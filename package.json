@@ -1,7 +1,7 @@
 {
-  "name": "@aaroncql/pim",
+  "name": "@aaroncql/pim-agent",
   "version": "0.0.1",
-  "description": "Pim is to Pi what Vim is to Vi.",
+  "description": "Pim Agent is to Pi Agent what Vim is to Vi.",
   "keywords": [
     "pi-package"
   ],

@@ -1,10 +1,10 @@
 # Developer Guide
 
-Pim is a Bun-native, opinionated extension pack for [Pi Agent](https://www.npmjs.com/package/@mariozechner/pi-coding-agent).
+Pim Agent is a Bun-native, opinionated extension pack for [Pi Agent](https://www.npmjs.com/package/@mariozechner/pi-coding-agent).
 
 `bin/pim.ts` is a Bun launcher that resolves pi's `cli.js` and runs it under Bun, bypassing pi's Node shebang. Other pi extensions still work normally.
 
-Dev setup: `bun link` puts `pim` on PATH; `.pi/settings.json` registers Pim as a project-local pi package, so pi auto-loads it inside this repo. Launching plain `pi` (Node) here trips Pim's Bun runtime guard — use `pim`.
+Dev setup: `bun link` puts `pim` on PATH; `.pi/settings.json` registers Pim Agent as a project-local pi package, so pi auto-loads it inside this repo. Launching plain `pi` (Node) here trips Pim Agent's Bun runtime guard — use `pim`.
 
 ## Code Conventions
 

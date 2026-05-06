@@ -1,6 +1,6 @@
-# Pim
+# Pim Agent
 
-_Pim is to Pi what Vim is to Vi._
+_Pim Agent is to Pi Agent what Vim is to Vi._
 
 A Bun-native, opinionated extension pack for [Pi Agent](https://www.npmjs.com/package/@mariozechner/pi-coding-agent).
 
@@ -9,17 +9,17 @@ A Bun-native, opinionated extension pack for [Pi Agent](https://www.npmjs.com/pa
 Assumes [`pi`](https://www.npmjs.com/package/@mariozechner/pi-coding-agent) and [`bun`](https://bun.com/docs/installation) are already installed globally.
 
 ```bash
-# Install the Pim extension pack
-pi install npm:@aaroncql/pim
+# Install the Pim Agent extension pack
+pi install npm:@aaroncql/pim-agent
 
 # Install the `pim` launcher via Bun
-bun install -g @aaroncql/pim
+bun install -g @aaroncql/pim-agent
 
 # Launch pim
 pim
 ```
 
-`pim` is a thin Bun launcher around `pi` so that Pim's Bun-specific tooling work. Other extensions and packages registered with Pi continue to work normally.
+`pim` is a thin Bun launcher around `pi` so that Pim Agent's Bun-specific tooling works. Other extensions and packages registered with Pi continue to work normally.
 
 ## Developing
 
@@ -30,7 +30,7 @@ Assuming you are in this repo:
 bun dev
 ```
 
-Pim is registered as a project-local Pi package via `.pi/settings.json`. Pi auto-loads it when launched from within this repo. Outside this repo, `pim` is still on PATH but no Pim package is loaded.
+Pim Agent is registered as a project-local Pi package via `.pi/settings.json`. Pi auto-loads it when launched from within this repo. Outside this repo, `pim` is still on PATH but no Pim Agent package is loaded.
 
-- To reload Pim after edits, run the built-in `/reload` command
+- To reload Pim Agent after edits, run the built-in `/reload` command
 - To tear down, run `bun unlink` within this dir
