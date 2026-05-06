@@ -6,7 +6,7 @@ const readFormatSchema = Type.Union(
   [Type.Literal("hashline"), Type.Literal("plain")],
   {
     description:
-      "Output format. `hashline` includes edit anchors; `plain` returns raw file lines. Defaults to hashline.",
+      "Output format - `hashline` includes edit anchors, `plain` returns raw file. Defaults to `hashline`.",
   }
 );
 

@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { Paths } from "../../shared/Paths";
 import { Renderer } from "../../shared/Renderer";
-import { buildReadRange, readFile, resolveReadPath } from "./read";
+import { buildReadRange, readFile } from "./read";
 import { formatTitlePath } from "./render";
 import { type ReadInput, readSchema } from "./schema";
 
@@ -11,8 +12,8 @@ export default function (pi: ExtensionAPI): void {
     name: "read",
     label: "read",
     description:
-      "Read a UTF-8 text file. Hashline output uses `LINE+ID|content` anchors such as `41th|def alpha():`; copy anchors verbatim into edit. Filesystem files only: use web_fetch for URLs and glob for directory listings.",
-    promptSnippet: "Read text files (hashline anchors for edit).",
+      "Read a local UTF-8 text file. The `hashline` output uses `LINE+ID|content` anchors (eg. `41th|def alpha():`) - copy anchors verbatim into edit.",
+    promptSnippet: "Read text files.",
     parameters: readSchema,
     renderShell: "self",
     async execute(_id, params, signal, _onUpdate, ctx) {
@@ -23,7 +24,7 @@ export default function (pi: ExtensionAPI): void {
       }
 
       const range = buildReadRange(start, end, format);
-      const absolutePath = resolveReadPath(path, ctx.cwd);
+      const absolutePath = Paths.resolve(path, ctx.cwd);
       const outcome = await readFile(absolutePath, range);
 
       const content: Array<{ type: "text"; text: string }> = [

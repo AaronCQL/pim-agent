@@ -1,6 +1,4 @@
 import { stat } from "node:fs/promises";
-import { homedir } from "node:os";
-import { isAbsolute, resolve } from "node:path";
 import { Hashline } from "../../shared/Hashline";
 import { MAX_READ_BYTES, type ReadFormat, type ReadRange } from "./schema";
 
@@ -21,17 +19,6 @@ export type ReadOutcome = {
     readonly bytes: number;
   };
 };
-
-export function resolveReadPath(value: string, baseDir: string): string {
-  const expanded =
-    value === "~"
-      ? homedir()
-      : value.startsWith("~/")
-        ? resolve(homedir(), value.slice(2))
-        : value;
-
-  return isAbsolute(expanded) ? expanded : resolve(baseDir, expanded);
-}
 
 export function buildReadRange(
   start: number | undefined,

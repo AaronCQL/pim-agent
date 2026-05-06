@@ -1,4 +1,4 @@
-import { isAbsolute, relative } from "node:path";
+import { Paths } from "../../shared/Paths";
 import type { ReadFormat } from "./schema";
 
 export type TitlePathOptions = {
@@ -10,23 +10,11 @@ export type TitlePathOptions = {
 };
 
 export function formatTitlePath(options: TitlePathOptions): string {
-  const path = displayPath(options.path, options.cwd);
+  const path = options.path
+    ? Paths.displayRelative(options.path, options.cwd)
+    : "...";
   const range = formatRange(options.start, options.end);
   return `${path}${range} (${options.format})`;
-}
-
-function displayPath(rawPath: string | undefined, cwd: string): string {
-  if (!rawPath) {
-    return "...";
-  }
-
-  const rel = relative(cwd, rawPath);
-
-  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
-    return rawPath;
-  }
-
-  return rel;
 }
 
 function formatRange(

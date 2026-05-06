@@ -1,6 +1,7 @@
 import type {
   AgentToolResult,
   Theme,
+  ThemeColor,
   ToolRenderResultOptions,
 } from "@mariozechner/pi-coding-agent";
 import {
@@ -16,11 +17,22 @@ type RenderContext = {
   readonly isError: boolean;
 };
 
-type MarkerStatus = "warning" | "error" | "success";
+export type MarkerStatus = "warning" | "error" | "success";
+
+type PrefixSpec = {
+  readonly prefix: string;
+  readonly width: number;
+};
 
 export class Renderer {
-  private static readonly PREFIX = " │ ";
-  private static readonly PREFIX_WIDTH = 3;
+  public static readonly GAPPED_PREFIX: PrefixSpec = {
+    prefix: " │ ",
+    width: 3,
+  };
+  public static readonly TIGHT_PREFIX: PrefixSpec = {
+    prefix: " │",
+    width: 2,
+  };
 
   public static markerColorFor(
     isPartial: boolean,
@@ -70,6 +82,29 @@ export class Renderer {
     return text;
   }
 
+  public static makePrefixedBlock(args: {
+    readonly text: string;
+    readonly theme: Theme;
+    readonly prefix: PrefixSpec;
+    readonly lineColor?: ThemeColor;
+  }): Component {
+    const { text, theme, prefix, lineColor } = args;
+    return {
+      render(width: number): string[] {
+        const inner = Math.max(1, width - prefix.width);
+        const out: string[] = [];
+        for (const logical of text.split("\n")) {
+          for (const w of wrapTextWithAnsi(logical, inner)) {
+            const body = lineColor ? theme.fg(lineColor, w) : w;
+            out.push(theme.fg("toolOutput", prefix.prefix) + body);
+          }
+        }
+        return out;
+      },
+      invalidate() {},
+    };
+  }
+
   public static renderBorderedResult(args: {
     readonly result: AgentToolResult<unknown>;
     readonly options: ToolRenderResultOptions;
@@ -96,22 +131,13 @@ export class Renderer {
     }
 
     const lineColor = context.isError ? "error" : "toolOutput";
-    const block = (text: string): Component => ({
-      render(width: number): string[] {
-        const inner = Math.max(1, width - Renderer.PREFIX_WIDTH);
-        const out: string[] = [];
-        for (const logical of text.split("\n")) {
-          const wrapped = wrapTextWithAnsi(logical, inner);
-          for (const w of wrapped) {
-            out.push(
-              theme.fg("toolOutput", Renderer.PREFIX) + theme.fg(lineColor, w)
-            );
-          }
-        }
-        return out;
-      },
-      invalidate() {},
-    });
+    const block = (text: string): Component =>
+      Renderer.makePrefixedBlock({
+        text,
+        theme,
+        prefix: Renderer.GAPPED_PREFIX,
+        lineColor,
+      });
 
     if (options.expanded) {
       container.addChild(block(body));

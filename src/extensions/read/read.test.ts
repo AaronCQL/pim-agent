@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { Hashline } from "../../shared/Hashline";
-import { buildReadRange, readFile, resolveReadPath } from "./read";
+import { buildReadRange, readFile } from "./read";
 
 const tempRoot = (): Promise<string> =>
   mkdtemp(join(tmpdir(), "pim-read-tool-"));
@@ -210,22 +210,5 @@ describe("buildReadRange", () => {
       start: 1,
       format: "hashline",
     });
-  });
-});
-
-describe("resolveReadPath", () => {
-  test("resolves relative paths against base", async () => {
-    const base = await tempRoot();
-    expect(resolveReadPath("foo.txt", base)).toBe(join(base, "foo.txt"));
-  });
-
-  test("expands ~ to home directory", () => {
-    const home = process.env.HOME ?? "";
-    expect(resolveReadPath("~", "/tmp")).toBe(home);
-    expect(resolveReadPath("~/.config", "/tmp")).toBe(join(home, ".config"));
-  });
-
-  test("preserves absolute paths", () => {
-    expect(resolveReadPath("/etc/hosts", "/tmp")).toBe("/etc/hosts");
   });
 });
