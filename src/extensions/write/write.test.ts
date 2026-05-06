@@ -44,6 +44,39 @@ describe("writeContent", () => {
     expect(outcome.diff).toBeUndefined();
   });
 
+  test("reports a trailing-newline removal even when content matches and produces no diff hunks", async () => {
+    const root = await tempRoot();
+    const path = join(root, "eof.txt");
+    await writeFile(path, "alpha\n", "utf8");
+
+    const outcome = await writeContent(path, "alpha");
+
+    expect(outcome.created).toBe(false);
+    expect(outcome.diff).toBeUndefined();
+    expect(outcome.trailingNewlineChange).toBe("removed");
+  });
+
+  test("reports a trailing-newline addition", async () => {
+    const root = await tempRoot();
+    const path = join(root, "eof2.txt");
+    await writeFile(path, "alpha", "utf8");
+
+    const outcome = await writeContent(path, "alpha\n");
+
+    expect(outcome.created).toBe(false);
+    expect(outcome.trailingNewlineChange).toBe("added");
+  });
+
+  test("does not report trailing-newline change for newly created files", async () => {
+    const root = await tempRoot();
+    const path = join(root, "fresh.txt");
+
+    const outcome = await writeContent(path, "alpha");
+
+    expect(outcome.created).toBe(true);
+    expect(outcome.trailingNewlineChange).toBeUndefined();
+  });
+
   test("emits a diff capturing modified lines", async () => {
     const root = await tempRoot();
     const path = join(root, "edit.txt");

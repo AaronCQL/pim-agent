@@ -126,10 +126,11 @@ async function performEdit(
 
   await writeFileAtomic(canonicalPath, finalContent, metadata);
 
+  const newHasTrailingNewline = hadTrailingNewline && outcome.lines.length > 0;
   const diff = DiffLines.buildToolDiff(
     displayPath,
-    originalLines,
-    outcome.lines,
+    { lines: originalLines, hasTrailingNewline: hadTrailingNewline },
+    { lines: outcome.lines, hasTrailingNewline: newHasTrailingNewline },
     CONTEXT_LINES
   );
 

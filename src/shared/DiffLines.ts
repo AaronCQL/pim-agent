@@ -28,17 +28,28 @@ export type ToolDiff = {
   readonly hunks: readonly ToolDiffHunk[];
 };
 
+// Logical lines (no trailing empty token) plus an explicit EOF-newline flag.
+// Don't fold the flag back into the array: a raw `split("\n")` would make
+// `joinComparable` emit a phantom blank line on every append.
+export type ToolDiffSide = {
+  readonly lines: readonly string[];
+  readonly hasTrailingNewline: boolean;
+};
+
 export class DiffLines {
   public static buildToolDiff(
     path: string,
-    oldLines: readonly string[],
-    newLines: readonly string[],
+    oldSide: ToolDiffSide,
+    newSide: ToolDiffSide,
     contextSize: number
   ): ToolDiff | undefined {
-    const lines = DiffLines.build(
-      DiffLines.effectiveLines(oldLines),
-      DiffLines.effectiveLines(newLines)
-    );
+    if (contextSize < 0 || !Number.isFinite(contextSize)) {
+      throw new Error(
+        `contextSize must be a non-negative finite number, got ${contextSize}.`
+      );
+    }
+
+    const lines = DiffLines.build(oldSide.lines, newSide.lines);
 
     if (!lines.some((line) => line.kind !== "context")) {
       return undefined;
@@ -50,6 +61,21 @@ export class DiffLines {
       path,
       hunks: DiffLines.buildHunks(emphasized, contextSize),
     };
+  }
+
+  public static fromText(text: string): ToolDiffSide {
+    if (text.length === 0) {
+      return { lines: [], hasTrailingNewline: false };
+    }
+
+    const hasTrailingNewline = text.endsWith("\n");
+    const parts = text.split("\n");
+
+    if (hasTrailingNewline) {
+      parts.pop();
+    }
+
+    return { lines: parts, hasTrailingNewline };
   }
 
   private static attachEmphasis(
@@ -197,18 +223,6 @@ export class DiffLines {
     }
 
     return lines;
-  }
-
-  private static effectiveLines(lines: readonly string[]): readonly string[] {
-    if (lines.at(-1) === "") {
-      return lines.slice(0, -1);
-    }
-
-    return lines;
-  }
-
-  public static splitLines(text: string): readonly string[] {
-    return text.split("\n");
   }
 
   private static buildHunks(

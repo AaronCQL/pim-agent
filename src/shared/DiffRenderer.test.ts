@@ -17,7 +17,12 @@ const firstHunk = (
   oldText: readonly string[],
   newText: readonly string[]
 ): ToolDiffHunk => {
-  const diff = DiffLines.buildToolDiff("foo.ts", oldText, newText, 1);
+  const diff = DiffLines.buildToolDiff(
+    "foo.ts",
+    { lines: oldText, hasTrailingNewline: true },
+    { lines: newText, hasTrailingNewline: true },
+    1
+  );
 
   if (diff === undefined || diff.hunks[0] === undefined) {
     throw new Error("expected at least one hunk");
@@ -102,8 +107,8 @@ describe("DiffRenderer.render", () => {
   test("includes content for each diff line", () => {
     const diff = DiffLines.buildToolDiff(
       "foo.ts",
-      ["alpha", "beta", "gamma"],
-      ["alpha", "BETA", "gamma"],
+      { lines: ["alpha", "beta", "gamma"], hasTrailingNewline: true },
+      { lines: ["alpha", "BETA", "gamma"], hasTrailingNewline: true },
       1
     );
 
@@ -122,8 +127,8 @@ describe("DiffRenderer.render", () => {
   test("emits emphasis bg for paired changed lines", () => {
     const diff = DiffLines.buildToolDiff(
       "foo.ts",
-      ["const x = 1;"],
-      ["const y = 2;"],
+      { lines: ["const x = 1;"], hasTrailingNewline: true },
+      { lines: ["const y = 2;"], hasTrailingNewline: true },
       1
     );
 
@@ -135,6 +140,23 @@ describe("DiffRenderer.render", () => {
 
     expect(out).toContain("\x1b[48;2;31;102;58m");
     expect(out).toContain("\x1b[48;2;110;36;36m");
+  });
+
+  test("does not render any EOF newline marker (EOF state is surfaced by callers, not the renderer)", () => {
+    const diff = DiffLines.buildToolDiff(
+      "foo.ts",
+      { lines: ["alpha"], hasTrailingNewline: false },
+      { lines: ["beta"], hasTrailingNewline: true },
+      1
+    );
+
+    if (diff === undefined) {
+      throw new Error("expected diff");
+    }
+
+    const out = DiffRenderer.render({ toolDiff: diff, theme: stubTheme });
+    expect(out).not.toContain("No newline at end of file");
+    expect(out).not.toContain("Newline added");
   });
 });
 

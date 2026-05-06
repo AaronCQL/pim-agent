@@ -111,10 +111,22 @@ export default function (pi: ExtensionAPI): void {
 
 function formatSummary(path: string, outcome: WriteOutcome): string {
   const verb = outcome.created ? "Created" : "Wrote";
+  const eofNote =
+    outcome.trailingNewlineChange === undefined
+      ? ""
+      : ` Trailing newline ${outcome.trailingNewlineChange}.`;
 
-  if (outcome.diff === undefined && !outcome.created) {
-    return `Wrote ${outcome.bytesWritten} bytes to ${path} (no changes).`;
+  if (
+    outcome.diff === undefined &&
+    !outcome.created &&
+    outcome.diffSkipped === undefined
+  ) {
+    return `Wrote ${outcome.bytesWritten} bytes to ${path} (no content changes).${eofNote}`;
   }
 
-  return `${verb} ${outcome.bytesWritten} bytes at ${path}.`;
+  if (outcome.diffSkipped !== undefined) {
+    return `${verb} ${outcome.bytesWritten} bytes at ${path} (diff omitted: file exceeds ${outcome.diffSkipped.thresholdBytes}-byte render cap).${eofNote}`;
+  }
+
+  return `${verb} ${outcome.bytesWritten} bytes at ${path}.${eofNote}`;
 }

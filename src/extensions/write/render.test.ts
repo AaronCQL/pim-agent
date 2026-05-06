@@ -15,8 +15,14 @@ describe("DiffView.countStats", () => {
   test("counts added and removed lines across hunks", () => {
     const diff = DiffLines.buildToolDiff(
       "/tmp/x.ts",
-      ["alpha", "beta", "gamma", "delta"],
-      ["alpha", "BETA", "gamma", "DELTA"],
+      {
+        lines: ["alpha", "beta", "gamma", "delta"],
+        hasTrailingNewline: true,
+      },
+      {
+        lines: ["alpha", "BETA", "gamma", "DELTA"],
+        hasTrailingNewline: true,
+      },
       0
     );
     expect(DiffView.countStats(diff)).toEqual({ added: 2, removed: 2 });
@@ -25,8 +31,8 @@ describe("DiffView.countStats", () => {
   test("counts a brand-new file as all added", () => {
     const diff = DiffLines.buildToolDiff(
       "/tmp/new.ts",
-      [],
-      ["one", "two", "three"],
+      { lines: [], hasTrailingNewline: false },
+      { lines: ["one", "two", "three"], hasTrailingNewline: true },
       0
     );
     expect(DiffView.countStats(diff)).toEqual({ added: 3, removed: 0 });
