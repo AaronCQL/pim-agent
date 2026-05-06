@@ -1,12 +1,6 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import {
-  type Component,
-  Container,
-  Text,
-  wrapTextWithAnsi,
-} from "@mariozechner/pi-tui";
+import { Renderer } from "../../shared/Renderer";
 import { detailsOf, formatResult, isErrorResult } from "./format";
-import { buildPreviewLines, markerColorFor, PREVIEW_LINES } from "./render";
 import { runBashCommand } from "./run";
 import {
   type BashInput,
@@ -15,6 +9,8 @@ import {
   STREAM_HEAD_BYTES,
   STREAM_TAIL_BYTES,
 } from "./schema";
+
+const PREVIEW_LINES = 5;
 
 export default function (pi: ExtensionAPI): void {
   pi.registerTool({
@@ -47,75 +43,25 @@ export default function (pi: ExtensionAPI): void {
       };
     },
     renderCall(args, theme, context) {
-      const text =
-        (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
       const cmd =
         typeof args?.command === "string" && args.command
           ? args.command
           : "...";
-      const markerColor = markerColorFor(
-        Boolean(context.isPartial),
-        Boolean(context.isError)
-      );
-      text.setText(
-        theme.fg(markerColor, " ▪") +
-          " " +
-          theme.fg("toolTitle", theme.bold("Bash") + ": " + cmd)
-      );
-      return text;
+      return Renderer.renderToolCallTitle({
+        label: "Bash",
+        title: cmd,
+        theme,
+        context,
+      });
     },
     renderResult(result, options, theme, context) {
-      const container =
-        (context.lastComponent as Container | undefined) ?? new Container();
-      container.clear();
-
-      if (options.isPartial) {
-        return container;
-      }
-      if (!context.isError && !options.expanded) {
-        return container;
-      }
-
-      const first = result.content?.[0];
-      const body = first && "text" in first ? (first.text ?? "") : "";
-      if (!body) {
-        return container;
-      }
-
-      const PREFIX = " │ ";
-      const PREFIX_WIDTH = 3;
-      const colorPrefix = () => theme.fg("toolOutput", PREFIX);
-      const colorLine = (line: string) => theme.fg("toolOutput", line);
-
-      const borderedBlock = (text: string): Component => ({
-        render(width: number): string[] {
-          const inner = Math.max(1, width - PREFIX_WIDTH);
-          const out: string[] = [];
-          for (const logical of text.split("\n")) {
-            const wrapped = wrapTextWithAnsi(logical, inner);
-            for (const w of wrapped) {
-              out.push(colorPrefix() + colorLine(w));
-            }
-          }
-          return out;
-        },
-        invalidate() {},
+      return Renderer.renderBorderedResult({
+        result,
+        options,
+        theme,
+        context,
+        previewLines: PREVIEW_LINES,
       });
-
-      if (options.expanded) {
-        container.addChild(borderedBlock(body));
-      } else {
-        const { preview, overflow } = buildPreviewLines(body, PREVIEW_LINES);
-        if (preview) {
-          container.addChild(borderedBlock(preview));
-        }
-        if (overflow > 0) {
-          container.addChild(borderedBlock(`… ${overflow} more lines`));
-        }
-      }
-
-      container.invalidate();
-      return container;
     },
   });
 }

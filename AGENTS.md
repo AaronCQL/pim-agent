@@ -12,6 +12,7 @@ Dev setup: `bun link` puts `pim` on PATH; `.pi/settings.json` registers Pim as a
 - Mark all data-shape fields `readonly` where possible
 - Default to `Bun.*` APIs over Node built-ins (`fs`, `child_process`, etc.)
 - Use comments sparingly, and only to explain why, not what or how
+- Shared utilities that cross module boundaries live in `src/shared/` and are exposed as a static-method class rather than a bare function. The filename must match the class name exactly (`Renderer.ts` exports `class Renderer`). Helpers that have a single colocated caller stay as bare functions in lowercase files.
 - **IMPORTANT**: Always run `bun run check` after finishing a change
 
 ## Pi Extension API
@@ -33,3 +34,12 @@ Primary ref: `vendor/pi-mono/packages/coding-agent/docs/extensions.md` (~2600 li
 **`ctx` (ExtensionContext)** — `ui` (`notify`, `confirm`, `select`, `input`, `setStatus`, `setWidget`, `custom`), `hasUI`, `cwd`, `signal`, `sessionManager`, `modelRegistry`/`model`, `isIdle()`/`abort()`/`hasPendingMessages()`, `shutdown()`, `getContextUsage()`, `compact()`, `getSystemPrompt()`. Command ctx adds `waitForIdle`, `newSession`, `fork`, `navigateTree`, `switchSession`, `reload` — session replacement has footguns, read the doc first.
 
 **Tool def** — `{ name, label, description, parameters: TypeBox, async execute(toolCallId, params, signal, onUpdate, ctx) { return { content: [{type:'text', text}], details: {} } } }`. Optional `renderCall`/`renderResult`, `remote` for off-process.
+
+### Tool Output
+
+A tool returns `{ content, details }`. Treat the two channels as distinct audiences.
+
+- **`content` → the model.** Pi catches anything `execute` throws and tags the result `isError: true`; providers map that to native error semantics (Anthropic `is_error: true`, Bedrock `ToolResultStatus.ERROR`, Google `{ error }`). Returning a string with a "this is an error" sentence does NOT — the model receives it as a normal success and cannot structurally distinguish it from real tool output. **Throw for every error and edge case** (not found, empty, out-of-range, permission denied, etc.); never return an English-prose error string in `content`.
+- **`details` → renderers and programmatic consumers, not the model.** Providers don't serialize `details` over the wire. Put pagination metadata, byte counts, file paths, structured truncation info here so the TUI/renderer can display affordances without that text leaking into `content`.
+- **Partial-success affordances** (e.g. "showing lines 1-50 of 200, call again with start=51"): the model needs the hint, so it has to live in `content`. Use a clearly-fenced bracket form on its own line so it's structurally identifiable, and mirror the structured fields into `details`. Anthropic's provider concatenates multi-block text results, so splitting body and footer into separate `content` blocks is cosmetic — the wire format is `\n`-joined either way.
+- **Error messages should be actionable.** Include the underlying error code, name what failed, and where useful suggest the next tool call (e.g. "use glob to locate the file"). See `src/extensions/read/read.ts` for the canonical pattern.
