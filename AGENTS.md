@@ -6,6 +6,14 @@ Pim is a Bun-native, opinionated extension pack for [Pi Agent](https://www.npmjs
 
 Dev setup: `bun link` puts `pim` on PATH; `.pi/settings.json` registers Pim as a project-local pi package, so pi auto-loads it inside this repo. Launching plain `pi` (Node) here trips Pim's Bun runtime guard — use `pim`.
 
+## Code Conventions
+
+- Always prefer using `type` over `interface`
+- Mark all data-shape fields `readonly` where possible
+- Default to `Bun.*` APIs over Node built-ins (`fs`, `child_process`, etc.)
+- Use comments sparingly, and only to explain why, not what or how
+- **IMPORTANT**: Always run `bun run check` after finishing a change
+
 ## Pi Extension API
 
 Shallow clone of [pi-mono](https://github.com/badlogic/pi-mono) at `vendor/pi-mono/` (gitignored). Bootstrap: `git clone --depth 1 https://github.com/badlogic/pi-mono.git vendor/pi-mono`. Refresh: `git -C vendor/pi-mono pull`. Clone tracks `main`; if behavior diverges, check installed version in `node_modules/@mariozechner/pi-coding-agent/package.json` and `git -C vendor/pi-mono checkout <tag>`.

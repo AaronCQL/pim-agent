@@ -26,15 +26,16 @@
   "scripts": {
     "dev": "bun link && pim",
     "typecheck": "tsgo --noEmit",
-    "lint": "oxlint .",
-    "format": "prettier --write --list-different package.json tsconfig.json oxlint.json .prettierrc.json \"src/**/*.ts\" \"bin/**/*.ts\" \"**/*.md\"",
-    "check": "bun run typecheck && bun run lint && bun run format"
+    "test": "bun test src --only-failures",
+    "lint": "oxlint . --fix",
+    "format": "prettier --write --list-different package.json tsconfig.json .oxlintrc.json .prettierrc.json \"src/**/*.ts\" \"bin/**/*.ts\" \"**/*.md\"",
+    "check": "bun run typecheck && bun run test && bun run lint && bun run format"
   },
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": "*"
   },
   "devDependencies": {
-    "@mariozechner/pi-coding-agent": "0.72.1",
+    "@mariozechner/pi-coding-agent": "0.73.0",
     "@types/bun": "latest",
     "@typescript/native-preview": "^7.0.0-dev.20260505.1",
     "oxlint": "^1.62.0",
