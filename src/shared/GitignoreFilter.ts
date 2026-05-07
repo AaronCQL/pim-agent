@@ -1,7 +1,8 @@
 import { readFile, stat } from "node:fs/promises";
-import { dirname, isAbsolute, parse, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, parse, relative, resolve } from "node:path";
 import ignore, { type Ignore } from "ignore";
 import { FsErrors } from "./FsErrors";
+import { Paths } from "./Paths";
 
 type IgnoreMatcher = {
   readonly baseDirectory: string;
@@ -136,6 +137,6 @@ export class GitignoreFilter {
       return undefined;
     }
 
-    return candidate.split(sep).join("/");
+    return Paths.toForwardSlashes(candidate);
   }
 }
