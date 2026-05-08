@@ -3,12 +3,14 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 const SPLASH_ID = "pim-splash";
 
 const shortcuts = [
-  ["Ctrl+C / Ctrl+D", "quit"],
-  ["Esc", "stop the current agent"],
-  ["/", "run a command"],
-  ["@", "attach files"],
-  ["!", "run bash"],
-  ["!!", "run bash (no context)"],
+  ["Ctrl+C", "Clear editor (first) / exit (second)"],
+  ["Escape", "Cancel autocomplete / abort streaming"],
+  ["/<command>", "Slash commands", "<command>"],
+  ["/hotkeys", "Show all keyboard shortcuts"],
+  ["/settings", "Open settings menu"],
+  ["@<path>", "Attach files", "<path>"],
+  ["!<command>", "Run bash command", "<command>"],
+  ["!!<command>", "Run bash command (excluded from context)", "<command>"],
 ] as const;
 
 export default async function (pi: ExtensionAPI): Promise<void> {
@@ -34,19 +36,65 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     }
 
     const theme = ctx.ui.theme;
+    const renderKey = (key: string, muted: string | undefined): string => {
+      const padding = " ".repeat(Math.max(0, keyCol - key.length));
+      if (!muted) {
+        return theme.fg("mdCode", key + padding);
+      }
+      const idx = key.indexOf(muted);
+      if (idx === -1) {
+        return theme.fg("mdCode", key + padding);
+      }
+      return (
+        theme.fg("mdCode", key.slice(0, idx)) +
+        theme.fg("muted", muted) +
+        key.slice(idx + muted.length) +
+        padding
+      );
+    };
+
+    const title =
+      theme.bold(theme.fg("mdHeading", "PIM - Pi IMproved")) +
+      " " +
+      theme.fg("muted", `v${version}`);
     ctx.ui.setWidget(SPLASH_ID, [
-      theme.fg("accent", `PIM - Pi IMproved v${version}`),
-      "",
-      ...shortcuts.map(([k, d]) => k.padEnd(keyCol) + theme.fg("dim", d)),
+      title,
+      ...shortcuts.map(
+        ([k, d, muted]) => renderKey(k, muted) + theme.fg("dim", d)
+      ),
     ]);
     splashShown = true;
   });
 
-  pi.on("input", (_event, ctx) => {
+  const clearSplash = (ctx: {
+    ui: { setWidget: (id: string, content: undefined) => void };
+  }) => {
     if (splashShown) {
       ctx.ui.setWidget(SPLASH_ID, undefined);
       splashShown = false;
     }
+  };
+
+  pi.on("input", (_event, ctx) => {
+    clearSplash(ctx);
     return { action: "continue" };
+  });
+  pi.on("user_bash", (_event, ctx) => {
+    clearSplash(ctx);
+  });
+  pi.on("model_select", (_event, ctx) => {
+    clearSplash(ctx);
+  });
+  pi.on("thinking_level_select", (_event, ctx) => {
+    clearSplash(ctx);
+  });
+  pi.on("session_before_fork", (_event, ctx) => {
+    clearSplash(ctx);
+  });
+  pi.on("session_before_tree", (_event, ctx) => {
+    clearSplash(ctx);
+  });
+  pi.on("session_before_compact", (_event, ctx) => {
+    clearSplash(ctx);
   });
 }
