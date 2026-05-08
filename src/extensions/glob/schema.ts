@@ -9,7 +9,7 @@ export const globSchema = Type.Object({
   path: Type.Optional(
     Type.String({
       description:
-        "Root directory to search. Defaults to the current working directory.",
+        "Absolute or relative path to directory (resolved against cwd). Defaults to cwd.",
     })
   ),
   headLimit: Type.Optional(

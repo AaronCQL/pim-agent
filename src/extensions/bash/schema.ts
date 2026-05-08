@@ -6,11 +6,13 @@ export const DEFAULT_TIMEOUT_MS = 30_000;
 export const KILL_GRACE_MS = 2000;
 
 export const bashSchema = Type.Object({
-  command: Type.String({ description: "Bash command to execute" }),
+  command: Type.String({
+    description: "Runs via bash -lc, so login shell init applies.",
+  }),
   timeoutMs: Type.Optional(
     Type.Integer({
       minimum: 1,
-      description: `Timeout in milliseconds (default ${DEFAULT_TIMEOUT_MS})`,
+      description: `Timeout in milliseconds (default ${DEFAULT_TIMEOUT_MS}). After timeout the process gets a ${KILL_GRACE_MS / 1000}s grace period before SIGKILL.`,
     })
   ),
 });

@@ -26,7 +26,6 @@ export default function (pi: ExtensionAPI): void {
     name: "web_fetch",
     label: "web_fetch",
     description: "Fetch a URL and return its markdown or HTML content.",
-    promptSnippet: "Fetch a URL.",
     parameters: webFetchSchema,
     renderShell: "self",
     async execute(_id, params, signal) {

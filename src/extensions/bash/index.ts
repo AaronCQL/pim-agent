@@ -17,14 +17,10 @@ export default function (pi: ExtensionAPI): void {
     name: "bash",
     label: "bash",
     description:
-      `Execute a bash command (\`bash -lc <command>\`) in the project working directory.\n` +
-      `Returns exit code, signal (if any), and stdout/stderr captured separately.\n` +
-      `Default timeout: ${DEFAULT_TIMEOUT_MS} ms (override with "timeoutMs").\n` +
-      `Each stream is capped at ${STREAM_HEAD_BYTES} bytes head + ${STREAM_TAIL_BYTES} bytes tail; the middle is truncated.`,
-    promptSnippet: "Execute bash commands (ls, grep, find, etc.)",
-    promptGuidelines: [
-      "Use bash with trimming args or pipe to head/tail/cut to keep output small.",
-    ],
+      `Execute a bash command in the cwd. ` +
+      `Returns exit code, signal (if any), and stdout/stderr captured separately. ` +
+      `Each stream is capped at ${STREAM_HEAD_BYTES} bytes head + ${STREAM_TAIL_BYTES} bytes tail; the middle is truncated. ` +
+      `Use bash with trimming args or pipe to head/tail/cut to keep output small.`,
     parameters: bashSchema,
     renderShell: "self",
     async execute(_id, params, signal, _onUpdate, ctx) {

@@ -12,18 +12,18 @@ export default function (pi: ExtensionAPI): void {
     name: "read",
     label: "read",
     description:
-      "Read a local UTF-8 text file. The `hashline` output uses `LINE+ID|content` anchors (eg. `41th|def alpha():`) - copy anchors verbatim into edit.",
+      "Read a local UTF-8 text file. Output is `LINE:CONTENT` with no space after the colon. Capped at 32KB per call; lines longer than 2000 chars are truncated.",
     promptSnippet: "Read text files.",
     parameters: readSchema,
     renderShell: "self",
     async execute(_id, params, signal, _onUpdate, ctx) {
-      const { path, start, end, format } = params as ReadInput;
+      const { path, start, end } = params as ReadInput;
 
       if (signal?.aborted) {
         throw new Error("Read aborted before execution.");
       }
 
-      const range = buildReadRange(start, end, format);
+      const range = buildReadRange(start, end);
       const absolutePath = Paths.resolve(path, ctx.cwd);
       const outcome = await readFile(absolutePath, range);
 
@@ -31,7 +31,7 @@ export default function (pi: ExtensionAPI): void {
         { type: "text", text: outcome.body },
       ];
 
-      if (outcome.truncatedByByteCap && outcome.nextStart !== undefined) {
+      if (outcome.truncatedByEnd && outcome.nextStart !== undefined) {
         content.push({
           type: "text",
           text: `[read tool: showing lines ${outcome.visibleStart}-${outcome.visibleEnd} of ${outcome.totalLines}; call read again with start=${outcome.nextStart} to continue.]`,
@@ -42,11 +42,12 @@ export default function (pi: ExtensionAPI): void {
         content,
         details: {
           absolutePath,
-          format: range.format,
           totalLines: outcome.totalLines,
           visibleStart: outcome.visibleStart,
           visibleEnd: outcome.visibleEnd,
           truncatedByByteCap: outcome.truncatedByByteCap,
+          truncatedByEnd: outcome.truncatedByEnd,
+          hadBom: outcome.hadBom,
           ...(outcome.nextStart === undefined
             ? {}
             : { nextStart: outcome.nextStart }),
@@ -60,7 +61,6 @@ export default function (pi: ExtensionAPI): void {
         cwd: context.cwd,
         start: input.start,
         end: input.end,
-        format: input.format ?? "hashline",
       });
       return Renderer.renderToolCallTitle({
         label: "Read",

@@ -1,7 +1,8 @@
-import { stat } from "node:fs/promises";
+import { basename, dirname, extname, join } from "node:path";
+import { readdir, stat } from "node:fs/promises";
 import { FsErrors } from "../../shared/FsErrors";
-import { Hashline } from "../../shared/Hashline";
-import { MAX_READ_BYTES, type ReadFormat, type ReadRange } from "./schema";
+import { Lines } from "../../shared/Lines";
+import { MAX_LINE_LENGTH, MAX_READ_BYTES, type ReadRange } from "./schema";
 
 type RenderedLine = {
   readonly lineNumber: number;
@@ -14,16 +15,16 @@ export type ReadOutcome = {
   readonly visibleStart: number;
   readonly visibleEnd: number;
   readonly truncatedByByteCap: boolean;
+  readonly truncatedByEnd: boolean;
+  readonly hadBom: boolean;
   readonly nextStart?: number;
 };
 
 export function buildReadRange(
   start: number | undefined,
-  end: number | undefined,
-  format: ReadFormat | undefined
+  end: number | undefined
 ): ReadRange {
   const startLine = start ?? 1;
-  const fmt = format ?? "hashline";
 
   if (start !== undefined && (!Number.isInteger(start) || start <= 0)) {
     throw new Error(`Read start ${start} must be a positive integer.`);
@@ -40,7 +41,6 @@ export function buildReadRange(
   return {
     start: startLine,
     ...(end === undefined ? {} : { end }),
-    format: fmt,
   };
 }
 
@@ -78,21 +78,23 @@ export async function readFile(
     rethrowFsError(error, path, "read");
   }
 
-  return renderText(new TextDecoder("utf-8").decode(bytes), range, path);
+  const hadBom = Lines.hasUtf8Bom(bytes);
+  const text = new TextDecoder("utf-8").decode(bytes);
+
+  return renderText(Lines.stripUtf8Bom(text), range, path, hadBom);
 }
 
 function renderText(
   content: string,
   range: ReadRange,
-  path: string
+  path: string,
+  hadBom: boolean
 ): ReadOutcome {
-  const lines = Hashline.splitLines(content);
+  const lines = Lines.split(content);
   const totalLines = lines.length;
 
   if (totalLines === 0) {
-    throw new Error(
-      "File is empty. Use edit with prepend or append and omit pos to insert content."
-    );
+    throw new Error("File is empty. Use the write tool to create content.");
   }
 
   if (range.start > totalLines) {
@@ -102,7 +104,7 @@ function renderText(
   }
 
   const lastLine = Math.min(range.end ?? totalLines, totalLines);
-  const rendered = renderLines(lines, range.start, lastLine, range.format);
+  const rendered = renderLines(lines, range.start, lastLine);
   const { visible, firstLineTooBig } = applyByteCap(rendered);
 
   if (firstLineTooBig !== undefined) {
@@ -114,6 +116,7 @@ function renderText(
   const lastVisibleLine = visible.at(-1)?.lineNumber ?? range.start;
   const body = visible.map((line) => line.text).join("\n");
   const truncatedByByteCap = lastVisibleLine < lastLine;
+  const truncatedByEnd = lastVisibleLine < totalLines;
 
   return {
     body,
@@ -121,28 +124,36 @@ function renderText(
     visibleStart: range.start,
     visibleEnd: lastVisibleLine,
     truncatedByByteCap,
-    ...(truncatedByByteCap ? { nextStart: lastVisibleLine + 1 } : {}),
+    truncatedByEnd,
+    hadBom,
+    ...(truncatedByEnd ? { nextStart: lastVisibleLine + 1 } : {}),
   };
 }
 
 function renderLines(
   lines: readonly string[],
   start: number,
-  end: number,
-  format: ReadFormat
+  end: number
 ): readonly RenderedLine[] {
   const rendered: RenderedLine[] = [];
 
   for (let lineNumber = start; lineNumber <= end; lineNumber += 1) {
-    const line = lines[lineNumber - 1] ?? "";
+    const line = truncateLine(lines[lineNumber - 1] ?? "");
     rendered.push({
       lineNumber,
-      text:
-        format === "hashline" ? Hashline.formatLine(lineNumber, line) : line,
+      text: `${lineNumber}:${line}`,
     });
   }
 
   return rendered;
+}
+
+function truncateLine(line: string): string {
+  if (line.length <= MAX_LINE_LENGTH) {
+    return line;
+  }
+
+  return `${line.slice(0, MAX_LINE_LENGTH)}... (line truncated to ${MAX_LINE_LENGTH} chars)`;
 }
 
 function applyByteCap(lines: readonly RenderedLine[]): {
@@ -198,12 +209,50 @@ async function metadataOrThrow(
     return await stat(path);
   } catch (error) {
     if (FsErrors.code(error) === "ENOENT") {
-      throw new Error(
-        `File not found: ${path}. Use glob to locate the file or verify the path.`
-      );
+      throw new Error(await renderMissingFileError(path));
     }
 
     rethrowFsError(error, path, "stat");
+  }
+}
+
+async function renderMissingFileError(path: string): Promise<string> {
+  const suggestions = await suggestSiblings(path);
+
+  if (suggestions.length === 0) {
+    return `File not found: ${path}. Use glob to locate the file or verify the path.`;
+  }
+
+  return [
+    `File not found: ${path}. Use glob to locate the file or verify the path.`,
+    "",
+    "Did you mean one of these?",
+    ...suggestions,
+  ].join("\n");
+}
+
+async function suggestSiblings(path: string): Promise<readonly string[]> {
+  const dir = dirname(path);
+  const base = basename(path).toLowerCase();
+  const stem = base.slice(0, base.length - extname(base).length);
+
+  try {
+    const entries = await readdir(dir);
+    return entries
+      .filter((entry) => {
+        const lower = entry.toLowerCase();
+        const lowerStem = lower.slice(0, lower.length - extname(lower).length);
+        return (
+          lower.includes(base) ||
+          base.includes(lower) ||
+          (stem.length > 0 &&
+            (lowerStem.includes(stem) || stem.includes(lowerStem)))
+        );
+      })
+      .slice(0, 3)
+      .map((entry) => join(dir, entry));
+  } catch {
+    return [];
   }
 }
 

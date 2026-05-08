@@ -1,9 +1,12 @@
 import { type Static, Type } from "typebox";
 
 export const MAX_READ_BYTES = 32 * 1024;
+export const MAX_LINE_LENGTH = 2000;
 
 export const readSchema = Type.Object({
-  path: Type.String({ description: "Path to the file to read." }),
+  path: Type.String({
+    description: "Absolute or relative path to file (resolved against cwd).",
+  }),
   start: Type.Optional(
     Type.Integer({
       minimum: 1,
@@ -17,20 +20,11 @@ export const readSchema = Type.Object({
         "Last line to return, 1-indexed and inclusive. Defaults to EOF or the byte cap.",
     })
   ),
-  format: Type.Optional(
-    Type.Union([Type.Literal("hashline"), Type.Literal("plain")], {
-      description:
-        "Output format - `hashline` includes edit anchors, `plain` returns raw file. Defaults to `hashline`.",
-    })
-  ),
 });
 
 export type ReadInput = Static<typeof readSchema>;
 
-export type ReadFormat = ReadInput["format"];
-
 export type ReadRange = {
   readonly start: number;
   readonly end?: number;
-  readonly format: ReadFormat;
 };

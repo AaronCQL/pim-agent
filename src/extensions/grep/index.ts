@@ -19,11 +19,7 @@ export default function (pi: ExtensionAPI): void {
     name: "grep",
     label: "grep",
     description:
-      "Search UTF-8 text files for a JavaScript regex. Skips binary files, gitignored paths, and dotfiles. Defaults to listing files with matches.",
-    promptSnippet: "Search files with a JavaScript regex.",
-    promptGuidelines: [
-      "Use grep to search file contents instead of bash with grep, rg, ag, find -exec, or similar.",
-    ],
+      "Search UTF-8 text files for a JavaScript regex. Skips binary files, gitignored paths, and dotfiles. Use grep to search file contents instead of bash with grep, rg, ag, find -exec, or similar.",
     parameters: grepSchema,
     renderShell: "self",
     async execute(toolCallId, params, signal, _onUpdate, ctx) {

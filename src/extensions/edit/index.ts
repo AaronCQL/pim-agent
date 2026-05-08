@@ -18,12 +18,7 @@ export default function (pi: ExtensionAPI): void {
     name: "edit",
     label: "edit",
     description:
-      "Edit a UTF-8 text file using LINE+ID anchors copied verbatim from `read`. All anchors in one call must come from the same pre-edit read. Don't guess or construct anchors. Don't emit overlapping edits.",
-    promptSnippet: "Edit text files via hashline anchors.",
-    promptGuidelines: [
-      "Use edit only after reading the file; copy LINE+ID anchors verbatim from the read output.",
-      "Use edit to batch related changes into one atomic call rather than calling edit multiple times.",
-    ],
+      "Replace strings in a UTF-8 text file. Prefer edit over write for changes to existing files.",
     parameters: editSchema,
     renderShell: "self",
     async execute(_id, params, signal, _onUpdate, ctx) {

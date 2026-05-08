@@ -2,46 +2,32 @@ import { type Static, Type } from "typebox";
 
 export const editSchema = Type.Object({
   path: Type.String({
-    description:
-      "Path to the file to edit. Relative paths resolve against the working directory.",
+    description: "Absolute or relative path to file (resolved against cwd).",
   }),
   edits: Type.Array(
     Type.Object(
       {
-        op: Type.Union(
-          [
-            Type.Literal("replace"),
-            Type.Literal("append"),
-            Type.Literal("prepend"),
-          ],
-          {
-            description:
-              "`replace` replaces the line at `pos`, or the inclusive range `pos`..`end`, with `content`. `append` inserts `content` after `pos` - omit `pos` to append at EOF. `prepend` inserts `content` before `pos` - omit `pos` to insert at BOF.",
-          }
-        ),
-        pos: Type.Optional(
-          Type.String({
-            description:
-              "Single-line anchor copied verbatim from hashline `read`. Format: `LINE+ID` (eg. `42sr`) or `LINE+ID|content` (eg. `42sr|  return value;`). For multiline edits, set `pos` to the first line's anchor and `end` to the last line's anchor.",
-          })
-        ),
-        end: Type.Optional(
-          Type.String({
-            description:
-              "Single-line anchor for the last line of a range replace. Must be on or after `pos`. Omit for single-line replace.",
-          })
-        ),
-        content: Type.String({
+        oldString: Type.String({
           description:
-            "Input string for this edit. Use newline-delimited string for multiple lines. Empty string deletes the target range.",
+            "Use the actual file content without the `LINE:` prefix from read output. Must be unique unless replaceAll=true. Include enough surrounding context for uniqueness.",
         }),
+        newString: Type.String({
+          description:
+            "Replacement text. Empty string deletes the matched range.",
+        }),
+        replaceAll: Type.Optional(
+          Type.Boolean({
+            description:
+              "If true, replaces every occurrence of oldString. Defaults to false.",
+          })
+        ),
       },
       { additionalProperties: false }
     ),
     {
       minItems: 1,
       description:
-        "Non-empty atomic batch of edits. Anchors must come from the same pre-edit read and must not overlap.",
+        "Non-empty atomic batch of edits. Batched edits resolve against the initial file state and must not overlap. For sequential transformations where edit 2 depends on edit 1's result, use separate tool calls.",
     }
   ),
 });

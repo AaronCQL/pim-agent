@@ -13,11 +13,7 @@ export default function (pi: ExtensionAPI): void {
     name: "glob",
     label: "glob",
     description:
-      "Find files by glob pattern under a directory, sorted newest first. Skips gitignored paths and dotfiles.",
-    promptSnippet: "Find files by glob pattern.",
-    promptGuidelines: [
-      "Use glob to enumerate files instead of bash with find, fd, ls -R, or similar.",
-    ],
+      "Find files by glob pattern under a directory, sorted newest first. Skips gitignored paths and dotfiles. Use glob to enumerate files instead of bash with find, fd, ls -R, or similar.",
     parameters: globSchema,
     renderShell: "self",
     async execute(toolCallId, params, signal, _onUpdate, ctx) {

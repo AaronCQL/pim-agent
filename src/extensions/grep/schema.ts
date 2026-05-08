@@ -16,7 +16,7 @@ export const grepSchema = Type.Object({
   path: Type.Optional(
     Type.String({
       description:
-        "File or directory to search. Defaults to the current working directory.",
+        "Absolute or relative path to file/directory (resolved against cwd). Defaults to cwd.",
     })
   ),
   glob: Type.Optional(
@@ -28,7 +28,7 @@ export const grepSchema = Type.Object({
   outputMode: Type.Optional(
     StringEnum(GREP_OUTPUT_MODES, {
       description:
-        "Defaults to files_with_matches. content returns path:line:text; count returns path:count.",
+        "`files_with_matches` (default): returns file paths. `content`: returns path:line:text. `count`: returns path:count.",
     })
   ),
   multiline: Type.Optional(

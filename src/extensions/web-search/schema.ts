@@ -7,7 +7,7 @@ export const DEFAULT_NUM_RESULTS = 5;
 export const webSearchSchema = Type.Object({
   query: Type.String({
     minLength: 1,
-    description: "Public web search query.",
+    description: "Search query. Prefer natural language over keywords.",
   }),
   numResults: Type.Optional(
     Type.Integer({

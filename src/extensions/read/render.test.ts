@@ -4,16 +4,15 @@ import { formatTitlePath } from "./render";
 describe("formatTitlePath", () => {
   const cwd = "/work/repo";
 
-  test("renders relative path with format only when no range", () => {
+  test("renders relative path without format suffix", () => {
     expect(
       formatTitlePath({
         path: "/work/repo/src/foo.ts",
         cwd,
         start: undefined,
         end: undefined,
-        format: "hashline",
       })
-    ).toBe("src/foo.ts (hashline)");
+    ).toBe("src/foo.ts");
   });
 
   test("renders explicit start-end range", () => {
@@ -23,9 +22,8 @@ describe("formatTitlePath", () => {
         cwd,
         start: 40,
         end: 80,
-        format: "hashline",
       })
-    ).toBe("src/foo.ts:40-80 (hashline)");
+    ).toBe("src/foo.ts:40-80");
   });
 
   test("renders start-only range", () => {
@@ -35,9 +33,8 @@ describe("formatTitlePath", () => {
         cwd,
         start: 40,
         end: undefined,
-        format: "plain",
       })
-    ).toBe("src/foo.ts:40 (plain)");
+    ).toBe("src/foo.ts:40");
   });
 
   test("falls back to absolute path when outside cwd", () => {
@@ -47,9 +44,8 @@ describe("formatTitlePath", () => {
         cwd,
         start: undefined,
         end: undefined,
-        format: "hashline",
       })
-    ).toBe("/etc/hosts (hashline)");
+    ).toBe("/etc/hosts");
   });
 
   test("placeholder when path is missing", () => {
@@ -59,8 +55,7 @@ describe("formatTitlePath", () => {
         cwd,
         start: undefined,
         end: undefined,
-        format: "hashline",
       })
-    ).toBe("... (hashline)");
+    ).toBe("...");
   });
 });

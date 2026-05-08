@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { FsErrors } from "../../shared/FsErrors";
 import { GitignoreFilter } from "../../shared/GitignoreFilter";
-import { Hashline } from "../../shared/Hashline";
+import { Lines } from "../../shared/Lines";
 
 const MATCH_CONCURRENCY = 32;
 
@@ -64,11 +64,11 @@ async function matchFile(
 ): Promise<GrepMatch | undefined> {
   const file = Bun.file(filePath);
 
-  if (await Hashline.isBinary(file)) {
+  if (await Lines.isBinary(file)) {
     return undefined;
   }
 
-  const lines = Hashline.splitLines(await file.text());
+  const lines = Lines.split(await file.text());
   const lineMatches: { lineNumber: number; text: string }[] = [];
 
   for (const [index, line] of lines.entries()) {

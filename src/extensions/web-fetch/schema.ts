@@ -12,12 +12,13 @@ export type WebFetchResolvedFormat = Exclude<WebFetchFormat, "auto">;
 export const webFetchSchema = Type.Object({
   url: Type.String({
     minLength: 1,
-    description: "URL to fetch.",
+    description:
+      "URL to fetch. Must be a public http(s) URL; localhost and private IPs are rejected.",
   }),
   format: Type.Optional(
     StringEnum(FETCH_FORMATS, {
       description:
-        "'auto' (default): markdown output with fallback to HTML. 'markdown': markdown only, fails if not available. 'html': HTML only.",
+        "`auto` (default): markdown output with fallback to HTML. `markdown`: markdown only, fails if not available. `html`: HTML only.",
     })
   ),
   maxBytes: Type.Optional(

@@ -1,12 +1,10 @@
 import { Paths } from "../../shared/Paths";
-import type { ReadFormat } from "./schema";
 
 export type TitlePathOptions = {
   readonly path: string | undefined;
   readonly cwd: string;
   readonly start: number | undefined;
   readonly end: number | undefined;
-  readonly format: ReadFormat;
 };
 
 export function formatTitlePath(options: TitlePathOptions): string {
@@ -14,7 +12,7 @@ export function formatTitlePath(options: TitlePathOptions): string {
     ? Paths.displayRelative(options.path, options.cwd)
     : "...";
   const range = formatRange(options.start, options.end);
-  return `${path}${range} (${options.format})`;
+  return `${path}${range}`;
 }
 
 function formatRange(
