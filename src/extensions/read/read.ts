@@ -15,10 +15,6 @@ export type ReadOutcome = {
   readonly visibleEnd: number;
   readonly truncatedByByteCap: boolean;
   readonly nextStart?: number;
-  readonly firstLineTooBig?: {
-    readonly line: number;
-    readonly bytes: number;
-  };
 };
 
 export function buildReadRange(
@@ -110,17 +106,9 @@ function renderText(
   const { visible, firstLineTooBig } = applyByteCap(rendered);
 
   if (firstLineTooBig !== undefined) {
-    const body = `[Line ${firstLineTooBig.line} is ${formatBytes(firstLineTooBig.bytes)}, exceeds the ${formatBytes(MAX_READ_BYTES)} read cap. Use bash: sed -n '${firstLineTooBig.line}p' ${path} | head -c ${MAX_READ_BYTES}]`;
-
-    return {
-      body,
-      totalLines,
-      visibleStart: range.start,
-      visibleEnd: range.start,
-      truncatedByByteCap: true,
-      firstLineTooBig,
-      ...(range.start < totalLines ? { nextStart: range.start + 1 } : {}),
-    };
+    throw new Error(
+      `Line ${firstLineTooBig.line} is ${formatBytes(firstLineTooBig.bytes)}, exceeds the ${formatBytes(MAX_READ_BYTES)} read cap. Use bash: sed -n '${firstLineTooBig.line}p' ${path} | head -c ${MAX_READ_BYTES}${range.start < totalLines ? `, or call read again with start=${range.start + 1} to skip this line.` : "."}`
+    );
   }
 
   const lastVisibleLine = visible.at(-1)?.lineNumber ?? range.start;

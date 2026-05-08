@@ -31,11 +31,7 @@ export default function (pi: ExtensionAPI): void {
         { type: "text", text: outcome.body },
       ];
 
-      if (
-        outcome.truncatedByByteCap &&
-        outcome.nextStart !== undefined &&
-        outcome.firstLineTooBig === undefined
-      ) {
+      if (outcome.truncatedByByteCap && outcome.nextStart !== undefined) {
         content.push({
           type: "text",
           text: `[read tool: showing lines ${outcome.visibleStart}-${outcome.visibleEnd} of ${outcome.totalLines}; call read again with start=${outcome.nextStart} to continue.]`,
@@ -54,9 +50,6 @@ export default function (pi: ExtensionAPI): void {
           ...(outcome.nextStart === undefined
             ? {}
             : { nextStart: outcome.nextStart }),
-          ...(outcome.firstLineTooBig === undefined
-            ? {}
-            : { firstLineTooBig: outcome.firstLineTooBig }),
         },
       };
     },

@@ -144,25 +144,37 @@ describe("readFile", () => {
     expect(outcome.truncatedByByteCap).toBe(false);
   });
 
-  test("redirects to bash when the first line alone exceeds the byte cap", async () => {
+  test("throws when the first line alone exceeds the byte cap", async () => {
     const root = await tempRoot();
     const path = join(root, "huge.txt");
     const huge = "x".repeat(40 * 1024);
     await writeFile(path, `${huge}\nshort line`, "utf8");
 
-    const outcome = await readFile(
+    const promise = readFile(
       path,
       buildReadRange(undefined, undefined, "plain")
     );
 
-    expect(outcome.firstLineTooBig).toBeDefined();
-    expect(outcome.firstLineTooBig?.line).toBe(1);
-    expect(outcome.firstLineTooBig?.bytes).toBe(40 * 1024);
-    expect(outcome.truncatedByByteCap).toBe(true);
-    expect(outcome.nextStart).toBe(2);
-    expect(outcome.body).toContain("Use bash: sed -n '1p'");
-    expect(outcome.body).toContain(path);
-    expect(outcome.body).toContain("head -c");
+    await expect(promise).rejects.toThrow(
+      new RegExp(
+        `Line 1 is .* exceeds the .* read cap\\. Use bash: sed -n '1p' ${path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\| head -c \\d+, or call read again with start=2 to skip this line\\.`
+      )
+    );
+  });
+
+  test("throws without next-line hint when the only line exceeds the byte cap", async () => {
+    const root = await tempRoot();
+    const path = join(root, "single.txt");
+    await writeFile(path, "x".repeat(40 * 1024), "utf8");
+
+    const promise = readFile(
+      path,
+      buildReadRange(undefined, undefined, "plain")
+    );
+
+    await expect(promise).rejects.toThrow(
+      /Use bash: sed -n '1p' .* head -c \d+\.$/
+    );
   });
 
   test("applies a 32 KiB head-only byte cap and reports pagination metadata", async () => {
