@@ -1,10 +1,31 @@
-import type { AssistantMessage } from "@mariozechner/pi-ai";
+import type { AssistantMessageEvent } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { PimSettings } from "../../shared/PimSettings";
 
+type RequestTiming = {
+  readonly sentMs: number;
+  firstOutputMs: number | null;
+};
+
+function isOutputEvent(event: AssistantMessageEvent): boolean {
+  switch (event.type) {
+    case "text_delta":
+    case "thinking_delta":
+    case "toolcall_delta":
+      return event.delta.length > 0;
+    case "text_end":
+    case "thinking_end":
+      return event.content.length > 0;
+    case "toolcall_end":
+      return true;
+    default:
+      return false;
+  }
+}
+
 export default function (pi: ExtensionAPI): void {
   pi.registerCommand("tps", {
-    description: "Toggle per-turn decode/prefill tps reporting",
+    description: "Toggle per-cycle decode/prefill tps reporting",
     handler: async (_args, ctx) => {
       const current = await PimSettings.get("tps");
       const next = { ...current, enabled: !current.enabled };
@@ -16,8 +37,7 @@ export default function (pi: ExtensionAPI): void {
     },
   });
 
-  let requestSentMs: number | null = null;
-  const firstTokenByMessage = new WeakMap<AssistantMessage, number>();
+  let requestTiming: RequestTiming | null = null;
 
   let promptTokens = 0;
   let prefillMs = 0;
@@ -26,7 +46,7 @@ export default function (pi: ExtensionAPI): void {
   let cacheReadTokens = 0;
   let firstTtftMs: number | null = null;
 
-  pi.on("turn_start", () => {
+  pi.on("agent_start", () => {
     promptTokens = 0;
     prefillMs = 0;
     outputTokens = 0;
@@ -36,17 +56,21 @@ export default function (pi: ExtensionAPI): void {
   });
 
   pi.on("before_provider_request", () => {
-    requestSentMs = Date.now();
+    requestTiming = {
+      sentMs: Date.now(),
+      firstOutputMs: null,
+    };
   });
 
   pi.on("message_update", (event) => {
-    if (event.message.role !== "assistant") {
-      return;
+    if (
+      event.message.role === "assistant" &&
+      requestTiming !== null &&
+      requestTiming.firstOutputMs === null &&
+      isOutputEvent(event.assistantMessageEvent)
+    ) {
+      requestTiming.firstOutputMs = Date.now();
     }
-    if (firstTokenByMessage.has(event.message)) {
-      return;
-    }
-    firstTokenByMessage.set(event.message, Date.now());
   });
 
   pi.on("message_end", (event) => {
@@ -54,16 +78,17 @@ export default function (pi: ExtensionAPI): void {
       return;
     }
 
-    const firstTokenMs = firstTokenByMessage.get(event.message);
-    const sentMs = requestSentMs;
-    requestSentMs = null;
-    if (firstTokenMs === undefined || sentMs === null) {
+    const timing = requestTiming;
+    const endedMs = Date.now();
+    requestTiming = null;
+    if (timing === null) {
       return;
     }
 
     const usage = event.message.usage;
-    const ttft = firstTokenMs - sentMs;
-    const decode = Date.now() - firstTokenMs;
+    const responseMs = timing.firstOutputMs ?? endedMs;
+    const ttft = responseMs - timing.sentMs;
+    const decode = endedMs - responseMs;
 
     if (firstTtftMs === null && ttft > 0) {
       firstTtftMs = ttft;
@@ -81,7 +106,7 @@ export default function (pi: ExtensionAPI): void {
     cacheReadTokens += usage.cacheRead ?? 0;
   });
 
-  pi.on("turn_end", async (_event, ctx) => {
+  pi.on("agent_end", async (_event, ctx) => {
     if (!ctx.hasUI) {
       return;
     }
