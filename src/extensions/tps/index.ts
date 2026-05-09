@@ -3,19 +3,14 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { PimSettings } from "../../shared/PimSettings";
 
 export default function (pi: ExtensionAPI): void {
-  let enabled = false;
-
-  pi.on("session_start", async () => {
-    enabled = (await PimSettings.get("tps")).enabled;
-  });
-
   pi.registerCommand("tps", {
     description: "Toggle per-turn decode/prefill tps reporting",
     handler: async (_args, ctx) => {
-      enabled = !enabled;
-      await PimSettings.set("tps", { enabled });
+      const current = await PimSettings.get("tps");
+      const next = { ...current, enabled: !current.enabled };
+      await PimSettings.set("tps", next);
       ctx.ui.notify(
-        `TPS reporting ${enabled ? "enabled" : "disabled"}`,
+        `TPS reporting ${next.enabled ? "enabled" : "disabled"}`,
         "info"
       );
     },
@@ -86,14 +81,15 @@ export default function (pi: ExtensionAPI): void {
     cacheReadTokens += usage.cacheRead ?? 0;
   });
 
-  pi.on("turn_end", (_event, ctx) => {
-    if (!enabled) {
-      return;
-    }
+  pi.on("turn_end", async (_event, ctx) => {
     if (!ctx.hasUI) {
       return;
     }
     if (decodeMs <= 0 && prefillMs <= 0) {
+      return;
+    }
+    const { enabled } = await PimSettings.get("tps");
+    if (!enabled) {
       return;
     }
 
