@@ -81,7 +81,7 @@ export default function (pi: ExtensionAPI): void {
 
     const parts = [
       `Decode: ${decodeTps.toFixed(1)} tps`,
-      `Prefill: ${prefillTps.toFixed(0)} tps`,
+      `Prefill: ${prefillTps.toFixed(1)} tps`,
     ];
     if (cacheReadTokens > 0) {
       parts.push(`Cache read: ${cacheReadTokens.toLocaleString()}`);
