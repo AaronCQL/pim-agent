@@ -18,12 +18,8 @@ export class PimSettings {
   private static readonly path = join(getAgentDir(), "pim.json");
 
   private static async readFromDisk(): Promise<unknown> {
-    const file = Bun.file(PimSettings.path);
-    if (!(await file.exists())) {
-      return {};
-    }
     try {
-      return await file.json();
+      return await Bun.file(PimSettings.path).json();
     } catch {
       return {};
     }
@@ -31,7 +27,7 @@ export class PimSettings {
 
   static async load(): Promise<Settings> {
     const raw = await PimSettings.readFromDisk();
-    const filled = Value.Default(Schema, structuredClone(raw ?? {}));
+    const filled = Value.Default(Schema, raw);
     if (Value.Check(Schema, filled)) {
       return filled;
     }
