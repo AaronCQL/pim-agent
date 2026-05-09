@@ -20,28 +20,24 @@ export class PimSettings {
   private static loadPromise: Promise<Settings> | undefined;
   private static writeQueue: Promise<unknown> = Promise.resolve();
 
-  private static async readFromDisk(): Promise<unknown> {
-    try {
-      return await Bun.file(PimSettings.path).json();
-    } catch {
-      return {};
-    }
-  }
-
-  private static async loadOnce(): Promise<Settings> {
-    const raw = await PimSettings.readFromDisk();
-    const filled = Value.Default(Schema, raw);
-    return Value.Check(Schema, filled) ? filled : Value.Create(Schema);
-  }
-
   private static async load(): Promise<Settings> {
     if (PimSettings.cache !== undefined) {
       return PimSettings.cache;
     }
-    PimSettings.loadPromise ??= PimSettings.loadOnce().then((settings) => {
+    PimSettings.loadPromise ??= (async () => {
+      let raw: unknown;
+      try {
+        raw = await Bun.file(PimSettings.path).json();
+      } catch {
+        raw = {};
+      }
+      const filled = Value.Default(Schema, raw);
+      const settings: Settings = Value.Check(Schema, filled)
+        ? filled
+        : Value.Create(Schema);
       PimSettings.cache = settings;
       return settings;
-    });
+    })();
     return PimSettings.loadPromise;
   }
 
