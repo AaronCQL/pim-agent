@@ -1,7 +1,21 @@
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { PimSettings } from "../../shared/PimSettings";
 
 export default function (pi: ExtensionAPI): void {
+  pi.registerCommand("tps", {
+    description: "Toggle per-turn decode/prefill tps reporting",
+    handler: async (_args, ctx) => {
+      const current = await PimSettings.get("tps");
+      const next = { ...current, enabled: !current.enabled };
+      await PimSettings.set("tps", next);
+      ctx.ui.notify(
+        `TPS reporting ${next.enabled ? "enabled" : "disabled"}`,
+        "info"
+      );
+    },
+  });
+
   let requestSentMs: number | null = null;
   const firstTokenByMessage = new WeakMap<AssistantMessage, number>();
 
@@ -67,11 +81,15 @@ export default function (pi: ExtensionAPI): void {
     cacheReadTokens += usage.cacheRead ?? 0;
   });
 
-  pi.on("turn_end", (_event, ctx) => {
+  pi.on("turn_end", async (_event, ctx) => {
     if (!ctx.hasUI) {
       return;
     }
     if (decodeMs <= 0 && prefillMs <= 0) {
+      return;
+    }
+    const { enabled } = await PimSettings.get("tps");
+    if (!enabled) {
       return;
     }
 
