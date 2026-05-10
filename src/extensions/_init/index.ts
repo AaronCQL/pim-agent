@@ -56,7 +56,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     const title =
       theme.bold(theme.fg("mdHeading", "PIM - Pi IMproved")) +
       " " +
-      theme.fg("muted", `v${version}`);
+      theme.italic(theme.fg("muted", `v${version}`));
     ctx.ui.setWidget(SPLASH_ID, [
       title,
       ...shortcuts.map(

@@ -9,6 +9,16 @@ type BuildOptions = {
   readonly appendSystemPrompt?: string;
 };
 
+function dynamicGuidelines(): ReadonlyArray<string> {
+  const guidelines: string[] = [];
+  if (Bun.which("gh")) {
+    guidelines.push(
+      "Always prefer `gh` CLI instead of raw API calls when viewing GitHub content (eg. PRs, issues, comments)."
+    );
+  }
+  return guidelines;
+}
+
 export function buildSystemPrompt(opts: BuildOptions): string {
   const sections: string[] = [];
 
@@ -17,6 +27,7 @@ export function buildSystemPrompt(opts: BuildOptions): string {
       "<system_instructions>",
       "You are pim (Pi IMproved), a Bun-native, opinionated extension pack for the [pi agent harness](https://pi.dev/).",
       ...opts.toolGuidelines.map((g) => `- ${g}`),
+      ...dynamicGuidelines().map((g) => `- ${g}`),
       "</system_instructions>",
     ].join("\n")
   );
