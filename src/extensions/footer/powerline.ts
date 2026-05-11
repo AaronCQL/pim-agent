@@ -3,8 +3,11 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 export const SEP_RIGHT = "";
 export const SEP_LEFT = "";
 export const SEP_THIN_LEFT = "";
+
 export const GIT_ICON = "";
 export const GIT_DIRTY_ICON = "";
+export const GIT_AHEAD_ICON = "";
+export const GIT_BEHIND_ICON = "";
 
 export const RESET = "\x1b[0m";
 export const BG_DEFAULT = "\x1b[49m";

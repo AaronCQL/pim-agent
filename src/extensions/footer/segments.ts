@@ -13,6 +13,8 @@ import {
   BG_GRAY,
   FG_BLACK,
   FG_WHITE,
+  GIT_AHEAD_ICON,
+  GIT_BEHIND_ICON,
   GIT_DIRTY_ICON,
   GIT_ICON,
   groupWidth,
@@ -50,10 +52,10 @@ function gitSegment(state: GitState): Segment | null {
   if (ahead > 0 || behind > 0) {
     let arrows = " ";
     if (ahead > 0) {
-      arrows += `${ahead}`;
+      arrows += `${GIT_AHEAD_ICON}${ahead}`;
     }
     if (behind > 0) {
-      arrows += `${behind}`;
+      arrows += `${GIT_BEHIND_ICON}${behind}`;
     }
     text += arrows;
   }
