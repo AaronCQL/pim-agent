@@ -23,6 +23,11 @@ export class Paths {
     return value;
   }
 
+  public static abbreviateHome(path: string): string {
+    const home = homedir();
+    return home && path.startsWith(home) ? `~${path.slice(home.length)}` : path;
+  }
+
   public static displayRelative(path: string, cwd: string): string {
     const rel = relative(cwd, path);
 

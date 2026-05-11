@@ -10,6 +10,12 @@ const Schema = Type.Object({
     },
     { default: { enabled: false } }
   ),
+  powerline: Type.Object(
+    {
+      enabled: Type.Boolean({ default: true }),
+    },
+    { default: { enabled: true } }
+  ),
 });
 
 type Settings = Static<typeof Schema>;

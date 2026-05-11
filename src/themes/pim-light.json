@@ -31,7 +31,7 @@
     "warning": "yellow",
     "muted": "gray",
     "dim": "gray",
-    "text": "",
+    "text": "black",
     "thinkingText": "gray",
 
     "selectedBg": "panelBg",
