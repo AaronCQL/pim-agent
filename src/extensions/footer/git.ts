@@ -15,6 +15,28 @@ export const EMPTY_GIT: GitState = {
   behind: 0,
 };
 
+export function parseGitStatus(text: string): GitState {
+  let branch: string | null = null;
+  let ahead = 0;
+  let behind = 0;
+  let dirty = false;
+  for (const line of text.split("\n")) {
+    if (line.startsWith("# branch.head ")) {
+      const head = line.slice("# branch.head ".length);
+      branch = head === "(detached)" ? "detached" : head;
+    } else if (line.startsWith("# branch.ab ")) {
+      const m = /\+(\d+)\s+-(\d+)/.exec(line);
+      if (m) {
+        ahead = Number(m[1]);
+        behind = Number(m[2]);
+      }
+    } else if (line.length > 0 && !line.startsWith("#")) {
+      dirty = true;
+    }
+  }
+  return { branch, dirty, ahead, behind };
+}
+
 export function watchGitDir(cwd: string, onChange: () => void): () => void {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const fire = (): void => {
@@ -58,25 +80,7 @@ export async function fetchGitStatus(cwd: string): Promise<GitState> {
     if (proc.exitCode !== 0) {
       return EMPTY_GIT;
     }
-    let branch: string | null = null;
-    let ahead = 0;
-    let behind = 0;
-    let dirty = false;
-    for (const line of text.split("\n")) {
-      if (line.startsWith("# branch.head ")) {
-        const head = line.slice("# branch.head ".length);
-        branch = head === "(detached)" ? "detached" : head;
-      } else if (line.startsWith("# branch.ab ")) {
-        const m = /\+(\d+)\s+-(\d+)/.exec(line);
-        if (m) {
-          ahead = Number(m[1]);
-          behind = Number(m[2]);
-        }
-      } else if (line.length > 0 && !line.startsWith("#")) {
-        dirty = true;
-      }
-    }
-    return { branch, dirty, ahead, behind };
+    return parseGitStatus(text);
   } catch {
     return EMPTY_GIT;
   }

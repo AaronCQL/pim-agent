@@ -131,6 +131,21 @@ function compact<T>(items: readonly (T | null)[]): T[] {
   return items.filter((x): x is T => x !== null);
 }
 
+function totalWidth(
+  left: readonly Segment[],
+  right: readonly Segment[]
+): number {
+  const gap = left.length > 0 && right.length > 0 ? 1 : 0;
+  return groupWidth(left) + groupWidth(right) + gap;
+}
+
+function fitLine(line: string, width: number): string {
+  if (width <= 0) {
+    return "";
+  }
+  return visibleWidth(line) <= width ? line : truncateToWidth(line, width, "");
+}
+
 const bold = (s: string): string => `\x1b[1m${s}\x1b[22m`;
 
 function formatCwd(path: string): string {
@@ -173,6 +188,7 @@ export function renderFooterLine(
     { left: fullLeft, right: compact([costSeg, ctxSeg]) },
     { left: fullLeft, right: compact([ctxSeg]) },
     { left: [cwd], right: compact([ctxSeg]) },
+    { left: [cwd], right: [] },
   ];
 
   let chosen = candidates[candidates.length - 1]!;
@@ -181,7 +197,8 @@ export function renderFooterLine(
   for (const c of candidates) {
     const lw = c.left === fullLeft ? fullLeftWidth : groupWidth(c.left);
     const rw = groupWidth(c.right);
-    if (lw + rw + 1 <= width) {
+    const gapWidth = c.left.length > 0 && c.right.length > 0 ? 1 : 0;
+    if (lw + rw + gapWidth <= width) {
       chosen = c;
       chosenLeftWidth = lw;
       chosenRightWidth = rw;
@@ -191,9 +208,10 @@ export function renderFooterLine(
 
   let left = chosen.left;
   let leftWidth = chosenLeftWidth;
-  if (leftWidth + chosenRightWidth + 1 > width && left.length > 0) {
-    const overflow = leftWidth + chosenRightWidth + 1 - width;
-    const newCwdWidth = Math.max(3, visibleWidth(left[0]!.text) - overflow);
+  const requiredWidth = totalWidth(left, chosen.right);
+  if (requiredWidth > width && left.length > 0) {
+    const overflow = requiredWidth - width;
+    const newCwdWidth = Math.max(0, visibleWidth(left[0]!.text) - overflow);
     const truncated: Segment = {
       ...left[0]!,
       text: truncateToWidth(left[0]!.text, newCwdWidth, "…"),
@@ -205,8 +223,12 @@ export function renderFooterLine(
       visibleWidth(truncated.text);
   }
 
-  const gap = Math.max(1, width - leftWidth - chosenRightWidth);
-  return (
-    renderLeftGroup(left) + " ".repeat(gap) + renderRightGroup(chosen.right)
+  const gap =
+    left.length > 0 && chosen.right.length > 0
+      ? Math.max(1, width - leftWidth - chosenRightWidth)
+      : 0;
+  return fitLine(
+    renderLeftGroup(left) + " ".repeat(gap) + renderRightGroup(chosen.right),
+    width
   );
 }
