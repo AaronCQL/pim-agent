@@ -1,0 +1,10 @@
+# Tool Output
+
+Read this when writing or modifying any tool's `execute()` return value, error handling, or partial-success behavior.
+
+A tool returns `{ content, details }`. Treat the two channels as distinct audiences.
+
+- **`content` → the model.** Pi catches anything `execute` throws and tags the result `isError: true`; providers map that to native error semantics (Anthropic `is_error: true`, Bedrock `ToolResultStatus.ERROR`, Google `{ error }`). Returning a string with a "this is an error" sentence does NOT - the model receives it as a normal success and cannot structurally distinguish it from real tool output. **Throw for every error and edge case** (not found, empty, out-of-range, permission denied, etc.); never return an English-prose error string in `content`.
+- **`details` → renderers and programmatic consumers, not the model.** Providers don't serialize `details` over the wire. Put pagination metadata, byte counts, file paths, structured truncation info here so the TUI/renderer can display affordances without that text leaking into `content`.
+- **Partial-success affordances**: the model needs the hint, so it has to live in `content`. Use square brackets `[…]` as the clearly-fenced bracket form, on its own line, so it's structurally identifiable — e.g. `[read tool: showing lines 1-50 of 200; call read again with start=51 to continue.]`. Mirror the structured fields into `details`. Anthropic's provider concatenates multi-block text results, so splitting body and footer into separate `content` blocks is cosmetic - the wire format is `\n`-joined either way.
+- **Error messages should be actionable.** Include the underlying error code, name what failed, and where useful suggest the next tool call (e.g. "use glob to locate the file"). See `src/extensions/read/read.ts` for the canonical pattern.
