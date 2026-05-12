@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Container, type Text } from "@earendil-works/pi-tui";
+import { type Component, Container } from "@earendil-works/pi-tui";
 import { DiffView } from "../../shared/DiffView";
 import { Paths } from "../../shared/Paths";
 import { Renderer } from "../../shared/Renderer";
@@ -9,7 +9,7 @@ import { writeContent, type WriteOutcome } from "./write";
 const ERROR_PREVIEW_LINES = 12;
 
 type WriteRenderState = {
-  titleComponent?: Text;
+  titleComponent?: Component;
   path?: string;
 };
 

@@ -7,7 +7,7 @@ import type {
 import {
   type Component,
   Container,
-  Text,
+  visibleWidth,
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 
@@ -23,6 +23,52 @@ type PrefixSpec = {
   readonly prefix: string;
   readonly width: number;
 };
+
+class ToolTitle implements Component {
+  private text = "";
+  private theme: Theme | undefined;
+
+  public setText(text: string, theme: Theme): void {
+    this.text = text;
+    this.theme = theme;
+  }
+
+  public render(width: number): string[] {
+    if (!this.text || this.text.trim() === "") {
+      return [];
+    }
+
+    const theme = this.theme;
+    const normalized = this.text.replace(/\t/g, "   ");
+    const lines = wrapTextWithAnsi(normalized, Math.max(1, width));
+
+    if (lines.length <= 1 || theme === undefined) {
+      return lines.map((line) => ToolTitle.padLine(line, width));
+    }
+
+    const inner = Math.max(1, width - Renderer.GAPPED_PREFIX.width);
+    const out = [ToolTitle.padLine(lines[0] ?? "", width)];
+
+    for (const logical of lines.slice(1)) {
+      for (const wrapped of wrapTextWithAnsi(logical, inner)) {
+        out.push(
+          ToolTitle.padLine(
+            theme.fg("toolOutput", Renderer.GAPPED_PREFIX.prefix) + wrapped,
+            width
+          )
+        );
+      }
+    }
+
+    return out;
+  }
+
+  public invalidate(): void {}
+
+  private static padLine(line: string, width: number): string {
+    return line + " ".repeat(Math.max(0, width - visibleWidth(line)));
+  }
+}
 
 export class Renderer {
   public static readonly GAPPED_PREFIX: PrefixSpec = {
@@ -84,20 +130,23 @@ export class Renderer {
     readonly title: string;
     readonly theme: Theme;
     readonly context: RenderContext;
-  }): Text {
+  }): Component {
     const { label, title, theme, context } = args;
-    const text =
-      (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
     const markerColor = Renderer.markerColorFor(
       Boolean(context.isPartial),
       Boolean(context.isError)
     );
-    text.setText(
+    const component =
+      context.lastComponent instanceof ToolTitle
+        ? context.lastComponent
+        : new ToolTitle();
+    component.setText(
       theme.fg(markerColor, " ▪") +
         " " +
-        theme.fg("toolTitle", theme.bold(label) + ": " + title)
+        theme.fg("toolTitle", theme.bold(label) + ": " + title),
+      theme
     );
-    return text;
+    return component;
   }
 
   public static makePrefixedBlock(args: {

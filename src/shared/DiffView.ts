@@ -1,5 +1,5 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { type Component, Container, Text } from "@earendil-works/pi-tui";
+import { type Component, Container } from "@earendil-works/pi-tui";
 import type { ToolDiff } from "./DiffLines";
 import { DiffRenderer } from "./DiffRenderer";
 import { type MarkerStatus, Renderer } from "./Renderer";
@@ -52,17 +52,20 @@ export class DiffView {
     readonly theme: Theme;
     readonly markerColor: MarkerStatus;
     readonly lastComponent: Component | undefined;
-  }): Text {
+  }): Component {
     const { label, path, stats, theme, markerColor, lastComponent } = args;
-    const text = (lastComponent as Text | undefined) ?? new Text("", 0, 0);
     const statsText = DiffView.formatStats(stats, theme);
-    const head =
-      theme.fg(markerColor, " ▪") +
-      " " +
-      theme.fg("toolTitle", theme.bold(label) + ": " + path);
 
-    text.setText(statsText ? `${head} ${statsText}` : head);
-    return text;
+    return Renderer.renderToolCallTitle({
+      label,
+      title: statsText ? `${path} ${statsText}` : path,
+      theme,
+      context: {
+        lastComponent,
+        isPartial: markerColor === "warning",
+        isError: markerColor === "error",
+      },
+    });
   }
 
   public static buildBlock(args: {
