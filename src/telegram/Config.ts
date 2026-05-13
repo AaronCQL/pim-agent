@@ -107,7 +107,7 @@ export class Config {
     const allowSrc = cli.allow ?? process.env.PIM_TELEGRAM_ALLOW;
     const allow = allowSrc
       ? Config.parseAllow(allowSrc)
-      : (fileConfig.allow ?? []);
+      : Config.normalizeAllow(fileConfig.allow);
 
     const cwd = cli.cwd ?? fileConfig.cwd ?? process.cwd();
     const model = cli.model ?? fileConfig.model;
@@ -155,6 +155,24 @@ export class Config {
         }
         return n;
       });
+  }
+
+  private static normalizeAllow(value: unknown): ReadonlyArray<number> {
+    if (value === undefined || value === null) {
+      return [];
+    }
+    if (typeof value === "string") {
+      return Config.parseAllow(value);
+    }
+    if (typeof value === "number") {
+      return Config.parseAllow(String(value));
+    }
+    if (Array.isArray(value)) {
+      return Config.parseAllow(value.join(","));
+    }
+    throw new Error(
+      `Invalid 'allow' in config.json: expected number, string, or array, got ${typeof value}`
+    );
   }
 
   private static async readJsonOrEmpty<T>(

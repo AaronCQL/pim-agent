@@ -183,6 +183,33 @@ describe("Config.loadConfig precedence", () => {
     expect(cfg.allow).toEqual([1, 2]);
   });
 
+  test("accepts allow as a single number in config.json", async () => {
+    await Bun.write(
+      join(tmp, "config.json"),
+      JSON.stringify({ token: "t", allow: 12345 })
+    );
+    const cfg = await Config.loadConfig({ configDir: tmp, printConfig: false });
+    expect(cfg.allow).toEqual([12345]);
+  });
+
+  test("accepts allow as a comma-separated string in config.json", async () => {
+    await Bun.write(
+      join(tmp, "config.json"),
+      JSON.stringify({ token: "t", allow: "1, 2 ,3" })
+    );
+    const cfg = await Config.loadConfig({ configDir: tmp, printConfig: false });
+    expect(cfg.allow).toEqual([1, 2, 3]);
+  });
+
+  test("accepts allow as a mixed-type array in config.json", async () => {
+    await Bun.write(
+      join(tmp, "config.json"),
+      JSON.stringify({ token: "t", allow: [1, "2", 3] })
+    );
+    const cfg = await Config.loadConfig({ configDir: tmp, printConfig: false });
+    expect(cfg.allow).toEqual([1, 2, 3]);
+  });
+
   test("malformed config.json surfaces a clear error", async () => {
     await Bun.write(join(tmp, "config.json"), "{not json");
     await expect(

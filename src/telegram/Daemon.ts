@@ -18,7 +18,12 @@ export class Daemon {
     }
 
     const bot = new Bot(config);
+    let stopped = false;
     const stop = (): void => {
+      if (stopped) {
+        return;
+      }
+      stopped = true;
       void bot.stop();
     };
     process.once("SIGINT", stop);
