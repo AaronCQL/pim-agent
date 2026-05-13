@@ -20,12 +20,22 @@ export type TelegramConfig = {
   readonly configDir: string;
 };
 
+export const THINKING_LEVELS = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+] as const;
+export type ThinkingLevelOpt = (typeof THINKING_LEVELS)[number];
+
 export type ThreadEntry = {
   readonly cwd?: string;
   readonly model?: string;
-  readonly thinkingLevel?: string;
+  readonly thinkingLevel?: ThinkingLevelOpt;
   readonly sessionPath?: string;
-  readonly logsMode?: string;
+  readonly cumulativeCost?: number;
 };
 
 export type TelegramState = {
@@ -175,7 +185,7 @@ export class Config {
     );
   }
 
-  private static async readJsonOrEmpty<T>(
+  public static async readJsonOrEmpty<T>(
     filePath: string,
     fallback: T
   ): Promise<T> {
@@ -189,7 +199,7 @@ export class Config {
     }
   }
 
-  private static async writeAtomic(
+  public static async writeAtomic(
     filePath: string,
     data: string
   ): Promise<void> {

@@ -1,24 +1,53 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
-import { Bot as Grammy, GrammyError } from "grammy";
+import {
+  Context,
+  type Filter,
+  Bot as Grammy,
+  GrammyError,
+  InlineKeyboard,
+} from "grammy";
 
-import type { TelegramConfig } from "./Config.ts";
+import { Paths } from "../shared/Paths.ts";
+
+import { type TelegramConfig, type ThinkingLevelOpt } from "./Config.ts";
 import { Markdown } from "./Markdown.ts";
-import { SessionRegistry } from "./SessionRegistry.ts";
+import { ModelResolver } from "./ModelResolver.ts";
+import { ReloadConfirm } from "./ReloadConfirm.ts";
+import { SessionRegistry, type ThreadHandle } from "./SessionRegistry.ts";
 
-type SendTarget = {
-  readonly chatId: number;
-  readonly threadId: number | undefined;
+const EFFORT_MAP: Record<string, ThinkingLevelOpt> = {
+  off: "off",
+  minimal: "minimal",
+  low: "low",
+  medium: "medium",
+  high: "high",
+  xhigh: "xhigh",
+  max: "xhigh",
+  default: "medium",
 };
+
+const CB_CLEAR_CONFIRM = "clear-confirm";
+const CB_CLEAR_CANCEL = "clear-cancel";
 
 export class Bot {
   private readonly grammy: Grammy;
   private readonly allowSet: ReadonlySet<number>;
   private readonly registry: SessionRegistry;
+  private readonly config: TelegramConfig;
+  private readonly bootMs = Date.now();
 
   public constructor(config: TelegramConfig) {
+    this.config = config;
     this.grammy = new Grammy(config.token);
     this.allowSet = new Set(config.allow);
     this.registry = new SessionRegistry(config);
+
+    this.grammy.on("callback_query:data", async (ctx) => {
+      if (!this.allowSet.has(ctx.chat?.id ?? -1)) {
+        return;
+      }
+      await this.handleCallback(ctx);
+    });
 
     this.grammy.on("message:text", async (ctx) => {
       const chatId = ctx.chat.id;
@@ -26,15 +55,23 @@ export class Bot {
         console.log(`[recv] reject chatId=${chatId} (not in allow-list)`);
         return;
       }
-      const threadId = ctx.message.message_thread_id;
+      const handle: ThreadHandle = {
+        chatId,
+        threadId: ctx.message.message_thread_id,
+      };
       const text = ctx.message.text;
-      const key = SessionRegistry.key(chatId, threadId);
       const preview = text.slice(0, 120).replace(/\s+/g, " ");
       console.log(
-        `[recv] chatId=${chatId} threadId=${threadId ?? "main"} ${preview}`
+        `[recv] chatId=${chatId} threadId=${handle.threadId ?? "main"} ${preview}`
       );
-      void this.registry.enqueue(key, (session) =>
-        this.handleTurn({ chatId, threadId }, session, text)
+
+      if (text.startsWith("/")) {
+        await this.handleCommand(handle, text);
+        return;
+      }
+
+      void this.registry.enqueue(handle, (session) =>
+        this.handleTurn(handle, session, text)
       );
     });
 
@@ -44,7 +81,9 @@ export class Bot {
   }
 
   public async run(): Promise<void> {
+    await this.registry.init();
     await this.grammy.init();
+    await this.processBootReloadConfirm();
     await this.grammy.api.deleteWebhook({ drop_pending_updates: true });
     const username = this.grammy.botInfo.username;
     console.log(`bot @${username} ready`);
@@ -56,8 +95,306 @@ export class Bot {
     await this.registry.disposeAll();
   }
 
+  private async processBootReloadConfirm(): Promise<void> {
+    const entries = await ReloadConfirm.read(this.config.configDir);
+    if (entries.length === 0) {
+      return;
+    }
+    await Promise.all(
+      entries.map((e) =>
+        this.grammy.api
+          .sendMessage(e.chatId, `✅ Pim daemon reloaded.`, {
+            message_thread_id: e.threadId,
+            link_preview_options: { is_disabled: true },
+          })
+          .catch((err) => console.warn(`[reload-confirm] send failed:`, err))
+      )
+    );
+    await ReloadConfirm.clear(this.config.configDir);
+  }
+
+  private async handleCommand(
+    handle: ThreadHandle,
+    raw: string
+  ): Promise<void> {
+    const [first, ...rest] = raw.trim().split(/\s+/);
+    const name = (first ?? "").split("@")[0];
+    const args = rest.join(" ").trim();
+    try {
+      switch (name) {
+        case "/chatid":
+          await this.sendPlain(
+            handle,
+            `chatId=${handle.chatId}\nthreadId=${handle.threadId ?? "main"}`
+          );
+          return;
+        case "/cancel":
+          await this.cmdCancel(handle);
+          return;
+        case "/clear":
+          await this.cmdClear(handle);
+          return;
+        case "/cwd":
+          await this.cmdCwd(handle);
+          return;
+        case "/cd":
+          await this.cmdCd(handle, args);
+          return;
+        case "/model":
+          await this.cmdModel(handle, args);
+          return;
+        case "/effort":
+          await this.cmdEffort(handle, args);
+          return;
+        case "/usage":
+          await this.cmdUsage(handle);
+          return;
+        case "/reload":
+          await this.cmdReload(handle);
+          return;
+        default:
+          await this.sendPlain(handle, `Unknown command: ${name}`);
+      }
+    } catch (err) {
+      console.error(`[bot] command ${name} failed:`, err);
+      await this.sendPlain(
+        handle,
+        `⚠️ ${name} failed: ${(err as Error).message}`
+      );
+    }
+  }
+
+  private async cmdCancel(handle: ThreadHandle): Promise<void> {
+    const cancelled = await this.registry.cancel(handle);
+    await this.sendPlain(
+      handle,
+      cancelled ? "❌ Cancelled." : "Nothing running."
+    );
+  }
+
+  private async cmdClear(handle: ThreadHandle): Promise<void> {
+    const key = SessionRegistry.key(handle);
+    const kb = new InlineKeyboard()
+      .text("Clear", `${CB_CLEAR_CONFIRM}:${key}`)
+      .text("Cancel", `${CB_CLEAR_CANCEL}:${key}`);
+    await this.grammy.api.sendMessage(
+      handle.chatId,
+      "Clear this thread's session? Cumulative cost is preserved.",
+      {
+        message_thread_id: handle.threadId,
+        reply_markup: kb,
+        link_preview_options: { is_disabled: true },
+      }
+    );
+  }
+
+  private async cmdCwd(handle: ThreadHandle): Promise<void> {
+    const entry = this.registry.getEntry(handle);
+    const cwd = entry.cwd ?? this.config.cwd;
+    await this.sendPlain(handle, `cwd: ${Paths.abbreviateHome(cwd)}`);
+  }
+
+  private async cmdCd(handle: ThreadHandle, args: string): Promise<void> {
+    if (!args) {
+      await this.sendPlain(handle, "Usage: /cd <path>");
+      return;
+    }
+    if (this.registry.isStreaming(handle)) {
+      await this.sendPlain(
+        handle,
+        "Cannot /cd while a turn is in flight. /cancel first."
+      );
+      return;
+    }
+    const entry = this.registry.getEntry(handle);
+    const resolved = Paths.resolve(args, entry.cwd ?? this.config.cwd);
+    const result = await this.registry.setThreadCwd(handle, resolved);
+    if (!result.ok) {
+      await this.sendPlain(handle, `⚠️ ${result.error}`);
+      return;
+    }
+    await this.sendPlain(
+      handle,
+      `cwd → ${Paths.abbreviateHome(resolved)} (new session next turn)`
+    );
+  }
+
+  private async cmdModel(handle: ThreadHandle, args: string): Promise<void> {
+    if (!args) {
+      let current = "(unknown)";
+      await this.registry.enqueue(handle, async (session) => {
+        if (session.model) {
+          current = ModelResolver.id(session.model);
+        }
+      });
+      const html = [
+        `<b>Current Model</b>: <code>${Markdown.escape(current)}</code>`,
+        `<b>To Change</b>: <code>/model &lt;model_name&gt;</code>`,
+      ].join("\n");
+      await this.sendWithFallback(handle, html);
+      return;
+    }
+    const result = await this.registry.setThreadModel(handle, args);
+    if (!result.ok) {
+      const bullets = result.candidates
+        .map((c) => `• <code>${Markdown.escape(c)}</code>`)
+        .join("\n");
+      const header =
+        result.kind === "ambiguous"
+          ? `⚠️ Multiple matches for "${Markdown.escape(args)}":`
+          : `⚠️ No model matches "${Markdown.escape(args)}". Available:`;
+      const footer =
+        result.kind === "ambiguous" ? "\nPlease be more specific." : "";
+      await this.sendWithFallback(handle, `${header}\n${bullets}${footer}`);
+      return;
+    }
+    await this.sendPlain(handle, `model → ${result.id}`);
+  }
+
+  private async cmdEffort(handle: ThreadHandle, args: string): Promise<void> {
+    const level = EFFORT_MAP[args];
+    if (!level) {
+      await this.sendPlain(
+        handle,
+        `Usage: /effort ${Object.keys(EFFORT_MAP).join("|")}`
+      );
+      return;
+    }
+    await this.registry.setThreadThinkingLevel(handle, level);
+    const display = args === "default" ? "default (medium)" : level;
+    await this.sendPlain(handle, `effort → ${display}`);
+  }
+
+  private async cmdUsage(handle: ThreadHandle): Promise<void> {
+    const lines: string[] = [];
+    await this.registry.enqueue(handle, async (session) => {
+      const usage = session.getContextUsage();
+      const stats = session.getSessionStats();
+      if (usage) {
+        const pct =
+          usage.percent !== null ? `${usage.percent.toFixed(1)}%` : "—";
+        const tok =
+          usage.tokens !== null ? usage.tokens.toLocaleString("en-US") : "—";
+        const ctx = usage.contextWindow.toLocaleString("en-US");
+        lines.push(`<b>Context</b>: <code>${tok}/${ctx} (${pct})</code>`);
+      }
+      lines.push(
+        `<b>Session Cost</b>: <code>$${(stats.cost ?? 0).toFixed(2)}</code>`
+      );
+    });
+    const entry = this.registry.getEntry(handle);
+    lines.push(
+      `<b>Cumulative Cost</b>: <code>$${(entry.cumulativeCost ?? 0).toFixed(2)}</code>`
+    );
+    await this.sendWithFallback(handle, lines.join("\n"));
+  }
+
+  private async cmdReload(handle: ThreadHandle): Promise<void> {
+    const since = Date.now() - this.bootMs;
+    if (since < 30_000) {
+      await this.sendPlain(
+        handle,
+        `⚠️ /reload throttled (daemon booted ${(since / 1000).toFixed(0)}s ago)`
+      );
+      return;
+    }
+    const wrapper = Bot.detectWrapper();
+    if (wrapper === "none") {
+      await this.sendPlain(
+        handle,
+        "⚠️ daemon not under a process supervisor — restart manually"
+      );
+      return;
+    }
+
+    await ReloadConfirm.append(this.config.configDir, {
+      chatId: handle.chatId,
+      threadId: handle.threadId,
+      ts: new Date().toISOString(),
+    });
+    await this.sendPlain(handle, "🔄 reloading...");
+
+    const unit = process.env.PIM_TELEGRAM_UNIT ?? "pim-telegram";
+    const cmd =
+      wrapper === "systemd"
+        ? ["systemctl", "--user", "restart", unit]
+        : [
+            "launchctl",
+            "kickstart",
+            "-k",
+            `gui/${process.getuid?.() ?? 0}/${unit}`,
+          ];
+    try {
+      const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" });
+      const code = await proc.exited;
+      if (code !== 0) {
+        const stderr = await new Response(proc.stderr).text();
+        await this.sendPlain(
+          handle,
+          `⚠️ wrapper exit ${code}: ${stderr.trim() || "(no stderr)"}`
+        );
+        await ReloadConfirm.clear(this.config.configDir);
+        return;
+      }
+    } catch (err) {
+      console.error(`[reload] spawn failed:`, err);
+      await this.sendPlain(
+        handle,
+        `⚠️ spawn failed: ${(err as Error).message}`
+      );
+      await ReloadConfirm.clear(this.config.configDir);
+      return;
+    }
+    process.exit(0);
+  }
+
+  private static detectWrapper(): "systemd" | "launchd" | "none" {
+    const env = process.env.PIM_TELEGRAM_WRAPPER;
+    if (env === "systemd" || env === "launchd" || env === "none") {
+      return env;
+    }
+    if (process.platform === "linux") {
+      return "systemd";
+    }
+    if (process.platform === "darwin") {
+      return "launchd";
+    }
+    return "none";
+  }
+
+  private async handleCallback(
+    ctx: Filter<Context, "callback_query:data">
+  ): Promise<void> {
+    const data = ctx.callbackQuery.data;
+    const colon = data.indexOf(":");
+    const action = colon >= 0 ? data.slice(0, colon) : data;
+    const keyPart = colon >= 0 ? data.slice(colon + 1) : "";
+
+    if (action === CB_CLEAR_CONFIRM && keyPart) {
+      const handle = SessionRegistry.parseKey(keyPart);
+      await this.registry.clearThread(handle);
+      await ctx.answerCallbackQuery({ text: "Cleared" });
+      try {
+        await ctx.editMessageText("✅ Session cleared.");
+      } catch {
+        // Message may have aged out past Telegram's edit window — non-fatal.
+      }
+      return;
+    }
+    if (action === CB_CLEAR_CANCEL) {
+      await ctx.answerCallbackQuery({ text: "Cancelled" });
+      try {
+        await ctx.editMessageText("Cancelled.");
+      } catch {
+        // Message may have aged out past Telegram's edit window — non-fatal.
+      }
+      return;
+    }
+    await ctx.answerCallbackQuery();
+  }
+
   private async handleTurn(
-    target: SendTarget,
+    handle: ThreadHandle,
     session: AgentSession,
     text: string
   ): Promise<void> {
@@ -69,49 +406,49 @@ export class Bot {
       await session.prompt(text);
       const final = Bot.extractFinalText(session);
       if (final) {
-        await this.sendWithFallback(target, Markdown.toHtml(final));
+        await this.sendWithFallback(handle, Markdown.toHtml(final));
       }
     } catch (err) {
       const msg = (err as Error).message ?? String(err);
       console.error(`[bot] turn failed:`, err);
-      await this.sendPlain(target, `⚠️ ${msg}`);
+      await this.sendPlain(handle, `⚠️ ${msg}`);
     }
   }
 
   private async sendWithFallback(
-    target: SendTarget,
+    handle: ThreadHandle,
     html: string
   ): Promise<void> {
     if (!html) {
       return;
     }
     try {
-      await this.grammy.api.sendMessage(target.chatId, html, {
+      await this.grammy.api.sendMessage(handle.chatId, html, {
         parse_mode: "HTML",
-        message_thread_id: target.threadId,
+        message_thread_id: handle.threadId,
         link_preview_options: { is_disabled: true },
       });
       console.log(
-        `[send] chatId=${target.chatId} threadId=${target.threadId ?? "main"} html ok (${html.length}b)`
+        `[send] chatId=${handle.chatId} threadId=${handle.threadId ?? "main"} html ok (${html.length}b)`
       );
     } catch (err) {
       if (err instanceof GrammyError && err.error_code === 400) {
         console.warn(`[send] HTML 400 (${err.description}) — retry plain`);
-        await this.sendPlain(target, html);
+        await this.sendPlain(handle, html);
         return;
       }
       throw err;
     }
   }
 
-  private async sendPlain(target: SendTarget, body: string): Promise<void> {
+  private async sendPlain(handle: ThreadHandle, body: string): Promise<void> {
     try {
-      await this.grammy.api.sendMessage(target.chatId, body, {
-        message_thread_id: target.threadId,
+      await this.grammy.api.sendMessage(handle.chatId, body, {
+        message_thread_id: handle.threadId,
         link_preview_options: { is_disabled: true },
       });
       console.log(
-        `[send] chatId=${target.chatId} threadId=${target.threadId ?? "main"} plain ok (${body.length}b)`
+        `[send] chatId=${handle.chatId} threadId=${handle.threadId ?? "main"} plain ok (${body.length}b)`
       );
     } catch (err) {
       console.error(`[send] plain failed:`, err);
