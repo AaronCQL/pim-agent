@@ -1,6 +1,3 @@
-import { mkdir, rename, stat } from "node:fs/promises";
-import { join } from "node:path";
-
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import {
   AgentSession,
@@ -9,19 +6,26 @@ import {
   DefaultResourceLoader,
   getAgentDir,
   ModelRegistry,
+  type PromptOptions,
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import type { Api } from "grammy";
+import { mkdir, rename, stat } from "node:fs/promises";
+import { join } from "node:path";
 
 import {
-  Config,
+  loadState,
+  saveStateAtomic,
+  type LogsMode,
   type TelegramConfig,
   type TelegramState,
   type ThinkingLevelOpt,
   type ThreadEntry,
-} from "./Config.ts";
-import { ModelResolver } from "./ModelResolver.ts";
-import { ThreadPrompt } from "./ThreadPrompt.ts";
+} from "./config.ts";
+import { modelId, resolveModel } from "./model.ts";
+import { buildSendFileTool } from "./sendTool.ts";
+import { loadWrappedThreadInstruction } from "./threadInstruction.ts";
 
 export type SessionKey = string;
 
@@ -46,6 +50,7 @@ const MAIN = "main";
 
 export class SessionRegistry {
   private readonly config: TelegramConfig;
+  private readonly api: Api;
   private readonly workQueues = new Map<SessionKey, WorkQueue>();
   private readonly sessionCache = new Map<SessionKey, TelegramSession>();
   private readonly authStorage: AuthStorage;
@@ -56,8 +61,9 @@ export class SessionRegistry {
   private stateLoaded = false;
   private initPromise: Promise<void> | undefined;
 
-  public constructor(config: TelegramConfig) {
+  public constructor(config: TelegramConfig, api: Api) {
     this.config = config;
+    this.api = api;
     this.agentDir = getAgentDir();
     this.authStorage = AuthStorage.create(join(this.agentDir, "auth.json"));
     this.modelRegistry = ModelRegistry.create(
@@ -93,7 +99,7 @@ export class SessionRegistry {
   }
 
   private async loadInitialState(): Promise<void> {
-    const loaded = await Config.loadState(this.config.configDir);
+    const loaded = await loadState(this.config.configDir);
     this.state = { threads: { ...loaded.threads } };
     await mkdir(join(this.config.configDir, "sessions"), { recursive: true });
     await mkdir(join(this.config.configDir, "instructions"), {
@@ -189,7 +195,7 @@ export class SessionRegistry {
       }
   > {
     this.requireInitialized();
-    const result = ModelResolver.resolve(this.modelRegistry, pattern);
+    const result = resolveModel(this.modelRegistry, pattern);
     if (result.kind === "none" || result.kind === "ambiguous") {
       return {
         ok: false,
@@ -197,7 +203,7 @@ export class SessionRegistry {
         candidates: result.candidates,
       };
     }
-    const id = ModelResolver.id(result.model);
+    const id = modelId(result.model);
     const key = SessionRegistry.key(handle);
     if (this.state.threads[key]?.model === id) {
       return { ok: true, id };
@@ -224,6 +230,31 @@ export class SessionRegistry {
     if (live) {
       live.session.setThinkingLevel(level as ThinkingLevel);
     }
+  }
+
+  public async setThreadLogsMode(
+    handle: ThreadHandle,
+    logsMode: LogsMode
+  ): Promise<void> {
+    this.requireInitialized();
+    await this.patchEntry(SessionRegistry.key(handle), { logsMode });
+  }
+
+  public async steerIfStreaming(
+    handle: ThreadHandle,
+    text: string,
+    options: Pick<PromptOptions, "images">
+  ): Promise<boolean> {
+    const live = this.sessionCache.get(SessionRegistry.key(handle));
+    if (!live?.session.isStreaming) {
+      return false;
+    }
+    await live.session.prompt(text, {
+      ...options,
+      streamingBehavior: "steer",
+      source: "rpc",
+    });
+    return true;
   }
 
   public async clearThread(handle: ThreadHandle): Promise<void> {
@@ -265,7 +296,7 @@ export class SessionRegistry {
 
   private async flushState(): Promise<void> {
     try {
-      await Config.saveStateAtomic(this.config.configDir, this.state);
+      await saveStateAtomic(this.config.configDir, this.state);
     } catch (err) {
       console.warn(`[registry] state save failed:`, err);
     }
@@ -296,7 +327,7 @@ export class SessionRegistry {
     const existing = this.sessionCache.get(key);
     if (existing) {
       existing.lastUsed = Date.now();
-      const wrapped = await ThreadPrompt.loadWrapped({
+      const wrapped = await loadWrappedThreadInstruction({
         configDir: this.config.configDir,
         chatId: handle.chatId,
         threadId: handle.threadId,
@@ -315,7 +346,7 @@ export class SessionRegistry {
     const sessionPath = entry.sessionPath ?? this.defaultSessionPath(key);
     const sessionManager = SessionManager.open(sessionPath, undefined, cwd);
     const settingsManager = this.settingsManagerFor(cwd);
-    const wrapped = await ThreadPrompt.loadWrapped({
+    const wrapped = await loadWrappedThreadInstruction({
       configDir: this.config.configDir,
       chatId: handle.chatId,
       threadId: handle.threadId,
@@ -336,10 +367,7 @@ export class SessionRegistry {
     const defaultModelId = entry.model ?? this.config.model;
     let model;
     if (defaultModelId) {
-      const resolved = ModelResolver.resolve(
-        this.modelRegistry,
-        defaultModelId
-      );
+      const resolved = resolveModel(this.modelRegistry, defaultModelId);
       if (resolved.kind === "ok") {
         model = resolved.model;
       } else {
@@ -348,6 +376,12 @@ export class SessionRegistry {
         );
       }
     }
+
+    const sendFile = buildSendFileTool({
+      api: this.api,
+      handle,
+      cwd,
+    });
 
     const { session } = await createAgentSession({
       cwd,
@@ -359,6 +393,7 @@ export class SessionRegistry {
       sessionManager,
       model,
       thinkingLevel: entry.thinkingLevel as ThinkingLevel | undefined,
+      customTools: [sendFile],
     });
 
     const live: TelegramSession = {

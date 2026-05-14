@@ -21,6 +21,7 @@ Inside a running `pim` session, `/reload` re-loads Pim Agent after edits without
 - Mark all data-shape fields `readonly` where possible.
 - Default to `Bun.*` APIs over Node built-ins (`fs`, `child_process`, etc.).
 - Use comments sparingly, and only to explain why, not what or how.
+- Use instance classes for stateful services and lifecycle objects. Avoid static-only classes outside `src/shared/`; prefer named functions for stateless module-local helpers.
 - Shared utilities that cross module boundaries live in `src/shared/` and are exposed as a static-method class rather than a bare function. The filename must match the class name exactly (`Renderer.ts` exports `class Renderer`). Helpers with a single colocated caller stay as bare functions in lowercase files.
 
 ## On-demand Docs

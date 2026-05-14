@@ -3,7 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { Config, type TelegramConfig } from "./Config";
+import {
+  loadConfig,
+  loadState,
+  parseArgs,
+  saveConfigAtomic,
+  saveStateAtomic,
+  type TelegramConfig,
+} from "./config";
 
 const ENV_KEYS = [
   "PIM_TELEGRAM_BOT_TOKEN",
@@ -34,9 +41,9 @@ afterEach(async () => {
   await rm(tmp, { recursive: true, force: true });
 });
 
-describe("Config.parseArgs", () => {
+describe("parseArgs", () => {
   test("parses space-separated flags", () => {
-    const cli = Config.parseArgs([
+    const cli = parseArgs([
       "--mode",
       "telegram",
       "--token",
@@ -61,39 +68,29 @@ describe("Config.parseArgs", () => {
   });
 
   test("parses --key=value form", () => {
-    const cli = Config.parseArgs([
-      "--mode=telegram",
-      "--token=abc",
-      "--allow=1",
-    ]);
+    const cli = parseArgs(["--mode=telegram", "--token=abc", "--allow=1"]);
     expect(cli.token).toBe("abc");
     expect(cli.allow).toBe("1");
   });
 
   test("--print-config is a boolean flag", () => {
-    const cli = Config.parseArgs(["--print-config", "--token", "t"]);
+    const cli = parseArgs(["--print-config", "--token", "t"]);
     expect(cli.printConfig).toBe(true);
     expect(cli.token).toBe("t");
   });
 
   test("ignores unknown positional args and unknown flags", () => {
-    const cli = Config.parseArgs([
-      "positional",
-      "--unknown",
-      "x",
-      "--token",
-      "t",
-    ]);
+    const cli = parseArgs(["positional", "--unknown", "x", "--token", "t"]);
     expect(cli.token).toBe("t");
   });
 
   test("consumes --mode value so it does not leak into the next flag", () => {
-    const cli = Config.parseArgs(["--mode", "telegram", "--token", "t"]);
+    const cli = parseArgs(["--mode", "telegram", "--token", "t"]);
     expect(cli.token).toBe("t");
   });
 });
 
-describe("Config.loadConfig precedence", () => {
+describe("loadConfig precedence", () => {
   test("CLI wins over env and file", async () => {
     process.env.PIM_TELEGRAM_BOT_TOKEN = "env-tok";
     process.env.PIM_TELEGRAM_ALLOW = "9";
@@ -101,7 +98,7 @@ describe("Config.loadConfig precedence", () => {
       join(tmp, "config.json"),
       JSON.stringify({ token: "file-tok", allow: [1] })
     );
-    const cfg = await Config.loadConfig({
+    const cfg = await loadConfig({
       token: "cli-tok",
       allow: "2,3",
       configDir: tmp,
@@ -118,7 +115,7 @@ describe("Config.loadConfig precedence", () => {
       join(tmp, "config.json"),
       JSON.stringify({ token: "file-tok", allow: [1] })
     );
-    const cfg = await Config.loadConfig({
+    const cfg = await loadConfig({
       configDir: tmp,
       printConfig: false,
     });
@@ -131,7 +128,7 @@ describe("Config.loadConfig precedence", () => {
       join(tmp, "config.json"),
       JSON.stringify({ token: "file-tok", allow: [1, 2], cwd: "/from-file" })
     );
-    const cfg = await Config.loadConfig({
+    const cfg = await loadConfig({
       configDir: tmp,
       printConfig: false,
     });
@@ -143,18 +140,18 @@ describe("Config.loadConfig precedence", () => {
   test("PIM_TELEGRAM_DIR resolves the config directory", async () => {
     process.env.PIM_TELEGRAM_DIR = tmp;
     process.env.PIM_TELEGRAM_BOT_TOKEN = "t";
-    const cfg = await Config.loadConfig({ printConfig: false });
+    const cfg = await loadConfig({ printConfig: false });
     expect(cfg.configDir).toBe(tmp);
   });
 
   test("throws when no token from any source", async () => {
     await expect(
-      Config.loadConfig({ configDir: tmp, printConfig: false })
+      loadConfig({ configDir: tmp, printConfig: false })
     ).rejects.toThrow(/token required/i);
   });
 
   test("missing config.json is not an error", async () => {
-    const cfg = await Config.loadConfig({
+    const cfg = await loadConfig({
       token: "t",
       configDir: tmp,
       printConfig: false,
@@ -164,7 +161,7 @@ describe("Config.loadConfig precedence", () => {
 
   test("rejects non-numeric allow entries", async () => {
     await expect(
-      Config.loadConfig({
+      loadConfig({
         token: "t",
         allow: "1,abc",
         configDir: tmp,
@@ -174,7 +171,7 @@ describe("Config.loadConfig precedence", () => {
   });
 
   test("trims whitespace and drops empty entries in allow", async () => {
-    const cfg = await Config.loadConfig({
+    const cfg = await loadConfig({
       token: "t",
       allow: " 1 , ,2 ",
       configDir: tmp,
@@ -188,7 +185,7 @@ describe("Config.loadConfig precedence", () => {
       join(tmp, "config.json"),
       JSON.stringify({ token: "t", allow: 12345 })
     );
-    const cfg = await Config.loadConfig({ configDir: tmp, printConfig: false });
+    const cfg = await loadConfig({ configDir: tmp, printConfig: false });
     expect(cfg.allow).toEqual([12345]);
   });
 
@@ -197,7 +194,7 @@ describe("Config.loadConfig precedence", () => {
       join(tmp, "config.json"),
       JSON.stringify({ token: "t", allow: "1, 2 ,3" })
     );
-    const cfg = await Config.loadConfig({ configDir: tmp, printConfig: false });
+    const cfg = await loadConfig({ configDir: tmp, printConfig: false });
     expect(cfg.allow).toEqual([1, 2, 3]);
   });
 
@@ -206,29 +203,29 @@ describe("Config.loadConfig precedence", () => {
       join(tmp, "config.json"),
       JSON.stringify({ token: "t", allow: [1, "2", 3] })
     );
-    const cfg = await Config.loadConfig({ configDir: tmp, printConfig: false });
+    const cfg = await loadConfig({ configDir: tmp, printConfig: false });
     expect(cfg.allow).toEqual([1, 2, 3]);
   });
 
   test("malformed config.json surfaces a clear error", async () => {
     await Bun.write(join(tmp, "config.json"), "{not json");
     await expect(
-      Config.loadConfig({ token: "t", configDir: tmp, printConfig: false })
+      loadConfig({ token: "t", configDir: tmp, printConfig: false })
     ).rejects.toThrow(/Failed to parse/);
   });
 });
 
 describe("Config state + atomic writes", () => {
   test("loadState returns empty when state.json missing", async () => {
-    const state = await Config.loadState(tmp);
+    const state = await loadState(tmp);
     expect(state).toEqual({ threads: {} });
   });
 
   test("state round-trips through saveStateAtomic", async () => {
-    await Config.saveStateAtomic(tmp, {
+    await saveStateAtomic(tmp, {
       threads: { "111-main": { cwd: "/x", model: "sonnet" } },
     });
-    const state = await Config.loadState(tmp);
+    const state = await loadState(tmp);
     expect(state.threads["111-main"]).toEqual({ cwd: "/x", model: "sonnet" });
   });
 
@@ -240,8 +237,8 @@ describe("Config state + atomic writes", () => {
       model: "sonnet",
       configDir: tmp,
     };
-    await Config.saveConfigAtomic(cfg);
-    const reloaded = await Config.loadConfig({
+    await saveConfigAtomic(cfg);
+    const reloaded = await loadConfig({
       configDir: tmp,
       printConfig: false,
     });
@@ -252,13 +249,13 @@ describe("Config state + atomic writes", () => {
   });
 
   test("atomic writes chmod files to 0600", async () => {
-    await Config.saveStateAtomic(tmp, { threads: {} });
+    await saveStateAtomic(tmp, { threads: {} });
     const s = await stat(join(tmp, "state.json"));
     expect(s.mode & 0o777).toBe(0o600);
   });
 
   test("atomic writes leave no temp files behind", async () => {
-    await Config.saveStateAtomic(tmp, { threads: {} });
+    await saveStateAtomic(tmp, { threads: {} });
     const glob = new Bun.Glob("state.json.tmp-*");
     const leftovers = await Array.fromAsync(glob.scan({ cwd: tmp }));
     expect(leftovers).toEqual([]);

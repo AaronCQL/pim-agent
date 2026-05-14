@@ -1,13 +1,15 @@
+import type { Api } from "grammy";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { Config, type TelegramConfig } from "./Config.ts";
+import { loadState, saveStateAtomic, type TelegramConfig } from "./config.ts";
 import { SessionRegistry } from "./SessionRegistry.ts";
 
 let tmp: string;
 let config: TelegramConfig;
+const stubApi = {} as Api;
 
 beforeEach(async () => {
   tmp = await mkdtemp(join(tmpdir(), "pim-session-registry-test-"));
@@ -25,7 +27,7 @@ afterEach(async () => {
 
 describe("SessionRegistry state", () => {
   test("loads persisted state before command-first mutations", async () => {
-    await Config.saveStateAtomic(tmp, {
+    await saveStateAtomic(tmp, {
       threads: {
         "1-main": {
           cwd: "/repo",
@@ -35,14 +37,14 @@ describe("SessionRegistry state", () => {
       },
     });
 
-    const registry = new SessionRegistry(config);
+    const registry = new SessionRegistry(config, stubApi);
     await registry.init();
     await registry.setThreadThinkingLevel(
       { chatId: 2, threadId: undefined },
       "off"
     );
 
-    const loaded = await Config.loadState(tmp);
+    const loaded = await loadState(tmp);
     expect(loaded.threads["1-main"]).toEqual({
       cwd: "/repo",
       cumulativeCost: 12.5,
@@ -52,7 +54,7 @@ describe("SessionRegistry state", () => {
   });
 
   test("does not flush empty state when disposed before init", async () => {
-    await Config.saveStateAtomic(tmp, {
+    await saveStateAtomic(tmp, {
       threads: {
         "1-main": {
           cwd: "/repo",
@@ -61,10 +63,10 @@ describe("SessionRegistry state", () => {
       },
     });
 
-    const registry = new SessionRegistry(config);
+    const registry = new SessionRegistry(config, stubApi);
     await registry.disposeAll();
 
-    const loaded = await Config.loadState(tmp);
+    const loaded = await loadState(tmp);
     expect(loaded.threads["1-main"]).toEqual({
       cwd: "/repo",
       cumulativeCost: 12.5,

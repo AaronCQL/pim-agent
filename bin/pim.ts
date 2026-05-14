@@ -53,8 +53,8 @@ const mode =
       : cliArgs[modeIdx + 1]
     : undefined;
 if (mode === "telegram") {
-  const { Daemon } = await import("../src/telegram/Daemon.ts");
-  await Daemon.main(cliArgs);
+  const { runDaemon } = await import("../src/telegram/daemon.ts");
+  await runDaemon(cliArgs);
   process.exit(0);
 }
 
