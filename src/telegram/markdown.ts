@@ -63,7 +63,7 @@ const RENDERERS = {
     }
     return `${indent}${marker} ${c.replace(/\n+$/, "")}\n`;
   },
-  hr: (): string => "———\n\n",
+  hr: (): string => "───\n\n",
   br: (): string => "\n",
   table: (c: string): string => c,
 };
@@ -138,32 +138,27 @@ function parseRow(line: string): string[] {
 }
 
 function renderTable(rows: ReadonlyArray<TableRow>): string {
-  if (rows.length === 0) {
+  if (rows.length < 2) {
     return "";
   }
-  const cols = Math.max(...rows.map((r) => r.length));
-  const widths: number[] = [];
-  for (let c = 0; c < cols; c++) {
-    let w = 0;
-    for (const row of rows) {
-      const cell = row[c] ?? "";
-      if (cell.length > w) {
-        w = cell.length;
+  const header = rows[0]!;
+  const dataRows = rows.slice(1);
+  if (dataRows.length === 0) {
+    return "";
+  }
+  const pieces: string[] = [];
+  for (const row of dataRows) {
+    pieces.push("───");
+    for (let c = 0; c < header.length; c++) {
+      const label = renderMd(header[c] ?? "").trim();
+      const value = renderMd(row[c] ?? "").trim();
+      if (label) {
+        pieces.push(`<b>${label}</b>: ${value}`);
+      } else if (value) {
+        pieces.push(value);
       }
     }
-    widths.push(w);
   }
-  const pad = (cell: string, w: number): string =>
-    cell + " ".repeat(w - cell.length);
-  const formatRow = (row: TableRow): string =>
-    `| ${widths.map((w, c) => pad(row[c] ?? "", w)).join(" | ")} |`;
-  const separator = `|${widths.map((w) => "-".repeat(w + 2)).join("|")}|`;
-
-  const lines: string[] = [];
-  lines.push(formatRow(rows[0]!));
-  lines.push(separator);
-  for (let r = 1; r < rows.length; r++) {
-    lines.push(formatRow(rows[r]!));
-  }
-  return `<pre>${escape(lines.join("\n"))}</pre>\n\n`;
+  pieces.push("───");
+  return `${pieces.join("\n")}\n\n`;
 }

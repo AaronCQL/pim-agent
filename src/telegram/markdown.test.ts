@@ -67,7 +67,7 @@ describe("toHtml", () => {
   });
 
   test("thematic break renders em-dashes", () => {
-    expect(toHtml("a\n\n---\n\nb")).toBe("a\n\n———\n\nb");
+    expect(toHtml("a\n\n───\n\nb")).toBe("a\n\n───\n\nb");
   });
 
   test("collapses 3+ newlines to two", () => {
@@ -78,24 +78,35 @@ describe("toHtml", () => {
     expect(toHtml("\n\nhello\n\n")).toBe("hello");
   });
 
-  test("table renders as padded monospace <pre>", () => {
+  test("table renders as vertical labeled cards", () => {
     const md = "| Name | Score |\n| ---- | ----- |\n| Aaron | 99 |\n| Bo | 7 |";
     expect(toHtml(md)).toBe(
-      "<pre>| Name  | Score |\n|-------|-------|\n| Aaron | 99    |\n| Bo    | 7     |</pre>"
+      "───\n<b>Name</b>: Aaron\n<b>Score</b>: 99\n───\n<b>Name</b>: Bo\n<b>Score</b>: 7\n───"
     );
+  });
+
+  test("table renders markdown formatting in cells", () => {
+    const md = "| a | b |\n| - | - |\n| **x** | `y` |";
+    const out = toHtml(md);
+    expect(out).toContain("<b>a</b>: <b>x</b>");
+    expect(out).toContain("<b>b</b>: <code>y</code>");
   });
 
   test("table escapes html inside cells", () => {
     const md = "| a | b |\n| - | - |\n| <x> | & |";
-    expect(toHtml(md)).toContain("&lt;x&gt;");
-    expect(toHtml(md)).toContain("&amp;");
+    const out = toHtml(md);
+    expect(out).toContain("&lt;x&gt;");
+    expect(out).toContain("&amp;");
+    expect(out).not.toContain("<pre>");
   });
 
   test("table surrounded by prose is rendered with both segments", () => {
     const md = "Hello\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\nDone.";
     const out = toHtml(md);
     expect(out.startsWith("Hello")).toBe(true);
-    expect(out).toContain("<pre>");
+    expect(out).toContain("───");
+    expect(out).toContain("<b>a</b>: 1");
+    expect(out).toContain("<b>b</b>: 2");
     expect(out.endsWith("Done.")).toBe(true);
   });
 
