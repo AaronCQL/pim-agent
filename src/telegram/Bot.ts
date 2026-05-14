@@ -10,6 +10,7 @@ import {
 import { Paths } from "../shared/Paths";
 import {
   LOGS_MODES,
+  THINKING_LEVELS,
   type LogsMode,
   type TelegramConfig,
   type ThinkingLevelOpt,
@@ -28,22 +29,33 @@ import {
 import { Renderer, type TurnEndState } from "./Renderer";
 import { SessionRegistry, type ThreadHandle } from "./SessionRegistry";
 
-const EFFORT_MAP: Record<string, ThinkingLevelOpt> = {
-  off: "off",
-  minimal: "minimal",
-  low: "low",
-  medium: "medium",
-  high: "high",
-  xhigh: "xhigh",
-  max: "xhigh",
-  default: "medium",
-};
-
 const CB_CLEAR_CONFIRM = "clear-confirm";
 const CB_CLEAR_CANCEL = "clear-cancel";
+const CB_EFFORT = "effort";
+const CB_LOGS = "logs";
 
-function isLogsMode(value: string): value is LogsMode {
-  return (LOGS_MODES as readonly string[]).includes(value);
+const LOGS_DESCRIPTIONS: Record<LogsMode, string> = {
+  off: "final message only",
+  tool: "show tool use",
+  text: "show tool use, and intermediate texts",
+  verbose: "show tool use, intermediate texts, and thinking",
+};
+
+function splitValueAndKey(
+  s: string
+): { readonly value: string; readonly key: string } | undefined {
+  const i = s.indexOf(":");
+  if (i < 0) {
+    return undefined;
+  }
+  return { value: s.slice(0, i), key: s.slice(i + 1) };
+}
+
+function isMember<T extends string>(
+  tuple: readonly T[],
+  value: string
+): value is T {
+  return (tuple as readonly string[]).includes(value);
 }
 
 export class Bot {
@@ -166,19 +178,13 @@ export class Bot {
     try {
       switch (name) {
         case "/chatid":
-          await this.sendPlain(
-            handle,
-            `chatId=${handle.chatId}\nthreadId=${handle.threadId ?? "main"}`
-          );
+          await this.cmdChatId(handle);
           return;
         case "/cancel":
           await this.cmdCancel(handle);
           return;
         case "/clear":
           await this.cmdClear(handle);
-          return;
-        case "/cwd":
-          await this.cmdCwd(handle);
           return;
         case "/cd":
           await this.cmdCd(handle, args);
@@ -210,39 +216,43 @@ export class Bot {
     }
   }
 
+  private async cmdChatId(handle: ThreadHandle): Promise<void> {
+    const lines = [`Chat ID: <code>${handle.chatId}</code>`];
+    if (handle.threadId) {
+      lines.push(`Thread ID: <code>${handle.threadId}</code>`);
+    }
+    await this.sendWithFallback(handle, lines.join("\n"));
+  }
+
   private async cmdCancel(handle: ThreadHandle): Promise<void> {
     const cancelled = await this.registry.cancel(handle);
     await this.sendPlain(
       handle,
-      cancelled ? "❌ Cancelled." : "Nothing running."
+      cancelled ? "❌ Cancelled." : "Nothing to cancel."
     );
   }
 
   private async cmdClear(handle: ThreadHandle): Promise<void> {
     const key = SessionRegistry.key(handle);
     const kb = new InlineKeyboard()
-      .text("Clear", `${CB_CLEAR_CONFIRM}:${key}`)
-      .text("Cancel", `${CB_CLEAR_CANCEL}:${key}`);
-    await this.grammy.api.sendMessage(
-      handle.chatId,
-      "Clear this thread's session? Cumulative cost is preserved.",
-      {
-        message_thread_id: handle.threadId,
-        reply_markup: kb,
-        link_preview_options: { is_disabled: true },
-      }
+      .text("🚫 Cancel", `${CB_CLEAR_CANCEL}:${key}`)
+      .text("👍 Yes", `${CB_CLEAR_CONFIRM}:${key}`);
+    await this.sendPlain(
+      handle,
+      "⚠️ Are you sure you want to reset this thread's chat history and context window?",
+      kb
     );
-  }
-
-  private async cmdCwd(handle: ThreadHandle): Promise<void> {
-    const entry = this.registry.getEntry(handle);
-    const cwd = entry.cwd ?? this.config.cwd;
-    await this.sendPlain(handle, `cwd: ${Paths.abbreviateHome(cwd)}`);
   }
 
   private async cmdCd(handle: ThreadHandle, args: string): Promise<void> {
     if (!args) {
-      await this.sendPlain(handle, "Usage: /cd <path>");
+      const entry = this.registry.getEntry(handle);
+      const cwd = Paths.abbreviateHome(entry.cwd ?? this.config.cwd);
+      const lines = [
+        `<b>CWD</b>: <code>${escapeMarkdown(cwd)}</code>`,
+        `<b>To Change</b>: <code>/cd &lt;path&gt;</code>`,
+      ];
+      await this.sendWithFallback(handle, lines.join("\n"));
       return;
     }
     if (this.registry.isStreaming(handle)) {
@@ -259,10 +269,8 @@ export class Bot {
       await this.sendPlain(handle, `⚠️ ${result.error}`);
       return;
     }
-    await this.sendPlain(
-      handle,
-      `cwd → ${Paths.abbreviateHome(resolved)} (new session next turn)`
-    );
+    const html = `<b>CWD</b> → <code>${escapeMarkdown(Paths.abbreviateHome(resolved))}</code>`;
+    await this.sendWithFallback(handle, html);
   }
 
   private async cmdModel(handle: ThreadHandle, args: string): Promise<void> {
@@ -274,7 +282,7 @@ export class Bot {
         }
       });
       const html = [
-        `<b>Current Model</b>: <code>${escapeMarkdown(current)}</code>`,
+        `<b>Model</b>: <code>${escapeMarkdown(current)}</code>`,
         `<b>To Change</b>: <code>/model &lt;model_name&gt;</code>`,
       ].join("\n");
       await this.sendWithFallback(handle, html);
@@ -290,25 +298,75 @@ export class Bot {
           ? `⚠️ Multiple matches for "${escapeMarkdown(args)}":`
           : `⚠️ No model matches "${escapeMarkdown(args)}". Available:`;
       const footer =
-        result.kind === "ambiguous" ? "\nPlease be more specific." : "";
+        result.kind === "ambiguous"
+          ? "\n\nPlease choose one above or use a more specific name."
+          : "";
       await this.sendWithFallback(handle, `${header}\n${bullets}${footer}`);
       return;
     }
-    await this.sendPlain(handle, `model → ${result.id}`);
+    await this.sendWithFallback(
+      handle,
+      `<b>Model</b> → <code>${escapeMarkdown(result.id)}</code>`
+    );
   }
 
-  private async cmdEffort(handle: ThreadHandle, args: string): Promise<void> {
-    const level = EFFORT_MAP[args];
-    if (!level) {
+  private async cmdEffort(handle: ThreadHandle, _args: string): Promise<void> {
+    const supported = this.registry.getSupportedThinkingLevels(handle);
+    if (supported.length <= 1) {
       await this.sendPlain(
         handle,
-        `Usage: /effort ${Object.keys(EFFORT_MAP).join("|")}`
+        "Effort level for the current model cannot be configured."
       );
       return;
     }
-    await this.registry.setThreadThinkingLevel(handle, level);
-    const display = args === "default" ? "default (medium)" : level;
-    await this.sendPlain(handle, `effort → ${display}`);
+    const entry = this.registry.getEntry(handle);
+    const current = entry.thinkingLevel ?? "medium";
+    const { kb, html } = this.buildEffortPicker(handle, current, supported);
+    await this.sendWithFallback(handle, html, kb);
+  }
+
+  private buildEffortPicker(
+    handle: ThreadHandle,
+    currentLevel: ThinkingLevelOpt,
+    supported: readonly ThinkingLevelOpt[]
+  ): { readonly kb: InlineKeyboard; readonly html: string } {
+    const key = SessionRegistry.key(handle);
+    const kb = new InlineKeyboard();
+    for (const [i, lvl] of supported.entries()) {
+      const label = lvl === currentLevel ? `✅ ${lvl}` : lvl;
+      kb.text(label, `${CB_EFFORT}:${lvl}:${key}`);
+      if ((i + 1) % 3 === 0 && i < supported.length - 1) {
+        kb.row();
+      }
+    }
+    const html = `<b>Effort</b>: <code>${escapeMarkdown(currentLevel)}</code>`;
+    return { kb, html };
+  }
+
+  private buildLogsPicker(
+    handle: ThreadHandle,
+    currentMode: LogsMode
+  ): { readonly kb: InlineKeyboard; readonly html: string } {
+    const key = SessionRegistry.key(handle);
+    const kb = new InlineKeyboard();
+    const descriptions: string[] = [];
+    for (const [i, mode] of LOGS_MODES.entries()) {
+      const label = mode === currentMode ? `✅ ${mode}` : mode;
+      kb.text(label, `${CB_LOGS}:${mode}:${key}`);
+      if ((i + 1) % 2 === 0 && i < LOGS_MODES.length - 1) {
+        kb.row();
+      }
+      descriptions.push(
+        `• <code>${escapeMarkdown(mode)}</code>: ${escapeMarkdown(LOGS_DESCRIPTIONS[mode])}`
+      );
+    }
+    const html = [
+      `<b>Level</b>: <code>${escapeMarkdown(currentMode)}</code>`,
+      "",
+      `<b>Options</b>:`,
+      ...descriptions,
+    ].join("\n");
+    return { kb, html };
   }
 
   private async cmdUsage(handle: ThreadHandle): Promise<void> {
@@ -335,17 +393,11 @@ export class Bot {
     await this.sendWithFallback(handle, lines.join("\n"));
   }
 
-  private async cmdLogs(handle: ThreadHandle, args: string): Promise<void> {
-    if (!isLogsMode(args)) {
-      const current = this.registry.getEntry(handle).logsMode ?? "text";
-      await this.sendPlain(
-        handle,
-        `logs: ${current}\nUsage: /logs ${LOGS_MODES.join("|")}`
-      );
-      return;
-    }
-    await this.registry.setThreadLogsMode(handle, args);
-    await this.sendPlain(handle, `logs → ${args}`);
+  private async cmdLogs(handle: ThreadHandle, _args: string): Promise<void> {
+    const entry = this.registry.getEntry(handle);
+    const current = entry.logsMode ?? "text";
+    const { kb, html } = this.buildLogsPicker(handle, current);
+    await this.sendWithFallback(handle, html, kb);
   }
 
   private async cmdReload(handle: ThreadHandle): Promise<void> {
@@ -433,23 +485,72 @@ export class Bot {
       const handle = SessionRegistry.parseKey(keyPart);
       await this.registry.clearThread(handle);
       await ctx.answerCallbackQuery({ text: "Cleared" });
-      try {
-        await ctx.editMessageText("✅ Session cleared.");
-      } catch {
-        // Message may have aged out past Telegram's edit window — non-fatal.
-      }
+      await Bot.safeEditMessage(
+        ctx,
+        Bot.strikeOriginal(ctx, "Context window cleared.")
+      );
       return;
     }
     if (action === CB_CLEAR_CANCEL) {
       await ctx.answerCallbackQuery({ text: "Cancelled" });
-      try {
-        await ctx.editMessageText("Cancelled.");
-      } catch {
-        // Message may have aged out past Telegram's edit window — non-fatal.
+      await Bot.safeEditMessage(ctx, Bot.strikeOriginal(ctx, "Cancelled."));
+      return;
+    }
+    if (action === CB_EFFORT && keyPart) {
+      const parts = splitValueAndKey(keyPart);
+      if (!parts || !isMember(THINKING_LEVELS, parts.value)) {
+        await ctx.answerCallbackQuery();
+        return;
       }
+      const handle = SessionRegistry.parseKey(parts.key);
+      await this.registry.setThreadThinkingLevel(handle, parts.value);
+      await ctx.answerCallbackQuery({ text: `Effort: ${parts.value}` });
+      const supported = this.registry.getSupportedThinkingLevels(handle);
+      const { kb, html } = this.buildEffortPicker(
+        handle,
+        parts.value,
+        supported
+      );
+      await Bot.safeEditMessage(ctx, html, kb);
+      return;
+    }
+    if (action === CB_LOGS && keyPart) {
+      const parts = splitValueAndKey(keyPart);
+      if (!parts || !isMember(LOGS_MODES, parts.value)) {
+        await ctx.answerCallbackQuery();
+        return;
+      }
+      const handle = SessionRegistry.parseKey(parts.key);
+      await this.registry.setThreadLogsMode(handle, parts.value);
+      await ctx.answerCallbackQuery({ text: `Logs: ${parts.value}` });
+      const { kb, html } = this.buildLogsPicker(handle, parts.value);
+      await Bot.safeEditMessage(ctx, html, kb);
       return;
     }
     await ctx.answerCallbackQuery();
+  }
+
+  private static strikeOriginal(
+    ctx: Filter<Context, "callback_query:data">,
+    note: string
+  ): string {
+    const original = ctx.callbackQuery.message?.text ?? "";
+    return `<s>${escapeMarkdown(original)}</s>\n\n<i>${note}</i>`;
+  }
+
+  private static async safeEditMessage(
+    ctx: Filter<Context, "callback_query:data">,
+    html: string,
+    replyMarkup?: InlineKeyboard
+  ): Promise<void> {
+    try {
+      await ctx.editMessageText(html, {
+        parse_mode: "HTML",
+        reply_markup: replyMarkup,
+      });
+    } catch {
+      // Message may have aged out past Telegram's edit window — non-fatal.
+    }
   }
 
   private async handleTurn(
@@ -494,7 +595,8 @@ export class Bot {
 
   private async sendWithFallback(
     handle: ThreadHandle,
-    html: string
+    html: string,
+    replyMarkup?: InlineKeyboard
   ): Promise<void> {
     if (!html) {
       return;
@@ -504,6 +606,7 @@ export class Bot {
         parse_mode: "HTML",
         message_thread_id: handle.threadId,
         link_preview_options: { is_disabled: true },
+        reply_markup: replyMarkup,
       });
       console.log(
         `[send] chatId=${handle.chatId} threadId=${handle.threadId ?? "main"} html ok (${html.length}b)`
@@ -511,18 +614,23 @@ export class Bot {
     } catch (err) {
       if (err instanceof GrammyError && err.error_code === 400) {
         console.warn(`[send] HTML 400 (${err.description}) — retry plain`);
-        await this.sendPlain(handle, html);
+        await this.sendPlain(handle, html, replyMarkup);
         return;
       }
       throw err;
     }
   }
 
-  private async sendPlain(handle: ThreadHandle, body: string): Promise<void> {
+  private async sendPlain(
+    handle: ThreadHandle,
+    body: string,
+    replyMarkup?: InlineKeyboard
+  ): Promise<void> {
     try {
       await this.grammy.api.sendMessage(handle.chatId, body, {
         message_thread_id: handle.threadId,
         link_preview_options: { is_disabled: true },
+        reply_markup: replyMarkup,
       });
       console.log(
         `[send] chatId=${handle.chatId} threadId=${handle.threadId ?? "main"} plain ok (${body.length}b)`

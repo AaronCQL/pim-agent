@@ -1,4 +1,5 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { getSupportedThinkingLevels as piGetSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import {
   AgentSession,
   AuthStorage,
@@ -216,6 +217,22 @@ export class SessionRegistry {
     return { ok: true, id };
   }
 
+  public getSupportedThinkingLevels(
+    handle: ThreadHandle
+  ): readonly ThinkingLevelOpt[] {
+    this.requireInitialized();
+    const entry = this.state.threads[SessionRegistry.key(handle)] ?? {};
+    const mid = entry.model ?? this.config.model;
+    if (!mid) {
+      return [];
+    }
+    const resolved = resolveModel(this.modelRegistry, mid);
+    if (resolved.kind !== "ok") {
+      return [];
+    }
+    return piGetSupportedThinkingLevels(resolved.model) as ThinkingLevelOpt[];
+  }
+
   public async setThreadThinkingLevel(
     handle: ThreadHandle,
     level: ThinkingLevelOpt
@@ -237,7 +254,11 @@ export class SessionRegistry {
     logsMode: LogsMode
   ): Promise<void> {
     this.requireInitialized();
-    await this.patchEntry(SessionRegistry.key(handle), { logsMode });
+    const key = SessionRegistry.key(handle);
+    if (this.state.threads[key]?.logsMode === logsMode) {
+      return;
+    }
+    await this.patchEntry(key, { logsMode });
   }
 
   public async steerIfStreaming(
