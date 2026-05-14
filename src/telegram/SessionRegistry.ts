@@ -13,7 +13,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Api } from "grammy";
 import { mkdir, rename, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
   loadState,
@@ -25,7 +25,9 @@ import {
   type ThreadEntry,
 } from "./config";
 import { modelId, resolveModel } from "./model";
-import { buildSendFileTool } from "./tools/file";
+import { buildSendFileTool } from "./files/tool";
+import type { Scheduler } from "./tasks/Scheduler";
+import { buildTaskTool } from "./tasks/tool";
 import { loadWrappedThreadInstruction } from "./threadInstruction";
 
 export type SessionKey = string;
@@ -52,6 +54,7 @@ const MAIN = "main";
 export class SessionRegistry {
   private readonly config: TelegramConfig;
   private readonly api: Api;
+  private readonly scheduler: Scheduler;
   private readonly workQueues = new Map<SessionKey, WorkQueue>();
   private readonly sessionCache = new Map<SessionKey, TelegramSession>();
   private readonly authStorage: AuthStorage;
@@ -62,9 +65,10 @@ export class SessionRegistry {
   private stateLoaded = false;
   private initPromise: Promise<void> | undefined;
 
-  public constructor(config: TelegramConfig, api: Api) {
+  public constructor(config: TelegramConfig, api: Api, scheduler: Scheduler) {
     this.config = config;
     this.api = api;
+    this.scheduler = scheduler;
     this.agentDir = getAgentDir();
     this.authStorage = AuthStorage.create(join(this.agentDir, "auth.json"));
     this.modelRegistry = ModelRegistry.create(
@@ -120,12 +124,18 @@ export class SessionRegistry {
     work: (session: AgentSession) => Promise<void>
   ): Promise<void> {
     this.requireInitialized();
-    const key = SessionRegistry.key(handle);
-    const prev = this.workQueues.get(key) ?? Promise.resolve();
-    const next = prev.then(async () => {
+    return this.enqueueWork(SessionRegistry.key(handle), async () => {
       const session = await this.getOrCreate(handle);
       await work(session);
     });
+  }
+
+  private enqueueWork(
+    key: SessionKey,
+    runner: () => Promise<void>
+  ): Promise<void> {
+    const prev = this.workQueues.get(key) ?? Promise.resolve();
+    const next = prev.then(runner);
     const tail = next.catch((err: unknown) => {
       console.error(`[registry] tail error for key=${key}:`, err);
     });
@@ -363,59 +373,11 @@ export class SessionRegistry {
     this.evictIfNeeded();
 
     const entry = this.state.threads[key] ?? {};
-    const cwd = entry.cwd ?? this.config.cwd;
     const sessionPath = entry.sessionPath ?? this.defaultSessionPath(key);
-    const sessionManager = SessionManager.open(sessionPath, undefined, cwd);
-    const settingsManager = this.settingsManagerFor(cwd);
-    const wrapped = await loadWrappedThreadInstruction({
-      configDir: this.config.configDir,
-      chatId: handle.chatId,
-      threadId: handle.threadId,
-    });
-    const promptRef = { wrapped };
-
-    const loader = new DefaultResourceLoader({
-      cwd,
-      agentDir: this.agentDir,
-      settingsManager,
-      appendSystemPromptOverride: (base) => {
-        return promptRef.wrapped ? [...base, promptRef.wrapped] : base;
-      },
-    });
-
-    await loader.reload();
-
-    const defaultModelId = entry.model ?? this.config.model;
-    let model;
-    if (defaultModelId) {
-      const resolved = resolveModel(this.modelRegistry, defaultModelId);
-      if (resolved.kind === "ok") {
-        model = resolved.model;
-      } else {
-        console.warn(
-          `[registry] model "${defaultModelId}" did not resolve cleanly (${resolved.kind})`
-        );
-      }
-    }
-
-    const sendFile = buildSendFileTool({
-      api: this.api,
+    const { session, cwd, promptRef } = await this.buildAgentSession(
       handle,
-      cwd,
-    });
-
-    const { session } = await createAgentSession({
-      cwd,
-      agentDir: this.agentDir,
-      authStorage: this.authStorage,
-      modelRegistry: this.modelRegistry,
-      settingsManager,
-      resourceLoader: loader,
-      sessionManager,
-      model,
-      thinkingLevel: entry.thinkingLevel as ThinkingLevel | undefined,
-      customTools: [sendFile],
-    });
+      sessionPath
+    );
 
     const live: TelegramSession = {
       handle,
@@ -447,6 +409,91 @@ export class SessionRegistry {
     await this.patchEntry(key, { cwd, sessionPath });
 
     return session;
+  }
+
+  private async buildAgentSession(
+    handle: ThreadHandle,
+    sessionPath: string
+  ): Promise<{
+    readonly session: AgentSession;
+    readonly cwd: string;
+    readonly promptRef: { wrapped: string | undefined };
+  }> {
+    const key = SessionRegistry.key(handle);
+    const entry = this.state.threads[key] ?? {};
+    const cwd = entry.cwd ?? this.config.cwd;
+    const sessionManager = SessionManager.open(sessionPath, undefined, cwd);
+    const settingsManager = this.settingsManagerFor(cwd);
+    const wrapped = await loadWrappedThreadInstruction({
+      configDir: this.config.configDir,
+      chatId: handle.chatId,
+      threadId: handle.threadId,
+    });
+    const promptRef = { wrapped };
+
+    const loader = new DefaultResourceLoader({
+      cwd,
+      agentDir: this.agentDir,
+      settingsManager,
+      appendSystemPromptOverride: (base) => {
+        return promptRef.wrapped ? [...base, promptRef.wrapped] : base;
+      },
+    });
+    await loader.reload();
+
+    const defaultModelId = entry.model ?? this.config.model;
+    let model;
+    if (defaultModelId) {
+      const resolved = resolveModel(this.modelRegistry, defaultModelId);
+      if (resolved.kind === "ok") {
+        model = resolved.model;
+      } else {
+        console.warn(
+          `[registry] model "${defaultModelId}" did not resolve cleanly (${resolved.kind})`
+        );
+      }
+    }
+
+    const sendFile = buildSendFileTool({ api: this.api, handle, cwd });
+    const taskTool = buildTaskTool({ scheduler: this.scheduler, handle });
+
+    const { session } = await createAgentSession({
+      cwd,
+      agentDir: this.agentDir,
+      authStorage: this.authStorage,
+      modelRegistry: this.modelRegistry,
+      settingsManager,
+      resourceLoader: loader,
+      sessionManager,
+      model,
+      thinkingLevel: entry.thinkingLevel as ThinkingLevel | undefined,
+      customTools: [sendFile, taskTool],
+    });
+
+    return { session, cwd, promptRef };
+  }
+
+  public enqueueIsolated(
+    handle: ThreadHandle,
+    work: (session: AgentSession) => Promise<void>
+  ): Promise<void> {
+    this.requireInitialized();
+    const key = SessionRegistry.key(handle);
+    return this.enqueueWork(key, async () => {
+      const sessionPath = this.isolatedSessionPath(key);
+      await mkdir(dirname(sessionPath), { recursive: true });
+      const { session } = await this.buildAgentSession(handle, sessionPath);
+      try {
+        await work(session);
+      } finally {
+        session.dispose();
+      }
+    });
+  }
+
+  private isolatedSessionPath(key: SessionKey): string {
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    return join(this.config.configDir, "tasks-sessions", `${key}-${ts}.jsonl`);
   }
 
   private settingsManagerFor(cwd: string): SettingsManager {

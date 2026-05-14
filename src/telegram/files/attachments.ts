@@ -3,7 +3,7 @@ import type { Context, Filter } from "grammy";
 import { mkdir } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 
-import type { ThreadHandle } from "./SessionRegistry";
+import type { ThreadHandle } from "../SessionRegistry";
 
 type AttachmentFile = {
   readonly path: string;

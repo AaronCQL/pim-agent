@@ -18,7 +18,7 @@ import {
 import {
   buildPromptWithAttachments,
   type AttachmentPrompt,
-} from "./attachments";
+} from "./files/attachments";
 import { escape as escapeMarkdown } from "./markdown";
 import { modelId } from "./model";
 import {
@@ -28,6 +28,8 @@ import {
 } from "./reload";
 import { Renderer, type TurnEndState } from "./Renderer";
 import { SessionRegistry, type ThreadHandle } from "./SessionRegistry";
+import { Scheduler } from "./tasks/Scheduler";
+import type { ScheduledTask } from "./tasks/schema";
 
 const CB_CLEAR_CONFIRM = "clear-confirm";
 const CB_CLEAR_CANCEL = "clear-cancel";
@@ -62,6 +64,7 @@ export class Bot {
   private readonly grammy: Grammy;
   private readonly allowSet: ReadonlySet<number>;
   private readonly registry: SessionRegistry;
+  private readonly scheduler: Scheduler;
   private readonly config: TelegramConfig;
   private readonly bootMs = Date.now();
 
@@ -69,7 +72,15 @@ export class Bot {
     this.config = config;
     this.grammy = new Grammy(config.token);
     this.allowSet = new Set(config.allow);
-    this.registry = new SessionRegistry(config, this.grammy.api);
+    this.scheduler = new Scheduler({
+      configDir: config.configDir,
+      runTask: (task) => this.runScheduledTask(task),
+    });
+    this.registry = new SessionRegistry(
+      config,
+      this.grammy.api,
+      this.scheduler
+    );
 
     this.grammy.on("callback_query:data", async (ctx) => {
       if (!this.allowSet.has(ctx.chat?.id ?? -1)) {
@@ -142,12 +153,29 @@ export class Bot {
     await this.grammy.api.deleteWebhook({ drop_pending_updates: true });
     const username = this.grammy.botInfo.username;
     console.log(`bot @${username} ready`);
+    await this.scheduler.start();
     await this.grammy.start();
   }
 
   public async stop(): Promise<void> {
+    await this.scheduler.stop();
     await this.grammy.stop();
     await this.registry.disposeAll();
+  }
+
+  private async runScheduledTask(task: ScheduledTask): Promise<void> {
+    const handle: ThreadHandle = {
+      chatId: task.chatId,
+      threadId: task.threadId,
+    };
+    const prompt: AttachmentPrompt = { text: task.prompt, options: {} };
+    const work = (session: AgentSession): Promise<void> =>
+      this.handleTurn(handle, session, prompt);
+    if (task.isolatedSession) {
+      await this.registry.enqueueIsolated(handle, work);
+    } else {
+      await this.registry.enqueue(handle, work);
+    }
   }
 
   private async processBootReloadConfirm(): Promise<void> {

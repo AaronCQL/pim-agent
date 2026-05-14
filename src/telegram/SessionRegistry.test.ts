@@ -6,10 +6,15 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { loadState, saveStateAtomic, type TelegramConfig } from "./config";
 import { SessionRegistry } from "./SessionRegistry";
+import { Scheduler } from "./tasks/Scheduler";
 
 let tmp: string;
 let config: TelegramConfig;
 const stubApi = {} as Api;
+const stubScheduler = new Scheduler({
+  configDir: "/tmp",
+  runTask: async () => {},
+});
 
 beforeEach(async () => {
   tmp = await mkdtemp(join(tmpdir(), "pim-session-registry-test-"));
@@ -37,7 +42,7 @@ describe("SessionRegistry state", () => {
       },
     });
 
-    const registry = new SessionRegistry(config, stubApi);
+    const registry = new SessionRegistry(config, stubApi, stubScheduler);
     await registry.init();
     await registry.setThreadThinkingLevel(
       { chatId: 2, threadId: undefined },
@@ -63,7 +68,7 @@ describe("SessionRegistry state", () => {
       },
     });
 
-    const registry = new SessionRegistry(config, stubApi);
+    const registry = new SessionRegistry(config, stubApi, stubScheduler);
     await registry.disposeAll();
 
     const loaded = await loadState(tmp);

@@ -27,6 +27,7 @@ const TOOL_EMOJI: Record<string, string> = {
   web_search: "🌐",
   web_fetch: "🌐",
   send_file: "📤",
+  task: "⏰",
 };
 
 const MESSAGE_LIMIT = 4000;
@@ -461,6 +462,9 @@ export class Renderer {
         Renderer.stringArg(obj, "url") ?? Renderer.stringArg(obj, "query");
       return target ? escapeMarkdown(Renderer.truncate(target, 180)) : "";
     }
+    if (name === "task") {
+      return Renderer.taskLabel(obj, code);
+    }
 
     const candidate =
       Renderer.stringArg(obj, "path") ??
@@ -487,6 +491,66 @@ export class Renderer {
   ): string | undefined {
     const value = obj[key];
     return typeof value === "string" && value ? value : undefined;
+  }
+
+  private static taskScheduleSummary(
+    obj: Record<string, unknown>
+  ): string | undefined {
+    const sched = obj.schedule;
+    if (!sched || typeof sched !== "object") {
+      return undefined;
+    }
+    const s = sched as Record<string, unknown>;
+    if (s.type === "once" && typeof s.at === "string") {
+      return `once @ ${s.at}`;
+    }
+    if (s.type === "interval" && typeof s.every === "string") {
+      return `every ${s.every}`;
+    }
+    if (s.type === "cron" && typeof s.expr === "string") {
+      return `cron ${s.expr}`;
+    }
+    return undefined;
+  }
+
+  private static taskLabel(
+    obj: Record<string, unknown>,
+    code: (s: string) => string
+  ): string {
+    const action = Renderer.stringArg(obj, "action");
+    if (!action) {
+      return "";
+    }
+    if (action === "list") {
+      return "List tasks";
+    }
+    if (action === "create") {
+      const prompt = Renderer.stringArg(obj, "prompt");
+      const sched = Renderer.taskScheduleSummary(obj);
+      if (prompt && sched) {
+        return `Schedule task: ${code(prompt)} (${escapeMarkdown(sched)})`;
+      }
+      if (prompt) {
+        return `Schedule task: ${code(prompt)}`;
+      }
+      return sched
+        ? `Schedule task (${escapeMarkdown(sched)})`
+        : "Schedule task";
+    }
+    if (action === "update_prompt") {
+      const prompt = Renderer.stringArg(obj, "prompt");
+      return prompt ? `Update task: ${code(prompt)}` : "Update task";
+    }
+    const verb =
+      action === "delete"
+        ? "Delete"
+        : action === "pause"
+          ? "Pause"
+          : action === "resume"
+            ? "Resume"
+            : action;
+    const id = Renderer.stringArg(obj, "id");
+    return id ? `${verb} task: ${code(id)}` : `${verb} task`;
   }
 
   private static cleanProse(text: string): string {
