@@ -67,7 +67,6 @@ export class Bot {
   private readonly registry: SessionRegistry;
   private readonly scheduler: Scheduler;
   private readonly config: TelegramConfig;
-  private readonly bootMs = Date.now();
 
   public constructor(config: TelegramConfig) {
     this.config = config;
@@ -477,15 +476,6 @@ export class Bot {
   }
 
   private async cmdUpdate(handle: ThreadHandle): Promise<void> {
-    const since = Date.now() - this.bootMs;
-    if (since < 30_000) {
-      await this.sendPlain(
-        handle,
-        `⚠️ /update throttled (daemon booted ${(since / 1000).toFixed(0)}s ago)`
-      );
-      return;
-    }
-
     await this.sendPlain(handle, "🔄 updating...");
     const result = await runUpdate();
     if (!result.ok) {
