@@ -34,3 +34,21 @@ Pim Agent is registered as a project-local Pi package via `.pi/settings.json`. P
 
 - To reload Pim Agent after edits, run the built-in `/reload` command
 - To tear down, run `bun unlink` within this dir
+
+## Telegram daemon
+
+Run Pim as a background Telegram bot, supervised by systemd (Linux) or launchd (macOS):
+
+```bash
+# Install and start the supervised service
+pim --mode telegram --install
+
+# Update from Telegram itself (sends /update to the bot):
+#   - dev install (bun link'd): re-runs `bun install`, then restarts
+#   - prod install (bun install -g): bumps to @aaroncql/pim-agent@latest, then restarts
+
+# Tear down
+pim --mode telegram --uninstall
+```
+
+The supervisor unit has `Restart=always` (systemd) / `KeepAlive=true` (launchd), so `/update` just exits and lets the supervisor bring the daemon back up.

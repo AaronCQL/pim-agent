@@ -53,6 +53,16 @@ const mode =
       : cliArgs[modeIdx + 1]
     : undefined;
 if (mode === "telegram") {
+  if (cliArgs.includes("--install")) {
+    const { install } = await import("../src/telegram/supervisor.ts");
+    await install();
+    process.exit(0);
+  }
+  if (cliArgs.includes("--uninstall")) {
+    const { uninstall } = await import("../src/telegram/supervisor.ts");
+    await uninstall();
+    process.exit(0);
+  }
   const { runDaemon } = await import("../src/telegram/daemon.ts");
   await runDaemon(cliArgs);
   process.exit(0);

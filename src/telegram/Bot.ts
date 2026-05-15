@@ -21,13 +21,14 @@ import {
 } from "./files/attachments";
 import { escape as escapeMarkdown } from "./markdown";
 import { modelId } from "./model";
-import {
-  appendReloadConfirm,
-  clearReloadConfirm,
-  readReloadConfirm,
-} from "./reload";
 import { Renderer, type TurnEndState } from "./Renderer";
 import { SessionRegistry, type ThreadHandle } from "./SessionRegistry";
+import {
+  appendUpdateConfirm,
+  clearUpdateConfirm,
+  readUpdateConfirm,
+  runUpdate,
+} from "./supervisor";
 import { Scheduler } from "./tasks/Scheduler";
 import type { ScheduledTask } from "./tasks/schema";
 
@@ -149,7 +150,7 @@ export class Bot {
   public async run(): Promise<void> {
     await this.registry.init();
     await this.grammy.init();
-    await this.processBootReloadConfirm();
+    await this.processBootUpdateConfirm();
     await this.grammy.api.deleteWebhook({ drop_pending_updates: true });
     const username = this.grammy.botInfo.username;
     console.log(`bot @${username} ready`);
@@ -178,22 +179,22 @@ export class Bot {
     }
   }
 
-  private async processBootReloadConfirm(): Promise<void> {
-    const entries = await readReloadConfirm(this.config.configDir);
+  private async processBootUpdateConfirm(): Promise<void> {
+    const entries = await readUpdateConfirm(this.config.configDir);
     if (entries.length === 0) {
       return;
     }
     await Promise.all(
       entries.map((e) =>
         this.grammy.api
-          .sendMessage(e.chatId, `✅ Pim daemon reloaded.`, {
+          .sendMessage(e.chatId, `✅ Pim daemon updated.`, {
             message_thread_id: e.threadId,
             link_preview_options: { is_disabled: true },
           })
-          .catch((err) => console.warn(`[reload-confirm] send failed:`, err))
+          .catch((err) => console.warn(`[update-confirm] send failed:`, err))
       )
     );
-    await clearReloadConfirm(this.config.configDir);
+    await clearUpdateConfirm(this.config.configDir);
   }
 
   private async handleCommand(
@@ -242,8 +243,8 @@ export class Bot {
         case "/logs":
           await this.cmdLogs(handle, args);
           return;
-        case "/reload":
-          await this.runQueued(ctx, handle, () => this.cmdReload(handle));
+        case "/update":
+          await this.runQueued(ctx, handle, () => this.cmdUpdate(handle));
           return;
         default:
           await this.sendPlain(handle, `Unknown command: ${name}`);
@@ -475,77 +476,29 @@ export class Bot {
     await this.sendWithFallback(handle, html, kb);
   }
 
-  private async cmdReload(handle: ThreadHandle): Promise<void> {
+  private async cmdUpdate(handle: ThreadHandle): Promise<void> {
     const since = Date.now() - this.bootMs;
     if (since < 30_000) {
       await this.sendPlain(
         handle,
-        `⚠️ /reload throttled (daemon booted ${(since / 1000).toFixed(0)}s ago)`
-      );
-      return;
-    }
-    const wrapper = Bot.detectWrapper();
-    if (wrapper === "none") {
-      await this.sendPlain(
-        handle,
-        "⚠️ daemon not under a process supervisor — restart manually"
+        `⚠️ /update throttled (daemon booted ${(since / 1000).toFixed(0)}s ago)`
       );
       return;
     }
 
-    await appendReloadConfirm(this.config.configDir, {
+    await this.sendPlain(handle, "🔄 updating...");
+    const result = await runUpdate();
+    if (!result.ok) {
+      await this.sendPlain(handle, `⚠️ ${result.error}`);
+      return;
+    }
+
+    await appendUpdateConfirm(this.config.configDir, {
       chatId: handle.chatId,
       threadId: handle.threadId,
       ts: new Date().toISOString(),
     });
-    await this.sendPlain(handle, "🔄 reloading...");
-
-    const unit = process.env.PIM_TELEGRAM_UNIT ?? "pim-telegram";
-    const cmd =
-      wrapper === "systemd"
-        ? ["systemctl", "--user", "restart", unit]
-        : [
-            "launchctl",
-            "kickstart",
-            "-k",
-            `gui/${process.getuid?.() ?? 0}/${unit}`,
-          ];
-    try {
-      const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" });
-      const code = await proc.exited;
-      if (code !== 0) {
-        const stderr = await new Response(proc.stderr).text();
-        await this.sendPlain(
-          handle,
-          `⚠️ wrapper exit ${code}: ${stderr.trim() || "(no stderr)"}`
-        );
-        await clearReloadConfirm(this.config.configDir);
-        return;
-      }
-    } catch (err) {
-      console.error(`[reload] spawn failed:`, err);
-      await this.sendPlain(
-        handle,
-        `⚠️ spawn failed: ${(err as Error).message}`
-      );
-      await clearReloadConfirm(this.config.configDir);
-      return;
-    }
     process.exit(0);
-  }
-
-  private static detectWrapper(): "systemd" | "launchd" | "none" {
-    const env = process.env.PIM_TELEGRAM_WRAPPER;
-    if (env === "systemd" || env === "launchd" || env === "none") {
-      return env;
-    }
-    if (process.platform === "linux") {
-      return "systemd";
-    }
-    if (process.platform === "darwin") {
-      return "launchd";
-    }
-    return "none";
   }
 
   private async handleCallback(
