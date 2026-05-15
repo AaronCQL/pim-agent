@@ -1,6 +1,5 @@
-import { mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
 import { DiffLines, type ToolDiff } from "../../shared/DiffLines";
+import { Fs } from "../../shared/Fs";
 
 const CONTEXT_LINES = 3;
 
@@ -32,8 +31,7 @@ export async function writeContent(
     return { bytesWritten, created: false };
   }
 
-  await mkdir(dirname(absolutePath), { recursive: true });
-  await Bun.write(absolutePath, content);
+  await Fs.writeAtomic(absolutePath, content);
 
   const created = prior === undefined;
   const priorBytes = prior === undefined ? 0 : Buffer.byteLength(prior, "utf8");

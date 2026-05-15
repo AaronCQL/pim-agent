@@ -3,14 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import type { ThreadHandle } from "../SessionRegistry";
-import { Scheduler } from "./Scheduler";
-import { buildTaskTool } from "./tool";
-import type { ScheduledTask, TaskToolInput } from "./schema";
+import type { SessionId } from "./Session";
+import { TaskScheduler } from "./TaskScheduler";
+import { TaskTool } from "./TaskTool";
+import type { ScheduledTask, TaskToolInput } from "./TaskSchema";
 
 let tmp: string;
-const handle: ThreadHandle = { chatId: 7, threadId: undefined };
-const otherHandle: ThreadHandle = { chatId: 7, threadId: 99 };
+const sessionId: SessionId = { chatId: 7, threadId: undefined };
+const otherSessionId: SessionId = { chatId: 7, threadId: 99 };
 
 beforeEach(async () => {
   tmp = await mkdtemp(join(tmpdir(), "pim-task-tool-test-"));
@@ -24,14 +24,14 @@ function makeTool(opts?: { readonly now?: () => number }): {
   readonly run: (
     input: TaskToolInput
   ) => Promise<{ readonly text: string; readonly details: unknown }>;
-  readonly scheduler: Scheduler;
+  readonly scheduler: TaskScheduler;
 } {
-  const scheduler = new Scheduler({
+  const scheduler = new TaskScheduler({
     configDir: tmp,
     runTask: async () => {},
     now: opts?.now ?? ((): number => Date.now()),
   });
-  const tool = buildTaskTool({ scheduler, handle });
+  const tool = TaskTool.build({ scheduler, sessionId });
   const run = async (
     input: TaskToolInput
   ): Promise<{ readonly text: string; readonly details: unknown }> => {
@@ -101,7 +101,7 @@ describe("task tool: create", () => {
 });
 
 describe("task tool: list/delete/pause/resume", () => {
-  test("list filters to current handle", async () => {
+  test("list filters to current sessionId", async () => {
     const t0 = Date.parse("2026-05-14T12:00:00Z");
     const { run, scheduler } = makeTool({ now: () => t0 });
     await run({
@@ -109,7 +109,7 @@ describe("task tool: list/delete/pause/resume", () => {
       prompt: "mine",
       schedule: { type: "interval", every: "1h" },
     });
-    await scheduler.createTask(otherHandle, {
+    await scheduler.create(otherSessionId, {
       prompt: "not mine",
       schedule: { type: "interval", every: "1h" },
     });
@@ -133,10 +133,10 @@ describe("task tool: list/delete/pause/resume", () => {
     expect((list.details as { tasks: ScheduledTask[] }).tasks).toHaveLength(0);
   });
 
-  test("delete refuses cross-handle id", async () => {
+  test("delete refuses cross-session id", async () => {
     const t0 = Date.parse("2026-05-14T12:00:00Z");
     const { run, scheduler } = makeTool({ now: () => t0 });
-    const foreign = await scheduler.createTask(otherHandle, {
+    const foreign = await scheduler.create(otherSessionId, {
       prompt: "not yours",
       schedule: { type: "interval", every: "1h" },
     });

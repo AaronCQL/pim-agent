@@ -2,9 +2,9 @@ import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { GrammyError, type Api } from "grammy";
 import { basename } from "node:path";
 
-import type { LogsMode } from "./config";
-import { escape as escapeMarkdown, toHtml } from "./markdown";
-import type { ThreadHandle } from "./SessionRegistry";
+import type { LogsMode } from "./Config";
+import { Markdown } from "./Markdown";
+import type { Session, SessionId } from "./Session";
 
 export type TurnEndState = "ok" | "cancelled" | "error";
 type TurnState = TurnEndState | "running";
@@ -34,7 +34,7 @@ const MESSAGE_LIMIT = 4000;
 
 export class Renderer {
   private readonly api: Api;
-  private readonly handle: ThreadHandle;
+  private readonly sessionId: SessionId;
   private readonly logsMode: LogsMode;
   private readonly entries: TrackerEntry[] = [];
   private readonly toolIndex = new Map<string, number>();
@@ -47,14 +47,10 @@ export class Renderer {
   private lastRendered = "";
   private stopped = false;
 
-  public constructor(params: {
-    readonly api: Api;
-    readonly handle: ThreadHandle;
-    readonly logsMode: LogsMode;
-  }) {
-    this.api = params.api;
-    this.handle = params.handle;
-    this.logsMode = params.logsMode;
+  public constructor(session: Session, api: Api) {
+    this.api = api;
+    this.sessionId = session.id;
+    this.logsMode = session.settings.logsMode ?? "text";
   }
 
   public async start(): Promise<void> {
@@ -282,9 +278,9 @@ export class Renderer {
     for (let i = 0; i < visible.length; i++) {
       const entry = visible[i]!;
       if (entry.kind === "thinking") {
-        pieces.push(`<i>${toHtml(entry.label)}</i>`);
+        pieces.push(`<i>${Markdown.toHtml(entry.label)}</i>`);
       } else if (entry.kind === "narration") {
-        pieces.push(toHtml(entry.label));
+        pieces.push(Markdown.toHtml(entry.label));
       } else {
         const isLastEntry = i === visible.length - 1;
         let suffix = "";
@@ -313,7 +309,7 @@ export class Renderer {
   }
 
   private async sendFinal(markdown: string): Promise<void> {
-    const html = toHtml(markdown);
+    const html = Markdown.toHtml(markdown);
     for (const piece of Renderer.chunk(html)) {
       await this.sendMessage(piece, { status: false });
     }
@@ -321,8 +317,8 @@ export class Renderer {
 
   private async sendTyping(): Promise<void> {
     await this.api
-      .sendChatAction(this.handle.chatId, "typing", {
-        message_thread_id: this.handle.threadId,
+      .sendChatAction(this.sessionId.chatId, "typing", {
+        message_thread_id: this.sessionId.threadId,
       })
       .catch(() => {});
   }
@@ -336,27 +332,27 @@ export class Renderer {
     }
     const other = {
       parse_mode: "HTML" as const,
-      message_thread_id: this.handle.threadId,
+      message_thread_id: this.sessionId.threadId,
       link_preview_options: { is_disabled: true },
     };
     try {
       const msg = await this.api.sendMessage(
-        this.handle.chatId,
+        this.sessionId.chatId,
         Renderer.sanitize(html),
         other
       );
       console.log(
-        `[send] chatId=${this.handle.chatId} threadId=${this.handle.threadId ?? "main"} ${opts.status ? "status" : "answer"} ok (${html.length}b)`
+        `[send] chatId=${this.sessionId.chatId} threadId=${this.sessionId.threadId ?? "main"} ${opts.status ? "status" : "answer"} ok (${html.length}b)`
       );
       return msg;
     } catch (err) {
       if (err instanceof GrammyError && err.error_code === 400) {
         console.warn(`[send] HTML 400 (${err.description}) — retry plain`);
         const msg = await this.api.sendMessage(
-          this.handle.chatId,
+          this.sessionId.chatId,
           Renderer.stripHtml(Renderer.sanitize(html)),
           {
-            message_thread_id: this.handle.threadId,
+            message_thread_id: this.sessionId.threadId,
             link_preview_options: { is_disabled: true },
           }
         );
@@ -369,7 +365,7 @@ export class Renderer {
   private async editMessage(html: string): Promise<void> {
     try {
       await this.api.editMessageText(
-        this.handle.chatId,
+        this.sessionId.chatId,
         this.statusMessageId!,
         Renderer.sanitize(html),
         {
@@ -385,7 +381,7 @@ export class Renderer {
         if (err.error_code === 400) {
           await this.api
             .editMessageText(
-              this.handle.chatId,
+              this.sessionId.chatId,
               this.statusMessageId!,
               Renderer.stripHtml(Renderer.sanitize(html)),
               {
@@ -429,7 +425,7 @@ export class Renderer {
       args && typeof args === "object" ? (args as Record<string, unknown>) : {};
     const name = toolName.toLowerCase();
     const code = (s: string): string =>
-      `<code>${escapeMarkdown(Renderer.truncate(s, 160))}</code>`;
+      `<code>${Markdown.escape(Renderer.truncate(s, 160))}</code>`;
 
     if (
       name === "read" ||
@@ -460,7 +456,7 @@ export class Renderer {
     if (name === "web_search" || name === "web_fetch") {
       const target =
         Renderer.stringArg(obj, "url") ?? Renderer.stringArg(obj, "query");
-      return target ? escapeMarkdown(Renderer.truncate(target, 180)) : "";
+      return target ? Markdown.escape(Renderer.truncate(target, 180)) : "";
     }
     if (name === "task") {
       return Renderer.taskLabel(obj, code);
@@ -472,7 +468,7 @@ export class Renderer {
       Renderer.stringArg(obj, "query") ??
       Renderer.stringArg(obj, "pattern") ??
       Renderer.stringArg(obj, "url");
-    return escapeMarkdown(
+    return Markdown.escape(
       Renderer.truncate(`${toolName}${candidate ? ` ${candidate}` : ""}`)
     );
   }
@@ -528,13 +524,13 @@ export class Renderer {
       const prompt = Renderer.stringArg(obj, "prompt");
       const sched = Renderer.taskScheduleSummary(obj);
       if (prompt && sched) {
-        return `Schedule task: ${code(prompt)} (${escapeMarkdown(sched)})`;
+        return `Schedule task: ${code(prompt)} (${Markdown.escape(sched)})`;
       }
       if (prompt) {
         return `Schedule task: ${code(prompt)}`;
       }
       return sched
-        ? `Schedule task (${escapeMarkdown(sched)})`
+        ? `Schedule task (${Markdown.escape(sched)})`
         : "Schedule task";
     }
     if (action === "update_prompt") {

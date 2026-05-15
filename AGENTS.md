@@ -15,7 +15,7 @@ Dev setup: `bun link` puts `pim` on PATH; `.pi/settings.json` registers Pim Agen
 
 Inside a running `pim` session, `/reload` re-loads Pim Agent after edits without restarting.
 
-Telegram daemon: `pim --mode telegram --install` writes a user systemd/launchd unit and starts it. From Telegram, `/update` re-runs `bun install` (dev) or bumps the global npm install to latest (prod), then exits so the supervisor restarts the daemon. `pim --mode telegram --uninstall` tears it down. See `src/telegram/supervisor.ts`.
+Telegram daemon: `pim --mode telegram --install` writes a user systemd/launchd unit and starts it. From Telegram, `/update` re-runs `bun install` (dev) or bumps the global npm install to latest (prod), then exits so the supervisor restarts the daemon. `pim --mode telegram --uninstall` tears it down. See `src/telegram/Supervisor.ts`.
 
 ## Code Conventions
 

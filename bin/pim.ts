@@ -54,17 +54,17 @@ const mode =
     : undefined;
 if (mode === "telegram") {
   if (cliArgs.includes("--install")) {
-    const { install } = await import("../src/telegram/supervisor.ts");
-    await install();
+    const { Supervisor } = await import("../src/telegram/Supervisor.ts");
+    await Supervisor.install();
     process.exit(0);
   }
   if (cliArgs.includes("--uninstall")) {
-    const { uninstall } = await import("../src/telegram/supervisor.ts");
-    await uninstall();
+    const { Supervisor } = await import("../src/telegram/Supervisor.ts");
+    await Supervisor.uninstall();
     process.exit(0);
   }
-  const { runDaemon } = await import("../src/telegram/daemon.ts");
-  await runDaemon(cliArgs);
+  const { start } = await import("../src/telegram/index.ts");
+  await start(cliArgs);
   process.exit(0);
 }
 

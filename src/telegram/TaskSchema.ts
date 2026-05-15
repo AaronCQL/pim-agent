@@ -86,30 +86,3 @@ export const taskToolSchema = Type.Object({
 });
 
 export type TaskToolInput = Static<typeof taskToolSchema>;
-
-const DURATION_UNITS: Record<string, number> = {
-  s: 1_000,
-  m: 60_000,
-  h: 3_600_000,
-  d: 86_400_000,
-};
-
-export function parseDurationMs(input: string): number {
-  const s = input.trim();
-  if (!s) {
-    throw new Error("empty duration");
-  }
-  let remaining = s;
-  let total = 0;
-  while (remaining.length > 0) {
-    const m = remaining.match(/^(\d+)([smhd])/);
-    if (!m) {
-      throw new Error(`bad duration: ${input}`);
-    }
-    const n = Number(m[1]);
-    const mult = DURATION_UNITS[m[2]!]!;
-    total += n * mult;
-    remaining = remaining.slice(m[0].length);
-  }
-  return total;
-}

@@ -1,9 +1,9 @@
 import { Bot } from "./Bot";
-import { loadConfig, parseArgs } from "./config";
+import { Config } from "./Config";
 
-export async function runDaemon(args: ReadonlyArray<string>): Promise<void> {
-  const cli = parseArgs(args);
-  const config = await loadConfig(cli);
+export async function start(args: ReadonlyArray<string>): Promise<void> {
+  const cli = Config.parseArgs(args);
+  const config = await Config.load(cli);
 
   if (cli.printConfig) {
     console.log(
@@ -28,5 +28,5 @@ export async function runDaemon(args: ReadonlyArray<string>): Promise<void> {
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
 
-  await bot.run();
+  await bot.start();
 }

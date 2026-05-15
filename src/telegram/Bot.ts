@@ -8,30 +8,21 @@ import {
 } from "grammy";
 
 import { Paths } from "../shared/Paths";
+import { Attachment, type AttachmentPrompt } from "./Attachment";
 import {
   LOGS_MODES,
   THINKING_LEVELS,
   type LogsMode,
   type TelegramConfig,
   type ThinkingLevelOpt,
-} from "./config";
-import {
-  buildPromptWithAttachments,
-  type AttachmentPrompt,
-} from "./files/attachments";
-import { escape as escapeMarkdown } from "./markdown";
-import { modelId } from "./model";
+} from "./Config";
+import { Markdown } from "./Markdown";
 import { Renderer, type TurnEndState } from "./Renderer";
-import { SessionRegistry, type ThreadHandle } from "./SessionRegistry";
-import {
-  appendUpdateConfirm,
-  clearUpdateConfirm,
-  readUpdateConfirm,
-  readVersion,
-  runUpdate,
-} from "./supervisor";
-import { Scheduler } from "./tasks/Scheduler";
-import type { ScheduledTask } from "./tasks/schema";
+import { Session, type SessionId } from "./Session";
+import { SessionRegistry } from "./SessionRegistry";
+import { Supervisor } from "./Supervisor";
+import type { ScheduledTask } from "./TaskSchema";
+import { TaskScheduler } from "./TaskScheduler";
 
 const CB_CLEAR_CONFIRM = "clear-confirm";
 const CB_CLEAR_CANCEL = "clear-cancel";
@@ -66,14 +57,14 @@ export class Bot {
   private readonly grammy: Grammy;
   private readonly allowSet: ReadonlySet<number>;
   private readonly registry: SessionRegistry;
-  private readonly scheduler: Scheduler;
+  private readonly scheduler: TaskScheduler;
   private readonly config: TelegramConfig;
 
   public constructor(config: TelegramConfig) {
     this.config = config;
     this.grammy = new Grammy(config.token);
     this.allowSet = new Set(config.allow);
-    this.scheduler = new Scheduler({
+    this.scheduler = new TaskScheduler({
       configDir: config.configDir,
       runTask: (task) => this.runScheduledTask(task),
     });
@@ -96,22 +87,22 @@ export class Bot {
         console.log(`[recv] reject chatId=${chatId} (not in allow-list)`);
         return;
       }
-      const handle: ThreadHandle = {
+      const sessionId: SessionId = {
         chatId,
         threadId: ctx.message.message_thread_id,
       };
       let prompt: AttachmentPrompt | undefined;
       try {
-        prompt = await buildPromptWithAttachments(
+        prompt = await Attachment.fromMessage(
           ctx,
           this.config.token,
           this.config.configDir,
-          handle
+          sessionId
         );
       } catch (err) {
         const msg = (err as Error).message ?? String(err);
         console.error(`[recv] attachment download failed:`, err);
-        await this.sendPlain(handle, `⚠️ ${msg}`);
+        await this.sendPlain(sessionId, `⚠️ ${msg}`);
         return;
       }
       if (!prompt) {
@@ -119,27 +110,16 @@ export class Bot {
       }
       const preview = prompt.text.slice(0, 120).replace(/\s+/g, " ");
       console.log(
-        `[recv] chatId=${chatId} threadId=${handle.threadId ?? "main"} ${preview}`
+        `[recv] chatId=${chatId} threadId=${sessionId.threadId ?? "main"} ${preview}`
       );
 
+      const session = this.registry.get(sessionId);
       if (prompt.text.startsWith("/") && !prompt.options.images?.length) {
-        await this.handleCommand(ctx, handle, prompt.text);
+        await this.handleCommand(ctx, session, prompt.text);
         return;
       }
 
-      if (
-        await this.registry.steerIfStreaming(
-          handle,
-          prompt.text,
-          prompt.options
-        )
-      ) {
-        return;
-      }
-
-      void this.registry.enqueueMessage(handle, (session) =>
-        this.handleTurn(handle, session, prompt)
-      );
+      void session.run((agent) => this.handleTurn(session, agent, prompt));
     });
 
     this.grammy.catch((err) => {
@@ -147,7 +127,7 @@ export class Bot {
     });
   }
 
-  public async run(): Promise<void> {
+  public async start(): Promise<void> {
     await this.registry.init();
     await this.grammy.init();
     await this.processBootUpdateConfirm();
@@ -165,26 +145,24 @@ export class Bot {
   }
 
   private async runScheduledTask(task: ScheduledTask): Promise<void> {
-    const handle: ThreadHandle = {
+    const sessionId: SessionId = {
       chatId: task.chatId,
       threadId: task.threadId,
     };
     const prompt: AttachmentPrompt = { text: task.prompt, options: {} };
-    const work = (session: AgentSession): Promise<void> =>
-      this.handleTurn(handle, session, prompt);
-    if (task.isolatedSession) {
-      await this.registry.enqueueIsolatedMessage(handle, work);
-    } else {
-      await this.registry.enqueueMessage(handle, work);
-    }
+    const session = this.registry.get(sessionId);
+    await session.run(
+      (agent) => this.handleTurn(session, agent, prompt),
+      task.isolatedSession ? { isolated: true } : undefined
+    );
   }
 
   private async processBootUpdateConfirm(): Promise<void> {
-    const entries = await readUpdateConfirm(this.config.configDir);
+    const entries = await Supervisor.readUpdateConfirm(this.config.configDir);
     if (entries.length === 0) {
       return;
     }
-    const version = await readVersion();
+    const version = await Supervisor.readVersion();
     const text = `✅ Pim Agent updated to v${version}!`;
     await Promise.all(
       entries.map((e) =>
@@ -195,12 +173,12 @@ export class Bot {
           .catch((err) => console.warn(`[update-confirm] edit failed:`, err))
       )
     );
-    await clearUpdateConfirm(this.config.configDir);
+    await Supervisor.clearUpdateConfirm(this.config.configDir);
   }
 
   private async handleCommand(
     ctx: Filter<Context, "message">,
-    handle: ThreadHandle,
+    session: Session,
     raw: string
   ): Promise<void> {
     const [first, ...rest] = raw.trim().split(/\s+/);
@@ -209,51 +187,51 @@ export class Bot {
     try {
       switch (name) {
         case "/chatid":
-          await this.cmdChatId(handle);
+          await this.cmdChatId(session);
           return;
         case "/cancel":
-          await this.cmdCancel(handle);
+          await this.cmdCancel(session);
           return;
         case "/clear":
-          await this.runQueued(ctx, handle, () => this.cmdClear(handle));
+          await this.runQueued(ctx, session, () => this.cmdClear(session));
           return;
         case "/cd":
           if (!args) {
-            await this.cmdCdRead(handle);
+            await this.cmdCdRead(session);
             return;
           }
-          await this.runQueued(ctx, handle, () =>
-            this.cmdCdWrite(handle, args)
+          await this.runQueued(ctx, session, () =>
+            this.cmdCdWrite(session, args)
           );
           return;
         case "/model":
           if (!args) {
-            await this.cmdModelRead(handle);
+            await this.cmdModelRead(session);
             return;
           }
-          await this.runQueued(ctx, handle, () =>
-            this.cmdModelWrite(handle, args)
+          await this.runQueued(ctx, session, () =>
+            this.cmdModelWrite(session, args)
           );
           return;
         case "/effort":
-          await this.cmdEffort(handle, args);
+          await this.cmdEffort(session);
           return;
         case "/usage":
-          await this.cmdUsage(handle);
+          await this.cmdUsage(session);
           return;
         case "/logs":
-          await this.cmdLogs(handle, args);
+          await this.cmdLogs(session);
           return;
         case "/update":
-          await this.runQueued(ctx, handle, () => this.cmdUpdate(handle));
+          await this.runQueued(ctx, session, () => this.cmdUpdate(session));
           return;
         default:
-          await this.sendPlain(handle, `Unknown command: ${name}`);
+          await this.sendPlain(session.id, `Unknown command: ${name}`);
       }
     } catch (err) {
       console.error(`[bot] command ${name} failed:`, err);
       await this.sendPlain(
-        handle,
+        session.id,
         `⚠️ ${name} failed: ${(err as Error).message}`
       );
     }
@@ -261,28 +239,26 @@ export class Bot {
 
   private async runQueued(
     ctx: Filter<Context, "message">,
-    handle: ThreadHandle,
+    session: Session,
     work: () => Promise<void>
   ): Promise<void> {
-    const wasBusy = this.registry.isStreaming(handle);
+    const wasBusy = session.isStreaming;
     if (wasBusy) {
       await Bot.reactSafe(ctx, "👀");
     }
-    void this.registry.enqueueCommand(handle, async () => {
-      try {
-        await work();
-      } catch (err) {
-        console.error(`[bot] queued command failed:`, err);
-        await this.sendPlain(
-          handle,
-          `⚠️ ${(err as Error).message ?? String(err)}`
-        );
-      } finally {
-        if (wasBusy) {
-          await Bot.reactSafe(ctx, []);
-        }
+    try {
+      await work();
+    } catch (err) {
+      console.error(`[bot] queued command failed:`, err);
+      await this.sendPlain(
+        session.id,
+        `⚠️ ${(err as Error).message ?? String(err)}`
+      );
+    } finally {
+      if (wasBusy) {
+        await Bot.reactSafe(ctx, []);
       }
-    });
+    }
   }
 
   private static async reactSafe(
@@ -294,119 +270,109 @@ export class Bot {
     });
   }
 
-  private async cmdChatId(handle: ThreadHandle): Promise<void> {
-    const lines = [`Chat ID: <code>${handle.chatId}</code>`];
-    if (handle.threadId) {
-      lines.push(`Thread ID: <code>${handle.threadId}</code>`);
+  private async cmdChatId(session: Session): Promise<void> {
+    const lines = [`Chat ID: <code>${session.id.chatId}</code>`];
+    if (session.id.threadId) {
+      lines.push(`Thread ID: <code>${session.id.threadId}</code>`);
     }
-    await this.sendWithFallback(handle, lines.join("\n"));
+    await this.sendWithFallback(session.id, lines.join("\n"));
   }
 
-  private async cmdCancel(handle: ThreadHandle): Promise<void> {
-    const cancelled = await this.registry.cancel(handle);
+  private async cmdCancel(session: Session): Promise<void> {
+    const cancelled = await session.cancel();
     await this.sendPlain(
-      handle,
+      session.id,
       cancelled ? "❌ Cancelled." : "Nothing to cancel."
     );
   }
 
-  private async cmdClear(handle: ThreadHandle): Promise<void> {
-    const key = SessionRegistry.key(handle);
+  private async cmdClear(session: Session): Promise<void> {
+    const key = Session.encodeId(session.id);
     const kb = new InlineKeyboard()
       .text("🚫 Cancel", `${CB_CLEAR_CANCEL}:${key}`)
       .text("👍 Yes", `${CB_CLEAR_CONFIRM}:${key}`);
     await this.sendPlain(
-      handle,
+      session.id,
       "⚠️ Are you sure you want to reset this thread's chat history and context window?",
       kb
     );
   }
 
-  private async cmdCdRead(handle: ThreadHandle): Promise<void> {
-    const settings = this.registry.getThreadSettings(handle);
-    const cwd = Paths.abbreviateHome(settings.cwd ?? this.config.cwd);
+  private async cmdCdRead(session: Session): Promise<void> {
+    const cwd = Paths.abbreviateHome(session.settings.cwd ?? this.config.cwd);
     const lines = [
-      `<b>CWD</b>: <code>${escapeMarkdown(cwd)}</code>`,
+      `<b>CWD</b>: <code>${Markdown.escape(cwd)}</code>`,
       `<b>To Change</b>: <code>/cd &lt;path&gt;</code>`,
     ];
-    await this.sendWithFallback(handle, lines.join("\n"));
+    await this.sendWithFallback(session.id, lines.join("\n"));
   }
 
-  private async cmdCdWrite(handle: ThreadHandle, args: string): Promise<void> {
-    const settings = this.registry.getThreadSettings(handle);
-    const resolved = Paths.resolve(args, settings.cwd ?? this.config.cwd);
-    const result = await this.registry.setThreadCwd(handle, resolved);
+  private async cmdCdWrite(session: Session, args: string): Promise<void> {
+    const resolved = Paths.resolve(
+      args,
+      session.settings.cwd ?? this.config.cwd
+    );
+    const result = await session.setCwd(resolved);
     if (!result.ok) {
-      await this.sendPlain(handle, `⚠️ ${result.error}`);
+      await this.sendPlain(session.id, `⚠️ ${result.error}`);
       return;
     }
-    const html = `<b>CWD</b> → <code>${escapeMarkdown(Paths.abbreviateHome(resolved))}</code>`;
-    await this.sendWithFallback(handle, html);
+    const html = `<b>CWD</b> → <code>${Markdown.escape(Paths.abbreviateHome(resolved))}</code>`;
+    await this.sendWithFallback(session.id, html);
   }
 
-  private async cmdModelRead(handle: ThreadHandle): Promise<void> {
-    const session = this.registry.getCachedSession(handle);
-    let current = "(unknown)";
-    if (session?.model) {
-      current = modelId(session.model);
-    } else {
-      const settings = this.registry.getThreadSettings(handle);
-      current = settings.model ?? this.config.model ?? "(unset)";
-    }
+  private async cmdModelRead(session: Session): Promise<void> {
+    const current = session.currentModelId ?? "(unset)";
     const html = [
-      `<b>Model</b>: <code>${escapeMarkdown(current)}</code>`,
+      `<b>Model</b>: <code>${Markdown.escape(current)}</code>`,
       `<b>To Change</b>: <code>/model &lt;model_name&gt;</code>`,
     ].join("\n");
-    await this.sendWithFallback(handle, html);
+    await this.sendWithFallback(session.id, html);
   }
 
-  private async cmdModelWrite(
-    handle: ThreadHandle,
-    args: string
-  ): Promise<void> {
-    const result = await this.registry.setThreadModel(handle, args);
+  private async cmdModelWrite(session: Session, args: string): Promise<void> {
+    const result = await session.setModel(args);
     if (!result.ok) {
       const bullets = result.candidates
-        .map((c) => `• <code>${escapeMarkdown(c)}</code>`)
+        .map((c) => `• <code>${Markdown.escape(c)}</code>`)
         .join("\n");
       const header =
         result.kind === "ambiguous"
-          ? `⚠️ Multiple matches for "${escapeMarkdown(args)}":`
-          : `⚠️ No model matches "${escapeMarkdown(args)}". Available:`;
+          ? `⚠️ Multiple matches for "${Markdown.escape(args)}":`
+          : `⚠️ No model matches "${Markdown.escape(args)}". Available:`;
       const footer =
         result.kind === "ambiguous"
           ? "\n\nPlease choose one above or use a more specific name."
           : "";
-      await this.sendWithFallback(handle, `${header}\n${bullets}${footer}`);
+      await this.sendWithFallback(session.id, `${header}\n${bullets}${footer}`);
       return;
     }
     await this.sendWithFallback(
-      handle,
-      `<b>Model</b> → <code>${escapeMarkdown(result.id)}</code>`
+      session.id,
+      `<b>Model</b> → <code>${Markdown.escape(result.id)}</code>`
     );
   }
 
-  private async cmdEffort(handle: ThreadHandle, _args: string): Promise<void> {
-    const supported = this.registry.getSupportedThinkingLevels(handle);
+  private async cmdEffort(session: Session): Promise<void> {
+    const supported = session.supportedThinkingLevels;
     if (supported.length <= 1) {
       await this.sendPlain(
-        handle,
+        session.id,
         "Effort level for the current model cannot be configured."
       );
       return;
     }
-    const settings = this.registry.getThreadSettings(handle);
-    const current = settings.thinkingLevel ?? "medium";
-    const { kb, html } = this.buildEffortPicker(handle, current, supported);
-    await this.sendWithFallback(handle, html, kb);
+    const current = session.settings.thinkingLevel ?? "medium";
+    const { kb, html } = this.buildEffortPicker(session.id, current, supported);
+    await this.sendWithFallback(session.id, html, kb);
   }
 
   private buildEffortPicker(
-    handle: ThreadHandle,
+    sessionId: SessionId,
     currentLevel: ThinkingLevelOpt,
     supported: readonly ThinkingLevelOpt[]
   ): { readonly kb: InlineKeyboard; readonly html: string } {
-    const key = SessionRegistry.key(handle);
+    const key = Session.encodeId(sessionId);
     const kb = new InlineKeyboard();
     for (const [i, lvl] of supported.entries()) {
       const label = lvl === currentLevel ? `✅ ${lvl}` : lvl;
@@ -415,15 +381,15 @@ export class Bot {
         kb.row();
       }
     }
-    const html = `<b>Effort</b>: <code>${escapeMarkdown(currentLevel)}</code>`;
+    const html = `<b>Effort</b>: <code>${Markdown.escape(currentLevel)}</code>`;
     return { kb, html };
   }
 
   private buildLogsPicker(
-    handle: ThreadHandle,
+    sessionId: SessionId,
     currentMode: LogsMode
   ): { readonly kb: InlineKeyboard; readonly html: string } {
-    const key = SessionRegistry.key(handle);
+    const key = Session.encodeId(sessionId);
     const kb = new InlineKeyboard();
     const descriptions: string[] = [];
     for (const [i, mode] of LOGS_MODES.entries()) {
@@ -433,11 +399,11 @@ export class Bot {
         kb.row();
       }
       descriptions.push(
-        `• <code>${escapeMarkdown(mode)}</code>: ${escapeMarkdown(LOGS_DESCRIPTIONS[mode])}`
+        `• <code>${Markdown.escape(mode)}</code>: ${Markdown.escape(LOGS_DESCRIPTIONS[mode])}`
       );
     }
     const html = [
-      `<b>Level</b>: <code>${escapeMarkdown(currentMode)}</code>`,
+      `<b>Level</b>: <code>${Markdown.escape(currentMode)}</code>`,
       "",
       `<b>Options</b>:`,
       ...descriptions,
@@ -445,12 +411,12 @@ export class Bot {
     return { kb, html };
   }
 
-  private async cmdUsage(handle: ThreadHandle): Promise<void> {
+  private async cmdUsage(session: Session): Promise<void> {
     const lines: string[] = [];
-    const session = this.registry.getCachedSession(handle);
-    if (session) {
-      const usage = session.getContextUsage();
-      const stats = session.getSessionStats();
+    const agent = session.agentSession;
+    if (agent) {
+      const usage = agent.getContextUsage();
+      const stats = agent.getSessionStats();
       if (usage) {
         const pct =
           usage.percent !== null ? `${usage.percent.toFixed(1)}%` : "—";
@@ -463,41 +429,39 @@ export class Bot {
         `<b>Session Cost</b>: <code>$${(stats.cost ?? 0).toFixed(2)}</code>`
       );
     }
-    const settings = this.registry.getThreadSettings(handle);
     lines.push(
-      `<b>Cumulative Cost</b>: <code>$${(settings.cumulativeCost ?? 0).toFixed(2)}</code>`
+      `<b>Cumulative Cost</b>: <code>$${(session.settings.cumulativeCost ?? 0).toFixed(2)}</code>`
     );
-    await this.sendWithFallback(handle, lines.join("\n"));
+    await this.sendWithFallback(session.id, lines.join("\n"));
   }
 
-  private async cmdLogs(handle: ThreadHandle, _args: string): Promise<void> {
-    const settings = this.registry.getThreadSettings(handle);
-    const current = settings.logsMode ?? "text";
-    const { kb, html } = this.buildLogsPicker(handle, current);
-    await this.sendWithFallback(handle, html, kb);
+  private async cmdLogs(session: Session): Promise<void> {
+    const current = session.settings.logsMode ?? "text";
+    const { kb, html } = this.buildLogsPicker(session.id, current);
+    await this.sendWithFallback(session.id, html, kb);
   }
 
-  private async cmdUpdate(handle: ThreadHandle): Promise<void> {
+  private async cmdUpdate(session: Session): Promise<void> {
     const sent = await this.grammy.api.sendMessage(
-      handle.chatId,
+      session.id.chatId,
       "🔄 Updating...",
       {
-        message_thread_id: handle.threadId,
+        message_thread_id: session.id.threadId,
         link_preview_options: { is_disabled: true },
       }
     );
-    const result = await runUpdate();
+    const result = await Supervisor.update();
     if (!result.ok) {
-      await this.sendPlain(handle, `⚠️ ${result.error}`);
+      await this.sendPlain(session.id, `⚠️ ${result.error}`);
       return;
     }
 
-    await appendUpdateConfirm(this.config.configDir, {
-      chatId: handle.chatId,
-      threadId: handle.threadId,
+    await Supervisor.appendUpdateConfirm(this.config.configDir, {
+      chatId: session.id.chatId,
+      threadId: session.id.threadId,
       messageId: sent.message_id,
     });
-    process.exit(0);
+    Supervisor.restart();
   }
 
   private async handleCallback(
@@ -509,29 +473,24 @@ export class Bot {
     const keyPart = colon >= 0 ? data.slice(colon + 1) : "";
 
     if (action === CB_CLEAR_CONFIRM && keyPart) {
-      const handle = SessionRegistry.parseKey(keyPart);
-      const wasBusy = this.registry.isStreaming(handle);
+      const session = this.registry.get(Session.decodeId(keyPart));
+      const wasBusy = session.isStreaming;
       await ctx.answerCallbackQuery({
         text: wasBusy ? "Queued — clearing after current turn" : "Cleared",
       });
-      void this.registry.enqueueCommand(handle, async () => {
-        try {
-          await this.registry.clearThread(handle);
-          await Bot.safeEditMessage(
-            ctx,
-            Bot.strikeOriginal(ctx, "Context window cleared.")
-          );
-        } catch (err) {
-          console.error(`[bot] queued clear failed:`, err);
-          await Bot.safeEditMessage(
-            ctx,
-            Bot.strikeOriginal(
-              ctx,
-              `⚠️ clear failed: ${(err as Error).message}`
-            )
-          );
-        }
-      });
+      try {
+        await session.clear();
+        await Bot.safeEditMessage(
+          ctx,
+          Bot.strikeOriginal(ctx, "Context window cleared.")
+        );
+      } catch (err) {
+        console.error(`[bot] queued clear failed:`, err);
+        await Bot.safeEditMessage(
+          ctx,
+          Bot.strikeOriginal(ctx, `⚠️ clear failed: ${(err as Error).message}`)
+        );
+      }
       return;
     }
     if (action === CB_CLEAR_CANCEL) {
@@ -545,14 +504,13 @@ export class Bot {
         await ctx.answerCallbackQuery();
         return;
       }
-      const handle = SessionRegistry.parseKey(parts.key);
-      await this.registry.setThreadThinkingLevel(handle, parts.value);
+      const session = this.registry.get(Session.decodeId(parts.key));
+      await session.setThinkingLevel(parts.value);
       await ctx.answerCallbackQuery({ text: `Effort: ${parts.value}` });
-      const supported = this.registry.getSupportedThinkingLevels(handle);
       const { kb, html } = this.buildEffortPicker(
-        handle,
+        session.id,
         parts.value,
-        supported
+        session.supportedThinkingLevels
       );
       await Bot.safeEditMessage(ctx, html, kb);
       return;
@@ -563,10 +521,10 @@ export class Bot {
         await ctx.answerCallbackQuery();
         return;
       }
-      const handle = SessionRegistry.parseKey(parts.key);
-      await this.registry.setThreadLogsMode(handle, parts.value);
+      const session = this.registry.get(Session.decodeId(parts.key));
+      await session.setLogsMode(parts.value);
       await ctx.answerCallbackQuery({ text: `Logs: ${parts.value}` });
-      const { kb, html } = this.buildLogsPicker(handle, parts.value);
+      const { kb, html } = this.buildLogsPicker(session.id, parts.value);
       await Bot.safeEditMessage(ctx, html, kb);
       return;
     }
@@ -578,7 +536,7 @@ export class Bot {
     note: string
   ): string {
     const original = ctx.callbackQuery.message?.text ?? "";
-    return `<s>${escapeMarkdown(original)}</s>\n\n<i>${note}</i>`;
+    return `<s>${Markdown.escape(original)}</s>\n\n<i>${note}</i>`;
   }
 
   private static async safeEditMessage(
@@ -597,35 +555,19 @@ export class Bot {
   }
 
   private async handleTurn(
-    handle: ThreadHandle,
-    session: AgentSession,
+    session: Session,
+    agent: AgentSession,
     prompt: AttachmentPrompt
   ): Promise<void> {
-    const settings = this.registry.getThreadSettings(handle);
-    const renderer = new Renderer({
-      api: this.grammy.api,
-      handle,
-      logsMode: settings.logsMode ?? "text",
-    });
-    const unsubscribe = session.subscribe((event) =>
-      renderer.handleEvent(event)
-    );
+    const renderer = new Renderer(session, this.grammy.api);
+    const unsubscribe = agent.subscribe((event) => renderer.handleEvent(event));
     await renderer.start();
     try {
-      if (session.isStreaming) {
-        await session.prompt(prompt.text, {
-          ...prompt.options,
-          streamingBehavior: "followUp",
-          source: "rpc",
-        });
-        await renderer.finish("", "ok");
-        return;
-      }
-      await session.prompt(prompt.text, {
+      await agent.prompt(prompt.text, {
         ...prompt.options,
         source: "rpc",
       });
-      const final = Bot.extractFinalResult(session);
+      const final = Bot.extractFinalResult(agent);
       await renderer.finish(final.text, final.state);
     } catch (err) {
       const msg = (err as Error).message ?? String(err);
@@ -637,7 +579,7 @@ export class Bot {
   }
 
   private async sendWithFallback(
-    handle: ThreadHandle,
+    sessionId: SessionId,
     html: string,
     replyMarkup?: InlineKeyboard
   ): Promise<void> {
@@ -645,19 +587,19 @@ export class Bot {
       return;
     }
     try {
-      await this.grammy.api.sendMessage(handle.chatId, html, {
+      await this.grammy.api.sendMessage(sessionId.chatId, html, {
         parse_mode: "HTML",
-        message_thread_id: handle.threadId,
+        message_thread_id: sessionId.threadId,
         link_preview_options: { is_disabled: true },
         reply_markup: replyMarkup,
       });
       console.log(
-        `[send] chatId=${handle.chatId} threadId=${handle.threadId ?? "main"} html ok (${html.length}b)`
+        `[send] chatId=${sessionId.chatId} threadId=${sessionId.threadId ?? "main"} html ok (${html.length}b)`
       );
     } catch (err) {
       if (err instanceof GrammyError && err.error_code === 400) {
         console.warn(`[send] HTML 400 (${err.description}) — retry plain`);
-        await this.sendPlain(handle, html, replyMarkup);
+        await this.sendPlain(sessionId, html, replyMarkup);
         return;
       }
       throw err;
@@ -665,29 +607,29 @@ export class Bot {
   }
 
   private async sendPlain(
-    handle: ThreadHandle,
+    sessionId: SessionId,
     body: string,
     replyMarkup?: InlineKeyboard
   ): Promise<void> {
     try {
-      await this.grammy.api.sendMessage(handle.chatId, body, {
-        message_thread_id: handle.threadId,
+      await this.grammy.api.sendMessage(sessionId.chatId, body, {
+        message_thread_id: sessionId.threadId,
         link_preview_options: { is_disabled: true },
         reply_markup: replyMarkup,
       });
       console.log(
-        `[send] chatId=${handle.chatId} threadId=${handle.threadId ?? "main"} plain ok (${body.length}b)`
+        `[send] chatId=${sessionId.chatId} threadId=${sessionId.threadId ?? "main"} plain ok (${body.length}b)`
       );
     } catch (err) {
       console.error(`[send] plain failed:`, err);
     }
   }
 
-  private static extractFinalResult(session: AgentSession): {
+  private static extractFinalResult(agent: AgentSession): {
     readonly text: string;
     readonly state: TurnEndState;
   } {
-    const messages = session.messages;
+    const messages = agent.messages;
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i]!;
       if (msg.role !== "assistant") {

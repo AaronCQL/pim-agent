@@ -1,12 +1,12 @@
 import type { Stats } from "node:fs";
-import { chmod, realpath, rename, stat } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { realpath, stat } from "node:fs/promises";
 import {
   EditMatcher,
   type EditMatchStrategy,
   type EditRange,
 } from "../../shared/EditMatcher";
 import { DiffLines, type ToolDiff } from "../../shared/DiffLines";
+import { Fs } from "../../shared/Fs";
 import { Lines } from "../../shared/Lines";
 import type { RawEdit } from "./schema";
 
@@ -324,15 +324,7 @@ async function writeFileAtomic(
     await Bun.write(canonicalPath, content);
     return;
   }
-
-  const tempPath = join(
-    dirname(canonicalPath),
-    `.pim-edit-${process.pid}-${crypto.randomUUID()}.tmp`
-  );
-
-  await Bun.write(tempPath, content);
-  await chmod(tempPath, Number(metadata.mode));
-  await rename(tempPath, canonicalPath);
+  await Fs.writeAtomic(canonicalPath, content, Number(metadata.mode));
 }
 
 async function enqueue<T>(key: string, task: () => Promise<T>): Promise<T> {

@@ -3,13 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import type { ThreadHandle } from "../SessionRegistry";
-import { Scheduler } from "./Scheduler";
-import { loadAllTasks, saveTask, tasksDir } from "./store";
-import { parseDurationMs, type ScheduledTask } from "./schema";
+import type { SessionId } from "./Session";
+import { TaskScheduler } from "./TaskScheduler";
+import type { ScheduledTask } from "./TaskSchema";
+import { TaskStore } from "./TaskStore";
 
 let tmp: string;
-const handle: ThreadHandle = { chatId: 42, threadId: undefined };
+const sessionId: SessionId = { chatId: 42, threadId: undefined };
 
 beforeEach(async () => {
   tmp = await mkdtemp(join(tmpdir(), "pim-scheduler-test-"));
@@ -22,9 +22,9 @@ afterEach(async () => {
 function makeScheduler(opts: {
   readonly now: () => number;
   readonly onFire?: (task: ScheduledTask) => Promise<void>;
-}): { readonly scheduler: Scheduler; readonly fired: ScheduledTask[] } {
+}): { readonly scheduler: TaskScheduler; readonly fired: ScheduledTask[] } {
   const fired: ScheduledTask[] = [];
-  const scheduler = new Scheduler({
+  const scheduler = new TaskScheduler({
     configDir: tmp,
     runTask: async (task) => {
       fired.push(task);
@@ -37,37 +37,37 @@ function makeScheduler(opts: {
 
 async function listTaskFiles(): Promise<string[]> {
   try {
-    return await readdir(tasksDir(tmp));
+    return await readdir(join(tmp, "tasks"));
   } catch {
     return [];
   }
 }
 
-describe("parseDurationMs", () => {
+describe("TaskScheduler.parseDuration", () => {
   test("parses simple units", () => {
-    expect(parseDurationMs("30s")).toBe(30_000);
-    expect(parseDurationMs("5m")).toBe(300_000);
-    expect(parseDurationMs("2h")).toBe(7_200_000);
-    expect(parseDurationMs("1d")).toBe(86_400_000);
+    expect(TaskScheduler.parseDuration("30s")).toBe(30_000);
+    expect(TaskScheduler.parseDuration("5m")).toBe(300_000);
+    expect(TaskScheduler.parseDuration("2h")).toBe(7_200_000);
+    expect(TaskScheduler.parseDuration("1d")).toBe(86_400_000);
   });
 
   test("parses compound durations", () => {
-    expect(parseDurationMs("1h30m")).toBe(5_400_000);
-    expect(parseDurationMs("2h15m30s")).toBe(8_130_000);
+    expect(TaskScheduler.parseDuration("1h30m")).toBe(5_400_000);
+    expect(TaskScheduler.parseDuration("2h15m30s")).toBe(8_130_000);
   });
 
   test("rejects garbage", () => {
-    expect(() => parseDurationMs("")).toThrow();
-    expect(() => parseDurationMs("forever")).toThrow();
-    expect(() => parseDurationMs("10")).toThrow();
+    expect(() => TaskScheduler.parseDuration("")).toThrow();
+    expect(() => TaskScheduler.parseDuration("forever")).toThrow();
+    expect(() => TaskScheduler.parseDuration("10")).toThrow();
   });
 });
 
-describe("Scheduler.tick", () => {
+describe("TaskScheduler.tick", () => {
   test("fires due active task and reschedules interval", async () => {
     const t0 = Date.parse("2026-05-14T12:00:00Z");
     const { scheduler, fired } = makeScheduler({ now: () => t0 });
-    const task = await scheduler.createTask(handle, {
+    const task = await scheduler.create(sessionId, {
       prompt: "test",
       schedule: { type: "interval", every: "30m" },
     });
@@ -84,18 +84,18 @@ describe("Scheduler.tick", () => {
     expect(later.fired).toHaveLength(1);
     expect(later.fired[0]!.id).toBe(task.id);
 
-    const reloaded = (await loadAllTasks(tmp))[0]!;
+    const reloaded = (await TaskStore.loadAll(tmp))[0]!;
     expect(reloaded.nextRun).toBe(new Date(t1 + 30 * 60_000).toISOString());
   });
 
   test("skips paused tasks", async () => {
     const t0 = Date.parse("2026-05-14T12:00:00Z");
     const { scheduler } = makeScheduler({ now: () => t0 });
-    const task = await scheduler.createTask(handle, {
+    const task = await scheduler.create(sessionId, {
       prompt: "test",
       schedule: { type: "interval", every: "5m" },
     });
-    await scheduler.setStatus(handle, task.id, "paused");
+    await scheduler.setStatus(sessionId, task.id, "paused");
 
     const t1 = t0 + 6 * 60_000;
     const { scheduler: s2, fired } = makeScheduler({ now: () => t1 });
@@ -110,7 +110,7 @@ describe("Scheduler.tick", () => {
     const t0 = Date.parse("2026-05-14T12:00:00Z");
     const { scheduler } = makeScheduler({ now: () => t0 });
     const at = new Date(t0 + 60_000).toISOString();
-    await scheduler.createTask(handle, {
+    await scheduler.create(sessionId, {
       prompt: "test",
       schedule: { type: "once", at },
     });
@@ -128,8 +128,8 @@ describe("Scheduler.tick", () => {
     const stale: ScheduledTask = {
       id: "stale-task",
       prompt: "test",
-      chatId: handle.chatId,
-      threadId: handle.threadId,
+      chatId: sessionId.chatId,
+      threadId: sessionId.threadId,
       schedule: { type: "interval", every: "1h" },
       status: "active",
       nextRun: new Date(t0 - 26 * 3600_000).toISOString(),
@@ -137,13 +137,13 @@ describe("Scheduler.tick", () => {
       isolatedSession: false,
       createdAt: new Date(t0 - 30 * 3600_000).toISOString(),
     };
-    await saveTask(tmp, stale);
+    await TaskStore.save(tmp, stale);
 
     const { scheduler, fired } = makeScheduler({ now: () => t0 });
     await scheduler.tick();
     expect(fired).toHaveLength(0);
 
-    const reloaded = (await loadAllTasks(tmp))[0]!;
+    const reloaded = (await TaskStore.loadAll(tmp))[0]!;
     expect(Date.parse(reloaded.nextRun)).toBeGreaterThan(t0);
   });
 
@@ -152,8 +152,8 @@ describe("Scheduler.tick", () => {
     const stale: ScheduledTask = {
       id: "recent-miss",
       prompt: "test",
-      chatId: handle.chatId,
-      threadId: handle.threadId,
+      chatId: sessionId.chatId,
+      threadId: sessionId.threadId,
       schedule: { type: "interval", every: "1h" },
       status: "active",
       nextRun: new Date(t0 - 2 * 3600_000).toISOString(),
@@ -161,7 +161,7 @@ describe("Scheduler.tick", () => {
       isolatedSession: false,
       createdAt: new Date(t0 - 5 * 3600_000).toISOString(),
     };
-    await saveTask(tmp, stale);
+    await TaskStore.save(tmp, stale);
 
     const { scheduler, fired } = makeScheduler({ now: () => t0 });
     await scheduler.tick();
@@ -173,8 +173,8 @@ describe("Scheduler.tick", () => {
     const expired: ScheduledTask = {
       id: "expired",
       prompt: "test",
-      chatId: handle.chatId,
-      threadId: handle.threadId,
+      chatId: sessionId.chatId,
+      threadId: sessionId.threadId,
       schedule: { type: "interval", every: "1h" },
       status: "active",
       nextRun: new Date(t0 - 60_000).toISOString(),
@@ -182,7 +182,7 @@ describe("Scheduler.tick", () => {
       isolatedSession: false,
       createdAt: new Date(t0 - 2 * 3600_000).toISOString(),
     };
-    await saveTask(tmp, expired);
+    await TaskStore.save(tmp, expired);
 
     const { scheduler, fired } = makeScheduler({ now: () => t0 });
     await scheduler.tick();
@@ -193,7 +193,7 @@ describe("Scheduler.tick", () => {
   test("cron task next-run advances via Bun.cron.parse", async () => {
     const t0 = Date.parse("2026-05-14T12:00:00Z");
     const { scheduler } = makeScheduler({ now: () => t0 });
-    const task = await scheduler.createTask(handle, {
+    const task = await scheduler.create(sessionId, {
       prompt: "test",
       schedule: { type: "cron", expr: "0 * * * *" },
     });
@@ -205,18 +205,18 @@ describe("Scheduler.tick", () => {
     await s2.tick();
     expect(fired).toHaveLength(1);
 
-    const reloaded = (await loadAllTasks(tmp))[0]!;
+    const reloaded = (await TaskStore.loadAll(tmp))[0]!;
     // Should advance to next top-of-hour after firing
     expect(Date.parse(reloaded.nextRun)).toBeGreaterThan(fireTime);
   });
 });
 
-describe("Scheduler create validation", () => {
+describe("TaskScheduler.create validation", () => {
   test("rejects 'once' with past timestamp", async () => {
     const t0 = Date.parse("2026-05-14T12:00:00Z");
     const { scheduler } = makeScheduler({ now: () => t0 });
     await expect(
-      scheduler.createTask(handle, {
+      scheduler.create(sessionId, {
         prompt: "test",
         schedule: { type: "once", at: new Date(t0 - 1000).toISOString() },
       })
@@ -227,7 +227,7 @@ describe("Scheduler create validation", () => {
     const t0 = Date.parse("2026-05-14T12:00:00Z");
     const { scheduler } = makeScheduler({ now: () => t0 });
     await expect(
-      scheduler.createTask(handle, {
+      scheduler.create(sessionId, {
         prompt: "test",
         schedule: { type: "interval", every: "30s" },
       })
@@ -238,7 +238,7 @@ describe("Scheduler create validation", () => {
     const t0 = Date.parse("2026-05-14T12:00:00Z");
     const { scheduler } = makeScheduler({ now: () => t0 });
     await expect(
-      scheduler.createTask(handle, {
+      scheduler.create(sessionId, {
         prompt: "test",
         schedule: { type: "interval", every: "1h" },
         expires: new Date(t0 + 5 * 60_000).toISOString(),
@@ -247,31 +247,31 @@ describe("Scheduler create validation", () => {
   });
 });
 
-describe("Scheduler listTasksFor", () => {
+describe("TaskScheduler.list", () => {
   test("filters by chat/thread", async () => {
     const t0 = Date.parse("2026-05-14T12:00:00Z");
     const { scheduler } = makeScheduler({ now: () => t0 });
-    await scheduler.createTask(
+    await scheduler.create(
       { chatId: 1, threadId: undefined },
       { prompt: "a", schedule: { type: "interval", every: "1h" } }
     );
-    await scheduler.createTask(
+    await scheduler.create(
       { chatId: 1, threadId: 99 },
       { prompt: "b", schedule: { type: "interval", every: "1h" } }
     );
-    await scheduler.createTask(
+    await scheduler.create(
       { chatId: 2, threadId: undefined },
       { prompt: "c", schedule: { type: "interval", every: "1h" } }
     );
 
-    const main = await scheduler.listTasksFor({
+    const main = await scheduler.list({
       chatId: 1,
       threadId: undefined,
     });
     expect(main).toHaveLength(1);
     expect(main[0]!.prompt).toBe("a");
 
-    const threaded = await scheduler.listTasksFor({ chatId: 1, threadId: 99 });
+    const threaded = await scheduler.list({ chatId: 1, threadId: 99 });
     expect(threaded).toHaveLength(1);
     expect(threaded[0]!.prompt).toBe("b");
   });

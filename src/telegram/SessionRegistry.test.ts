@@ -4,14 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { loadState, saveStateAtomic, type TelegramConfig } from "./config";
+import { Fs } from "../shared/Fs";
+import { type TelegramConfig } from "./Config";
 import { SessionRegistry } from "./SessionRegistry";
-import { Scheduler } from "./tasks/Scheduler";
+import type { SessionSettings } from "./Session";
+import { TaskScheduler } from "./TaskScheduler";
 
 let tmp: string;
 let config: TelegramConfig;
 const stubApi = {} as Api;
-const stubScheduler = new Scheduler({
+const stubScheduler = new TaskScheduler({
   configDir: "/tmp",
   runTask: async () => {},
 });
@@ -30,49 +32,56 @@ afterEach(async () => {
   await rm(tmp, { recursive: true, force: true });
 });
 
+async function readState(): Promise<Record<string, SessionSettings>> {
+  return Fs.readJsonOrEmpty<Record<string, SessionSettings>>(
+    join(tmp, "state.json"),
+    {}
+  );
+}
+
+async function writeState(
+  state: Record<string, SessionSettings>
+): Promise<void> {
+  await Fs.writeAtomic(join(tmp, "state.json"), JSON.stringify(state, null, 2));
+}
+
 describe("SessionRegistry state", () => {
-  test("loads persisted state before command-first mutations", async () => {
-    await saveStateAtomic(tmp, {
-      threads: {
-        "1-main": {
-          cwd: "/repo",
-          cumulativeCost: 12.5,
-          sessionPath: "/sessions/one.jsonl",
-        },
+  test("loads persisted state and preserves it when mutating another session", async () => {
+    await writeState({
+      "1-main": {
+        cwd: "/repo",
+        cumulativeCost: 12.5,
+        sessionPath: "/sessions/one.jsonl",
       },
     });
 
     const registry = new SessionRegistry(config, stubApi, stubScheduler);
     await registry.init();
-    await registry.setThreadThinkingLevel(
-      { chatId: 2, threadId: undefined },
-      "off"
-    );
+    const session = registry.get({ chatId: 2, threadId: undefined });
+    await session.setThinkingLevel("off");
 
-    const loaded = await loadState(tmp);
-    expect(loaded.threads["1-main"]).toEqual({
+    const loaded = await readState();
+    expect(loaded["1-main"]).toEqual({
       cwd: "/repo",
       cumulativeCost: 12.5,
       sessionPath: "/sessions/one.jsonl",
     });
-    expect(loaded.threads["2-main"]?.thinkingLevel).toBe("off");
+    expect(loaded["2-main"]?.thinkingLevel).toBe("off");
   });
 
-  test("does not flush empty state when disposed before init", async () => {
-    await saveStateAtomic(tmp, {
-      threads: {
-        "1-main": {
-          cwd: "/repo",
-          cumulativeCost: 12.5,
-        },
+  test("does not flush state when disposed before init", async () => {
+    await writeState({
+      "1-main": {
+        cwd: "/repo",
+        cumulativeCost: 12.5,
       },
     });
 
     const registry = new SessionRegistry(config, stubApi, stubScheduler);
     await registry.disposeAll();
 
-    const loaded = await loadState(tmp);
-    expect(loaded.threads["1-main"]).toEqual({
+    const loaded = await readState();
+    expect(loaded["1-main"]).toEqual({
       cwd: "/repo",
       cumulativeCost: 12.5,
     });

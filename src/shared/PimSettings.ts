@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 
+import { Fs } from "./Fs";
+
 const Schema = Type.Object({
   tps: Type.Object(
     {
@@ -62,7 +64,10 @@ export class PimSettings {
         throw new Error(`Invalid value for pim setting "${String(key)}"`);
       }
       PimSettings.cache = next;
-      await Bun.write(PimSettings.path, `${JSON.stringify(next, null, 2)}\n`);
+      await Fs.writeAtomic(
+        PimSettings.path,
+        `${JSON.stringify(next, null, 2)}\n`
+      );
     };
     PimSettings.writeQueue = PimSettings.writeQueue.then(task, task);
     await PimSettings.writeQueue;
