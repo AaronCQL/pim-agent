@@ -1,3 +1,4 @@
+import type { Stats } from "node:fs";
 import { stat } from "node:fs/promises";
 
 export class FsErrors {
@@ -7,9 +8,7 @@ export class FsErrors {
       : undefined;
   }
 
-  public static async statOrThrow(
-    path: string
-  ): Promise<Awaited<ReturnType<typeof stat>>> {
+  public static async statOrThrow(path: string): Promise<Stats> {
     try {
       return await stat(path);
     } catch (error) {

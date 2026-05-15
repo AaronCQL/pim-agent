@@ -1,3 +1,4 @@
+import type { Stats } from "node:fs";
 import { chmod, realpath, rename, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
@@ -317,7 +318,7 @@ function renderAllNoopError(noops: readonly NoopEdit[]): string {
 async function writeFileAtomic(
   canonicalPath: string,
   content: string,
-  metadata: Awaited<ReturnType<typeof stat>>
+  metadata: Stats
 ): Promise<void> {
   if (metadata.nlink > 1) {
     await Bun.write(canonicalPath, content);

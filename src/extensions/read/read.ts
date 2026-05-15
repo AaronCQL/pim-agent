@@ -1,4 +1,5 @@
 import { basename, dirname, extname, join } from "node:path";
+import type { Stats } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { FsErrors } from "../../shared/FsErrors";
 import { Lines } from "../../shared/Lines";
@@ -202,9 +203,7 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
-async function metadataOrThrow(
-  path: string
-): Promise<Awaited<ReturnType<typeof stat>>> {
+async function metadataOrThrow(path: string): Promise<Stats> {
   try {
     return await stat(path);
   } catch (error) {
