@@ -28,6 +28,7 @@ const CB_CLEAR_CONFIRM = "clear-confirm";
 const CB_CLEAR_CANCEL = "clear-cancel";
 const CB_EFFORT = "effort";
 const CB_LOGS = "logs";
+const CB_MODEL = "model";
 
 const LOGS_DESCRIPTIONS: Record<LogsMode, string> = {
   off: "final message only",
@@ -333,18 +334,16 @@ export class Bot {
   private async cmdModelWrite(session: Session, args: string): Promise<void> {
     const result = await session.setModel(args);
     if (!result.ok) {
-      const bullets = result.candidates
-        .map((c) => `• <code>${Markdown.escape(c)}</code>`)
-        .join("\n");
+      const key = Session.encodeId(session.id);
+      const kb = new InlineKeyboard();
+      for (const c of result.candidates) {
+        kb.text(c, `${CB_MODEL}|${c}|${key}`).row();
+      }
       const header =
         result.kind === "ambiguous"
-          ? `⚠️ Multiple matches for "${Markdown.escape(args)}":`
+          ? `⚠️ Multiple matches for "${Markdown.escape(args)}". Please choose one below or use /model with a more specific name.`
           : `⚠️ No model matches "${Markdown.escape(args)}". Available:`;
-      const footer =
-        result.kind === "ambiguous"
-          ? "\n\nPlease choose one above or use a more specific name."
-          : "";
-      await this.sendWithFallback(session.id, `${header}\n${bullets}${footer}`);
+      await this.sendWithFallback(session.id, header, kb);
       return;
     }
     await this.sendWithFallback(
@@ -468,6 +467,40 @@ export class Bot {
     ctx: Filter<Context, "callback_query:data">
   ): Promise<void> {
     const data = ctx.callbackQuery.data;
+
+    if (data.startsWith(`${CB_MODEL}|`)) {
+      const idx1 = data.indexOf("|");
+      const idx2 = data.lastIndexOf("|");
+      const modelId = data.slice(idx1 + 1, idx2);
+      const keyPart = data.slice(idx2 + 1);
+      const session = this.registry.get(Session.decodeId(keyPart));
+      await ctx.answerCallbackQuery({ text: `Model: ${modelId}` });
+      try {
+        const result = await session.setModel(modelId);
+        if (result.ok) {
+          await Bot.safeEditMessage(
+            ctx,
+            `<b>Model</b> → <code>${Markdown.escape(result.id)}</code>`
+          );
+        } else {
+          await Bot.safeEditMessage(
+            ctx,
+            Bot.strikeOriginal(ctx, `⚠️ model set failed: ${modelId}`)
+          );
+        }
+      } catch (err) {
+        console.error(`[bot] model callback failed for ${modelId}:`, err);
+        await Bot.safeEditMessage(
+          ctx,
+          Bot.strikeOriginal(
+            ctx,
+            `⚠️ model set failed: ${(err as Error).message}`
+          )
+        );
+      }
+      return;
+    }
+
     const colon = data.indexOf(":");
     const action = colon >= 0 ? data.slice(0, colon) : data;
     const keyPart = colon >= 0 ? data.slice(colon + 1) : "";
