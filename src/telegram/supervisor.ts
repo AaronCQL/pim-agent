@@ -13,7 +13,6 @@ export type UpdateConfirmEntry = {
   readonly chatId: number;
   readonly threadId: number | undefined;
   readonly messageId: number;
-  readonly ts: string;
 };
 
 export type Mode = {
@@ -97,8 +96,7 @@ export async function readUpdateConfirm(
       typeof (e as UpdateConfirmEntry).chatId === "number" &&
       ((e as UpdateConfirmEntry).threadId === undefined ||
         typeof (e as UpdateConfirmEntry).threadId === "number") &&
-      typeof (e as UpdateConfirmEntry).messageId === "number" &&
-      typeof (e as UpdateConfirmEntry).ts === "string"
+      typeof (e as UpdateConfirmEntry).messageId === "number"
   );
 }
 
@@ -203,10 +201,10 @@ async function lingerEnabled(): Promise<boolean> {
 }
 
 async function runOrThrow(cmd: ReadonlyArray<string>): Promise<void> {
-  const proc = Bun.spawn([...cmd], { stdout: "pipe", stderr: "pipe" });
+  const proc = Bun.spawn([...cmd], { stdout: "inherit", stderr: "pipe" });
+  const stderr = await new Response(proc.stderr).text();
   const code = await proc.exited;
   if (code !== 0) {
-    const stderr = await new Response(proc.stderr).text();
     throw new Error(
       `${cmd.join(" ")} exit ${code}: ${stderr.trim() || "(no stderr)"}`
     );
@@ -241,7 +239,7 @@ export async function install(): Promise<void> {
     try {
       await runOrThrow(["launchctl", "bootout", `gui/${uid}/${LAUNCHD_LABEL}`]);
     } catch {
-      // not previously loaded
+      // bootout fails when the service isn't currently loaded; safe to ignore before bootstrap
     }
     await runOrThrow(["launchctl", "bootstrap", `gui/${uid}`, path]);
     console.log(`[install] bootstrapped ${LAUNCHD_LABEL}`);
@@ -295,7 +293,7 @@ export async function uninstall(): Promise<void> {
 }
 
 export type UpdateResult =
-  | { readonly ok: true; readonly mode: Mode }
+  | { readonly ok: true }
   | { readonly ok: false; readonly error: string };
 
 export async function runUpdate(): Promise<UpdateResult> {
@@ -306,16 +304,16 @@ export async function runUpdate(): Promise<UpdateResult> {
       : ["bun", "install", "-g", `${NPM_PACKAGE}@latest`];
   const proc = Bun.spawn([...cmd], {
     cwd: mode.kind === "dev" ? mode.packageRoot : undefined,
-    stdout: "pipe",
+    stdout: "inherit",
     stderr: "pipe",
   });
+  const stderr = await new Response(proc.stderr).text();
   const code = await proc.exited;
   if (code !== 0) {
-    const stderr = await new Response(proc.stderr).text();
     return {
       ok: false,
       error: `${cmd.join(" ")} exit ${code}: ${stderr.trim() || "(no stderr)"}`,
     };
   }
-  return { ok: true, mode };
+  return { ok: true };
 }

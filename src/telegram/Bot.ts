@@ -496,7 +496,6 @@ export class Bot {
       chatId: handle.chatId,
       threadId: handle.threadId,
       messageId: sent.message_id,
-      ts: new Date().toISOString(),
     });
     process.exit(0);
   }
