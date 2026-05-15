@@ -12,6 +12,7 @@ const CONFIRM_FILE = "update-confirm.json";
 export type UpdateConfirmEntry = {
   readonly chatId: number;
   readonly threadId: number | undefined;
+  readonly messageId: number;
   readonly ts: string;
 };
 
@@ -96,8 +97,15 @@ export async function readUpdateConfirm(
       typeof (e as UpdateConfirmEntry).chatId === "number" &&
       ((e as UpdateConfirmEntry).threadId === undefined ||
         typeof (e as UpdateConfirmEntry).threadId === "number") &&
+      typeof (e as UpdateConfirmEntry).messageId === "number" &&
       typeof (e as UpdateConfirmEntry).ts === "string"
   );
+}
+
+export async function readVersion(): Promise<string> {
+  const mode = await detectMode();
+  const pkg = await Bun.file(join(mode.packageRoot, "package.json")).json();
+  return typeof pkg?.version === "string" ? pkg.version : "?";
 }
 
 export async function clearUpdateConfirm(configDir: string): Promise<void> {

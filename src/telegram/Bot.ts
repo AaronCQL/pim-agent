@@ -27,6 +27,7 @@ import {
   appendUpdateConfirm,
   clearUpdateConfirm,
   readUpdateConfirm,
+  readVersion,
   runUpdate,
 } from "./supervisor";
 import { Scheduler } from "./tasks/Scheduler";
@@ -183,14 +184,15 @@ export class Bot {
     if (entries.length === 0) {
       return;
     }
+    const version = await readVersion();
+    const text = `✅ Pim Agent updated to v${version}!`;
     await Promise.all(
       entries.map((e) =>
         this.grammy.api
-          .sendMessage(e.chatId, `✅ Pim daemon updated.`, {
-            message_thread_id: e.threadId,
+          .editMessageText(e.chatId, e.messageId, text, {
             link_preview_options: { is_disabled: true },
           })
-          .catch((err) => console.warn(`[update-confirm] send failed:`, err))
+          .catch((err) => console.warn(`[update-confirm] edit failed:`, err))
       )
     );
     await clearUpdateConfirm(this.config.configDir);
@@ -476,7 +478,14 @@ export class Bot {
   }
 
   private async cmdUpdate(handle: ThreadHandle): Promise<void> {
-    await this.sendPlain(handle, "🔄 updating...");
+    const sent = await this.grammy.api.sendMessage(
+      handle.chatId,
+      "🔄 Updating...",
+      {
+        message_thread_id: handle.threadId,
+        link_preview_options: { is_disabled: true },
+      }
+    );
     const result = await runUpdate();
     if (!result.ok) {
       await this.sendPlain(handle, `⚠️ ${result.error}`);
@@ -486,6 +495,7 @@ export class Bot {
     await appendUpdateConfirm(this.config.configDir, {
       chatId: handle.chatId,
       threadId: handle.threadId,
+      messageId: sent.message_id,
       ts: new Date().toISOString(),
     });
     process.exit(0);
