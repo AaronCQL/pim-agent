@@ -110,22 +110,16 @@ export class Session {
   }
 
   public get currentModelId(): string | undefined {
-    if (this.cached?.model) {
-      return Session.modelId(this.cached.model);
-    }
-    return this.currentSettings.model ?? this.deps.config.model;
+    const model = this.cached?.model ?? this.resolveDefaultModel();
+    return model ? Session.modelId(model) : undefined;
   }
 
   public get supportedThinkingLevels(): readonly ThinkingLevelOpt[] {
-    const mid = this.currentSettings.model ?? this.deps.config.model;
-    if (!mid) {
+    const model = this.cached?.model ?? this.resolveDefaultModel();
+    if (!model) {
       return [];
     }
-    const resolved = this.resolveModel(mid);
-    if (resolved.kind !== "ok") {
-      return [];
-    }
-    return piGetSupportedThinkingLevels(resolved.model) as ThinkingLevelOpt[];
+    return piGetSupportedThinkingLevels(model) as ThinkingLevelOpt[];
   }
 
   /**
@@ -444,6 +438,34 @@ export class Session {
       "You are running as a Telegram bot powered by Pim Agent. The thread_user_instructions below are your editable per-thread system instructions; edit the file at its `path` attribute to update your instructions for this chat/thread.";
     const userIx = `<thread_user_instructions path="${path}">${userContent ? `\n${userContent}\n` : ""}</thread_user_instructions>`;
     return `<telegram_system_instructions>\n${systemIx}\n${userIx}\n</telegram_system_instructions>`;
+  }
+
+  private resolveDefaultModel(): Model<ModelApi> | undefined {
+    const sessionModel = this.currentSettings.model;
+    if (sessionModel) {
+      const r = this.resolveModel(sessionModel);
+      if (r.kind === "ok") {
+        return r.model;
+      }
+    }
+    const configModel = this.deps.config.model;
+    if (configModel) {
+      const r = this.resolveModel(configModel);
+      if (r.kind === "ok") {
+        return r.model;
+      }
+    }
+    const cwd = this.currentSettings.cwd ?? this.deps.config.cwd;
+    const sm = this.deps.settingsManagerFor(cwd);
+    const provider = sm.getDefaultProvider();
+    const modelId = sm.getDefaultModel();
+    if (provider && modelId) {
+      const m = this.deps.modelRegistry.find(provider, modelId);
+      if (m) {
+        return m;
+      }
+    }
+    return this.deps.modelRegistry.getAvailable()[0];
   }
 
   private resolveModel(pattern: string): ModelResolveResult {
