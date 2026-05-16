@@ -486,6 +486,7 @@ export class Session {
   }
 
   private resolveDefaultModel(): Model<ModelApi> | undefined {
+    this.deps.modelRegistry.refresh();
     const sessionModel = this.currentSettings.model;
     if (sessionModel) {
       const r = this.resolveModel(sessionModel);
@@ -514,6 +515,7 @@ export class Session {
   }
 
   private resolveModel(pattern: string): ModelResolveResult {
+    this.deps.modelRegistry.refresh();
     const available = this.deps.modelRegistry.getAvailable();
     const candidates: FuzzyCandidate<Model<ModelApi>>[] = available.map(
       (m) => ({
