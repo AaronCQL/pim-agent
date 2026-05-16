@@ -58,6 +58,7 @@ export type SessionDeps = {
   readonly scheduler: TaskScheduler;
   readonly settingsManagerFor: (cwd: string) => SettingsManager;
   readonly persistSettings: (patch: Partial<SessionSettings>) => Promise<void>;
+  readonly getBotUsername: () => string | undefined;
 };
 
 type ModelResolveResult =
@@ -73,7 +74,7 @@ export class Session {
   private currentSettings: SessionSettings;
   private cached: AgentSession | undefined;
   private cachedUnsubscribe: (() => void) | undefined;
-  private cachedPromptInstruction: string | undefined;
+  private cachedSystemInstruction: string | undefined;
   private queue: Promise<void> = Promise.resolve();
   public lastUsed = Date.now();
 
@@ -141,7 +142,7 @@ export class Session {
    *
    * Default (`isolated: false`): work runs against the cached `AgentSession`,
    * which is built on first call and reused across turns (chat history
-   * persists, thread-instruction file is re-read between turns).
+   * persists, user instruction file is re-read between turns).
    *
    * `isolated: true`: work runs against a fresh `AgentSession` written under
    * `isolated-sessions/`, disposed and unlinked when the work resolves. No
@@ -306,19 +307,22 @@ export class Session {
   }
 
   private async ensureCached(): Promise<AgentSession> {
-    const wrapped = await this.loadWrappedThreadInstruction();
+    const systemInstruction = await this.getSystemInstruction();
     if (this.cached) {
-      if (this.cachedPromptInstruction !== wrapped) {
-        this.cachedPromptInstruction = wrapped;
+      if (this.cachedSystemInstruction !== systemInstruction) {
+        this.cachedSystemInstruction = systemInstruction;
         await this.cached.reload();
       }
       return this.cached;
     }
     const sessionPath =
       this.currentSettings.sessionPath ?? this.defaultSessionPath();
-    const { agent, cwd } = await this.buildAgent(sessionPath, wrapped);
+    const { agent, cwd } = await this.buildAgent(
+      sessionPath,
+      systemInstruction
+    );
     this.cached = agent;
-    this.cachedPromptInstruction = wrapped;
+    this.cachedSystemInstruction = systemInstruction;
     this.cachedUnsubscribe = this.subscribeCumulativeCost(agent);
     await this.patchSettings({ cwd, sessionPath });
     return agent;
@@ -348,7 +352,7 @@ export class Session {
   }> {
     const sessionPath = this.isolatedSessionPath();
     await mkdir(dirname(sessionPath), { recursive: true });
-    const wrapped = await this.loadWrappedThreadInstruction();
+    const wrapped = await this.getSystemInstruction();
     const { agent } = await this.buildAgent(sessionPath, wrapped);
     this.subscribeCumulativeCost(agent);
     return { agent, sessionPath };
@@ -419,7 +423,7 @@ export class Session {
       this.cached.dispose();
       this.cached = undefined;
       this.cachedUnsubscribe = undefined;
-      this.cachedPromptInstruction = undefined;
+      this.cachedSystemInstruction = undefined;
     }
     const path = this.currentSettings.sessionPath ?? this.defaultSessionPath();
     const archived = `${path}.archived-${new Date().toISOString().replace(/[:.]/g, "-")}`;
@@ -457,27 +461,27 @@ export class Session {
     );
   }
 
-  private threadInstructionPath(): string {
-    return join(
+  private async getSystemInstruction(): Promise<string | undefined> {
+    const path = join(
       this.deps.config.configDir,
       "instructions",
       `${Session.encodeId(this.id)}.md`
     );
-  }
-
-  private async loadWrappedThreadInstruction(): Promise<string | undefined> {
-    const path = this.threadInstructionPath();
     let userContent: string | undefined;
     try {
       userContent = (await Bun.file(path).text()).trim();
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-        console.warn(`[thread-prompt] failed to read ${path}:`, err);
+        console.warn(
+          `[telegram-user-instruction] failed to read ${path}:`,
+          err
+        );
       }
     }
-    const systemIx =
-      "You are running as a Telegram bot powered by Pim Agent. The thread_user_instructions below are your editable per-thread system instructions; edit the file at its `path` attribute to update your instructions for this chat/thread.";
-    const userIx = `<thread_user_instructions path="${path}">${userContent ? `\n${userContent}\n` : ""}</thread_user_instructions>`;
+    const username = this.deps.getBotUsername();
+    const handle = username ? ` (@${username})` : "";
+    const systemIx = `You are running as a Telegram bot${handle} powered by Pim Agent. The telegram_user_instructions below are your editable instructions - edit the file at its \`path\` attribute to update your instructions.`;
+    const userIx = `<telegram_user_instructions path="${path}">${userContent ? `\n${userContent}\n` : ""}</telegram_user_instructions>`;
     return `<telegram_system_instructions>\n${systemIx}\n${userIx}\n</telegram_system_instructions>`;
   }
 

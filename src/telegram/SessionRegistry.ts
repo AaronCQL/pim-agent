@@ -27,6 +27,7 @@ export class SessionRegistry {
   private settings: Map<string, SessionSettings> = new Map();
   private initialized = false;
   private initPromise: Promise<void> | undefined;
+  private botUsername: string | undefined;
 
   public constructor(
     config: TelegramConfig,
@@ -42,6 +43,10 @@ export class SessionRegistry {
       this.authStorage,
       join(this.agentDir, "models.json")
     );
+  }
+
+  public setBotUsername(username: string): void {
+    this.botUsername = username;
   }
 
   public async init(): Promise<void> {
@@ -75,6 +80,7 @@ export class SessionRegistry {
       scheduler: this.scheduler,
       settingsManagerFor: (cwd) => this.settingsManagerFor(cwd),
       persistSettings: (patch) => this.persistSettings(key, patch),
+      getBotUsername: () => this.botUsername,
     });
     this.cache.set(key, session);
     return session;

@@ -157,6 +157,7 @@ export class Bot {
     await this.processBootUpdateConfirm();
     await this.grammy.api.deleteWebhook({ drop_pending_updates: true });
     const username = this.grammy.botInfo.username;
+    this.registry.setBotUsername(username);
     console.log(`bot @${username} ready`);
     await this.scheduler.start();
     await this.grammy.start();
