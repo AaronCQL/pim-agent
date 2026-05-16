@@ -97,6 +97,9 @@ export class SessionRegistry {
     );
     this.settings = new Map(Object.entries(loaded));
     await mkdir(join(this.config.configDir, "sessions"), { recursive: true });
+    await mkdir(join(this.config.configDir, "isolated-sessions"), {
+      recursive: true,
+    });
     await mkdir(join(this.config.configDir, "instructions"), {
       recursive: true,
     });

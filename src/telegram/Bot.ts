@@ -29,6 +29,7 @@ const CB_CLEAR_CANCEL = "clear-cancel";
 const CB_EFFORT = "effort";
 const CB_LOGS = "logs";
 const CB_MODEL = "model";
+const CB_TEMPORARY = "temporary";
 
 type BotCommand = { readonly command: string; readonly description: string };
 
@@ -41,6 +42,10 @@ const BOT_COMMANDS: readonly BotCommand[] = [
   { command: "effort", description: "Show or change thinking effort level" },
   { command: "usage", description: "Show context window and session cost" },
   { command: "logs", description: "Show or change log verbosity" },
+  {
+    command: "temporary",
+    description: "Toggle temporary chat (no history, fresh each message)",
+  },
   { command: "update", description: "Update the bot to the latest version" },
   { command: "commands", description: "Register all commands with Telegram" },
 ];
@@ -135,7 +140,10 @@ export class Bot {
         return;
       }
 
-      void session.run((agent) => this.handleTurn(session, agent, prompt));
+      void session.run(
+        (agent) => this.handleTurn(session, agent, prompt),
+        session.temporary ? { isolated: true } : undefined
+      );
     });
 
     this.grammy.catch((err) => {
@@ -237,6 +245,9 @@ export class Bot {
           return;
         case "/logs":
           await this.cmdLogs(session);
+          return;
+        case "/temporary":
+          await this.cmdTemporary(session);
           return;
         case "/update":
           await this.runQueued(ctx, session, () => this.cmdUpdate(session));
@@ -458,6 +469,30 @@ export class Bot {
     await this.sendWithFallback(session.id, html, kb);
   }
 
+  private async cmdTemporary(session: Session): Promise<void> {
+    const { kb, html } = this.buildTemporaryPicker(
+      session.id,
+      session.temporary
+    );
+    await this.sendWithFallback(session.id, html, kb);
+  }
+
+  private buildTemporaryPicker(
+    sessionId: SessionId,
+    current: boolean
+  ): { readonly kb: InlineKeyboard; readonly html: string } {
+    const key = Session.encodeId(sessionId);
+    const kb = new InlineKeyboard()
+      .text(current ? "off" : "✅ off", `${CB_TEMPORARY}:0:${key}`)
+      .text(current ? "✅ on" : "on", `${CB_TEMPORARY}:1:${key}`);
+    const html = [
+      `<b>Temporary</b>: <code>${current ? "on" : "off"}</code>`,
+      "",
+      "When <b>on</b>, every message is independent and runs in a fresh session without any chat history.",
+    ].join("\n");
+    return { kb, html };
+  }
+
   private async cmdUpdate(session: Session): Promise<void> {
     const sent = await this.grammy.api.sendMessage(
       session.id.chatId,
@@ -636,6 +671,22 @@ export class Bot {
       await session.setLogsMode(parts.value);
       await ctx.answerCallbackQuery({ text: `Logs: ${parts.value}` });
       const { kb, html } = this.buildLogsPicker(session.id, parts.value);
+      await Bot.safeEditMessage(ctx, html, kb);
+      return;
+    }
+    if (action === CB_TEMPORARY && keyPart) {
+      const parts = splitValueAndKey(keyPart);
+      if (!parts || (parts.value !== "0" && parts.value !== "1")) {
+        await ctx.answerCallbackQuery();
+        return;
+      }
+      const value = parts.value === "1";
+      const session = this.registry.get(Session.decodeId(parts.key));
+      await session.setTemporary(value);
+      await ctx.answerCallbackQuery({
+        text: `Temporary: ${value ? "on" : "off"}`,
+      });
+      const { kb, html } = this.buildTemporaryPicker(session.id, value);
       await Bot.safeEditMessage(ctx, html, kb);
       return;
     }

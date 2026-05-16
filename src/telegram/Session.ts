@@ -11,7 +11,7 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import type { Api } from "grammy";
-import { mkdir, rename, stat } from "node:fs/promises";
+import { mkdir, rename, stat, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { FuzzyMatcher, type FuzzyCandidate } from "../shared/FuzzyMatcher";
@@ -32,6 +32,7 @@ export type SessionSettings = {
   readonly logsMode?: LogsMode;
   readonly sessionPath?: string;
   readonly cumulativeCost?: number;
+  readonly temporary?: boolean;
 };
 
 export type SetCwdResult =
@@ -73,7 +74,6 @@ export class Session {
   private cached: AgentSession | undefined;
   private cachedUnsubscribe: (() => void) | undefined;
   private cachedPromptInstruction: string | undefined;
-  private cachedLastTurnCost = 0;
   private queue: Promise<void> = Promise.resolve();
   public lastUsed = Date.now();
 
@@ -143,10 +143,10 @@ export class Session {
    * which is built on first call and reused across turns (chat history
    * persists, thread-instruction file is re-read between turns).
    *
-   * `isolated: true`: work runs against a fresh one-shot `AgentSession`
-   * written under `tasks-sessions/`, disposed when the work resolves. No
+   * `isolated: true`: work runs against a fresh `AgentSession` written under
+   * `isolated-sessions/`, disposed and unlinked when the work resolves. No
    * history, no shared state with the cached agent. Used for scheduled tasks
-   * that explicitly opt out of the chat thread.
+   * and chats in temporary mode that opt out of persistent chat history.
    */
   public run(
     work: (agent: AgentSession) => Promise<void>,
@@ -154,11 +154,19 @@ export class Session {
   ): Promise<void> {
     return this.enqueue(async () => {
       if (opts?.isolated) {
-        const isolated = await this.buildIsolatedAgent();
+        const { agent, sessionPath } = await this.buildIsolatedAgent();
         try {
-          await work(isolated);
+          await work(agent);
         } finally {
-          isolated.dispose();
+          agent.dispose();
+          await unlink(sessionPath).catch((err: unknown) => {
+            if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+              console.warn(
+                `[session ${Session.encodeId(this.id)}] unlink ${sessionPath}:`,
+                err
+              );
+            }
+          });
         }
         return;
       }
@@ -248,6 +256,19 @@ export class Session {
     });
   }
 
+  public get temporary(): boolean {
+    return this.currentSettings.temporary ?? false;
+  }
+
+  public setTemporary(value: boolean): Promise<void> {
+    return this.enqueue(async () => {
+      if ((this.currentSettings.temporary ?? false) === value) {
+        return;
+      }
+      await this.patchSettings({ temporary: value });
+    });
+  }
+
   public dispose(): void {
     if (this.cached) {
       this.cachedUnsubscribe?.();
@@ -298,31 +319,39 @@ export class Session {
     const { agent, cwd } = await this.buildAgent(sessionPath, wrapped);
     this.cached = agent;
     this.cachedPromptInstruction = wrapped;
-    this.cachedLastTurnCost = agent.getSessionStats().cost ?? 0;
-    this.cachedUnsubscribe = agent.subscribe((event) => {
-      if (event.type !== "turn_end") {
-        return;
-      }
-      const total = agent.getSessionStats().cost ?? 0;
-      const delta = total - this.cachedLastTurnCost;
-      if (delta <= 0) {
-        return;
-      }
-      this.cachedLastTurnCost = total;
-      void this.patchSettings({
-        cumulativeCost: (this.currentSettings.cumulativeCost ?? 0) + delta,
-      });
-    });
+    this.cachedUnsubscribe = this.subscribeCumulativeCost(agent);
     await this.patchSettings({ cwd, sessionPath });
     return agent;
   }
 
-  private async buildIsolatedAgent(): Promise<AgentSession> {
+  private subscribeCumulativeCost(agent: AgentSession): () => void {
+    let last = agent.getSessionStats().cost ?? 0;
+    return agent.subscribe((event) => {
+      if (event.type !== "turn_end") {
+        return;
+      }
+      const total = agent.getSessionStats().cost ?? 0;
+      const delta = total - last;
+      if (delta <= 0) {
+        return;
+      }
+      last = total;
+      void this.patchSettings({
+        cumulativeCost: (this.currentSettings.cumulativeCost ?? 0) + delta,
+      });
+    });
+  }
+
+  private async buildIsolatedAgent(): Promise<{
+    readonly agent: AgentSession;
+    readonly sessionPath: string;
+  }> {
     const sessionPath = this.isolatedSessionPath();
     await mkdir(dirname(sessionPath), { recursive: true });
     const wrapped = await this.loadWrappedThreadInstruction();
     const { agent } = await this.buildAgent(sessionPath, wrapped);
-    return agent;
+    this.subscribeCumulativeCost(agent);
+    return { agent, sessionPath };
   }
 
   private async buildAgent(
@@ -423,7 +452,7 @@ export class Session {
     const ts = new Date().toISOString().replace(/[:.]/g, "-");
     return join(
       this.deps.config.configDir,
-      "tasks-sessions",
+      "isolated-sessions",
       `${Session.encodeId(this.id)}-${ts}.jsonl`
     );
   }
