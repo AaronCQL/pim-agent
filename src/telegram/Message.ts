@@ -56,6 +56,9 @@ export class Message {
     }
 
     const body = (text || caption || "").trim();
+    if (!body && images.length === 0 && attachments.length === 0) {
+      return undefined;
+    }
     const replyContext = Message.buildReplyContext(ctx);
     const promptText = [replyContext, body, ...attachments]
       .filter(Boolean)
