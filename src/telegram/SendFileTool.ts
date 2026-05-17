@@ -3,9 +3,9 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { GrammyError, InputFile, type Api } from "grammy";
-import { stat } from "node:fs/promises";
 import { basename } from "node:path";
 
+import { FsErrors } from "../shared/FsErrors";
 import { Paths } from "../shared/Paths";
 import { Markdown } from "./Markdown";
 import {
@@ -55,12 +55,7 @@ export class SendFileTool {
     cwd: string
   ): Promise<{ readonly path: string; readonly size: number }> {
     const path = Paths.resolve(rawPath, cwd);
-    let st;
-    try {
-      st = await stat(path);
-    } catch (err) {
-      throw new Error(`${rawPath}: ${(err as Error).message}`);
-    }
+    const st = await FsErrors.statOrThrow(path);
     if (!st.isFile()) {
       throw new Error(`${rawPath} is not a regular file.`);
     }

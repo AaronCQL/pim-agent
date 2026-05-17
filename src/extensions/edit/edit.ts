@@ -1,5 +1,5 @@
 import type { Stats } from "node:fs";
-import { realpath, stat } from "node:fs/promises";
+import { realpath } from "node:fs/promises";
 import {
   EditMatcher,
   type EditMatchStrategy,
@@ -7,6 +7,7 @@ import {
 } from "../../shared/EditMatcher";
 import { DiffLines, type ToolDiff } from "../../shared/DiffLines";
 import { Fs } from "../../shared/Fs";
+import { FsErrors } from "../../shared/FsErrors";
 import { Lines } from "../../shared/Lines";
 import type { RawEdit } from "./schema";
 
@@ -63,20 +64,21 @@ export async function editFile(
   absolutePath: string,
   rawEdits: readonly RawEdit[]
 ): Promise<EditOutcome> {
+  const metadata = await FsErrors.statOrThrow(absolutePath);
   const canonicalPath = await realpath(absolutePath);
 
   return enqueue(canonicalPath, () =>
-    performEdit(absolutePath, canonicalPath, rawEdits)
+    performEdit(absolutePath, canonicalPath, rawEdits, metadata)
   );
 }
 
 async function performEdit(
   displayPath: string,
   canonicalPath: string,
-  rawEdits: readonly RawEdit[]
+  rawEdits: readonly RawEdit[],
+  metadata: Stats
 ): Promise<EditOutcome> {
   const edits = parseEdits(rawEdits);
-  const metadata = await stat(canonicalPath);
 
   if (metadata.isDirectory()) {
     throw new Error(`Path is a directory: ${displayPath}.`);
