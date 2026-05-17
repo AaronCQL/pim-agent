@@ -15,6 +15,7 @@ import { mkdir, rename, stat, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { FuzzyMatcher, type FuzzyCandidate } from "../shared/FuzzyMatcher";
+import { Tools } from "../shared/Tools";
 import type { LogsMode, TelegramConfig, ThinkingLevelOpt } from "./Config";
 import { SendFileTool } from "./SendFileTool";
 import type { TaskScheduler } from "./TaskScheduler";
@@ -411,7 +412,7 @@ export class Session {
       thinkingLevel: this.currentSettings.thinkingLevel as
         | ThinkingLevel
         | undefined,
-      customTools: [sendFile, taskTool],
+      customTools: [Tools.wrap(sendFile), Tools.wrap(taskTool)],
     });
 
     return { agent, cwd };

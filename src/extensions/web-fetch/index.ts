@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Renderer } from "../../shared/Renderer";
+import { Tools } from "../../shared/Tools";
 import {
   clampMaxBytes,
   executeFetch,
@@ -22,7 +23,7 @@ export default function (pi: ExtensionAPI): void {
   const jina = new JinaReaderClient(apiKey ? { apiKey } : {});
   const webView = new WebViewFetchClient();
 
-  pi.registerTool({
+  Tools.register(pi, {
     name: "web_fetch",
     label: "web_fetch",
     description: "Fetch a URL and return its markdown or HTML content.",

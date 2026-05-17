@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Paths } from "../../shared/Paths";
 import { Renderer } from "../../shared/Renderer";
+import { Tools } from "../../shared/Tools";
 import { findFiles } from "./glob";
 import { formatTitle, renderFiles } from "./render";
 import { GLOB_HEAD_LIMIT_MAX, type GlobInput, globSchema } from "./schema";
@@ -9,7 +10,7 @@ const PREVIEW_LINES = 10;
 const fileCountByToolCallId = new Map<string, number>();
 
 export default function (pi: ExtensionAPI): void {
-  pi.registerTool({
+  Tools.register(pi, {
     name: "glob",
     label: "glob",
     description:
