@@ -1,5 +1,5 @@
 import type { Stats } from "node:fs";
-import { realpath } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import {
   EditMatcher,
   type EditMatchStrategy,
@@ -64,21 +64,28 @@ export async function editFile(
   absolutePath: string,
   rawEdits: readonly RawEdit[]
 ): Promise<EditOutcome> {
-  const metadata = await FsErrors.statOrThrow(absolutePath);
-  const canonicalPath = await realpath(absolutePath);
+  let canonicalPath: string;
+  try {
+    canonicalPath = await realpath(absolutePath);
+  } catch (error) {
+    if (FsErrors.code(error) === "ENOENT") {
+      throw new Error(await FsErrors.renderMissing(absolutePath));
+    }
+    throw error;
+  }
 
   return enqueue(canonicalPath, () =>
-    performEdit(absolutePath, canonicalPath, rawEdits, metadata)
+    performEdit(absolutePath, canonicalPath, rawEdits)
   );
 }
 
 async function performEdit(
   displayPath: string,
   canonicalPath: string,
-  rawEdits: readonly RawEdit[],
-  metadata: Stats
+  rawEdits: readonly RawEdit[]
 ): Promise<EditOutcome> {
   const edits = parseEdits(rawEdits);
+  const metadata = await stat(canonicalPath);
 
   if (metadata.isDirectory()) {
     throw new Error(`Path is a directory: ${displayPath}.`);
