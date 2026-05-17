@@ -41,6 +41,13 @@ export class Tools {
           ? def.prepareArguments(rawArgs)
           : (rawArgs as Static<TParams>);
         const cleaned = coerceQuotedEnums(prepared, schema) as Static<TParams>;
+        const strictIssues = checkStrictTypes(cleaned, schema, "");
+        if (strictIssues.length > 0) {
+          const lines = strictIssues.map((s) => `  - ${s}`).join("\n");
+          throw new Error(
+            `Validation failed for tool "${def.name}":\n${lines}`
+          );
+        }
         let validated: Static<TParams>;
         try {
           validated = validateToolArguments(
@@ -490,6 +497,99 @@ function stripWrappingQuotes(value: string): string {
     return value.slice(1, -1);
   }
   return value;
+}
+
+/**
+ * Pi-ai intentionally coerces a lot of LLM-quirk inputs (`"42"` → 42,
+ * `"true"` → true, single value → array, etc.) so weak/cheap models don't
+ * fail on JSON shakiness. This is good. But two of those coercions are
+ * almost certainly silent bugs:
+ *
+ * - `null` → `0` / `""` / `false` / `"null"` for primitive fields. `null`
+ *   is never a sensible value for a non-nullable primitive; treating it as
+ *   the type's zero value hides the model's confusion.
+ * - `"42.5"` → `42` for an integer field. The float-shaped string means the
+ *   model misunderstood the type; truncating loses information without
+ *   recovering the intent.
+ *
+ * Reject both before pi's `Value.Convert` runs.
+ */
+function checkStrictTypes(
+  value: unknown,
+  schema: JsonSchema | undefined,
+  path: string
+): string[] {
+  if (!schema) {
+    return [];
+  }
+
+  const types = collectSchemaTypes(schema);
+  if (types.length > 0 && !types.includes("null") && value === null) {
+    return [
+      `${path || "root"}: must not be null (expected ${types.join(" | ")})`,
+    ];
+  }
+
+  if (
+    types.includes("integer") &&
+    typeof value === "string" &&
+    /^-?\d+\.\d*[1-9]/.test(value)
+  ) {
+    return [
+      `${path || "root"}: must be an integer (received "${value}" — fractional part would be truncated)`,
+    ];
+  }
+
+  if (isRecord(value) && schema.properties) {
+    const issues: string[] = [];
+    for (const [key, sub] of Object.entries(value)) {
+      const subSchema = schema.properties[key];
+      if (subSchema) {
+        issues.push(...checkStrictTypes(sub, subSchema, joinPath(path, key)));
+      }
+    }
+    return issues;
+  }
+
+  if (Array.isArray(value)) {
+    const itemsField = schema.items;
+    if (!itemsField || Array.isArray(itemsField)) {
+      return [];
+    }
+    const itemSchema = itemsField as JsonSchema;
+    const issues: string[] = [];
+    for (let i = 0; i < value.length; i++) {
+      issues.push(
+        ...checkStrictTypes(value[i], itemSchema, joinPath(path, String(i)))
+      );
+    }
+    return issues;
+  }
+
+  return [];
+}
+
+function collectSchemaTypes(schema: JsonSchema): string[] {
+  const types = new Set<string>();
+  if (typeof schema.type === "string") {
+    types.add(schema.type);
+  }
+  if (Array.isArray(schema.type)) {
+    for (const t of schema.type) {
+      if (typeof t === "string") {
+        types.add(t);
+      }
+    }
+  }
+  const branches = schema.anyOf ?? schema.oneOf;
+  if (branches) {
+    for (const b of branches) {
+      for (const t of collectSchemaTypes(b)) {
+        types.add(t);
+      }
+    }
+  }
+  return Array.from(types);
 }
 
 function findUnknownTopLevelKeys(schema: JsonSchema, args: unknown): string[] {

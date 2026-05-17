@@ -219,6 +219,83 @@ describe("Tools.wrap quoted-enum coercion", () => {
   });
 });
 
+describe("Tools.wrap strict type checks", () => {
+  function wrapTool(params: TSchema) {
+    return Tools.wrap({
+      name: "t",
+      label: "t",
+      description: "test",
+      parameters: params,
+      async execute() {
+        return { content: [{ type: "text", text: "" }], details: {} };
+      },
+    });
+  }
+
+  test('rejects null for string field instead of coercing to "null"', () => {
+    const wrapped = wrapTool(Type.Object({ path: Type.String() }));
+    expect(() => wrapped.prepareArguments!({ path: null })).toThrow(
+      'Validation failed for tool "t":\n  - path: must not be null (expected string)'
+    );
+  });
+
+  test("rejects null for integer field instead of coercing to 0", () => {
+    const wrapped = wrapTool(Type.Object({ n: Type.Integer() }));
+    expect(() => wrapped.prepareArguments!({ n: null })).toThrow(
+      'Validation failed for tool "t":\n  - n: must not be null (expected integer)'
+    );
+  });
+
+  test("rejects null for boolean field instead of coercing to false", () => {
+    const wrapped = wrapTool(Type.Object({ b: Type.Boolean() }));
+    expect(() => wrapped.prepareArguments!({ b: null })).toThrow(
+      'Validation failed for tool "t":\n  - b: must not be null (expected boolean)'
+    );
+  });
+
+  test("rejects float string for integer field instead of truncating", () => {
+    const wrapped = wrapTool(Type.Object({ n: Type.Integer() }));
+    expect(() => wrapped.prepareArguments!({ n: "42.5" })).toThrow(
+      'Validation failed for tool "t":\n  - n: must be an integer (received "42.5" — fractional part would be truncated)'
+    );
+  });
+
+  test("integer string with no fractional part still coerces", () => {
+    const wrapped = wrapTool(Type.Object({ n: Type.Integer() }));
+    expect(wrapped.prepareArguments!({ n: "42" })).toEqual({ n: 42 });
+  });
+
+  test("integer string like '42.0' is allowed (no precision loss)", () => {
+    const wrapped = wrapTool(Type.Object({ n: Type.Integer() }));
+    expect(wrapped.prepareArguments!({ n: "42.0" })).toEqual({ n: 42 });
+  });
+
+  test("string-to-bool coercion still works (defensible LLM quirk)", () => {
+    const wrapped = wrapTool(Type.Object({ b: Type.Boolean() }));
+    expect(wrapped.prepareArguments!({ b: "true" })).toEqual({ b: true });
+  });
+
+  test("null in a nested field is also rejected", () => {
+    const wrapped = wrapTool(
+      Type.Object({
+        edits: Type.Array(Type.Object({ value: Type.String() })),
+      })
+    );
+    expect(() =>
+      wrapped.prepareArguments!({ edits: [{ value: null }] })
+    ).toThrow(
+      'Validation failed for tool "t":\n  - edits.0.value: must not be null (expected string)'
+    );
+  });
+
+  test("null is not rejected when schema explicitly accepts it", () => {
+    const wrapped = wrapTool(
+      Type.Object({ x: Type.Union([Type.String(), Type.Null()]) })
+    );
+    expect(() => wrapped.prepareArguments!({ x: null })).not.toThrow();
+  });
+});
+
 describe("Tools.wrap unknown property detection", () => {
   test("rejects unknown top-level key", () => {
     const params = Type.Object({ command: Type.String() });
