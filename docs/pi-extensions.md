@@ -28,4 +28,4 @@ Sibling docs: `compaction.md`, `custom-provider.md`, `keybindings.md`, `models.m
 
 **Tool def**: `{ name, label, description, parameters: TypeBox, async execute(toolCallId, params, signal, onUpdate, ctx) { return { content: [{type:'text', text}], details: {} } } }`. Optional `renderCall`/`renderResult`, `remote` for off-process.
 
-**Register tools through `Tools` (from `src/shared/Tools.ts`), not `pi.registerTool` directly.** `Tools.register(pi, def)` for extensions, `Tools.wrap(def)` for `customTools`. The wrapper intercepts pi's raw validator errors and rewrites them into actionable messages (anyOf collapsing, enum value listing, "did you mean" hints for unknown keys), unwraps quoted enum values from weak models, and blocks the two coercions that hide bugs (`null` → primitive, float-string → integer truncation).
+**Registering tools**: `Tools.register(pi, def)` for extensions, `Tools.wrap(def)` for `customTools` (see `src/shared/Tools.ts`). Never call `pi.registerTool` directly — the wrapper rewrites pi's raw validator errors into actionable messages and tightens a few coercions that hide bugs.
