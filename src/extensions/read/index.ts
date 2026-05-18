@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Paths } from "../../shared/Paths";
 import { Renderer } from "../../shared/Renderer";
+import { Tools } from "../../shared/Tools";
 import { buildReadRange, readFile } from "./read";
 import { formatTitlePath } from "./render";
 import { type ReadInput, readSchema } from "./schema";
@@ -8,7 +9,7 @@ import { type ReadInput, readSchema } from "./schema";
 const PREVIEW_LINES = 10;
 
 export default function (pi: ExtensionAPI): void {
-  pi.registerTool({
+  Tools.register(pi, {
     name: "read",
     label: "read",
     description:

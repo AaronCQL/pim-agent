@@ -27,3 +27,5 @@ Sibling docs: `compaction.md`, `custom-provider.md`, `keybindings.md`, `models.m
 **`ctx` (ExtensionContext)**: `ui` (`notify`, `confirm`, `select`, `input`, `setStatus`, `setWidget`, `custom`), `hasUI`, `cwd`, `signal`, `sessionManager`, `modelRegistry`/`model`, `isIdle()`/`abort()`/`hasPendingMessages()`, `shutdown()`, `getContextUsage()`, `compact()`, `getSystemPrompt()`. Command ctx adds `waitForIdle`, `newSession`, `fork`, `navigateTree`, `switchSession`, `reload` - session replacement has footguns, read the doc first.
 
 **Tool def**: `{ name, label, description, parameters: TypeBox, async execute(toolCallId, params, signal, onUpdate, ctx) { return { content: [{type:'text', text}], details: {} } } }`. Optional `renderCall`/`renderResult`, `remote` for off-process.
+
+**Registering tools**: `Tools.register(pi, def)` for extensions, `Tools.wrap(def)` for `customTools` (see `src/shared/Tools.ts`). Never call `pi.registerTool` directly — the wrapper rewrites pi's raw validator errors into actionable messages and tightens a few coercions that hide bugs.

@@ -3,6 +3,7 @@ import { type Component, Container } from "@earendil-works/pi-tui";
 import { DiffView } from "../../shared/DiffView";
 import { Paths } from "../../shared/Paths";
 import { Renderer } from "../../shared/Renderer";
+import { Tools } from "../../shared/Tools";
 import { type EditOutcome, editFile, formatEditSummary } from "./edit";
 import { type EditInput, editSchema } from "./schema";
 
@@ -14,7 +15,7 @@ type EditRenderState = {
 };
 
 export default function (pi: ExtensionAPI): void {
-  pi.registerTool({
+  Tools.register(pi, {
     name: "edit",
     label: "edit",
     description:

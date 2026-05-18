@@ -1,6 +1,3 @@
-import { basename, dirname, extname, join } from "node:path";
-import type { Stats } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
 import { FsErrors } from "../../shared/FsErrors";
 import { Lines } from "../../shared/Lines";
 import { MAX_LINE_LENGTH, MAX_READ_BYTES, type ReadRange } from "./schema";
@@ -49,7 +46,7 @@ export async function readFile(
   path: string,
   range: ReadRange
 ): Promise<ReadOutcome> {
-  const metadata = await metadataOrThrow(path);
+  const metadata = await FsErrors.statOrThrow(path);
 
   if (metadata.isDirectory()) {
     throw new Error(
@@ -201,58 +198,6 @@ function formatBytes(bytes: number): string {
   }
 
   return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
-}
-
-async function metadataOrThrow(path: string): Promise<Stats> {
-  try {
-    return await stat(path);
-  } catch (error) {
-    if (FsErrors.code(error) === "ENOENT") {
-      throw new Error(await renderMissingFileError(path));
-    }
-
-    rethrowFsError(error, path, "stat");
-  }
-}
-
-async function renderMissingFileError(path: string): Promise<string> {
-  const suggestions = await suggestSiblings(path);
-
-  if (suggestions.length === 0) {
-    return `File not found: ${path}. Use glob to locate the file or verify the path.`;
-  }
-
-  return [
-    `File not found: ${path}. Use glob to locate the file or verify the path.`,
-    "",
-    "Did you mean one of these?",
-    ...suggestions,
-  ].join("\n");
-}
-
-async function suggestSiblings(path: string): Promise<readonly string[]> {
-  const dir = dirname(path);
-  const base = basename(path).toLowerCase();
-  const stem = base.slice(0, base.length - extname(base).length);
-
-  try {
-    const entries = await readdir(dir);
-    return entries
-      .filter((entry) => {
-        const lower = entry.toLowerCase();
-        const lowerStem = lower.slice(0, lower.length - extname(lower).length);
-        return (
-          lower.includes(base) ||
-          base.includes(lower) ||
-          (stem.length > 0 &&
-            (lowerStem.includes(stem) || stem.includes(lowerStem)))
-        );
-      })
-      .slice(0, 3)
-      .map((entry) => join(dir, entry));
-  } catch {
-    return [];
-  }
 }
 
 function rethrowFsError(error: unknown, path: string, action: string): never {

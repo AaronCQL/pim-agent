@@ -7,6 +7,7 @@ import {
 } from "../../shared/EditMatcher";
 import { DiffLines, type ToolDiff } from "../../shared/DiffLines";
 import { Fs } from "../../shared/Fs";
+import { FsErrors } from "../../shared/FsErrors";
 import { Lines } from "../../shared/Lines";
 import type { RawEdit } from "./schema";
 
@@ -63,7 +64,15 @@ export async function editFile(
   absolutePath: string,
   rawEdits: readonly RawEdit[]
 ): Promise<EditOutcome> {
-  const canonicalPath = await realpath(absolutePath);
+  let canonicalPath: string;
+  try {
+    canonicalPath = await realpath(absolutePath);
+  } catch (error) {
+    if (FsErrors.code(error) === "ENOENT") {
+      throw new Error(await FsErrors.renderMissing(absolutePath));
+    }
+    throw error;
+  }
 
   return enqueue(canonicalPath, () =>
     performEdit(absolutePath, canonicalPath, rawEdits)

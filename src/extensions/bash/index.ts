@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Renderer } from "../../shared/Renderer";
+import { Tools } from "../../shared/Tools";
 import { detailsOf, formatResult, isErrorResult } from "./format";
 import { runBashCommand } from "./run";
 import {
@@ -13,7 +14,7 @@ import {
 const PREVIEW_LINES = 5;
 
 export default function (pi: ExtensionAPI): void {
-  pi.registerTool({
+  Tools.register(pi, {
     name: "bash",
     label: "bash",
     description:

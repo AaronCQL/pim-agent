@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Renderer } from "../../shared/Renderer";
+import { Tools } from "../../shared/Tools";
 import { ExaMcpClient } from "./ExaMcpClient";
 import { formatTitle } from "./render";
 import { type WebSearchInput, webSearchSchema } from "./schema";
@@ -11,7 +12,7 @@ export default function (pi: ExtensionAPI): void {
   const apiKey = process.env["EXA_API_KEY"];
   const client = new ExaMcpClient(apiKey ? { apiKey } : {});
 
-  pi.registerTool({
+  Tools.register(pi, {
     name: "web_search",
     label: "web_search",
     description:

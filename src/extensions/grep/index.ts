@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Paths } from "../../shared/Paths";
 import { Renderer } from "../../shared/Renderer";
+import { Tools } from "../../shared/Tools";
 import { buildRegex, findMatches } from "./grep";
 import { formatTitle, renderMatches } from "./render";
 import {
@@ -15,7 +16,7 @@ const DEFAULT_OUTPUT_MODE: GrepOutputMode = "files_with_matches";
 const fileCountByToolCallId = new Map<string, number>();
 
 export default function (pi: ExtensionAPI): void {
-  pi.registerTool({
+  Tools.register(pi, {
     name: "grep",
     label: "grep",
     description:

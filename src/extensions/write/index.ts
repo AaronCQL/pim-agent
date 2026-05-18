@@ -3,6 +3,7 @@ import { type Component, Container } from "@earendil-works/pi-tui";
 import { DiffView } from "../../shared/DiffView";
 import { Paths } from "../../shared/Paths";
 import { Renderer } from "../../shared/Renderer";
+import { Tools } from "../../shared/Tools";
 import { type WriteInput, writeSchema } from "./schema";
 import { writeContent, type WriteOutcome } from "./write";
 
@@ -14,7 +15,7 @@ type WriteRenderState = {
 };
 
 export default function (pi: ExtensionAPI): void {
-  pi.registerTool({
+  Tools.register(pi, {
     name: "write",
     label: "write",
     description:
