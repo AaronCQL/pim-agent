@@ -43,6 +43,8 @@ export class Renderer {
   private editTimer: Timer | undefined;
   private thinking = "";
   private narration = "";
+  private currentMessageText = "";
+  private streamedFinalText = "";
   private pendingNarrationCount = 0;
   private lastRendered = "";
   private stopped = false;
@@ -80,6 +82,7 @@ export class Renderer {
       if (update.type === "text_delta") {
         this.flushThinking();
         this.narration += update.delta ?? "";
+        this.currentMessageText += update.delta ?? "";
         return;
       }
       if (update.type === "text_end") {
@@ -93,6 +96,7 @@ export class Renderer {
     if (event.type === "message_start") {
       this.flushThinking();
       this.narration = "";
+      this.currentMessageText = "";
       this.pendingNarrationCount = 0;
       return;
     }
@@ -132,8 +136,11 @@ export class Renderer {
     this.flushThinking();
     this.narration = "";
     await this.flushEdit(state);
-    if (finalText.trim()) {
-      await this.sendFinal(finalText);
+    const textToSend = finalText.trim()
+      ? finalText
+      : this.streamedFinalText.trim();
+    if (textToSend) {
+      await this.sendFinal(textToSend);
     }
   }
 
@@ -213,17 +220,20 @@ export class Renderer {
       readonly stopReason?: string;
     };
     const isFinal = msg.role === "assistant" && msg.stopReason !== "toolUse";
-    if (isFinal && this.pendingNarrationCount > 0) {
-      let removed = 0;
-      for (let i = 0; i < this.pendingNarrationCount; i++) {
-        if (this.entries.at(-1)?.kind !== "narration") {
-          break;
+    if (isFinal) {
+      this.streamedFinalText = this.currentMessageText;
+      if (this.pendingNarrationCount > 0) {
+        let removed = 0;
+        for (let i = 0; i < this.pendingNarrationCount; i++) {
+          if (this.entries.at(-1)?.kind !== "narration") {
+            break;
+          }
+          this.entries.pop();
+          removed += 1;
         }
-        this.entries.pop();
-        removed += 1;
-      }
-      if (removed > 0) {
-        this.scheduleEdit();
+        if (removed > 0) {
+          this.scheduleEdit();
+        }
       }
     }
     this.pendingNarrationCount = 0;
