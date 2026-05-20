@@ -81,7 +81,7 @@ describe("runBashCommand (integration)", () => {
     expect(r.exitCode === null || r.exitCode !== 0).toBe(true);
     expect(elapsed).toBeLessThan(KILL_GRACE_MS + 2000);
     // wait briefly for SIGKILL grace then confirm no stray sleep 41 remains
-    await new Promise((resolve) => setTimeout(resolve, KILL_GRACE_MS + 500));
+    await Bun.sleep(KILL_GRACE_MS + 500);
     const probe = Bun.spawnSync({ cmd: ["pgrep", "-f", marker] });
     expect(probe.exitCode).not.toBe(0);
   });
@@ -97,7 +97,7 @@ describe("runBashCommand (integration)", () => {
     try {
       const r = await runBashCommand("sleep 5", 100, undefined, process.cwd());
       expect(r.timedOut).toBe(true);
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await Bun.sleep(100);
       expect(rejections).toEqual([]);
     } finally {
       process.off("unhandledRejection", onRejection);
@@ -136,12 +136,12 @@ describe("runBashCommand (integration)", () => {
       undefined,
       process.cwd()
     );
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await Bun.sleep(200);
     killAllActiveBashGroups("SIGTERM");
     const result = await pending;
     expect(result.exitCode === null || result.exitCode !== 0).toBe(true);
     // Wait past the would-be sleep + kill grace; the marker should not exist
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await Bun.sleep(500);
     expect(Bun.file(marker).size).toBe(0);
   });
 

@@ -157,7 +157,7 @@ export async function runBashCommand(
     // the drain promise + capture buffer alive past this call.
     await Promise.race([
       Promise.all([stdoutDrain, stderrDrain]),
-      new Promise<void>((r) => setTimeout(r, DRAIN_GRACE_MS)),
+      Bun.sleep(DRAIN_GRACE_MS),
     ]);
   } finally {
     if (timeoutHandle) {
