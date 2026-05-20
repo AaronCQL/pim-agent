@@ -74,6 +74,14 @@ const proc = Bun.spawn({
   stdio: ["inherit", "inherit", "inherit"],
   env: process.env,
 });
+// Forward shutdown signals so pi's bash subtrees aren't orphaned on the host.
+for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+  process.once(sig, () => {
+    try {
+      proc.kill(sig);
+    } catch {}
+  });
+}
 const exitCode = await proc.exited;
 const signalCode = proc.signalCode as NodeJS.Signals | null;
 if (signalCode) {

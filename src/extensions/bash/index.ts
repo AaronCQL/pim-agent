@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Renderer } from "../../shared/Renderer";
 import { Tools } from "../../shared/Tools";
 import { detailsOf, formatResult, isErrorResult } from "./format";
-import { runBashCommand } from "./run";
+import { killAllActiveBashGroups, runBashCommand } from "./run";
 import {
   type BashInput,
   bashSchema,
@@ -13,7 +13,29 @@ import {
 
 const PREVIEW_LINES = 5;
 
+let signalHandlersInstalled = false;
+
+function installShutdownHandlers(): void {
+  if (signalHandlersInstalled) {
+    return;
+  }
+  signalHandlersInstalled = true;
+  // Sweep bash subtrees that escaped our process group (double-forked
+  // daemons via their own setsid) or that the parent harness is about to
+  // strand by signalling us. Re-raise the signal so the default handler
+  // still runs.
+  for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+    process.once(sig, () => {
+      try {
+        killAllActiveBashGroups(sig);
+      } catch {}
+      process.kill(process.pid, sig);
+    });
+  }
+}
+
 export default function (pi: ExtensionAPI): void {
+  installShutdownHandlers();
   Tools.register(pi, {
     name: "bash",
     label: "bash",
