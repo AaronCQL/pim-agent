@@ -1,3 +1,6 @@
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { StreamCapture } from "./capture";
 import {
   type BashCommandResult,
@@ -41,6 +44,24 @@ async function drain(reader: Reader | null, cap: StreamCapture): Promise<void> {
   }
 }
 
+// Match pi's approach: only spend a tmpfs file when the in-memory capture
+// actually had to drop the middle; small/non-truncated outputs leave nothing
+// behind. The model only ever needs the file when there's middle to recover.
+async function spillIfTruncated(
+  cap: StreamCapture,
+  path: string
+): Promise<string | null> {
+  if (!cap.truncated) {
+    return null;
+  }
+  try {
+    await Bun.write(path, cap.full());
+    return path;
+  } catch {
+    return null;
+  }
+}
+
 function killGroup(pid: number | undefined, sig: NodeJS.Signals): void {
   if (pid === undefined) {
     return;
@@ -69,6 +90,9 @@ export async function runBashCommand(
   const startedAt = Date.now();
   const stdoutCap = new StreamCapture();
   const stderrCap = new StreamCapture();
+  const callId = randomUUID();
+  const stdoutPath = join(tmpdir(), `pim-bash-${callId}.out`);
+  const stderrPath = join(tmpdir(), `pim-bash-${callId}.err`);
 
   // setsid puts bash and its descendants into a fresh process group with
   // pgid == proc.pid, so we can signal the whole tree on timeout/abort
@@ -179,11 +203,18 @@ export async function runBashCommand(
     }
   }
 
+  const [resolvedStdoutPath, resolvedStderrPath] = await Promise.all([
+    spillIfTruncated(stdoutCap, stdoutPath),
+    spillIfTruncated(stderrCap, stderrPath),
+  ]);
+
   return {
     exitCode,
     signal: signalCode,
     stdout: stdoutCap.snapshot(),
     stderr: stderrCap.snapshot(),
+    stdoutPath: resolvedStdoutPath,
+    stderrPath: resolvedStderrPath,
     timedOut,
     aborted,
     durationMs: Date.now() - startedAt,

@@ -74,7 +74,7 @@ describe("StreamCapture", () => {
     expect(snap.text).toContain(`... ${500} bytes truncated ...`);
   });
 
-  test("drops middle chunks as they arrive (bounded memory)", () => {
+  test("keeps head and final tail when many middle chunks arrive", () => {
     const c = new StreamCapture();
     const HEAD_FILL = "A".repeat(STREAM_HEAD_BYTES);
     c.push(u8(HEAD_FILL));

@@ -20,6 +20,8 @@ function makeResult(
     signal: null,
     stdout: { text: "", totalBytes: 0, truncated: false },
     stderr: { text: "", totalBytes: 0, truncated: false },
+    stdoutPath: null,
+    stderrPath: null,
     timedOut: false,
     aborted: false,
     durationMs: 1,
@@ -41,11 +43,15 @@ describe("stripTrailingNewline", () => {
 
 describe("formatTruncationAffordance", () => {
   test("emits bracketed affordance with byte counts and next-step", () => {
-    const out = formatTruncationAffordance("stderr", {
-      text: "x",
-      totalBytes: 12345,
-      truncated: true,
-    });
+    const out = formatTruncationAffordance(
+      "stderr",
+      {
+        text: "x",
+        totalBytes: 12345,
+        truncated: true,
+      },
+      null
+    );
     expect(out.startsWith("[bash tool:")).toBe(true);
     expect(out.endsWith("]")).toBe(true);
     expect(out).toContain("stderr truncated");
@@ -54,6 +60,17 @@ describe("formatTruncationAffordance", () => {
     expect(out).toContain("of 12345");
     expect(out).toContain("redirect to a file");
     expect(out).toContain("read");
+  });
+
+  test("points to spill path when one is provided", () => {
+    const out = formatTruncationAffordance(
+      "stdout",
+      { text: "x", totalBytes: 99999, truncated: true },
+      "/tmp/pim-bash-abc.out"
+    );
+    expect(out).toContain("/tmp/pim-bash-abc.out");
+    expect(out).toContain("full output saved");
+    expect(out).not.toContain("redirect to a file");
   });
 });
 
@@ -145,8 +162,8 @@ describe("detailsOf", () => {
       durationMs: 42,
       timedOut: false,
       aborted: false,
-      stdout: { totalBytes: 99999, truncated: true },
-      stderr: { totalBytes: 5, truncated: false },
+      stdout: { totalBytes: 99999, truncated: true, path: null },
+      stderr: { totalBytes: 5, truncated: false, path: null },
     });
   });
 });

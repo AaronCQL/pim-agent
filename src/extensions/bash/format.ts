@@ -12,9 +12,14 @@ export function stripTrailingNewline(s: string): string {
 
 export function formatTruncationAffordance(
   label: string,
-  s: CapturedStream
+  s: CapturedStream,
+  spillPath: string | null
 ): string {
-  return `[bash tool: ${label} truncated — kept first ${STREAM_HEAD_BYTES} bytes + last ${STREAM_TAIL_BYTES} bytes of ${s.totalBytes}; redirect to a file (e.g. \`cmd > /tmp/out.log\`) and use read for the full output.]`;
+  const base = `[bash tool: ${label} truncated — kept first ${STREAM_HEAD_BYTES} bytes + last ${STREAM_TAIL_BYTES} bytes of ${s.totalBytes}`;
+  if (spillPath) {
+    return `${base}; full output saved to ${spillPath} — use read for the middle bytes.]`;
+  }
+  return `${base}; redirect to a file (e.g. \`cmd > /tmp/out.log\`) and use read for the full output.]`;
 }
 
 export function formatResult(
@@ -34,14 +39,18 @@ export function formatResult(
     lines.push("stdout:");
     lines.push(stripTrailingNewline(result.stdout.text));
     if (result.stdout.truncated) {
-      lines.push(formatTruncationAffordance("stdout", result.stdout));
+      lines.push(
+        formatTruncationAffordance("stdout", result.stdout, result.stdoutPath)
+      );
     }
   }
   if (result.stderr.totalBytes > 0) {
     lines.push("stderr:");
     lines.push(stripTrailingNewline(result.stderr.text));
     if (result.stderr.truncated) {
-      lines.push(formatTruncationAffordance("stderr", result.stderr));
+      lines.push(
+        formatTruncationAffordance("stderr", result.stderr, result.stderrPath)
+      );
     }
   }
   return lines.join("\n");
@@ -61,10 +70,12 @@ export function detailsOf(result: BashCommandResult): BashDetails {
     stdout: {
       totalBytes: result.stdout.totalBytes,
       truncated: result.stdout.truncated,
+      path: result.stdoutPath,
     },
     stderr: {
       totalBytes: result.stderr.totalBytes,
       truncated: result.stderr.truncated,
+      path: result.stderrPath,
     },
   };
 }

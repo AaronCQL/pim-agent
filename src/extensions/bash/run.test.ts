@@ -158,4 +158,30 @@ describe("runBashCommand (integration)", () => {
     expect(r.stdout.truncated).toBe(true);
     expect(r.stdout.text).toContain("bytes truncated");
   });
+
+  test("spills full stdout to a temp file when truncated", async () => {
+    const totalBytes = STREAM_HEAD_BYTES + STREAM_TAIL_BYTES + 4096;
+    const r = await runBashCommand(
+      `head -c ${totalBytes} /dev/zero | tr '\\0' 'A'`,
+      5000,
+      undefined,
+      process.cwd()
+    );
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout.truncated).toBe(true);
+    expect(r.stdoutPath).toBeTruthy();
+    const spilled = await Bun.file(r.stdoutPath!).text();
+    expect(spilled.length).toBe(totalBytes);
+    expect(spilled).toBe("A".repeat(totalBytes));
+    try {
+      Bun.spawnSync({ cmd: ["rm", "-f", r.stdoutPath!] });
+    } catch {}
+  });
+
+  test("omits spill path when stream is empty", async () => {
+    const r = await runBashCommand("true", 5000, undefined, process.cwd());
+    expect(r.exitCode).toBe(0);
+    expect(r.stdoutPath).toBeNull();
+    expect(r.stderrPath).toBeNull();
+  });
 });

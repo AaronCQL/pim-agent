@@ -1,7 +1,7 @@
 import { type Static, Type } from "typebox";
 
-export const STREAM_HEAD_BYTES = 4096;
-export const STREAM_TAIL_BYTES = 4096;
+export const STREAM_HEAD_BYTES = 8192;
+export const STREAM_TAIL_BYTES = 8192;
 export const DEFAULT_TIMEOUT_MS = 30_000;
 export const KILL_GRACE_MS = 2000;
 export const DRAIN_GRACE_MS = 1000;
@@ -30,6 +30,8 @@ export type BashCommandResult = {
   readonly signal: NodeJS.Signals | null;
   readonly stdout: CapturedStream;
   readonly stderr: CapturedStream;
+  readonly stdoutPath: string | null;
+  readonly stderrPath: string | null;
   readonly timedOut: boolean;
   readonly aborted: boolean;
   readonly durationMs: number;
@@ -38,6 +40,7 @@ export type BashCommandResult = {
 export type BashStreamDetails = {
   readonly totalBytes: number;
   readonly truncated: boolean;
+  readonly path: string | null;
 };
 
 export type BashDetails = {
