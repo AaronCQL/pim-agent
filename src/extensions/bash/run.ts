@@ -69,16 +69,8 @@ export async function runBashCommand(
   // fds and keep the pipes open after bash exits, so we must not block on
   // EOF. We race proc.exited against a wall-clock timeout instead, then
   // cancel the streams to release the pipes.
-  const stdoutDrain = drain(
-    proc.stdout as unknown as ReadableStream<Uint8Array>,
-    stdoutCap
-  );
-  const stderrDrain = drain(
-    proc.stderr as unknown as ReadableStream<Uint8Array>,
-    stderrCap
-  );
-  void stdoutDrain;
-  void stderrDrain;
+  void drain(proc.stdout as unknown as ReadableStream<Uint8Array>, stdoutCap);
+  void drain(proc.stderr as unknown as ReadableStream<Uint8Array>, stderrCap);
 
   let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
   const exitedPromise = proc.exited.then(() => "exited" as const);
@@ -136,12 +128,11 @@ export async function runBashCommand(
     if (signal) {
       signal.removeEventListener("abort", onAbort);
     }
-    try {
-      proc.stdout?.cancel();
-    } catch {}
-    try {
-      proc.stderr?.cancel();
-    } catch {}
+    for (const stream of [proc.stdout, proc.stderr]) {
+      try {
+        stream?.cancel();
+      } catch {}
+    }
   }
 
   return {
