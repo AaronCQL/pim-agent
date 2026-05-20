@@ -57,14 +57,7 @@ function killGroup(pid: number | undefined, sig: NodeJS.Signals): void {
 function getReader(
   stream: ReadableStream<Uint8Array> | undefined
 ): Reader | null {
-  if (!stream) {
-    return null;
-  }
-  try {
-    return stream.getReader();
-  } catch {
-    return null;
-  }
+  return stream ? stream.getReader() : null;
 }
 
 export async function runBashCommand(

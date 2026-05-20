@@ -26,7 +26,9 @@ function installShutdownHandlers(): void {
   // still runs.
   for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
     process.once(sig, () => {
-      killAllActiveBashGroups(sig);
+      try {
+        killAllActiveBashGroups(sig);
+      } catch {}
       process.kill(process.pid, sig);
     });
   }
