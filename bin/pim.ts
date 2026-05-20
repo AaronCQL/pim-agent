@@ -74,8 +74,7 @@ const proc = Bun.spawn({
   stdio: ["inherit", "inherit", "inherit"],
   env: process.env,
 });
-// Forward shutdown signals so the pi subprocess (and its bash subtrees)
-// get a chance to tear down instead of being orphaned when this launcher dies.
+// Forward shutdown signals so pi's bash subtrees aren't orphaned on the host.
 for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
   process.once(sig, () => {
     try {

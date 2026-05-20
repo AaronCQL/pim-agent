@@ -9,11 +9,8 @@ type Reader = ReadableStreamDefaultReader<Uint8Array>;
 
 const activePids = new Set<number>();
 
-/**
- * Signal every active bash process group. Called from extension-level
- * signal handlers so a daemon that `setsid`s out of our group (or
- * harbor/parent SIGTERM) still tears down its bash subtree.
- */
+// Wired into the extension's signal handlers so a daemon that `setsid`s
+// out of our group (or harbor/parent SIGTERM) still tears down its subtree.
 export function killAllActiveBashGroups(sig: NodeJS.Signals = "SIGTERM"): void {
   for (const pid of activePids) {
     killGroup(pid, sig);
@@ -164,8 +161,7 @@ export async function runBashCommand(
     signalCode = (proc.signalCode as NodeJS.Signals | null | undefined) ?? null;
 
     // Bound the drain so a detached grandchild holding the pipe can't keep
-    // the drain promise + capture buffer alive past this call. After the
-    // grace, force-cancel via our held readers.
+    // the drain promise + capture buffer alive past this call.
     await Promise.race([
       Promise.all([stdoutDrain, stderrDrain]),
       new Promise<void>((r) => setTimeout(r, DRAIN_GRACE_MS)),
