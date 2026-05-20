@@ -19,8 +19,25 @@ async function drain(
         cap.push(value);
       }
     }
+  } catch {
+    // stream cancelled; drop remaining bytes
   } finally {
-    reader.releaseLock();
+    try {
+      reader.releaseLock();
+    } catch {}
+  }
+}
+
+function killGroup(pid: number | undefined, sig: NodeJS.Signals): void {
+  if (pid === undefined) {
+    return;
+  }
+  try {
+    process.kill(-pid, sig);
+  } catch {
+    try {
+      process.kill(pid, sig);
+    } catch {}
   }
 }
 
@@ -34,8 +51,11 @@ export async function runBashCommand(
   const stdoutCap = new StreamCapture();
   const stderrCap = new StreamCapture();
 
+  // setsid puts bash and all descendants into a fresh process group with
+  // pgid == proc.pid, so we can signal the whole tree on timeout/abort
+  // instead of leaving backgrounded grandchildren alive holding our pipes.
   const proc = Bun.spawn({
-    cmd: ["bash", "-lc", command],
+    cmd: ["setsid", "bash", "-lc", command],
     cwd,
     stdout: "pipe",
     stderr: "pipe",
@@ -44,46 +64,74 @@ export async function runBashCommand(
 
   let timedOut = false;
   let aborted = false;
-  let killTimer: ReturnType<typeof setTimeout> | null = null;
 
-  const timeoutHandle = setTimeout(() => {
-    timedOut = true;
-    try {
-      proc.kill("SIGTERM");
-    } catch {}
-    killTimer = setTimeout(() => {
-      try {
-        proc.kill("SIGKILL");
-      } catch {}
-    }, KILL_GRACE_MS);
-  }, timeoutMs);
+  // Fire-and-forget drains: a backgrounded child can inherit the subshell's
+  // fds and keep the pipes open after bash exits, so we must not block on
+  // EOF. We race proc.exited against a wall-clock timeout instead, then
+  // cancel the streams to release the pipes.
+  void drain(proc.stdout as unknown as ReadableStream<Uint8Array>, stdoutCap);
+  void drain(proc.stderr as unknown as ReadableStream<Uint8Array>, stderrCap);
 
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  const exitedPromise = proc.exited.then(() => "exited" as const);
+  const timeoutPromise = new Promise<"timeout">((resolve) => {
+    timeoutHandle = setTimeout(() => resolve("timeout"), timeoutMs);
+  });
+
+  let abortResolve: ((v: "aborted") => void) | null = null;
+  const abortPromise = new Promise<"aborted">((resolve) => {
+    abortResolve = resolve;
+  });
   const onAbort = () => {
     aborted = true;
-    try {
-      proc.kill("SIGTERM");
-    } catch {}
+    abortResolve?.("aborted");
   };
   if (signal) {
-    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+    } else {
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
   }
 
   let exitCode: number | null = null;
   let signalCode: NodeJS.Signals | null = null;
   try {
-    await Promise.all([
-      drain(proc.stdout as unknown as ReadableStream<Uint8Array>, stdoutCap),
-      drain(proc.stderr as unknown as ReadableStream<Uint8Array>, stderrCap),
+    const result = await Promise.race([
+      exitedPromise,
+      timeoutPromise,
+      abortPromise,
     ]);
-    exitCode = await proc.exited;
+
+    if (result === "timeout") {
+      timedOut = true;
+    }
+
+    if (result !== "exited") {
+      killGroup(proc.pid, "SIGTERM");
+      const sigkillTimer = setTimeout(() => {
+        killGroup(proc.pid, "SIGKILL");
+      }, KILL_GRACE_MS);
+      try {
+        await proc.exited;
+      } finally {
+        clearTimeout(sigkillTimer);
+      }
+    }
+
+    exitCode = proc.exitCode ?? null;
     signalCode = (proc.signalCode as NodeJS.Signals | null | undefined) ?? null;
   } finally {
-    clearTimeout(timeoutHandle);
-    if (killTimer) {
-      clearTimeout(killTimer);
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
     }
     if (signal) {
       signal.removeEventListener("abort", onAbort);
+    }
+    for (const stream of [proc.stdout, proc.stderr]) {
+      try {
+        stream?.cancel();
+      } catch {}
     }
   }
 
