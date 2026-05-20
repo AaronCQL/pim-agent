@@ -14,19 +14,14 @@ const activePids = new Set<number>();
  * signal handlers so a daemon that `setsid`s out of our group (or
  * harbor/parent SIGTERM) still tears down its bash subtree.
  */
-export function killAllActiveBashGroups(
-  sig: NodeJS.Signals = "SIGTERM"
-): void {
+export function killAllActiveBashGroups(sig: NodeJS.Signals = "SIGTERM"): void {
   for (const pid of activePids) {
     killGroup(pid, sig);
   }
   activePids.clear();
 }
 
-async function drain(
-  reader: Reader | null,
-  cap: StreamCapture
-): Promise<void> {
+async function drain(reader: Reader | null, cap: StreamCapture): Promise<void> {
   if (!reader) {
     return;
   }
@@ -183,7 +178,9 @@ export async function runBashCommand(
       signal.removeEventListener("abort", onAbort);
     }
     for (const reader of [stdoutReader, stderrReader]) {
-      if (!reader) continue;
+      if (!reader) {
+        continue;
+      }
       try {
         void reader.cancel().catch(() => {});
       } catch {}

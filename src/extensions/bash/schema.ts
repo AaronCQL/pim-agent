@@ -4,7 +4,7 @@ export const STREAM_HEAD_BYTES = 4096;
 export const STREAM_TAIL_BYTES = 4096;
 export const DEFAULT_TIMEOUT_MS = 30_000;
 export const KILL_GRACE_MS = 2000;
-export const DRAIN_GRACE_MS = 2000;
+export const DRAIN_GRACE_MS = 1000;
 
 export const bashSchema = Type.Object({
   command: Type.String({
