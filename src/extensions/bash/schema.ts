@@ -13,7 +13,7 @@ export const bashSchema = Type.Object({
   timeoutMs: Type.Optional(
     Type.Integer({
       minimum: 1,
-      description: `Timeout in milliseconds. Default is ${DEFAULT_TIMEOUT_MS} (${DEFAULT_TIMEOUT_MS / 1000}s) — raise it for long-running commands like builds, test suites, training runs, or installs. After timeout the process gets a ${KILL_GRACE_MS / 1000}s grace period before SIGKILL.`,
+      description: `Timeout in milliseconds. Default is ${DEFAULT_TIMEOUT_MS} (${DEFAULT_TIMEOUT_MS / 1000}s) — raise it for long-running commands like builds, test suites, training runs, or installs.`,
     })
   ),
 });
