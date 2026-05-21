@@ -14,7 +14,11 @@ export function formatTruncationAffordance(
   label: string,
   s: CapturedStream
 ): string {
-  return `[bash tool: ${label} truncated — kept first ${STREAM_HEAD_BYTES} bytes + last ${STREAM_TAIL_BYTES} bytes of ${s.totalBytes}; redirect to a file (e.g. \`cmd > /tmp/out.log\`) and use read for the full output.]`;
+  const base = `[bash tool: ${label} truncated — kept first ${STREAM_HEAD_BYTES} bytes + last ${STREAM_TAIL_BYTES} bytes of ${s.totalBytes}`;
+  if (s.path) {
+    return `${base}; full output saved to ${s.path} — use read for the middle bytes.]`;
+  }
+  return `${base}; redirect to a file (e.g. \`cmd > /tmp/out.log\`) and use read for the full output.]`;
 }
 
 export function formatResult(
@@ -61,10 +65,12 @@ export function detailsOf(result: BashCommandResult): BashDetails {
     stdout: {
       totalBytes: result.stdout.totalBytes,
       truncated: result.stdout.truncated,
+      path: result.stdout.path,
     },
     stderr: {
       totalBytes: result.stderr.totalBytes,
       truncated: result.stderr.truncated,
+      path: result.stderr.path,
     },
   };
 }

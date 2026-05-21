@@ -18,8 +18,8 @@ function makeResult(
   return {
     exitCode: 0,
     signal: null,
-    stdout: { text: "", totalBytes: 0, truncated: false },
-    stderr: { text: "", totalBytes: 0, truncated: false },
+    stdout: { text: "", totalBytes: 0, truncated: false, path: null },
+    stderr: { text: "", totalBytes: 0, truncated: false, path: null },
     timedOut: false,
     aborted: false,
     durationMs: 1,
@@ -45,6 +45,7 @@ describe("formatTruncationAffordance", () => {
       text: "x",
       totalBytes: 12345,
       truncated: true,
+      path: null,
     });
     expect(out.startsWith("[bash tool:")).toBe(true);
     expect(out.endsWith("]")).toBe(true);
@@ -55,13 +56,30 @@ describe("formatTruncationAffordance", () => {
     expect(out).toContain("redirect to a file");
     expect(out).toContain("read");
   });
+
+  test("points to spill path when one is provided", () => {
+    const out = formatTruncationAffordance("stdout", {
+      text: "x",
+      totalBytes: 99999,
+      truncated: true,
+      path: "/tmp/pim-bash-abc.out",
+    });
+    expect(out).toContain("/tmp/pim-bash-abc.out");
+    expect(out).toContain("full output saved");
+    expect(out).not.toContain("redirect to a file");
+  });
 });
 
 describe("formatResult", () => {
   test("happy path with stdout only", () => {
     const out = formatResult(
       makeResult({
-        stdout: { text: "hello\n", totalBytes: 6, truncated: false },
+        stdout: {
+          text: "hello\n",
+          totalBytes: 6,
+          truncated: false,
+          path: null,
+        },
       }),
       30_000
     );
@@ -95,8 +113,8 @@ describe("formatResult", () => {
     const out = formatResult(
       makeResult({
         exitCode: 1,
-        stdout: { text: "out", totalBytes: 3, truncated: false },
-        stderr: { text: "err", totalBytes: 3, truncated: false },
+        stdout: { text: "out", totalBytes: 3, truncated: false, path: null },
+        stderr: { text: "err", totalBytes: 3, truncated: false, path: null },
       }),
       30_000
     );
@@ -106,7 +124,12 @@ describe("formatResult", () => {
   test("appends bracket affordance after a truncated stream body", () => {
     const out = formatResult(
       makeResult({
-        stdout: { text: "head…tail", totalBytes: 99999, truncated: true },
+        stdout: {
+          text: "head…tail",
+          totalBytes: 99999,
+          truncated: true,
+          path: null,
+        },
       }),
       30_000
     );
@@ -121,7 +144,7 @@ describe("formatResult", () => {
   test("does not append affordance when stream is not truncated", () => {
     const out = formatResult(
       makeResult({
-        stdout: { text: "ok", totalBytes: 2, truncated: false },
+        stdout: { text: "ok", totalBytes: 2, truncated: false, path: null },
       }),
       30_000
     );
@@ -135,8 +158,8 @@ describe("detailsOf", () => {
       makeResult({
         exitCode: 1,
         durationMs: 42,
-        stdout: { text: "x", totalBytes: 99999, truncated: true },
-        stderr: { text: "y", totalBytes: 5, truncated: false },
+        stdout: { text: "x", totalBytes: 99999, truncated: true, path: null },
+        stderr: { text: "y", totalBytes: 5, truncated: false, path: null },
       })
     );
     expect(details).toEqual({
@@ -145,8 +168,8 @@ describe("detailsOf", () => {
       durationMs: 42,
       timedOut: false,
       aborted: false,
-      stdout: { totalBytes: 99999, truncated: true },
-      stderr: { totalBytes: 5, truncated: false },
+      stdout: { totalBytes: 99999, truncated: true, path: null },
+      stderr: { totalBytes: 5, truncated: false, path: null },
     });
   });
 });

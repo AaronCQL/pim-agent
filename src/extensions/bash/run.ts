@@ -1,3 +1,7 @@
+import { randomUUID } from "node:crypto";
+import { unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { StreamCapture } from "./capture";
 import {
   type BashCommandResult,
@@ -8,6 +12,7 @@ import {
 type Reader = ReadableStreamDefaultReader<Uint8Array>;
 
 const activePids = new Set<number>();
+const spillPaths = new Set<string>();
 
 // Wired into the extension's signal handlers so a daemon that `setsid`s
 // out of our group (or harbor/parent SIGTERM) still tears down its subtree.
@@ -16,6 +21,17 @@ export function killAllActiveBashGroups(sig: NodeJS.Signals = "SIGTERM"): void {
     killGroup(pid, sig);
   }
   activePids.clear();
+}
+
+// /tmp is tmpfs on most hosts; without an explicit sweep, spill files
+// accumulate in RAM for the lifetime of the pim session.
+export function cleanupSpillFiles(): void {
+  for (const path of spillPaths) {
+    try {
+      unlinkSync(path);
+    } catch {}
+  }
+  spillPaths.clear();
 }
 
 async function drain(reader: Reader | null, cap: StreamCapture): Promise<void> {
@@ -38,6 +54,23 @@ async function drain(reader: Reader | null, cap: StreamCapture): Promise<void> {
     try {
       reader.releaseLock();
     } catch {}
+  }
+}
+
+async function spillIfTruncated(
+  cap: StreamCapture,
+  suffix: ".out" | ".err"
+): Promise<string | null> {
+  if (!cap.truncated) {
+    return null;
+  }
+  const path = join(tmpdir(), `pim-bash-${randomUUID()}${suffix}`);
+  try {
+    await Bun.write(path, cap.full());
+    spillPaths.add(path);
+    return path;
+  } catch {
+    return null;
   }
 }
 
@@ -179,11 +212,16 @@ export async function runBashCommand(
     }
   }
 
+  const [stdoutPath, stderrPath] = await Promise.all([
+    spillIfTruncated(stdoutCap, ".out"),
+    spillIfTruncated(stderrCap, ".err"),
+  ]);
+
   return {
     exitCode,
     signal: signalCode,
-    stdout: stdoutCap.snapshot(),
-    stderr: stderrCap.snapshot(),
+    stdout: { ...stdoutCap.snapshot(), path: stdoutPath },
+    stderr: { ...stderrCap.snapshot(), path: stderrPath },
     timedOut,
     aborted,
     durationMs: Date.now() - startedAt,

@@ -19,7 +19,12 @@ describe("concat", () => {
 describe("StreamCapture", () => {
   test("empty capture", () => {
     const c = new StreamCapture();
-    expect(c.snapshot()).toEqual({ text: "", totalBytes: 0, truncated: false });
+    expect(c.snapshot()).toEqual({
+      text: "",
+      totalBytes: 0,
+      truncated: false,
+      path: null,
+    });
   });
 
   test("ignores zero-byte chunks", () => {
@@ -30,6 +35,7 @@ describe("StreamCapture", () => {
       text: "hi",
       totalBytes: 2,
       truncated: false,
+      path: null,
     });
   });
 
@@ -41,6 +47,7 @@ describe("StreamCapture", () => {
       text: "hello world",
       totalBytes: 11,
       truncated: false,
+      path: null,
     });
   });
 
@@ -74,7 +81,7 @@ describe("StreamCapture", () => {
     expect(snap.text).toContain(`... ${500} bytes truncated ...`);
   });
 
-  test("drops middle chunks as they arrive (bounded memory)", () => {
+  test("keeps head and final tail when many middle chunks arrive", () => {
     const c = new StreamCapture();
     const HEAD_FILL = "A".repeat(STREAM_HEAD_BYTES);
     c.push(u8(HEAD_FILL));

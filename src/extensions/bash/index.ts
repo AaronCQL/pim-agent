@@ -2,7 +2,11 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Renderer } from "../../shared/Renderer";
 import { Tools } from "../../shared/Tools";
 import { detailsOf, formatResult, isErrorResult } from "./format";
-import { killAllActiveBashGroups, runBashCommand } from "./run";
+import {
+  cleanupSpillFiles,
+  killAllActiveBashGroups,
+  runBashCommand,
+} from "./run";
 import {
   type BashInput,
   bashSchema,
@@ -10,6 +14,8 @@ import {
   STREAM_HEAD_BYTES,
   STREAM_TAIL_BYTES,
 } from "./schema";
+
+const DEFAULT_TIMEOUT_SEC = DEFAULT_TIMEOUT_MS / 1000;
 
 const PREVIEW_LINES = 5;
 
@@ -29,6 +35,9 @@ function installShutdownHandlers(): void {
       try {
         killAllActiveBashGroups(sig);
       } catch {}
+      try {
+        cleanupSpillFiles();
+      } catch {}
       process.kill(process.pid, sig);
     });
   }
@@ -42,6 +51,7 @@ export default function (pi: ExtensionAPI): void {
     description:
       `Execute a bash command in the cwd. ` +
       `Returns exit code, signal (if any), and stdout/stderr captured separately. ` +
+      `Default timeout is ${DEFAULT_TIMEOUT_SEC}s — pass timeoutMs to raise it for long-running commands (builds, tests, training, installs). ` +
       `Each stream is capped at ${STREAM_HEAD_BYTES} bytes head + ${STREAM_TAIL_BYTES} bytes tail; the middle is truncated. ` +
       `Use bash with trimming args or pipe to head/tail/cut to keep output small.`,
     parameters: bashSchema,
