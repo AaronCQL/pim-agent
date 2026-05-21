@@ -6,3 +6,5 @@ bun.lock
 dist/
 notes/
 vendor/
+__pycache__/
+benchmarks/*/runs/
