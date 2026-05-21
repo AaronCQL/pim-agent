@@ -44,9 +44,6 @@ async function drain(reader: Reader | null, cap: StreamCapture): Promise<void> {
   }
 }
 
-// Match pi's approach: only spend a tmpfs file when the in-memory capture
-// actually had to drop the middle; small/non-truncated outputs leave nothing
-// behind. The model only ever needs the file when there's middle to recover.
 async function spillIfTruncated(
   cap: StreamCapture,
   path: string
