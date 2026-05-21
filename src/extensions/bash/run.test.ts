@@ -167,21 +167,26 @@ describe("runBashCommand (integration)", () => {
       undefined,
       process.cwd()
     );
-    expect(r.exitCode).toBe(0);
-    expect(r.stdout.truncated).toBe(true);
-    expect(r.stdoutPath).toBeTruthy();
-    const spilled = await Bun.file(r.stdoutPath!).text();
-    expect(spilled.length).toBe(totalBytes);
-    expect(spilled).toBe("A".repeat(totalBytes));
     try {
-      Bun.spawnSync({ cmd: ["rm", "-f", r.stdoutPath!] });
-    } catch {}
+      expect(r.exitCode).toBe(0);
+      expect(r.stdout.truncated).toBe(true);
+      expect(r.stdout.path).toBeTruthy();
+      const spilled = await Bun.file(r.stdout.path!).text();
+      expect(spilled.length).toBe(totalBytes);
+      expect(spilled).toBe("A".repeat(totalBytes));
+    } finally {
+      if (r.stdout.path) {
+        try {
+          Bun.spawnSync({ cmd: ["rm", "-f", r.stdout.path] });
+        } catch {}
+      }
+    }
   });
 
   test("omits spill path when stream is empty", async () => {
     const r = await runBashCommand("true", 5000, undefined, process.cwd());
     expect(r.exitCode).toBe(0);
-    expect(r.stdoutPath).toBeNull();
-    expect(r.stderrPath).toBeNull();
+    expect(r.stdout.path).toBeNull();
+    expect(r.stderr.path).toBeNull();
   });
 });

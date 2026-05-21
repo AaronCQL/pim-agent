@@ -2,7 +2,11 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Renderer } from "../../shared/Renderer";
 import { Tools } from "../../shared/Tools";
 import { detailsOf, formatResult, isErrorResult } from "./format";
-import { killAllActiveBashGroups, runBashCommand } from "./run";
+import {
+  cleanupSpillFiles,
+  killAllActiveBashGroups,
+  runBashCommand,
+} from "./run";
 import {
   type BashInput,
   bashSchema,
@@ -30,6 +34,9 @@ function installShutdownHandlers(): void {
     process.once(sig, () => {
       try {
         killAllActiveBashGroups(sig);
+      } catch {}
+      try {
+        cleanupSpillFiles();
       } catch {}
       process.kill(process.pid, sig);
     });

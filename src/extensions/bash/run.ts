@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StreamCapture } from "./capture";
@@ -11,6 +12,7 @@ import {
 type Reader = ReadableStreamDefaultReader<Uint8Array>;
 
 const activePids = new Set<number>();
+const spillPaths = new Set<string>();
 
 // Wired into the extension's signal handlers so a daemon that `setsid`s
 // out of our group (or harbor/parent SIGTERM) still tears down its subtree.
@@ -19,6 +21,17 @@ export function killAllActiveBashGroups(sig: NodeJS.Signals = "SIGTERM"): void {
     killGroup(pid, sig);
   }
   activePids.clear();
+}
+
+// /tmp is tmpfs on most hosts; without an explicit sweep, spill files
+// accumulate in RAM for the lifetime of the pim session.
+export function cleanupSpillFiles(): void {
+  for (const path of spillPaths) {
+    try {
+      unlinkSync(path);
+    } catch {}
+  }
+  spillPaths.clear();
 }
 
 async function drain(reader: Reader | null, cap: StreamCapture): Promise<void> {
@@ -46,13 +59,15 @@ async function drain(reader: Reader | null, cap: StreamCapture): Promise<void> {
 
 async function spillIfTruncated(
   cap: StreamCapture,
-  path: string
+  suffix: ".out" | ".err"
 ): Promise<string | null> {
   if (!cap.truncated) {
     return null;
   }
+  const path = join(tmpdir(), `pim-bash-${randomUUID()}${suffix}`);
   try {
     await Bun.write(path, cap.full());
+    spillPaths.add(path);
     return path;
   } catch {
     return null;
@@ -87,9 +102,6 @@ export async function runBashCommand(
   const startedAt = Date.now();
   const stdoutCap = new StreamCapture();
   const stderrCap = new StreamCapture();
-  const callId = randomUUID();
-  const stdoutPath = join(tmpdir(), `pim-bash-${callId}.out`);
-  const stderrPath = join(tmpdir(), `pim-bash-${callId}.err`);
 
   // setsid puts bash and its descendants into a fresh process group with
   // pgid == proc.pid, so we can signal the whole tree on timeout/abort
@@ -200,18 +212,16 @@ export async function runBashCommand(
     }
   }
 
-  const [resolvedStdoutPath, resolvedStderrPath] = await Promise.all([
-    spillIfTruncated(stdoutCap, stdoutPath),
-    spillIfTruncated(stderrCap, stderrPath),
+  const [stdoutPath, stderrPath] = await Promise.all([
+    spillIfTruncated(stdoutCap, ".out"),
+    spillIfTruncated(stderrCap, ".err"),
   ]);
 
   return {
     exitCode,
     signal: signalCode,
-    stdout: stdoutCap.snapshot(),
-    stderr: stderrCap.snapshot(),
-    stdoutPath: resolvedStdoutPath,
-    stderrPath: resolvedStderrPath,
+    stdout: { ...stdoutCap.snapshot(), path: stdoutPath },
+    stderr: { ...stderrCap.snapshot(), path: stderrPath },
     timedOut,
     aborted,
     durationMs: Date.now() - startedAt,

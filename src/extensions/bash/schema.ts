@@ -23,6 +23,7 @@ export type CapturedStream = {
   readonly text: string;
   readonly totalBytes: number;
   readonly truncated: boolean;
+  readonly path: string | null;
 };
 
 export type BashCommandResult = {
@@ -30,8 +31,6 @@ export type BashCommandResult = {
   readonly signal: NodeJS.Signals | null;
   readonly stdout: CapturedStream;
   readonly stderr: CapturedStream;
-  readonly stdoutPath: string | null;
-  readonly stderrPath: string | null;
   readonly timedOut: boolean;
   readonly aborted: boolean;
   readonly durationMs: number;

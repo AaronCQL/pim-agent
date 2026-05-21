@@ -17,6 +17,7 @@ export function concat(parts: Uint8Array[], total: number): Uint8Array {
 export class StreamCapture {
   private chunks: Uint8Array[] = [];
   private totalBytesAccum = 0;
+  private fullBytes: Uint8Array | null = null;
 
   push(chunk: Uint8Array): void {
     if (chunk.byteLength === 0) {
@@ -35,12 +36,15 @@ export class StreamCapture {
   }
 
   full(): Uint8Array {
-    return concat(this.chunks, this.totalBytesAccum);
+    if (!this.fullBytes) {
+      this.fullBytes = concat(this.chunks, this.totalBytesAccum);
+    }
+    return this.fullBytes;
   }
 
   snapshot(): CapturedStream {
     if (this.totalBytesAccum === 0) {
-      return { text: "", totalBytes: 0, truncated: false };
+      return { text: "", totalBytes: 0, truncated: false, path: null };
     }
     const dec = new TextDecoder();
     if (!this.truncated) {
@@ -48,6 +52,7 @@ export class StreamCapture {
         text: dec.decode(this.full()),
         totalBytes: this.totalBytesAccum,
         truncated: false,
+        path: null,
       };
     }
     const all = this.full();
@@ -60,6 +65,7 @@ export class StreamCapture {
       text: `${headText}\n... ${middle} bytes truncated ...\n${tailText}`,
       totalBytes: this.totalBytesAccum,
       truncated: true,
+      path: null,
     };
   }
 }
