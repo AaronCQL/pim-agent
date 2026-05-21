@@ -43,6 +43,16 @@ function resolveGlobalPiCli(): string | null {
 }
 
 const cliArgs = process.argv.slice(2);
+
+// Pi's argparse rejects prompts beginning with `-` and doesn't honour `--`
+// itself; do the split here and forward the prompt via pi's stdin instead.
+const dashDashIdx = cliArgs.indexOf("--");
+let promptViaStdin: string | undefined;
+if (dashDashIdx >= 0) {
+  promptViaStdin = cliArgs.slice(dashDashIdx + 1).join(" ");
+  cliArgs.length = dashDashIdx;
+}
+
 const modeIdx = cliArgs.findIndex(
   (a) => a === "--mode" || a.startsWith("--mode=")
 );
@@ -70,10 +80,18 @@ if (mode === "telegram") {
 
 const piCli = findPiCli();
 const proc = Bun.spawn({
-  cmd: [process.execPath, piCli, ...process.argv.slice(2)],
-  stdio: ["inherit", "inherit", "inherit"],
+  cmd: [process.execPath, piCli, ...cliArgs],
+  stdio: [
+    promptViaStdin === undefined ? "inherit" : "pipe",
+    "inherit",
+    "inherit",
+  ],
   env: process.env,
 });
+if (promptViaStdin !== undefined && proc.stdin) {
+  proc.stdin.write(promptViaStdin);
+  proc.stdin.end();
+}
 // Forward shutdown signals so pi's bash subtrees aren't orphaned on the host.
 for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
   process.once(sig, () => {

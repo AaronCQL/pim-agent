@@ -153,9 +153,8 @@ class PimAgent(BaseInstalledAgent):
         # Pipe through filter.py to drop streaming-delta event bloat - pim's
         # raw JSON output is ~1 GB per task, the filter reduces that ~1000x
         # while preserving message_end events (content + usage).
-        # Prepend a space to the instruction: pi's CLI parser doesn't honour
-        # `--`, so a prompt that starts with `-` (e.g. tb2 pytorch-model-recovery)
-        # gets parsed as an unknown flag and exits before the agent runs.
+        # `--` hands the raw instruction to pim, which forwards it via pi's
+        # stdin so prompts starting with `-` aren't parsed as flags.
         return (
             "set -e; "
             'export PATH="$HOME/.bun/bin:$PATH"; '
@@ -165,7 +164,7 @@ class PimAgent(BaseInstalledAgent):
             "done; "
             f"bun {CONTAINER_PIM_DIR}/bin/pim.ts "
             "--print --mode json --no-session --no-context-files "
-            f"--model {shlex.quote(model)} $EXTS {shlex.quote(' ' + instruction)} "
+            f"--model {shlex.quote(model)} $EXTS -- {shlex.quote(instruction)} "
             "2>&1 </dev/null "
             f"| python3 -u {CONTAINER_PIM_DIR}/benchmarks/terminal_bench_2/filter.py "
             f"| stdbuf -oL tee /logs/agent/{OUTPUT_FILENAME}"
