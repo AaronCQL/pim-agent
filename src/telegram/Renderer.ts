@@ -2,6 +2,7 @@ import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { GrammyError, type Api } from "grammy";
 import { basename } from "node:path";
 
+import type { TodoInput } from "../extensions/todo/schema";
 import type { LogsMode } from "./Config";
 import { Markdown } from "./Markdown";
 import type { Session, SessionId } from "./Session";
@@ -46,6 +47,7 @@ export class Renderer {
   private currentMessageText = "";
   private streamedFinalText = "";
   private pendingNarrationCount = 0;
+  private currentTodoContent: string | undefined;
   private lastRendered = "";
   private stopped = false;
 
@@ -145,7 +147,24 @@ export class Renderer {
   }
 
   private addTool(toolCallId: string, toolName: string, args: unknown): void {
-    const emoji = TOOL_EMOJI[toolName.toLowerCase()] ?? "⚙️";
+    const name = toolName.toLowerCase();
+    if (name === "todo") {
+      const todos = (args as TodoInput).todos;
+      for (let i = todos.length - 1; i >= 0; i--) {
+        const item = todos[i]!;
+        if (item.status !== "in_progress") {
+          continue;
+        }
+        const content = item.content.trim().replaceAll(/\s+/g, " ");
+        if (content && content !== this.currentTodoContent) {
+          this.currentTodoContent = content;
+          this.scheduleEdit();
+        }
+        return;
+      }
+      return;
+    }
+    const emoji = TOOL_EMOJI[name] ?? "⚙️";
     const label = Renderer.toolLabel(toolName, args);
     const last = this.entries.at(-1);
     if (last?.kind === "tool" && last.emoji === emoji && last.label === label) {
@@ -281,10 +300,16 @@ export class Renderer {
 
   private renderStatus(state: TurnState): string {
     const visible = this.entries.filter((entry) => this.entryVisible(entry));
-    if (visible.length === 0) {
+    const pieces: string[] = [];
+    if (this.currentTodoContent) {
+      pieces.push(`📋 <b>${Markdown.escape(this.currentTodoContent)}</b>`);
+      if (visible.length > 0) {
+        pieces.push("\n\n");
+      }
+    }
+    if (visible.length === 0 && pieces.length === 0) {
       return "";
     }
-    const pieces: string[] = [];
     for (let i = 0; i < visible.length; i++) {
       const entry = visible[i]!;
       if (entry.kind === "thinking") {
