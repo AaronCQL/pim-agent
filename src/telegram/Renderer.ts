@@ -2,6 +2,7 @@ import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { GrammyError, type Api } from "grammy";
 import { basename } from "node:path";
 
+import type { TodoInput } from "../extensions/todo/schema";
 import type { LogsMode } from "./Config";
 import { Markdown } from "./Markdown";
 import type { Session, SessionId } from "./Session";
@@ -11,7 +12,7 @@ type TurnState = TurnEndState | "running";
 
 type TrackerEntry = {
   readonly key: string;
-  readonly kind: "tool" | "thinking" | "narration";
+  readonly kind: "tool" | "todo" | "thinking" | "narration";
   readonly emoji: string;
   label: string;
   state: "running" | "ok" | "error";
@@ -24,6 +25,7 @@ const TOOL_EMOJI: Record<string, string> = {
   bash: "⚡️",
   grep: "🔎",
   glob: "🔎",
+  todo: "📋",
   web_search: "🌐",
   web_fetch: "🌐",
   send_file: "📤",
@@ -145,7 +147,23 @@ export class Renderer {
   }
 
   private addTool(toolCallId: string, toolName: string, args: unknown): void {
-    const emoji = TOOL_EMOJI[toolName.toLowerCase()] ?? "⚙️";
+    const name = toolName.toLowerCase();
+    if (name === "todo") {
+      const content = Renderer.latestInProgressTodoContent(args);
+      if (!content) {
+        return;
+      }
+      this.entries.push({
+        key: toolCallId,
+        kind: "todo",
+        emoji: TOOL_EMOJI.todo as string,
+        label: content,
+        state: "ok",
+      });
+      this.scheduleEdit();
+      return;
+    }
+    const emoji = TOOL_EMOJI[name] ?? "⚙️";
     const label = Renderer.toolLabel(toolName, args);
     const last = this.entries.at(-1);
     if (last?.kind === "tool" && last.emoji === emoji && last.label === label) {
@@ -281,13 +299,15 @@ export class Renderer {
 
   private renderStatus(state: TurnState): string {
     const visible = this.entries.filter((entry) => this.entryVisible(entry));
+    const pieces: string[] = [];
     if (visible.length === 0) {
       return "";
     }
-    const pieces: string[] = [];
     for (let i = 0; i < visible.length; i++) {
       const entry = visible[i]!;
-      if (entry.kind === "thinking") {
+      if (entry.kind === "todo") {
+        pieces.push(`${entry.emoji} <b>${Markdown.escape(entry.label)}</b>`);
+      } else if (entry.kind === "thinking") {
         pieces.push(`<i>${Markdown.toHtml(entry.label)}</i>`);
       } else if (entry.kind === "narration") {
         pieces.push(Markdown.toHtml(entry.label));
@@ -410,7 +430,7 @@ export class Renderer {
     if (this.logsMode === "off") {
       return false;
     }
-    if (entry.kind === "tool") {
+    if (entry.kind === "tool" || entry.kind === "todo") {
       return true;
     }
     if (entry.kind === "narration") {
@@ -557,6 +577,34 @@ export class Renderer {
             : action;
     const id = Renderer.stringArg(obj, "id");
     return id ? `${verb} task: ${code(id)}` : `${verb} task`;
+  }
+
+  private static latestInProgressTodoContent(
+    args: unknown
+  ): string | undefined {
+    const todos =
+      args && typeof args === "object" && !Array.isArray(args)
+        ? (args as Partial<TodoInput>).todos
+        : undefined;
+    if (!Array.isArray(todos)) {
+      return undefined;
+    }
+
+    for (let i = todos.length - 1; i >= 0; i--) {
+      const item = todos[i] as unknown;
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        continue;
+      }
+      const { content, status } = item as Record<string, unknown>;
+      if (status !== "in_progress" || typeof content !== "string") {
+        continue;
+      }
+      const normalized = content.trim().replaceAll(/\s+/g, " ");
+      if (normalized) {
+        return normalized;
+      }
+    }
+    return undefined;
   }
 
   private static cleanProse(text: string): string {
