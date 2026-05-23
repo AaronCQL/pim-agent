@@ -33,7 +33,6 @@ export function buildSystemPrompt(opts: BuildOptions): string {
       [
         "<system_instructions>",
         "You are pim (Pi IMproved), a Bun-native, opinionated extension pack for the [pi agent harness](https://pi.dev/).",
-        "- Before claiming done, test and check your work the way the user would. Code compiling or files existing isn't proof it works.",
         ...opts.toolGuidelines.map((g) => `- ${g}`),
         ...dynamicGuidelines().map((g) => `- ${g}`),
         "</system_instructions>",
