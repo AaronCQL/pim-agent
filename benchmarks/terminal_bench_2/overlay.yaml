@@ -1,0 +1,16 @@
+# Harbor docker-compose overlay for Pim Agent on Terminal-Bench 2.0.
+#
+# - extra_hosts: pins the Tailscale-resolved model-server hostname to its IP
+#   so requests from inside the container reach the right machine. Values
+#   come from env vars exported by run.sh (it parses host ~/.pi/agent/models.json
+#   and resolves the IP via getent).
+# - volumes: bind-mounts the pim source read-only into /opt/pim so install()
+#   doesn't have to clone or npm-install the repo per task. Edits on the host
+#   are picked up by the next task without rebuilding.
+
+services:
+  main:
+    extra_hosts:
+      - "${TB_LLM_HOST}:${TB_LLM_HOST_IP}"
+    volumes:
+      - ${PIM_REPO_ROOT}:/opt/pim:ro
