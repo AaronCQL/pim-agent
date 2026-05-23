@@ -2,17 +2,19 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Paths } from "../../shared/Paths";
 import { Renderer } from "../../shared/Renderer";
 import { Tools } from "../../shared/Tools";
-import { buildRegex, findMatches } from "./grep";
+import { buildMatcher, findMatches } from "./grep";
 import { formatTitle, renderMatches } from "./render";
 import {
   GREP_HEAD_LIMIT_MAX,
   type GrepInput,
   type GrepOutputMode,
+  type GrepPathFormat,
   grepSchema,
 } from "./schema";
 
 const PREVIEW_LINES = 10;
 const DEFAULT_OUTPUT_MODE: GrepOutputMode = "files_with_matches";
+const DEFAULT_PATH_FORMAT: GrepPathFormat = "relative";
 const fileCountByToolCallId = new Map<string, number>();
 
 export default function (pi: ExtensionAPI): void {
@@ -20,7 +22,7 @@ export default function (pi: ExtensionAPI): void {
     name: "grep",
     label: "grep",
     description:
-      "Search UTF-8 text files for a JavaScript regex. Skips binary files, gitignored paths, and dotfiles. Use grep to search file contents instead of bash with grep, rg, ag, find -exec, or similar.",
+      "Search UTF-8 text files with a JavaScript regex. Directory scans skip binary files, gitignored paths, and dotfiles unless requested; direct file paths are always searched. Use grep to search file contents instead of bash with grep, rg, ag, find -exec, or similar.",
     parameters: grepSchema,
     renderShell: "self",
     async execute(toolCallId, params, signal, _onUpdate, ctx) {
@@ -28,8 +30,13 @@ export default function (pi: ExtensionAPI): void {
         pattern,
         path,
         glob,
+        exclude,
         outputMode,
-        multiline,
+        matchAcrossLines,
+        context,
+        includeDotfiles,
+        includeIgnored,
+        pathFormat,
         caseInsensitive,
         headLimit,
       } = params as GrepInput;
@@ -38,19 +45,29 @@ export default function (pi: ExtensionAPI): void {
         throw new Error("Grep aborted before execution.");
       }
 
-      const mode = outputMode ?? DEFAULT_OUTPUT_MODE;
+      const resolvedPathFormat = pathFormat ?? DEFAULT_PATH_FORMAT;
+      const resolvedContext = context ?? 0;
+      const resolvedOutputMode = outputMode ?? DEFAULT_OUTPUT_MODE;
       const limit = Math.min(
         headLimit ?? GREP_HEAD_LIMIT_MAX,
         GREP_HEAD_LIMIT_MAX
       );
-      const regex = buildRegex(
+      const matcher = buildMatcher({
         pattern,
-        multiline ?? false,
-        caseInsensitive ?? false
-      );
+        caseInsensitive: caseInsensitive ?? false,
+        matchAcrossLines: matchAcrossLines ?? false,
+      });
       const absolutePath = Paths.resolve(path ?? ".", ctx.cwd);
-      const matches = await findMatches(absolutePath, glob, regex);
-      const outcome = renderMatches(matches, mode, limit);
+      const matches = await findMatches(absolutePath, glob, matcher, {
+        exclude,
+        includeDotfiles: includeDotfiles ?? false,
+        includeIgnored: includeIgnored ?? false,
+      });
+      const outcome = renderMatches(matches, resolvedOutputMode, limit, {
+        cwd: ctx.cwd,
+        pathFormat: resolvedPathFormat,
+        context: resolvedContext,
+      });
       fileCountByToolCallId.set(toolCallId, outcome.fileCount);
 
       const content: Array<{ type: "text"; text: string }> = [
@@ -60,7 +77,7 @@ export default function (pi: ExtensionAPI): void {
       if (outcome.truncated) {
         content.push({
           type: "text",
-          text: `[grep tool: showing ${outcome.visibleItems} of ${outcome.totalItems} ${outcome.itemNoun}; raise headLimit (max ${GREP_HEAD_LIMIT_MAX}) or narrow the pattern/glob to see more.]`,
+          text: `[grep tool: showing ${outcome.visibleItems} of ${outcome.totalItems} ${outcome.itemNoun}; narrow the pattern, scope to a specific path, or use a glob filter to reduce results.]`,
         });
       }
 
@@ -68,7 +85,13 @@ export default function (pi: ExtensionAPI): void {
         content,
         details: {
           absolutePath,
-          outputMode: mode,
+          outputMode: resolvedOutputMode,
+          exclude,
+          matchAcrossLines: matchAcrossLines ?? false,
+          context: resolvedContext,
+          includeDotfiles: includeDotfiles ?? false,
+          includeIgnored: includeIgnored ?? false,
+          pathFormat: resolvedPathFormat,
           fileCount: outcome.fileCount,
           totalMatches: outcome.totalMatches,
           totalItems: outcome.totalItems,

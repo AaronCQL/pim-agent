@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import type {
+  AgentToolResult,
+  Theme,
+  ToolRenderResultOptions,
+} from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { Renderer } from "./Renderer";
 
@@ -7,6 +11,21 @@ const stubTheme = {
   bold: (text: string) => text,
   fg: (_color: string, text: string) => text,
 } as unknown as Theme;
+
+const expandedOptions = {
+  expanded: true,
+  isPartial: false,
+} satisfies ToolRenderResultOptions;
+
+const rendererContext = {
+  lastComponent: undefined,
+  isPartial: false,
+  isError: false,
+} as const;
+
+function textResult(text: string): AgentToolResult<unknown> {
+  return { content: [{ type: "text", text }], details: undefined };
+}
 
 describe("Renderer.markerColorFor", () => {
   test("partial wins over error", () => {
@@ -39,6 +58,42 @@ describe("Renderer.buildPreviewLines", () => {
       preview: "a\nb\nc",
       overflow: 0,
     });
+  });
+});
+
+describe("Renderer.renderBorderedResult", () => {
+  test("wraps expanded output by default", () => {
+    const component = Renderer.renderBorderedResult({
+      result: textResult("0123456789abcdef\nnext"),
+      options: expandedOptions,
+      theme: stubTheme,
+      context: rendererContext,
+      previewLines: 10,
+    });
+
+    expect(component.render(10)).toHaveLength(4);
+  });
+
+  test("expanded output includes all lines even beyond the preview limit", () => {
+    const component = Renderer.renderBorderedResult({
+      result: textResult(
+        [
+          "  src/file.ts:10:before",
+          "> src/file.ts:11:matched",
+          "  src/file.ts:12:after",
+        ].join("\n")
+      ),
+      options: expandedOptions,
+      theme: stubTheme,
+      context: rendererContext,
+      previewLines: 1,
+    });
+
+    expect(component.render(80)).toEqual([
+      " │   src/file.ts:10:before",
+      " │ > src/file.ts:11:matched",
+      " │   src/file.ts:12:after",
+    ]);
   });
 });
 

@@ -1,15 +1,23 @@
 import { resolve } from "node:path";
 import { FsErrors } from "../../shared/FsErrors";
 import { GitignoreFilter } from "../../shared/GitignoreFilter";
+import { GlobExclusions } from "../../shared/GlobExclusions";
 
 export type GlobMatch = {
   readonly path: string;
   readonly mtime: number;
 };
 
+export type GlobScanOptions = {
+  readonly exclude?: readonly string[];
+  readonly includeDotfiles: boolean;
+  readonly includeIgnored: boolean;
+};
+
 export async function findFiles(
   root: string,
-  pattern: string
+  pattern: string,
+  options: GlobScanOptions
 ): Promise<readonly GlobMatch[]> {
   const metadata = await FsErrors.statOrThrow(root);
 
@@ -20,7 +28,10 @@ export async function findFiles(
   }
 
   const absoluteRoot = resolve(root);
-  const filter = await GitignoreFilter.for(absoluteRoot);
+  const filter = options.includeIgnored
+    ? undefined
+    : await GitignoreFilter.for(absoluteRoot);
+  const excludes = GlobExclusions.compile(options.exclude);
   const glob = new Bun.Glob(pattern);
   const matches: GlobMatch[] = [];
 
@@ -28,9 +39,12 @@ export async function findFiles(
     cwd: absoluteRoot,
     absolute: true,
     onlyFiles: true,
-    dot: false,
+    dot: options.includeDotfiles,
   })) {
-    if (!filter.ignores(path)) {
+    if (
+      (filter === undefined || !filter.ignores(path)) &&
+      !GlobExclusions.ignores(excludes, absoluteRoot, path)
+    ) {
       matches.push({
         path,
         mtime: Bun.file(path).lastModified,

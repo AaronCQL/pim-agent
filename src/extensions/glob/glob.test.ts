@@ -7,6 +7,11 @@ import { findFiles } from "./glob";
 const tempRoot = (): Promise<string> =>
   mkdtemp(join(tmpdir(), "pim-glob-tool-"));
 
+const defaultScanOptions = {
+  includeDotfiles: false,
+  includeIgnored: false,
+} as const;
+
 describe("findFiles", () => {
   test("sorts by recency desc with path-asc tiebreak when mtimes are equal", async () => {
     const root = await tempRoot();
@@ -34,7 +39,7 @@ describe("findFiles", () => {
       new Date("2024-01-02T00:00:00Z")
     );
 
-    const matches = await findFiles(root, "**/*.ts");
+    const matches = await findFiles(root, "**/*.ts", defaultScanOptions);
 
     expect(matches.map((match) => match.path)).toEqual([tieA, tieB, older]);
   });
@@ -56,9 +61,31 @@ describe("findFiles", () => {
     await writeFile(nodeModules, "", "utf8");
     await writeFile(dot, "", "utf8");
 
-    const matches = await findFiles(root, "**/*.ts");
+    const matches = await findFiles(root, "**/*.ts", defaultScanOptions);
 
     expect(matches.map((match) => match.path)).toEqual([kept]);
+  });
+
+  test("can include dotfiles and ignored paths", async () => {
+    const root = await tempRoot();
+    const kept = join(root, "kept.ts");
+    const ignored = join(root, "ignored.ts");
+    const dot = join(root, ".secret", "x.ts");
+
+    await mkdir(join(root, ".secret"), { recursive: true });
+    await writeFile(join(root, ".gitignore"), "ignored.ts\n", "utf8");
+    await writeFile(kept, "", "utf8");
+    await writeFile(ignored, "", "utf8");
+    await writeFile(dot, "", "utf8");
+
+    const matches = await findFiles(root, "**/*.ts", {
+      includeDotfiles: true,
+      includeIgnored: true,
+    });
+
+    expect(matches.map((match) => match.path).sort()).toEqual(
+      [dot, ignored, kept].sort()
+    );
   });
 
   test("filters by glob pattern extension", async () => {
@@ -69,16 +96,54 @@ describe("findFiles", () => {
     await writeFile(ts, "", "utf8");
     await writeFile(md, "", "utf8");
 
-    const matches = await findFiles(root, "**/*.ts");
+    const matches = await findFiles(root, "**/*.ts", defaultScanOptions);
 
     expect(matches.map((match) => match.path)).toEqual([ts]);
+  });
+
+  test("excludes a single glob pattern", async () => {
+    const root = await tempRoot();
+    const source = join(root, "src", "app.ts");
+    const test = join(root, "src", "app.test.ts");
+
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(source, "", "utf8");
+    await writeFile(test, "", "utf8");
+
+    const matches = await findFiles(root, "**/*.ts", {
+      ...defaultScanOptions,
+      exclude: ["**/*.test.ts"],
+    });
+
+    expect(matches.map((match) => match.path)).toEqual([source]);
+  });
+
+  test("excludes multiple glob patterns", async () => {
+    const root = await tempRoot();
+    const source = join(root, "src", "app.ts");
+    const test = join(root, "src", "app.test.ts");
+    const generated = join(root, "src", "generated", "types.ts");
+
+    await mkdir(join(root, "src", "generated"), { recursive: true });
+    await writeFile(source, "", "utf8");
+    await writeFile(test, "", "utf8");
+    await writeFile(generated, "", "utf8");
+
+    const matches = await findFiles(root, "**/*.ts", {
+      ...defaultScanOptions,
+      exclude: ["**/*.test.ts", "src/generated/**"],
+    });
+
+    expect(matches.map((match) => match.path)).toEqual([source]);
   });
 
   test("throws an actionable error when the path does not exist", async () => {
     const root = await tempRoot();
     const missing = join(root, "nope");
 
-    await expect(findFiles(missing, "**/*")).rejects.toThrow(
+    await expect(
+      findFiles(missing, "**/*", defaultScanOptions)
+    ).rejects.toThrow(
       `Path not found: ${missing}. Use glob to locate the file or directory, or verify the path.`
     );
   });
@@ -88,7 +153,7 @@ describe("findFiles", () => {
     const file = join(root, "notes.txt");
     await writeFile(file, "hello", "utf8");
 
-    await expect(findFiles(file, "**/*")).rejects.toThrow(
+    await expect(findFiles(file, "**/*", defaultScanOptions)).rejects.toThrow(
       `Glob path must be a directory: ${file}. Drop "path" and put the filename in "pattern", or use the read tool to inspect a single file.`
     );
   });

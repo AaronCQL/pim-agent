@@ -7,25 +7,40 @@ const fixture: readonly GlobMatch[] = [
   { path: "/repo/older.ts", mtime: 1_000 },
 ];
 
+const relativeOptions = {
+  cwd: "/repo",
+  pathFormat: "relative",
+} as const;
+
+const absoluteOptions = {
+  cwd: "/repo",
+  pathFormat: "absolute",
+} as const;
+
 describe("renderFiles", () => {
-  test("joins paths with newlines, newest first", () => {
-    const outcome = renderFiles(fixture, 1000);
-    expect(outcome.body).toBe("/repo/newer.ts\n/repo/older.ts");
+  test("joins paths with newlines, newest first, relative by default", () => {
+    const outcome = renderFiles(fixture, 1000, relativeOptions);
+    expect(outcome.body).toBe("newer.ts\nolder.ts");
     expect(outcome.totalItems).toBe(2);
     expect(outcome.visibleItems).toBe(2);
     expect(outcome.truncated).toBe(false);
   });
 
+  test("can render absolute paths", () => {
+    const outcome = renderFiles(fixture, 1000, absoluteOptions);
+    expect(outcome.body).toBe("/repo/newer.ts\n/repo/older.ts");
+  });
+
   test("flips truncated when results exceed headLimit", () => {
-    const outcome = renderFiles(fixture, 1);
-    expect(outcome.body).toBe("/repo/newer.ts");
+    const outcome = renderFiles(fixture, 1, relativeOptions);
+    expect(outcome.body).toBe("newer.ts");
     expect(outcome.truncated).toBe(true);
     expect(outcome.visibleItems).toBe(1);
     expect(outcome.totalItems).toBe(2);
   });
 
   test("returns a no-match outcome when there are no results", () => {
-    const outcome = renderFiles([], 1000);
+    const outcome = renderFiles([], 1000, relativeOptions);
     expect(outcome.body).toBe("No matches.");
     expect(outcome.truncated).toBe(false);
     expect(outcome.totalItems).toBe(0);

@@ -4,9 +4,15 @@ import { Renderer } from "../../shared/Renderer";
 import { Tools } from "../../shared/Tools";
 import { findFiles } from "./glob";
 import { formatTitle, renderFiles } from "./render";
-import { GLOB_HEAD_LIMIT_MAX, type GlobInput, globSchema } from "./schema";
+import {
+  GLOB_HEAD_LIMIT_MAX,
+  type GlobInput,
+  type GlobPathFormat,
+  globSchema,
+} from "./schema";
 
 const PREVIEW_LINES = 10;
+const DEFAULT_PATH_FORMAT: GlobPathFormat = "relative";
 const fileCountByToolCallId = new Map<string, number>();
 
 export default function (pi: ExtensionAPI): void {
@@ -14,20 +20,36 @@ export default function (pi: ExtensionAPI): void {
     name: "glob",
     label: "glob",
     description:
-      "Find files by glob pattern under a directory, sorted newest first. Skips gitignored paths and dotfiles. Use glob to enumerate files instead of bash with find, fd, ls -R, or similar.",
+      "Find files by glob pattern under a directory, sorted newest first. Skips gitignored paths and dotfiles unless requested. Use glob to enumerate files instead of bash with find, fd, ls -R, or similar.",
     parameters: globSchema,
     renderShell: "self",
     async execute(toolCallId, params, signal, _onUpdate, ctx) {
-      const { pattern, path, headLimit } = params as GlobInput;
+      const {
+        pattern,
+        path,
+        exclude,
+        includeDotfiles,
+        includeIgnored,
+        pathFormat,
+        headLimit,
+      } = params as GlobInput;
 
       if (signal?.aborted) {
         throw new Error("Glob aborted before execution.");
       }
 
       const limit = headLimit ?? GLOB_HEAD_LIMIT_MAX;
+      const resolvedPathFormat = pathFormat ?? DEFAULT_PATH_FORMAT;
       const absolutePath = Paths.resolve(path ?? ".", ctx.cwd);
-      const matches = await findFiles(absolutePath, pattern);
-      const outcome = renderFiles(matches, limit);
+      const matches = await findFiles(absolutePath, pattern, {
+        exclude,
+        includeDotfiles: includeDotfiles ?? false,
+        includeIgnored: includeIgnored ?? false,
+      });
+      const outcome = renderFiles(matches, limit, {
+        cwd: ctx.cwd,
+        pathFormat: resolvedPathFormat,
+      });
       fileCountByToolCallId.set(toolCallId, matches.length);
 
       const content: Array<{ type: "text"; text: string }> = [
@@ -37,7 +59,7 @@ export default function (pi: ExtensionAPI): void {
       if (outcome.truncated) {
         content.push({
           type: "text",
-          text: `[glob tool: showing ${outcome.visibleItems} of ${outcome.totalItems} entries; raise headLimit (max ${GLOB_HEAD_LIMIT_MAX}) or narrow the pattern to see more.]`,
+          text: `[glob tool: showing ${outcome.visibleItems} of ${outcome.totalItems} entries; narrow the pattern or scope to a specific path to reduce results.]`,
         });
       }
 
@@ -46,6 +68,10 @@ export default function (pi: ExtensionAPI): void {
         details: {
           absolutePath,
           pattern,
+          exclude,
+          includeDotfiles: includeDotfiles ?? false,
+          includeIgnored: includeIgnored ?? false,
+          pathFormat: resolvedPathFormat,
           totalItems: outcome.totalItems,
           visibleItems: outcome.visibleItems,
           truncated: outcome.truncated,

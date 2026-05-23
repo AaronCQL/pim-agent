@@ -1,6 +1,6 @@
 import { Paths } from "../../shared/Paths";
-import type { GrepMatch } from "./grep";
-import type { GrepOutputMode } from "./schema";
+import type { GrepLineRange, GrepMatch } from "./grep";
+import type { GrepOutputMode, GrepPathFormat } from "./schema";
 
 export type RenderOutcome = {
   readonly body: string;
@@ -12,11 +12,20 @@ export type RenderOutcome = {
   readonly itemNoun: string;
 };
 
+export type RenderOptions = {
+  readonly cwd: string;
+  readonly pathFormat: GrepPathFormat;
+  readonly context: number;
+};
+
 const renderers: Record<
   GrepOutputMode,
   {
     readonly itemNoun: string;
-    readonly toLines: (matches: readonly GrepMatch[]) => readonly string[];
+    readonly toLines: (
+      matches: readonly GrepMatch[],
+      options: RenderOptions
+    ) => readonly string[];
   }
 > = {
   files_with_matches: { itemNoun: "files", toLines: renderFiles },
@@ -27,14 +36,15 @@ const renderers: Record<
 export function renderMatches(
   matches: readonly GrepMatch[],
   outputMode: GrepOutputMode,
-  headLimit: number
+  headLimit: number,
+  options: RenderOptions
 ): RenderOutcome {
   const totalMatches = matches.reduce(
-    (sum, match) => sum + match.lines.length,
+    (sum, match) => sum + matchCount(match),
     0
   );
   const { itemNoun, toLines } = renderers[outputMode];
-  const lines = toLines(matches);
+  const lines = toLines(matches, options);
 
   if (lines.length === 0) {
     return {
@@ -71,37 +81,145 @@ export type TitleOptions = {
 };
 
 export function formatTitle(options: TitleOptions): string {
-  const pattern = options.pattern ?? "...";
-  const target = Paths.titleOr(options.path, options.cwd, ".");
+  const pattern = formatPattern(options.pattern);
+  const resolvedPath =
+    options.path === undefined
+      ? undefined
+      : Paths.resolve(options.path, options.cwd);
+  const target = Paths.titleOr(resolvedPath, options.cwd, ".");
   const glob = options.glob ? ` ${options.glob}` : "";
   const suffix =
     options.fileCount === undefined
       ? ""
       : ` (${options.fileCount} ${options.fileCount === 1 ? "file" : "files"})`;
-  return `/${pattern}/ in ${target}${glob}${suffix}`;
+  return `${pattern} in ${target}${glob}${suffix}`;
 }
 
-function renderFiles(matches: readonly GrepMatch[]): readonly string[] {
-  return byRecency(matches).map((match) => match.filePath);
+function formatPattern(pattern: string | undefined): string {
+  return pattern === undefined ? "..." : `/${pattern}/`;
 }
 
-function renderContent(matches: readonly GrepMatch[]): readonly string[] {
+function renderFiles(
+  matches: readonly GrepMatch[],
+  options: RenderOptions
+): readonly string[] {
+  return byRecency(matches).map((match) => formatPath(match.filePath, options));
+}
+
+function renderContent(
+  matches: readonly GrepMatch[],
+  options: RenderOptions
+): readonly string[] {
+  if (options.context > 0) {
+    return byRecency(matches).flatMap((match) =>
+      renderContextContent(match, options)
+    );
+  }
+
   return byRecency(matches).flatMap((match) =>
     match.lines.map(
-      (line) => `${match.filePath}:${line.lineNumber}:${line.text}`
+      (line) =>
+        `${formatPath(match.filePath, options)}:${line.lineNumber}:${line.text}`
     )
   );
 }
 
-function renderCounts(matches: readonly GrepMatch[]): readonly string[] {
+function renderContextContent(
+  match: GrepMatch,
+  options: RenderOptions
+): readonly string[] {
+  const path = formatPath(match.filePath, options);
+  const blocks = contextBlocks(
+    match.ranges,
+    match.fileLines.length,
+    options.context
+  );
+  const lines: string[] = [];
+
+  for (const [blockIndex, block] of blocks.entries()) {
+    if (blockIndex > 0) {
+      lines.push("--");
+    }
+
+    for (
+      let lineNumber = block.startLineNumber;
+      lineNumber <= block.endLineNumber;
+      lineNumber += 1
+    ) {
+      const marker = isMatchLine(match.ranges, lineNumber) ? ">" : " ";
+      lines.push(
+        `${marker} ${path}:${lineNumber}:${match.fileLines[lineNumber - 1] ?? ""}`
+      );
+    }
+  }
+
+  return lines;
+}
+
+function renderCounts(
+  matches: readonly GrepMatch[],
+  options: RenderOptions
+): readonly string[] {
   return [...matches]
     .sort(
       (left, right) =>
-        right.lines.length - left.lines.length ||
+        matchCount(right) - matchCount(left) ||
         right.mtime - left.mtime ||
         comparePaths(left.filePath, right.filePath)
     )
-    .map((match) => `${match.filePath}:${match.lines.length}`);
+    .map(
+      (match) => `${formatPath(match.filePath, options)}:${matchCount(match)}`
+    );
+}
+
+function contextBlocks(
+  ranges: readonly GrepLineRange[],
+  lineCount: number,
+  context: number
+): readonly GrepLineRange[] {
+  const blocks: GrepLineRange[] = [];
+
+  for (const range of ranges) {
+    const expanded = {
+      startLineNumber: Math.max(1, range.startLineNumber - context),
+      endLineNumber: Math.min(lineCount, range.endLineNumber + context),
+    };
+    const previous = blocks.at(-1);
+
+    if (
+      previous !== undefined &&
+      expanded.startLineNumber <= previous.endLineNumber + 1
+    ) {
+      blocks[blocks.length - 1] = {
+        startLineNumber: previous.startLineNumber,
+        endLineNumber: Math.max(previous.endLineNumber, expanded.endLineNumber),
+      };
+    } else {
+      blocks.push(expanded);
+    }
+  }
+
+  return blocks;
+}
+
+function matchCount(match: GrepMatch): number {
+  return match.ranges.length;
+}
+
+function isMatchLine(
+  ranges: readonly GrepLineRange[],
+  lineNumber: number
+): boolean {
+  return ranges.some(
+    (range) =>
+      lineNumber >= range.startLineNumber && lineNumber <= range.endLineNumber
+  );
+}
+
+function formatPath(filePath: string, options: RenderOptions): string {
+  return options.pathFormat === "absolute"
+    ? filePath
+    : Paths.displayRelative(filePath, options.cwd);
 }
 
 function byRecency(matches: readonly GrepMatch[]): readonly GrepMatch[] {
