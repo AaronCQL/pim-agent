@@ -56,23 +56,54 @@ function makeRenderer(): {
   return { api, renderer: new Renderer(session, api as unknown as Api) };
 }
 
-function todoStart(todos: readonly unknown[]): AgentSessionEvent {
+function todoStart(
+  todos: readonly unknown[],
+  toolCallId = "todo-1"
+): AgentSessionEvent {
+  return todoStartWithArgs({ todos }, toolCallId);
+}
+
+function todoStartWithArgs(
+  args: unknown,
+  toolCallId = "todo-1"
+): AgentSessionEvent {
   return {
     type: "tool_execution_start",
-    toolCallId: "todo-1",
+    toolCallId,
     toolName: "todo",
-    args: { todos },
+    args,
   } as AgentSessionEvent;
 }
 
-function todoEnd(todos: readonly unknown[]): AgentSessionEvent {
+function todoEnd(
+  todos: readonly unknown[],
+  toolCallId = "todo-1"
+): AgentSessionEvent {
   return {
     type: "tool_execution_end",
-    toolCallId: "todo-1",
+    toolCallId,
     toolName: "todo",
     result: { content: [], details: { todos } },
     isError: false,
   } as AgentSessionEvent;
+}
+
+function assistantText(text: string): readonly AgentSessionEvent[] {
+  return [
+    { type: "message_start" } as AgentSessionEvent,
+    {
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: text },
+    } as AgentSessionEvent,
+    {
+      type: "message_update",
+      assistantMessageEvent: { type: "text_end", content: text },
+    } as AgentSessionEvent,
+    {
+      type: "message_end",
+      message: { role: "assistant", stopReason: "toolUse" },
+    } as AgentSessionEvent,
+  ];
 }
 
 async function flush(renderer: Renderer): Promise<void> {
@@ -100,6 +131,44 @@ describe("Telegram Renderer todo status", () => {
     ]);
   });
 
+  test("keeps todo entries in event order instead of replacing the prior one", async () => {
+    const { api, renderer } = makeRenderer();
+
+    renderer.handleEvent(
+      todoStart([{ content: "Remember to buy milk", status: "in_progress" }])
+    );
+    await flush(renderer);
+
+    for (const event of assistantText(
+      "First item is in progress. Now let me finish it and start the next one:"
+    )) {
+      renderer.handleEvent(event);
+    }
+    renderer.handleEvent(
+      todoStart(
+        [
+          { content: "Remember to buy milk", status: "completed" },
+          { content: "Remember to get water", status: "in_progress" },
+        ],
+        "todo-2"
+      )
+    );
+    await renderer.finish("", "ok");
+
+    expect(api.sent.map((msg) => msg.text)).toEqual([
+      "📋 <b>Remember to buy milk</b>",
+    ]);
+    expect(api.edited.map((msg) => msg.text)).toEqual([
+      [
+        "📋 <b>Remember to buy milk</b>",
+        "",
+        "First item is in progress. Now let me finish it and start the next one:",
+        "",
+        "📋 <b>Remember to get water</b>",
+      ].join("\n"),
+    ]);
+  });
+
   test("does not render todo calls with no in-progress item", async () => {
     const { api, renderer } = makeRenderer();
 
@@ -115,7 +184,19 @@ describe("Telegram Renderer todo status", () => {
     expect(api.edited).toEqual([]);
   });
 
-  test("leaves the last todo status visible when no item remains in progress", async () => {
+  test("ignores malformed todo args", async () => {
+    const { api, renderer } = makeRenderer();
+
+    expect(() =>
+      renderer.handleEvent(todoStartWithArgs({ text: "done" }))
+    ).not.toThrow();
+    await renderer.finish("", "ok");
+
+    expect(api.sent).toEqual([]);
+    expect(api.edited).toEqual([]);
+  });
+
+  test("does not emit a new todo entry when no item remains in progress", async () => {
     const { api, renderer } = makeRenderer();
 
     renderer.handleEvent(
