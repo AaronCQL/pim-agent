@@ -1,18 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { type Component, Container } from "@earendil-works/pi-tui";
-import { DiffView } from "../../shared/DiffView";
+import { type DiffRenderState, DiffView } from "../../shared/DiffView";
 import { Paths } from "../../shared/Paths";
-import { Renderer } from "../../shared/Renderer";
 import { Tools } from "../../shared/Tools";
 import { type WriteInput, writeSchema } from "./schema";
 import { writeContent, type WriteOutcome } from "./write";
 
 const ERROR_PREVIEW_LINES = 12;
-
-type WriteRenderState = {
-  titleComponent?: Component;
-  path?: string;
-};
 
 export default function (pi: ExtensionAPI): void {
   Tools.register(pi, {
@@ -38,71 +31,22 @@ export default function (pi: ExtensionAPI): void {
       };
     },
     renderCall(args, theme, context) {
-      const state = context.state as WriteRenderState;
       const rawPath = typeof args?.path === "string" ? args.path : undefined;
-      const display = Paths.titleOr(rawPath, context.cwd);
-      state.path = display;
-      const markerColor = Renderer.markerColorFor(
-        Boolean(context.isPartial),
-        Boolean(context.isError)
-      );
-      const text = DiffView.buildTitle({
+      return DiffView.renderDiffCall({
         label: "Write",
-        path: display,
-        stats: { added: 0, removed: 0 },
+        rawPath,
         theme,
-        markerColor,
-        lastComponent: context.lastComponent,
+        context: context as typeof context & { state: DiffRenderState },
       });
-      state.titleComponent = text;
-      return text;
     },
     renderResult(result, options, theme, context) {
-      const state = context.state as WriteRenderState;
-      const fallback =
-        (context.lastComponent as Container | undefined) ?? new Container();
-
-      if (options.isPartial) {
-        fallback.clear();
-        return fallback;
-      }
-
-      if (context.isError) {
-        return Renderer.renderBorderedResult({
-          result,
-          options,
-          theme,
-          context,
-          previewLines: ERROR_PREVIEW_LINES,
-        });
-      }
-
-      const details = result.details as
-        | { readonly diff?: WriteOutcome["diff"] }
-        | undefined;
-      const diff = details?.diff;
-      const stats = DiffView.countStats(diff);
-
-      if (state.titleComponent && state.path !== undefined) {
-        DiffView.buildTitle({
-          label: "Write",
-          path: state.path,
-          stats,
-          theme,
-          markerColor: Renderer.markerColorFor(false, false),
-          lastComponent: state.titleComponent,
-        });
-      }
-
-      if (!diff) {
-        fallback.clear();
-        return fallback;
-      }
-
-      return DiffView.buildBlock({
-        diff,
+      return DiffView.renderDiffResult({
+        label: "Write",
+        result,
+        options,
         theme,
-        lastComponent: context.lastComponent,
+        context: context as typeof context & { state: DiffRenderState },
+        previewLines: ERROR_PREVIEW_LINES,
       });
     },
   });
