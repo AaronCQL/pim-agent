@@ -2,12 +2,14 @@ import { describe, expect, test } from "bun:test";
 import type { TodoItem } from "./schema";
 import {
   formatChecklist,
+  getCurrentItems,
   hasActiveItems,
   makeDetails,
   normalizeItems,
   reconstructFromBranch,
   replaceItems,
   summarizeItems,
+  type TodoSessionKey,
 } from "./todo";
 
 const allStatuses: readonly TodoItem[] = [
@@ -17,17 +19,36 @@ const allStatuses: readonly TodoItem[] = [
   { content: "Skip obsolete step", status: "cancelled" },
 ];
 
+function fakeSession(): TodoSessionKey {
+  return {} as TodoSessionKey;
+}
+
 describe("todo state", () => {
   test("replace semantics keep the latest write only", () => {
-    replaceItems([
+    const sm = fakeSession();
+    replaceItems(sm, [
       { content: "a", status: "pending" },
       { content: "b", status: "pending" },
       { content: "c", status: "pending" },
     ]);
-    const latest = replaceItems([{ content: "d", status: "in_progress" }]);
+    const latest = replaceItems(sm, [{ content: "d", status: "in_progress" }]);
 
     expect(latest).toEqual([{ content: "d", status: "in_progress" }]);
-    expect(formatChecklist()).toBe("[>] d");
+    expect(formatChecklist(getCurrentItems(sm))).toBe("[>] d");
+  });
+
+  test("state is isolated between sessions (parent vs subagent)", () => {
+    const parent = fakeSession();
+    const child = fakeSession();
+    replaceItems(parent, [{ content: "parent task", status: "pending" }]);
+    replaceItems(child, [{ content: "child task", status: "in_progress" }]);
+
+    expect(getCurrentItems(parent)).toEqual([
+      { content: "parent task", status: "pending" },
+    ]);
+    expect(getCurrentItems(child)).toEqual([
+      { content: "child task", status: "in_progress" },
+    ]);
   });
 
   test("content is normalized to a single trimmed line and blank content is dropped", () => {
@@ -101,7 +122,7 @@ describe("todo state", () => {
       toolResult("todo", [{ content: "new", status: "in_progress" }]),
     ];
 
-    expect(reconstructFromBranch(branch)).toEqual([
+    expect(reconstructFromBranch(fakeSession(), branch)).toEqual([
       { content: "new", status: "in_progress" },
     ]);
   });
@@ -112,7 +133,7 @@ describe("todo state", () => {
       todoStateEntry([{ content: "kept", status: "in_progress" }]),
     ];
 
-    expect(reconstructFromBranch(branch)).toEqual([
+    expect(reconstructFromBranch(fakeSession(), branch)).toEqual([
       { content: "kept", status: "in_progress" },
     ]);
   });
@@ -123,7 +144,7 @@ describe("todo state", () => {
       toolResult("todo", [{ content: "new", status: "completed" }]),
     ];
 
-    expect(reconstructFromBranch(branch)).toEqual([
+    expect(reconstructFromBranch(fakeSession(), branch)).toEqual([
       { content: "new", status: "completed" },
     ]);
   });
@@ -134,7 +155,7 @@ describe("todo state", () => {
       todoStateEntry([{ content: "checkpointed", status: "in_progress" }]),
     ];
 
-    expect(reconstructFromBranch(branch)).toEqual([
+    expect(reconstructFromBranch(fakeSession(), branch)).toEqual([
       { content: "checkpointed", status: "in_progress" },
     ]);
   });

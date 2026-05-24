@@ -19,7 +19,7 @@ type RenderContext = {
 
 export type MarkerStatus = "warning" | "error" | "success";
 
-type PrefixSpec = {
+export type PrefixSpec = {
   readonly prefix: string;
   readonly width: number;
 };
@@ -130,8 +130,9 @@ export class Renderer {
     readonly title: string;
     readonly theme: Theme;
     readonly context: RenderContext;
+    readonly labelColor?: ThemeColor;
   }): Component {
-    const { label, title, theme, context } = args;
+    const { label, title, theme, context, labelColor } = args;
     const markerColor = Renderer.markerColorFor(
       Boolean(context.isPartial),
       Boolean(context.isError)
@@ -143,7 +144,8 @@ export class Renderer {
     component.setText(
       theme.fg(markerColor, " ▪") +
         " " +
-        theme.fg("toolTitle", theme.bold(label) + ": " + title),
+        theme.fg(labelColor ?? "toolTitle", theme.bold(label)) +
+        theme.fg("toolTitle", ": " + title),
       theme
     );
     return component;

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -6,7 +6,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import type { TodoItem } from "./schema";
 import registerTodo from "./index";
-import { getCurrentItems, resetItems } from "./todo";
+import { getCurrentItems } from "./todo";
 
 type Handler = (event: unknown, ctx: ExtensionContext) => unknown;
 type RegisteredTool = {
@@ -44,16 +44,12 @@ const stubTheme = {
 } as unknown as Theme;
 
 describe("todo extension", () => {
-  beforeEach(() => {
-    resetItems();
-  });
-
   test("clears an all-done widget on the next user input", async () => {
     const pi = createPi();
     const ctx = createContext();
     registerTodo(pi.api);
 
-    await setTodos(pi, [
+    await setTodos(pi, ctx, [
       { content: "Ship it", status: "completed" },
       { content: "Skip obsolete", status: "cancelled" },
     ]);
@@ -68,7 +64,7 @@ describe("todo extension", () => {
     const results = await emit(pi, "input", { type: "input" }, ctx);
 
     expect(results).toEqual([{ action: "continue" }]);
-    expect(getCurrentItems()).toEqual([]);
+    expect(getCurrentItems(ctx.sessionManager)).toEqual([]);
     expect(ctx.widgetUpdates.at(-1)).toEqual({
       id: "pim-todo",
       lines: undefined,
@@ -84,14 +80,14 @@ describe("todo extension", () => {
       { content: "Done", status: "completed" },
       { content: "Next", status: "pending" },
     ];
-    await setTodos(pi, todos);
+    await setTodos(pi, ctx, todos);
     await emit(pi, "turn_end", { type: "turn_end" }, ctx);
     const updatesBeforeInput = ctx.widgetUpdates.length;
 
     const results = await emit(pi, "input", { type: "input" }, ctx);
 
     expect(results).toEqual([{ action: "continue" }]);
-    expect(getCurrentItems()).toEqual(todos);
+    expect(getCurrentItems(ctx.sessionManager)).toEqual(todos);
     expect(ctx.widgetUpdates).toHaveLength(updatesBeforeInput);
   });
 
@@ -104,7 +100,7 @@ describe("todo extension", () => {
       { content: "Ship", status: "in_progress" },
       { content: "Verify", status: "pending" },
     ];
-    await setTodos(pi, todos);
+    await setTodos(pi, ctx, todos);
     await emit(pi, "session_compact", { type: "session_compact" }, ctx);
 
     expect(pi.appendedEntries).toEqual([
@@ -133,12 +129,30 @@ describe("todo extension", () => {
     expect(pi.sentMessages).toEqual([]);
   });
 
+  test("subagent ctx mutating todos does not leak into the parent ctx", async () => {
+    const pi = createPi();
+    const parent = createContext();
+    const child = createContext();
+    registerTodo(pi.api);
+
+    await setTodos(pi, parent, [{ content: "parent", status: "pending" }]);
+    await setTodos(pi, child, [{ content: "child", status: "in_progress" }]);
+
+    expect(getCurrentItems(parent.sessionManager)).toEqual([
+      { content: "parent", status: "pending" },
+    ]);
+    expect(getCurrentItems(child.sessionManager)).toEqual([
+      { content: "child", status: "in_progress" },
+    ]);
+  });
+
   test("todo tool executes sequentially and returns an empty checklist for a cleared list", async () => {
     const pi = createPi();
+    const ctx = createContext();
     registerTodo(pi.api);
 
     expect(pi.tools[0]?.executionMode).toBe("sequential");
-    expect(await setTodos(pi, [])).toEqual({
+    expect(await setTodos(pi, ctx, [])).toEqual({
       content: [{ type: "text", text: "" }],
       details: {
         todos: [],
@@ -182,6 +196,7 @@ function createContext(): MockContext {
   const widgetUpdates: WidgetUpdate[] = [];
   return {
     hasUI: true,
+    sessionManager: {},
     ui: {
       theme: stubTheme,
       setWidget(id: string, lines: readonly string[] | undefined): void {
@@ -207,11 +222,12 @@ async function emit(
 
 async function setTodos(
   pi: MockPi,
+  ctx: ExtensionContext,
   todos: readonly TodoItem[]
 ): Promise<unknown> {
   const tool = pi.tools[0];
   if (!tool) {
     throw new Error("todo tool was not registered");
   }
-  return await tool.execute("todo-call", { todos });
+  return await tool.execute("todo-call", { todos }, undefined, undefined, ctx);
 }

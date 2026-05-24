@@ -23,7 +23,7 @@ export default function (pi: ExtensionAPI): void {
     if (!ctx.hasUI) {
       return;
     }
-    const items = getCurrentItems();
+    const items = getCurrentItems(ctx.sessionManager);
     if (items.length === 0) {
       ctx.ui.setWidget(WIDGET_ID, undefined);
       return;
@@ -32,17 +32,17 @@ export default function (pi: ExtensionAPI): void {
   };
 
   const reconstructAndRefresh = (ctx: ExtensionContext): void => {
-    reconstructFromBranch(ctx.sessionManager.getBranch());
+    reconstructFromBranch(ctx.sessionManager, ctx.sessionManager.getBranch());
     refreshWidget(ctx);
   };
 
   const clearInactiveTodos = (ctx: ExtensionContext): void => {
-    const items = getCurrentItems();
+    const items = getCurrentItems(ctx.sessionManager);
     if (items.length === 0 || hasActiveItems(items)) {
       return;
     }
 
-    resetItems();
+    resetItems(ctx.sessionManager);
     refreshWidget(ctx);
   };
 
@@ -56,8 +56,8 @@ export default function (pi: ExtensionAPI): void {
     parameters: todoSchema,
     renderShell: "self",
     executionMode: "sequential",
-    async execute(_toolCallId, params) {
-      const items = replaceItems(params.todos);
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const items = replaceItems(ctx.sessionManager, params.todos);
       return {
         content: [
           {
@@ -89,8 +89,8 @@ export default function (pi: ExtensionAPI): void {
     return { action: "continue" };
   });
 
-  pi.on("session_compact", () => {
-    const items = getCurrentItems();
+  pi.on("session_compact", (_event, ctx) => {
+    const items = getCurrentItems(ctx.sessionManager);
     if (items.length === 0) {
       return;
     }

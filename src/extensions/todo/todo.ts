@@ -1,3 +1,4 @@
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { STATUSES, type TodoItem, type TodoStatus } from "./schema";
 
 export const TODO_STATE_CUSTOM_TYPE = "pim-todo-state";
@@ -13,7 +14,13 @@ export type FormatChecklistOptions = {
   readonly activeOnly?: boolean;
 };
 
-let currentItems: TodoItem[] = [];
+// Identity key for the per-session state slot. Extracted from ExtensionContext
+// because ReadonlySessionManager isn't on the package's public entry point.
+// Only identity is used (no methods called) — WeakMap reclaims the slot when
+// the session is disposed.
+export type TodoSessionKey = ExtensionContext["sessionManager"];
+
+const itemsBySession = new WeakMap<TodoSessionKey, TodoItem[]>();
 
 const markers: Record<TodoStatus, string> = {
   pending: "[ ]",
@@ -24,24 +31,32 @@ const markers: Record<TodoStatus, string> = {
 
 const statusSet: ReadonlySet<TodoStatus> = new Set(STATUSES);
 
-export function getCurrentItems(): readonly TodoItem[] {
-  return currentItems;
+export function getCurrentItems(
+  sessionManager: TodoSessionKey
+): readonly TodoItem[] {
+  return itemsBySession.get(sessionManager) ?? [];
 }
 
-export function replaceItems(items: readonly TodoItem[]): readonly TodoItem[] {
-  currentItems = normalizeItems(items);
-  return currentItems;
+export function replaceItems(
+  sessionManager: TodoSessionKey,
+  items: readonly TodoItem[]
+): readonly TodoItem[] {
+  const normalized = normalizeItems(items);
+  itemsBySession.set(sessionManager, normalized);
+  return normalized;
 }
 
-export function resetItems(): void {
-  currentItems = [];
+export function resetItems(sessionManager: TodoSessionKey): void {
+  itemsBySession.set(sessionManager, []);
 }
 
 export function reconstructFromBranch(
+  sessionManager: TodoSessionKey,
   branch: readonly unknown[]
 ): readonly TodoItem[] {
-  currentItems = findLatestTodoItems(branch);
-  return currentItems;
+  const items = findLatestTodoItems(branch);
+  itemsBySession.set(sessionManager, items);
+  return items;
 }
 
 export function normalizeItems(items: readonly TodoItem[]): TodoItem[] {
@@ -51,9 +66,7 @@ export function normalizeItems(items: readonly TodoItem[]): TodoItem[] {
   });
 }
 
-export function hasActiveItems(
-  items: readonly TodoItem[] = currentItems
-): boolean {
+export function hasActiveItems(items: readonly TodoItem[]): boolean {
   return items.some(isActive);
 }
 
@@ -78,7 +91,7 @@ export function makeDetails(items: readonly TodoItem[]): TodoDetails {
 }
 
 export function formatChecklist(
-  items: readonly TodoItem[] = currentItems,
+  items: readonly TodoItem[],
   options: FormatChecklistOptions = {}
 ): string {
   return items

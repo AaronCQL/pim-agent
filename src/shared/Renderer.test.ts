@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type {
   AgentToolResult,
   Theme,
+  ThemeColor,
   ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
@@ -11,6 +12,23 @@ const stubTheme = {
   bold: (text: string) => text,
   fg: (_color: string, text: string) => text,
 } as unknown as Theme;
+
+function tracingTheme(): {
+  readonly theme: Theme;
+  readonly calls: { readonly color: ThemeColor; readonly text: string }[];
+} {
+  const calls: { color: ThemeColor; text: string }[] = [];
+  return {
+    calls,
+    theme: {
+      bold: (text: string) => text,
+      fg: (color: ThemeColor, text: string) => {
+        calls.push({ color, text });
+        return text;
+      },
+    } as unknown as Theme,
+  };
+}
 
 const expandedOptions = {
   expanded: true,
@@ -111,6 +129,44 @@ describe("Renderer.renderToolCallTitle", () => {
     });
 
     expect(component.render(80)).toEqual([" ▪ Bash: pwd".padEnd(80, " ")]);
+  });
+
+  test("labelColor overrides the default label color when provided", () => {
+    const overridden = tracingTheme();
+    Renderer.renderToolCallTitle({
+      label: "Subagent",
+      title: "investigate",
+      theme: overridden.theme,
+      context: {
+        lastComponent: undefined,
+        isPartial: false,
+        isError: false,
+      },
+      labelColor: "accent",
+    }).render(80);
+
+    expect(overridden.calls).toContainEqual({
+      color: "accent",
+      text: "Subagent",
+    });
+    expect(overridden.calls).not.toContainEqual({
+      color: "toolTitle",
+      text: "Subagent",
+    });
+
+    const fallback = tracingTheme();
+    Renderer.renderToolCallTitle({
+      label: "Bash",
+      title: "pwd",
+      theme: fallback.theme,
+      context: {
+        lastComponent: undefined,
+        isPartial: false,
+        isError: false,
+      },
+    }).render(80);
+
+    expect(fallback.calls).toContainEqual({ color: "toolTitle", text: "Bash" });
   });
 
   test("adds a left border to wrapped title lines", () => {

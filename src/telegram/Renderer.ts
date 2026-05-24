@@ -2,6 +2,7 @@ import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { GrammyError, type Api } from "grammy";
 import { basename } from "node:path";
 
+import type { SubagentDetails } from "../extensions/subagent/subagent";
 import type { TodoInput } from "../extensions/todo/schema";
 import type { LogsMode } from "./Config";
 import { Markdown } from "./Markdown";
@@ -30,6 +31,7 @@ const TOOL_EMOJI: Record<string, string> = {
   web_fetch: "🌐",
   send_file: "📤",
   task: "⏰",
+  subagent: "🤖",
 };
 
 const MESSAGE_LIMIT = 4000;
@@ -40,6 +42,7 @@ export class Renderer {
   private readonly logsMode: LogsMode;
   private readonly entries: TrackerEntry[] = [];
   private readonly toolIndex = new Map<string, number>();
+  private readonly subagentBaseById = new Map<string, string>();
   private statusMessageId: number | undefined;
   private typingTimer: Timer | undefined;
   private editTimer: Timer | undefined;
@@ -110,10 +113,22 @@ export class Renderer {
       this.addTool(event.toolCallId, event.toolName, event.args);
       return;
     }
+    if (event.type === "tool_execution_update") {
+      if (this.logsMode === "off") {
+        return;
+      }
+      this.updateSubagentLabel(
+        event.toolCallId,
+        event.toolName,
+        event.partialResult
+      );
+      return;
+    }
     if (event.type === "tool_execution_end") {
       if (this.logsMode === "off") {
         return;
       }
+      this.updateSubagentLabel(event.toolCallId, event.toolName, event.result);
       const idx = this.toolIndex.get(event.toolCallId);
       if (idx !== undefined) {
         this.entries[idx]!.state = event.isError ? "error" : "ok";
@@ -165,6 +180,9 @@ export class Renderer {
     }
     const emoji = TOOL_EMOJI[name] ?? "⚙️";
     const label = Renderer.toolLabel(toolName, args);
+    if (name === "subagent") {
+      this.subagentBaseById.set(toolCallId, label);
+    }
     const last = this.entries.at(-1);
     if (last?.kind === "tool" && last.emoji === emoji && last.label === label) {
       this.toolIndex.set(toolCallId, this.entries.length - 1);
@@ -180,6 +198,38 @@ export class Renderer {
       state: "running",
     });
     this.toolIndex.set(toolCallId, this.entries.length - 1);
+    this.scheduleEdit();
+  }
+
+  private updateSubagentLabel(
+    toolCallId: string,
+    toolName: string,
+    payload: unknown
+  ): void {
+    if (toolName.toLowerCase() !== "subagent") {
+      return;
+    }
+    const idx = this.toolIndex.get(toolCallId);
+    if (idx === undefined) {
+      return;
+    }
+    const base = this.subagentBaseById.get(toolCallId);
+    if (base === undefined) {
+      return;
+    }
+    const details = (payload as { readonly details?: SubagentDetails } | null)
+      ?.details;
+    if (!details) {
+      return;
+    }
+    const count = details.toolCalls.length + details.activeToolNames.length;
+    const suffix =
+      count > 0 ? ` (${count} ${count === 1 ? "tool" : "tools"})` : "";
+    const next = `${base}${suffix}`;
+    if (this.entries[idx]!.label === next) {
+      return;
+    }
+    this.entries[idx]!.label = next;
     this.scheduleEdit();
   }
 
@@ -490,6 +540,12 @@ export class Renderer {
     }
     if (name === "task") {
       return Renderer.taskLabel(obj, code);
+    }
+    if (name === "subagent") {
+      const prompt = Renderer.stringArg(obj, "prompt");
+      return prompt
+        ? Markdown.toHtml(Renderer.truncate(Renderer.firstLine(prompt), 180))
+        : "";
     }
 
     const candidate =
