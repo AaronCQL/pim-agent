@@ -142,7 +142,7 @@ export class EditMatcher {
     }
 
     throw new Error(
-      `[E_ESCAPE_DRIFT] Fuzzy edit matched with strategy "${strategy}", but newString introduces escape sequences not present in the matched region: ${[...new Set(introduced)].join(", ")}. Re-read the file and submit literal replacement text.`
+      `Edit failed: newString contains literal escape text not present in the matched file text: ${[...new Set(introduced)].join(", ")}. Re-read the file and retry using exact file text in oldString and the intended replacement text in newString.`
     );
   }
 
@@ -193,11 +193,11 @@ export class EditMatcher {
     error: InstanceType<typeof EditMatcher.NotFoundError>
   ): string {
     if (error.closest.length === 0) {
-      return "[E_NOT_FOUND] oldString was not found in the file.";
+      return "oldString was not found in the file.";
     }
 
     return [
-      "[E_NOT_FOUND] oldString was not found in the file. Closest candidate regions:",
+      "oldString was not found in the file. Closest candidate regions:",
       "",
       ...error.closest.flatMap((region, index) => [
         `${index + 1}. lines ${EditMatcher.formatLineRange(region.startLine, region.endLine)} (${Math.round(region.similarity * 100)}% similar)`,
@@ -228,7 +228,7 @@ export class EditMatcher {
   public static readonly MultipleMatchesError = class MultipleMatchesError extends Error {
     public constructor(public readonly oldString: string) {
       super(
-        "[E_MULTIPLE_MATCHES] oldString matched multiple regions. Use enough surrounding context to make oldString unique, or set replaceAll=true."
+        "oldString matched multiple regions. Use enough surrounding context to make oldString unique, or set replaceAll=true to replace all matching oldString."
       );
       this.name = "MultipleMatchesError";
     }

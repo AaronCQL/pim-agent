@@ -203,9 +203,7 @@ function parseEdits(rawEdits: readonly RawEdit[]): readonly ParsedEdit[] {
 
   return rawEdits.map((raw, index) => {
     if (raw.oldString === raw.newString) {
-      throw new Error(
-        `[E_NOOP_EDIT] Edit ${index}: oldString and newString are identical.`
-      );
+      throw new Error(`Edit ${index}: oldString and newString are identical.`);
     }
 
     return {
@@ -265,7 +263,7 @@ function assertNoDuplicateEdits(edits: readonly ParsedEdit[]): void {
 
     if (previous !== undefined) {
       throw new Error(
-        `[E_DUPLICATE_EDIT] Edits ${previous} and ${index} are identical. Remove one.`
+        `Edits ${previous} and ${index} are identical. Remove one.`
       );
     }
 
@@ -304,7 +302,7 @@ function assertNoOverlaps(sorted: readonly Mutation[]): void {
 
 function renderOverlapError(left: Mutation, right: Mutation): string {
   return [
-    `[E_OVERLAPPING_EDITS] Edits ${left.index} and ${right.index} target overlapping byte ranges.`,
+    `Edits ${left.index} and ${right.index} target overlapping byte ranges.`,
     `- Edit ${left.index}: range ${left.range[0]}-${left.range[1]}`,
     `- Edit ${right.index}: range ${right.range[0]}-${right.range[1]}`,
     "Combine into a single edit, or drop one.",
@@ -313,7 +311,7 @@ function renderOverlapError(left: Mutation, right: Mutation): string {
 
 function renderAllNoopError(noops: readonly NoopEdit[]): string {
   return [
-    "[E_NOOP_EDIT] All edits were no-ops. The file already contains the requested replacement content.",
+    "All edits were no-ops. The file already contains the requested replacement content.",
     "",
     ...noops.map(
       (noop) =>

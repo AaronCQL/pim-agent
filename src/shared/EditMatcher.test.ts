@@ -91,7 +91,7 @@ describe("EditMatcher", () => {
 
   test("throws multiple matches without replaceAll", () => {
     expect(() => EditMatcher.resolve("foo\nbar\nfoo", "foo")).toThrow(
-      /E_MULTIPLE_MATCHES/
+      /matched multiple regions/
     );
   });
 
@@ -118,6 +118,6 @@ describe("EditMatcher", () => {
         "new\\nvalue",
         "  beta".slice(range[0], range[1])
       )
-    ).toThrow(/E_ESCAPE_DRIFT/);
+    ).toThrow(/newString contains literal escape text/);
   });
 });

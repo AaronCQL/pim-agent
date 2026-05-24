@@ -58,7 +58,7 @@ describe("editFile", () => {
         { oldString: "beta", newString: "delta" },
         { oldString: "delta", newString: "omega" },
       ])
-    ).rejects.toThrow(/E_NOT_FOUND/);
+    ).rejects.toThrow(/oldString was not found/);
     expect(await readFile(path, "utf8")).toBe("alpha\nbeta");
   });
 
@@ -72,7 +72,7 @@ describe("editFile", () => {
         { oldString: "beta\ngamma", newString: "merged" },
         { oldString: "gamma", newString: "changed" },
       ])
-    ).rejects.toThrow(/E_OVERLAPPING_EDITS/);
+    ).rejects.toThrow(/target overlapping byte ranges/);
     expect(await readFile(path, "utf8")).toBe("alpha\nbeta\ngamma");
   });
 
@@ -102,7 +102,7 @@ describe("editFile", () => {
         { oldString: "foo", newString: "baz", replaceAll: true },
         { oldString: "foo\nbar", newString: "merged" },
       ])
-    ).rejects.toThrow(/E_OVERLAPPING_EDITS/);
+    ).rejects.toThrow(/target overlapping byte ranges/);
   });
 
   test("rejects duplicate edits", async () => {
@@ -113,7 +113,7 @@ describe("editFile", () => {
     const edit: RawEdit = { oldString: "beta", newString: "delta" };
 
     await expect(editFile(path, [edit, edit])).rejects.toThrow(
-      /E_DUPLICATE_EDIT/
+      /Edits 0 and 1 are identical/
     );
   });
 
@@ -126,7 +126,7 @@ describe("editFile", () => {
 
     await expect(
       editFile(noopPath, [{ oldString: "beta ", newString: "  beta" }])
-    ).rejects.toThrow(/E_NOOP_EDIT/);
+    ).rejects.toThrow(/All edits were no-ops/);
 
     const outcome = await editFile(partialPath, [
       { oldString: "alpha", newString: "ALPHA" },
@@ -144,7 +144,7 @@ describe("editFile", () => {
 
     await expect(
       editFile(path, [{ oldString: "betx", newString: "delta" }])
-    ).rejects.toThrow(/E_NOT_FOUND[\s\S]*lines 2/);
+    ).rejects.toThrow(/oldString was not found[\s\S]*lines 2/);
   });
 
   test("reports bare not found when nothing is close", async () => {
@@ -154,7 +154,7 @@ describe("editFile", () => {
 
     await expect(
       editFile(path, [{ oldString: "zzzz", newString: "delta" }])
-    ).rejects.toThrow("[E_NOT_FOUND] oldString was not found in the file.");
+    ).rejects.toThrow("oldString was not found in the file.");
   });
 
   test("rejects multiple matches without replaceAll", async () => {
@@ -164,7 +164,7 @@ describe("editFile", () => {
 
     await expect(
       editFile(path, [{ oldString: "foo", newString: "baz" }])
-    ).rejects.toThrow(/E_MULTIPLE_MATCHES/);
+    ).rejects.toThrow(/matched multiple regions/);
   });
 
   test("rejects escape drift after fuzzy match", async () => {
@@ -174,7 +174,7 @@ describe("editFile", () => {
 
     await expect(
       editFile(path, [{ oldString: "beta ", newString: "new\\nvalue" }])
-    ).rejects.toThrow(/E_ESCAPE_DRIFT/);
+    ).rejects.toThrow(/newString contains literal escape text/);
   });
 
   test("preserves UTF-8 BOM when editing", async () => {

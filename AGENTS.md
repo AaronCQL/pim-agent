@@ -25,6 +25,7 @@ Telegram daemon: `pim --mode telegram --install` writes a user systemd/launchd u
 - Use comments sparingly, and only to explain why, not what or how.
 - Use instance classes for stateful services and lifecycle objects. Avoid static-only classes outside `src/shared/`; prefer named functions for stateless module-local helpers.
 - Shared utilities that cross module boundaries live in `src/shared/` and are exposed as a static-method class rather than a bare function. The filename must match the class name exactly (`Renderer.ts` exports `class Renderer`). Helpers with a single colocated caller stay as bare functions in lowercase files.
+- When committing, check the commit history and use a similar semantic commit message.
 
 ## On-demand Docs
 
