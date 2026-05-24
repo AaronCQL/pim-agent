@@ -1,6 +1,10 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { Paths } from "../../shared/Paths";
-import { Renderer } from "../../shared/Renderer";
+import {
+  Renderer,
+  type StatefulToolCallTitleContext,
+  type StatefulToolCallTitleState,
+} from "../../shared/Renderer";
 import { Tools } from "../../shared/Tools";
 import { buildMatcher, findMatches } from "./grep";
 import { formatTitle, renderMatches } from "./render";
@@ -16,9 +20,35 @@ const PREVIEW_LINES = 10;
 const DEFAULT_OUTPUT_MODE: GrepOutputMode = "files_with_matches";
 const DEFAULT_PATH_FORMAT: GrepPathFormat = "relative";
 
-type GrepCallState = {
+type GrepCallState = StatefulToolCallTitleState & {
   fileCount?: number;
 };
+
+type GrepRenderContext = StatefulToolCallTitleContext & {
+  readonly args?: GrepInput;
+  readonly cwd: string;
+};
+
+function renderTitle(
+  input: Partial<GrepInput>,
+  theme: Theme,
+  context: GrepRenderContext
+) {
+  const state = context.state as GrepCallState;
+  const title = formatTitle({
+    pattern: input.pattern,
+    path: input.path,
+    glob: input.glob,
+    cwd: context.cwd,
+    fileCount: state.fileCount,
+  });
+  return Renderer.renderStatefulToolCallTitle({
+    label: "Grep",
+    title,
+    theme,
+    context,
+  });
+}
 
 export default function (pi: ExtensionAPI): void {
   Tools.register(pi, {
@@ -102,21 +132,7 @@ export default function (pi: ExtensionAPI): void {
       };
     },
     renderCall(args, theme, context) {
-      const input = (args ?? {}) as Partial<GrepInput>;
-      const state = context.state as GrepCallState;
-      const title = formatTitle({
-        pattern: input.pattern,
-        path: input.path,
-        glob: input.glob,
-        cwd: context.cwd,
-        fileCount: state.fileCount,
-      });
-      return Renderer.renderToolCallTitle({
-        label: "Grep",
-        title,
-        theme,
-        context,
-      });
+      return renderTitle((args ?? {}) as Partial<GrepInput>, theme, context);
     },
     renderResult(result, options, theme, context) {
       const state = context.state as GrepCallState;
@@ -126,6 +142,7 @@ export default function (pi: ExtensionAPI): void {
 
       if (details?.fileCount !== undefined) {
         state.fileCount = details.fileCount;
+        renderTitle(context.args ?? {}, theme, context);
       }
 
       return Renderer.renderBorderedResult({

@@ -11,10 +11,18 @@ import {
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 
-type RenderContext = {
+export type RenderContext = {
   readonly lastComponent: Component | undefined;
   readonly isPartial: boolean;
   readonly isError: boolean;
+};
+
+export type StatefulToolCallTitleContext = RenderContext & {
+  readonly state: unknown;
+};
+
+export type StatefulToolCallTitleState = {
+  titleComponent?: Component;
 };
 
 export type MarkerStatus = "warning" | "error" | "success";
@@ -148,6 +156,25 @@ export class Renderer {
         theme.fg("toolTitle", ": " + title),
       theme
     );
+    return component;
+  }
+
+  public static renderStatefulToolCallTitle(args: {
+    readonly label: string;
+    readonly title: string;
+    readonly theme: Theme;
+    readonly context: StatefulToolCallTitleContext;
+    readonly labelColor?: ThemeColor;
+  }): Component {
+    const state = args.context.state as StatefulToolCallTitleState;
+    const component = Renderer.renderToolCallTitle({
+      ...args,
+      context: {
+        ...args.context,
+        lastComponent: state.titleComponent ?? args.context.lastComponent,
+      },
+    });
+    state.titleComponent = component;
     return component;
   }
 
