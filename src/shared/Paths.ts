@@ -2,6 +2,10 @@ import { homedir } from "node:os";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
 export class Paths {
+  public static pimHomeDir(): string {
+    return Paths.expandHome(process.env.PIM_HOME_DIR ?? "~/.pim");
+  }
+
   public static resolve(value: string, baseDir: string): string {
     const expanded = Paths.expandHome(value);
     return isAbsolute(expanded) ? expanded : resolve(baseDir, expanded);

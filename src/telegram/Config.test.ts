@@ -9,7 +9,7 @@ import { Config, type TelegramConfig } from "./Config";
 const ENV_KEYS = [
   "PIM_TELEGRAM_BOT_TOKEN",
   "PIM_TELEGRAM_ALLOW",
-  "PIM_TELEGRAM_DIR",
+  "PIM_HOME_DIR",
 ] as const;
 
 let savedEnv: Record<string, string | undefined>;
@@ -141,11 +141,11 @@ describe("Config.load precedence", () => {
     expect(cfg.cwd).toBe("/from-file");
   });
 
-  test("PIM_TELEGRAM_DIR resolves the config directory", async () => {
-    process.env.PIM_TELEGRAM_DIR = tmp;
+  test("PIM_HOME_DIR resolves the config directory", async () => {
+    process.env.PIM_HOME_DIR = tmp;
     process.env.PIM_TELEGRAM_BOT_TOKEN = "t";
     const cfg = await Config.load({ printConfig: false });
-    expect(cfg.configDir).toBe(tmp);
+    expect(cfg.configDir).toBe(join(tmp, "telegram"));
   });
 
   test("throws when no token from any source", async () => {

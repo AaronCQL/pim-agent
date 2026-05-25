@@ -10,7 +10,7 @@
     "pim": "./bin/pim.ts"
   },
   "engines": {
-    "bun": ">=1.0.0"
+    "bun": ">=1.2.7"
   },
   "pi": {
     "extensions": [

@@ -3,7 +3,8 @@ import { Renderer } from "../../shared/Renderer";
 import { Tools } from "../../shared/Tools";
 import { detailsOf, formatResult, isErrorResult } from "./format";
 import {
-  cleanupSpillFiles,
+  BASH_SPILL_SWEEP_INTERVAL_MS,
+  cleanupOldBashSpillFiles,
   killAllActiveBashGroups,
   runBashCommand,
 } from "./run";
@@ -19,13 +20,23 @@ const DEFAULT_TIMEOUT_SEC = DEFAULT_TIMEOUT_MS / 1000;
 
 const PREVIEW_LINES = 5;
 
-let signalHandlersInstalled = false;
+let lifecycleHandlersInstalled = false;
 
-function installShutdownHandlers(): void {
-  if (signalHandlersInstalled) {
+function installLifecycleHandlers(): void {
+  if (lifecycleHandlersInstalled) {
     return;
   }
-  signalHandlersInstalled = true;
+  lifecycleHandlersInstalled = true;
+
+  cleanupOldBashSpillFiles();
+  setInterval(() => {
+    cleanupOldBashSpillFiles();
+  }, BASH_SPILL_SWEEP_INTERVAL_MS).unref?.();
+
+  process.once("exit", () => {
+    cleanupOldBashSpillFiles();
+  });
+
   // Sweep bash subtrees that escaped our process group (double-forked
   // daemons via their own setsid) or that the parent harness is about to
   // strand by signalling us. Re-raise the signal so the default handler
@@ -36,7 +47,7 @@ function installShutdownHandlers(): void {
         killAllActiveBashGroups(sig);
       } catch {}
       try {
-        cleanupSpillFiles();
+        cleanupOldBashSpillFiles();
       } catch {}
       process.kill(process.pid, sig);
     });
@@ -44,7 +55,7 @@ function installShutdownHandlers(): void {
 }
 
 export default function (pi: ExtensionAPI): void {
-  installShutdownHandlers();
+  installLifecycleHandlers();
   Tools.register(pi, {
     name: "bash",
     label: "bash",

@@ -33,8 +33,6 @@ export type ThinkingLevelOpt = (typeof THINKING_LEVELS)[number];
 export const LOGS_MODES = ["off", "tool", "text", "verbose"] as const;
 export type LogsMode = (typeof LOGS_MODES)[number];
 
-const DEFAULT_DIR = Paths.expandHome("~/.pim/telegram");
-
 export class Config {
   public static parseArgs(args: ReadonlyArray<string>): Cli {
     let token: string | undefined;
@@ -88,8 +86,7 @@ export class Config {
   }
 
   public static async load(cli: Cli): Promise<TelegramConfig> {
-    const configDir =
-      cli.configDir ?? process.env.PIM_TELEGRAM_DIR ?? DEFAULT_DIR;
+    const configDir = cli.configDir ?? join(Paths.pimHomeDir(), "telegram");
 
     const filePath = join(configDir, "config.json");
     const fileConfig = await Fs.readJsonOrEmpty<Partial<TelegramConfig>>(

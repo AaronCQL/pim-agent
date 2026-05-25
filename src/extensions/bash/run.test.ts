@@ -1,11 +1,40 @@
-import { describe, expect, test } from "bun:test";
-import { killAllActiveBashGroups, runBashCommand } from "./run";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtemp, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  BASH_SPILL_TTL_MS,
+  cleanupOldBashSpillFiles,
+  killAllActiveBashGroups,
+  pimCacheDir,
+  runBashCommand,
+} from "./run";
 import {
   DRAIN_GRACE_MS,
   KILL_GRACE_MS,
   STREAM_HEAD_BYTES,
   STREAM_TAIL_BYTES,
 } from "./schema";
+
+let previousPimHomeDir: string | undefined;
+let testPimHomeDir: string | undefined;
+
+beforeAll(async () => {
+  previousPimHomeDir = process.env.PIM_HOME_DIR;
+  testPimHomeDir = await mkdtemp(join(tmpdir(), "pim-bash-home-"));
+  process.env.PIM_HOME_DIR = testPimHomeDir;
+});
+
+afterAll(async () => {
+  if (previousPimHomeDir === undefined) {
+    delete process.env.PIM_HOME_DIR;
+  } else {
+    process.env.PIM_HOME_DIR = previousPimHomeDir;
+  }
+  if (testPimHomeDir) {
+    await rm(testPimHomeDir, { recursive: true, force: true });
+  }
+});
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
@@ -197,7 +226,7 @@ describe("runBashCommand (integration)", () => {
     expect(r.stdout.text).toContain("bytes truncated");
   });
 
-  test("spills full stdout to a temp file when truncated", async () => {
+  test("spills full stdout to ~/.pim/cache when truncated", async () => {
     const totalBytes = STREAM_HEAD_BYTES + STREAM_TAIL_BYTES + 4096;
     const r = await runBashCommand(
       `head -c ${totalBytes} /dev/zero | tr '\\0' 'A'`,
@@ -209,6 +238,14 @@ describe("runBashCommand (integration)", () => {
       expect(r.exitCode).toBe(0);
       expect(r.stdout.truncated).toBe(true);
       expect(r.stdout.path).toBeTruthy();
+      expect(r.stdout.path!.startsWith(join(pimCacheDir(), "bash-"))).toBe(
+        true
+      );
+      expect(r.stdout.path!.endsWith(".out")).toBe(true);
+      const cacheMode = (await stat(pimCacheDir())).mode & 0o777;
+      const spillMode = (await stat(r.stdout.path!)).mode & 0o777;
+      expect(cacheMode).toBe(0o700);
+      expect(spillMode).toBe(0o600);
       const spilled = await Bun.file(r.stdout.path!).text();
       expect(spilled.length).toBe(totalBytes);
       expect(spilled).toBe("A".repeat(totalBytes));
@@ -226,5 +263,39 @@ describe("runBashCommand (integration)", () => {
     expect(r.exitCode).toBe(0);
     expect(r.stdout.path).toBeNull();
     expect(r.stderr.path).toBeNull();
+  });
+
+  test("cleanupOldBashSpillFiles deletes only expired bash spill files", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pim-bash-cleanup-"));
+    const now = Date.now();
+    const oldSpill = join(
+      root,
+      "bash-0192ce11-26d5-7dc3-9305-1426de888c5a.out"
+    );
+    const recentSpill = join(
+      root,
+      "bash-0192ce11-26d5-7dc4-8894-bc88d506d6ee.err"
+    );
+    const invalidSpillName = join(root, "bash-not-a-uuid.out");
+    const unrelated = join(root, "other-old.out");
+    try {
+      await writeFile(oldSpill, "old");
+      await writeFile(recentSpill, "recent");
+      await writeFile(invalidSpillName, "invalid");
+      await writeFile(unrelated, "unrelated");
+      const oldDate = new Date(now - BASH_SPILL_TTL_MS - 1000);
+      await utimes(oldSpill, oldDate, oldDate);
+      await utimes(invalidSpillName, oldDate, oldDate);
+      await utimes(unrelated, oldDate, oldDate);
+
+      await cleanupOldBashSpillFiles(root, now);
+
+      expect(await Bun.file(oldSpill).exists()).toBe(false);
+      expect(await Bun.file(recentSpill).exists()).toBe(true);
+      expect(await Bun.file(invalidSpillName).exists()).toBe(true);
+      expect(await Bun.file(unrelated).exists()).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

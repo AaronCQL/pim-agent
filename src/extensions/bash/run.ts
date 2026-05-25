@@ -1,7 +1,7 @@
-import { randomUUID } from "node:crypto";
-import { unlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readdirSync, statSync, unlinkSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { Paths } from "../../shared/Paths";
 import { StreamCapture } from "./capture";
 import {
   type BashCommandResult,
@@ -11,8 +11,17 @@ import {
 
 type Reader = ReadableStreamDefaultReader<Uint8Array>;
 
+export const BASH_SPILL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export const BASH_SPILL_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+
+const BASH_SPILL_FILE_RE =
+  /^bash-[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(out|err)$/;
+
 const activePids = new Set<number>();
-const spillPaths = new Set<string>();
+
+export function pimCacheDir(): string {
+  return join(Paths.pimHomeDir(), "cache");
+}
 
 // Wired into the extension's signal handlers so a daemon that `setsid`s
 // out of our group (or harbor/parent SIGTERM) still tears down its subtree.
@@ -23,15 +32,30 @@ export function killAllActiveBashGroups(sig: NodeJS.Signals = "SIGTERM"): void {
   activePids.clear();
 }
 
-// /tmp is tmpfs on most hosts; without an explicit sweep, spill files
-// accumulate in RAM for the lifetime of the pim session.
-export function cleanupSpillFiles(): void {
-  for (const path of spillPaths) {
+export function cleanupOldBashSpillFiles(
+  dir = pimCacheDir(),
+  now = Date.now()
+): void {
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return;
+  }
+
+  const cutoff = now - BASH_SPILL_TTL_MS;
+  for (const name of entries) {
+    if (!BASH_SPILL_FILE_RE.test(name)) {
+      continue;
+    }
+    const path = join(dir, name);
     try {
-      unlinkSync(path);
+      const metadata = statSync(path);
+      if (metadata.isFile() && metadata.mtimeMs < cutoff) {
+        unlinkSync(path);
+      }
     } catch {}
   }
-  spillPaths.clear();
 }
 
 async function drain(reader: Reader | null, cap: StreamCapture): Promise<void> {
@@ -64,10 +88,11 @@ async function spillIfTruncated(
   if (!cap.truncated) {
     return null;
   }
-  const path = join(tmpdir(), `pim-bash-${randomUUID()}${suffix}`);
+  const dir = pimCacheDir();
+  const path = join(dir, `bash-${Bun.randomUUIDv7()}${suffix}`);
   try {
-    await Bun.write(path, cap.full());
-    spillPaths.add(path);
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    await writeFile(path, cap.full(), { flag: "wx", mode: 0o600 });
     return path;
   } catch {
     return null;
