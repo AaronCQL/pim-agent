@@ -1,11 +1,22 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { EMPTY_GIT, fetchGitStatus, parseGitStatus } from "./git";
 
-const tempRoot = (): Promise<string> =>
-  mkdtemp(join(tmpdir(), "pim-footer-git-"));
+const tempRoots: string[] = [];
+
+const tempRoot = async (): Promise<string> => {
+  const root = await mkdtemp(join(tmpdir(), "pim-footer-git-"));
+  tempRoots.push(root);
+  return root;
+};
+
+afterAll(async () => {
+  await Promise.all(
+    tempRoots.map((root) => rm(root, { force: true, recursive: true }))
+  );
+});
 
 describe("parseGitStatus", () => {
   test("parses clean branch status", () => {

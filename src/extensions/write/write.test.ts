@@ -1,11 +1,22 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { writeContent } from "./write";
 
-const tempRoot = (): Promise<string> =>
-  mkdtemp(join(tmpdir(), "pim-write-tool-"));
+const tempRoots: string[] = [];
+
+const tempRoot = async (): Promise<string> => {
+  const root = await mkdtemp(join(tmpdir(), "pim-write-tool-"));
+  tempRoots.push(root);
+  return root;
+};
+
+afterAll(async () => {
+  await Promise.all(
+    tempRoots.map((root) => rm(root, { force: true, recursive: true }))
+  );
+});
 
 describe("writeContent", () => {
   test("creates a new file and reports an all-added diff", async () => {

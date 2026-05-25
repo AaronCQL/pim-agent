@@ -3,18 +3,30 @@ import {
   link,
   mkdtemp,
   readFile,
+  rm,
   stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { editFile, formatEditSummary } from "./edit";
 import type { RawEdit } from "./schema";
 
-const tempRoot = (): Promise<string> =>
-  mkdtemp(join(tmpdir(), "pim-edit-tool-"));
+const tempRoots: string[] = [];
+
+const tempRoot = async (): Promise<string> => {
+  const root = await mkdtemp(join(tmpdir(), "pim-edit-tool-"));
+  tempRoots.push(root);
+  return root;
+};
+
+afterAll(async () => {
+  await Promise.all(
+    tempRoots.map((root) => rm(root, { force: true, recursive: true }))
+  );
+});
 
 describe("editFile", () => {
   test("applies exact single edit", async () => {

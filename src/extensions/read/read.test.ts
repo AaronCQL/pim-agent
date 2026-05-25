@@ -1,14 +1,25 @@
-import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { OutputBudget } from "../../shared/OutputBudget";
 import { buildReadRange, readFile } from "./read";
 
 const MAX_LINE_LENGTH = OutputBudget.maxLineLength;
 
-const tempRoot = (): Promise<string> =>
-  mkdtemp(join(tmpdir(), "pim-read-tool-"));
+const tempRoots: string[] = [];
+
+const tempRoot = async (): Promise<string> => {
+  const root = await mkdtemp(join(tmpdir(), "pim-read-tool-"));
+  tempRoots.push(root);
+  return root;
+};
+
+afterAll(async () => {
+  await Promise.all(
+    tempRoots.map((root) => rm(root, { force: true, recursive: true }))
+  );
+});
 
 describe("readFile", () => {
   test("emits inclusive LINE:CONTENT ranges", async () => {

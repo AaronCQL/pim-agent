@@ -1,11 +1,22 @@
-import { mkdir, mkdtemp, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { findFiles } from "./glob";
 
-const tempRoot = (): Promise<string> =>
-  mkdtemp(join(tmpdir(), "pim-glob-tool-"));
+const tempRoots: string[] = [];
+
+const tempRoot = async (): Promise<string> => {
+  const root = await mkdtemp(join(tmpdir(), "pim-glob-tool-"));
+  tempRoots.push(root);
+  return root;
+};
+
+afterAll(async () => {
+  await Promise.all(
+    tempRoots.map((root) => rm(root, { force: true, recursive: true }))
+  );
+});
 
 const defaultScanOptions = {
   includeDotfiles: false,

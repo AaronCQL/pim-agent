@@ -1,11 +1,22 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { GitignoreFilter } from "./GitignoreFilter";
 
-const createTempDir = (): Promise<string> =>
-  mkdtemp(join(tmpdir(), "pim-gitignore-filter-"));
+const tempRoots: string[] = [];
+
+const createTempDir = async (): Promise<string> => {
+  const root = await mkdtemp(join(tmpdir(), "pim-gitignore-filter-"));
+  tempRoots.push(root);
+  return root;
+};
+
+afterAll(async () => {
+  await Promise.all(
+    tempRoots.map((root) => rm(root, { force: true, recursive: true }))
+  );
+});
 
 test("applies hardcoded defaults", async () => {
   const root = await createTempDir();
