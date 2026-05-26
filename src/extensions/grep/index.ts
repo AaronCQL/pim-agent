@@ -58,6 +58,7 @@ export default function (pi: ExtensionAPI): void {
       "Search UTF-8 text files with a JavaScript regex. Directory scans skip binary files, gitignored paths, and dotfiles unless requested; direct file paths are always searched. Use grep to search file contents instead of bash with grep, rg, ag, find -exec, or similar.",
     parameters: grepSchema,
     renderShell: "self",
+    executionMode: "parallel",
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const {
         pattern,

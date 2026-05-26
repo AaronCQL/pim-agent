@@ -29,6 +29,7 @@ export default function (pi: ExtensionAPI): void {
     description: "Fetch a URL and return its markdown or HTML content.",
     parameters: webFetchSchema,
     renderShell: "self",
+    executionMode: "parallel",
     async execute(_id, params, signal) {
       const { url, maxBytes, format } = params as WebFetchInput;
 

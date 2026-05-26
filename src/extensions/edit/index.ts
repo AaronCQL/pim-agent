@@ -15,6 +15,7 @@ export default function (pi: ExtensionAPI): void {
       "Replace strings in a UTF-8 text file. Prefer edit over write for changes to existing files.",
     parameters: editSchema,
     renderShell: "self",
+    executionMode: "sequential",
     async execute(_id, params, signal, _onUpdate, ctx) {
       const { path, edits } = params as EditInput;
 

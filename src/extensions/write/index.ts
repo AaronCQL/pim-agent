@@ -15,6 +15,7 @@ export default function (pi: ExtensionAPI): void {
       "Create or overwrite UTF-8 text files. Use write only for new files or full rewrites - prefer edit for changes to existing files.",
     parameters: writeSchema,
     renderShell: "self",
+    executionMode: "sequential",
     async execute(_id, params, signal, _onUpdate, ctx) {
       const { path, content } = params as WriteInput;
 

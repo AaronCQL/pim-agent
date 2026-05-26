@@ -17,6 +17,7 @@ export default function (pi: ExtensionAPI): void {
     promptSnippet: "Read text files.",
     parameters: readSchema,
     renderShell: "self",
+    executionMode: "parallel",
     async execute(_id, params, signal, _onUpdate, ctx) {
       const { path, start, end } = params as ReadInput;
 

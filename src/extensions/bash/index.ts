@@ -67,6 +67,7 @@ export default function (pi: ExtensionAPI): void {
       `Use bash with trimming args or pipe to head/tail/cut to keep output small.`,
     parameters: bashSchema,
     renderShell: "self",
+    executionMode: "sequential",
     async execute(_id, params, signal, _onUpdate, ctx) {
       const { command, timeoutMs: requestedTimeoutMs } = params as BashInput;
       const timeoutMs = requestedTimeoutMs ?? DEFAULT_TIMEOUT_MS;
