@@ -1,10 +1,7 @@
 {
   "name": "@aaroncql/pim-agent",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Pim Agent is to Pi Agent what Vim is to Vi.",
-  "keywords": [
-    "pi-package"
-  ],
   "type": "module",
   "bin": {
     "pim": "./bin/pim.ts"
@@ -15,9 +12,6 @@
   "pi": {
     "extensions": [
       "./src/extensions"
-    ],
-    "prompts": [
-      "./src/prompts"
     ],
     "themes": [
       "./src/themes"
