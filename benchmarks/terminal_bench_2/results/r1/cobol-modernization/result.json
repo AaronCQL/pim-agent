@@ -1,0 +1,111 @@
+{
+  "id": "454d10e0-c95d-4e87-8202-a47c1c6310b4",
+  "task_name": "cobol-modernization",
+  "trial_name": "cobol-modernization__PumVS8y",
+  "trial_uri": "file:///home/htpc/Desktop/dev/pim-agent/benchmarks/terminal_bench_2/runs/r1/2026-05-23__21-59-47/cobol-modernization__PumVS8y",
+  "task_id": {
+    "git_url": "https://github.com/laude-institute/terminal-bench-2.git",
+    "git_commit_id": "69671fbaac6d67a7ef0dfec016cc38a64ef7a77c",
+    "path": "cobol-modernization"
+  },
+  "source": "terminal-bench",
+  "task_checksum": "f8220a33bf193106989df1a28e4806985b12e5f93dcf07efb86acd8dbbc44f6a",
+  "config": {
+    "task": {
+      "path": "cobol-modernization",
+      "git_url": "https://github.com/laude-institute/terminal-bench-2.git",
+      "git_commit_id": "69671fbaac6d67a7ef0dfec016cc38a64ef7a77c",
+      "name": null,
+      "ref": null,
+      "overwrite": false,
+      "download_dir": null,
+      "source": "terminal-bench"
+    },
+    "trial_name": "cobol-modernization__PumVS8y",
+    "trials_dir": "benchmarks/terminal_bench_2/runs/r1/2026-05-23__21-59-47",
+    "timeout_multiplier": 1.0,
+    "agent_timeout_multiplier": null,
+    "verifier_timeout_multiplier": null,
+    "agent_setup_timeout_multiplier": null,
+    "environment_build_timeout_multiplier": null,
+    "agent": {
+      "name": null,
+      "import_path": "benchmarks.terminal_bench_2.adapter:PimAgent",
+      "model_name": "ollama/Qwen3.6-35B-A3B-UD-Q6_K_XL",
+      "skills": [],
+      "override_timeout_sec": null,
+      "override_setup_timeout_sec": null,
+      "max_timeout_sec": null,
+      "kwargs": {},
+      "env": {},
+      "mcp_servers": []
+    },
+    "environment": {
+      "type": "docker",
+      "import_path": null,
+      "force_build": false,
+      "delete": true,
+      "override_cpus": null,
+      "override_memory_mb": null,
+      "override_storage_mb": null,
+      "override_gpus": null,
+      "suppress_override_warnings": false,
+      "mounts": null,
+      "extra_docker_compose": [
+        "/home/htpc/Desktop/dev/pim-agent/benchmarks/terminal_bench_2/overlay.yaml"
+      ],
+      "env": {},
+      "kwargs": {}
+    },
+    "verifier": {
+      "override_timeout_sec": null,
+      "max_timeout_sec": null,
+      "env": {},
+      "disable": false
+    },
+    "artifacts": [],
+    "extra_instruction_paths": [],
+    "job_id": "9b30014a-6a39-48ac-9a0d-817a04ed5d18"
+  },
+  "agent_info": {
+    "name": "pim",
+    "version": "0.75.5",
+    "model_info": {
+      "name": "Qwen3.6-35B-A3B-UD-Q6_K_XL",
+      "provider": "ollama"
+    }
+  },
+  "agent_result": {
+    "n_input_tokens": 879133,
+    "n_cache_tokens": 863376,
+    "n_output_tokens": 17730,
+    "cost_usd": null,
+    "rollout_details": null,
+    "metadata": null
+  },
+  "verifier_result": {
+    "rewards": {
+      "reward": 1.0
+    }
+  },
+  "exception_info": null,
+  "started_at": "2026-05-23T22:56:21.825774Z",
+  "finished_at": "2026-05-23T23:07:36.195620Z",
+  "environment_setup": {
+    "started_at": "2026-05-23T22:56:21.826418Z",
+    "finished_at": "2026-05-23T22:56:29.459154Z"
+  },
+  "agent_setup": {
+    "started_at": "2026-05-23T22:56:29.459170Z",
+    "finished_at": "2026-05-23T22:56:41.900919Z"
+  },
+  "agent_execution": {
+    "started_at": "2026-05-23T22:56:41.900966Z",
+    "finished_at": "2026-05-23T23:07:20.641205Z"
+  },
+  "verifier": {
+    "started_at": "2026-05-23T23:07:20.914880Z",
+    "finished_at": "2026-05-23T23:07:24.552484Z"
+  },
+  "step_results": null
+}

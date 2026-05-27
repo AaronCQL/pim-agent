@@ -54,6 +54,8 @@ Files:
 | `adapter.py` | `BaseInstalledAgent` subclass. Handles install, run, JSONL parsing. |
 | `overlay.yaml` | docker-compose overlay: `extra_hosts` for host gateway + bind mount `${PIM_REPO_ROOT}` → `/opt/pim`. |
 | `run.sh` | Wrapper around `harbor run` with the right flags. Exports `PIM_REPO_ROOT`. |
+| `filter.py` | Streaming JSONL filter that strips `*_delta` bloat from pim's raw output (~1000x reduction). |
+| `to_atif.py` | Converts `pim.txt` agent logs to ATIF v1.7 `trajectory.json` files for Harbor submission. |
 | `.env.example` | Documents required host env vars (Anthropic / Exa / Jina / local model stubs). |
 
 ## Configuration

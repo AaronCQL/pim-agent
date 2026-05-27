@@ -1,0 +1,111 @@
+{
+  "id": "5521b019-9048-4ed1-aac2-b4aac9055cd3",
+  "task_name": "sparql-university",
+  "trial_name": "sparql-university__rxgTxYQ",
+  "trial_uri": "file:///home/htpc/Desktop/dev/pim-agent/benchmarks/terminal_bench_2/runs/r2/2026-05-26__11-25-13/sparql-university__rxgTxYQ",
+  "task_id": {
+    "git_url": "https://github.com/laude-institute/terminal-bench-2.git",
+    "git_commit_id": "69671fbaac6d67a7ef0dfec016cc38a64ef7a77c",
+    "path": "sparql-university"
+  },
+  "source": "terminal-bench",
+  "task_checksum": "5f84ab8191b8b921e3adeae2fa11f7a1f5fc2549627cce7218ae0046f66d450b",
+  "config": {
+    "task": {
+      "path": "sparql-university",
+      "git_url": "https://github.com/laude-institute/terminal-bench-2.git",
+      "git_commit_id": "69671fbaac6d67a7ef0dfec016cc38a64ef7a77c",
+      "name": null,
+      "ref": null,
+      "overwrite": false,
+      "download_dir": null,
+      "source": "terminal-bench"
+    },
+    "trial_name": "sparql-university__rxgTxYQ",
+    "trials_dir": "benchmarks/terminal_bench_2/runs/r2/2026-05-26__11-25-13",
+    "timeout_multiplier": 1.0,
+    "agent_timeout_multiplier": null,
+    "verifier_timeout_multiplier": null,
+    "agent_setup_timeout_multiplier": null,
+    "environment_build_timeout_multiplier": null,
+    "agent": {
+      "name": null,
+      "import_path": "benchmarks.terminal_bench_2.adapter:PimAgent",
+      "model_name": "ollama/Qwen3.6-35B-A3B-UD-Q6_K_XL",
+      "skills": [],
+      "override_timeout_sec": null,
+      "override_setup_timeout_sec": null,
+      "max_timeout_sec": null,
+      "kwargs": {},
+      "env": {},
+      "mcp_servers": []
+    },
+    "environment": {
+      "type": "docker",
+      "import_path": null,
+      "force_build": false,
+      "delete": true,
+      "override_cpus": null,
+      "override_memory_mb": null,
+      "override_storage_mb": null,
+      "override_gpus": null,
+      "suppress_override_warnings": false,
+      "mounts": null,
+      "extra_docker_compose": [
+        "/home/htpc/Desktop/dev/pim-agent/benchmarks/terminal_bench_2/overlay.yaml"
+      ],
+      "env": {},
+      "kwargs": {}
+    },
+    "verifier": {
+      "override_timeout_sec": null,
+      "max_timeout_sec": null,
+      "env": {},
+      "disable": false
+    },
+    "artifacts": [],
+    "extra_instruction_paths": [],
+    "job_id": "df285c20-b02f-4eb0-b400-d25d0552f11e"
+  },
+  "agent_info": {
+    "name": "pim",
+    "version": "0.75.5",
+    "model_info": {
+      "name": "Qwen3.6-35B-A3B-UD-Q6_K_XL",
+      "provider": "ollama"
+    }
+  },
+  "agent_result": {
+    "n_input_tokens": 148321,
+    "n_cache_tokens": 140999,
+    "n_output_tokens": 14266,
+    "cost_usd": null,
+    "rollout_details": null,
+    "metadata": null
+  },
+  "verifier_result": {
+    "rewards": {
+      "reward": 0.0
+    }
+  },
+  "exception_info": null,
+  "started_at": "2026-05-27T03:06:26.331018Z",
+  "finished_at": "2026-05-27T03:15:06.737927Z",
+  "environment_setup": {
+    "started_at": "2026-05-27T03:06:26.331788Z",
+    "finished_at": "2026-05-27T03:06:30.437899Z"
+  },
+  "agent_setup": {
+    "started_at": "2026-05-27T03:06:30.437914Z",
+    "finished_at": "2026-05-27T03:06:46.538036Z"
+  },
+  "agent_execution": {
+    "started_at": "2026-05-27T03:06:46.538074Z",
+    "finished_at": "2026-05-27T03:14:45.987770Z"
+  },
+  "verifier": {
+    "started_at": "2026-05-27T03:14:46.193658Z",
+    "finished_at": "2026-05-27T03:14:55.271318Z"
+  },
+  "step_results": null
+}

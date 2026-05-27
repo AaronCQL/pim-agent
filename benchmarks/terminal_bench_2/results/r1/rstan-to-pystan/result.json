@@ -1,0 +1,111 @@
+{
+  "id": "f2cd5260-1391-497d-bb60-3ffd73be3dda",
+  "task_name": "rstan-to-pystan",
+  "trial_name": "rstan-to-pystan__LmGWj4c",
+  "trial_uri": "file:///home/htpc/Desktop/dev/pim-agent/benchmarks/terminal_bench_2/runs/r1/2026-05-23__21-59-47/rstan-to-pystan__LmGWj4c",
+  "task_id": {
+    "git_url": "https://github.com/laude-institute/terminal-bench-2.git",
+    "git_commit_id": "69671fbaac6d67a7ef0dfec016cc38a64ef7a77c",
+    "path": "rstan-to-pystan"
+  },
+  "source": "terminal-bench",
+  "task_checksum": "1404a5a663c5ad348382a3374bf1ac11e28c2d10de5af6630ddd5ab69ff8f2e3",
+  "config": {
+    "task": {
+      "path": "rstan-to-pystan",
+      "git_url": "https://github.com/laude-institute/terminal-bench-2.git",
+      "git_commit_id": "69671fbaac6d67a7ef0dfec016cc38a64ef7a77c",
+      "name": null,
+      "ref": null,
+      "overwrite": false,
+      "download_dir": null,
+      "source": "terminal-bench"
+    },
+    "trial_name": "rstan-to-pystan__LmGWj4c",
+    "trials_dir": "benchmarks/terminal_bench_2/runs/r1/2026-05-23__21-59-47",
+    "timeout_multiplier": 1.0,
+    "agent_timeout_multiplier": null,
+    "verifier_timeout_multiplier": null,
+    "agent_setup_timeout_multiplier": null,
+    "environment_build_timeout_multiplier": null,
+    "agent": {
+      "name": null,
+      "import_path": "benchmarks.terminal_bench_2.adapter:PimAgent",
+      "model_name": "ollama/Qwen3.6-35B-A3B-UD-Q6_K_XL",
+      "skills": [],
+      "override_timeout_sec": null,
+      "override_setup_timeout_sec": null,
+      "max_timeout_sec": null,
+      "kwargs": {},
+      "env": {},
+      "mcp_servers": []
+    },
+    "environment": {
+      "type": "docker",
+      "import_path": null,
+      "force_build": false,
+      "delete": true,
+      "override_cpus": null,
+      "override_memory_mb": null,
+      "override_storage_mb": null,
+      "override_gpus": null,
+      "suppress_override_warnings": false,
+      "mounts": null,
+      "extra_docker_compose": [
+        "/home/htpc/Desktop/dev/pim-agent/benchmarks/terminal_bench_2/overlay.yaml"
+      ],
+      "env": {},
+      "kwargs": {}
+    },
+    "verifier": {
+      "override_timeout_sec": null,
+      "max_timeout_sec": null,
+      "env": {},
+      "disable": false
+    },
+    "artifacts": [],
+    "extra_instruction_paths": [],
+    "job_id": "9b30014a-6a39-48ac-9a0d-817a04ed5d18"
+  },
+  "agent_info": {
+    "name": "pim",
+    "version": "0.75.5",
+    "model_info": {
+      "name": "Qwen3.6-35B-A3B-UD-Q6_K_XL",
+      "provider": "ollama"
+    }
+  },
+  "agent_result": {
+    "n_input_tokens": 913212,
+    "n_cache_tokens": 888905,
+    "n_output_tokens": 12633,
+    "cost_usd": null,
+    "rollout_details": null,
+    "metadata": null
+  },
+  "verifier_result": {
+    "rewards": {
+      "reward": 1.0
+    }
+  },
+  "exception_info": null,
+  "started_at": "2026-05-24T15:16:04.523838Z",
+  "finished_at": "2026-05-24T15:39:40.312931Z",
+  "environment_setup": {
+    "started_at": "2026-05-24T15:16:04.524889Z",
+    "finished_at": "2026-05-24T15:16:10.851050Z"
+  },
+  "agent_setup": {
+    "started_at": "2026-05-24T15:16:10.851066Z",
+    "finished_at": "2026-05-24T15:16:22.421139Z"
+  },
+  "agent_execution": {
+    "started_at": "2026-05-24T15:16:22.421185Z",
+    "finished_at": "2026-05-24T15:39:21.527931Z"
+  },
+  "verifier": {
+    "started_at": "2026-05-24T15:39:21.807212Z",
+    "finished_at": "2026-05-24T15:39:27.451218Z"
+  },
+  "step_results": null
+}

@@ -1,0 +1,111 @@
+{
+  "id": "3ef918bf-f287-459b-9d62-4a1d2c5f1992",
+  "task_name": "financial-document-processor",
+  "trial_name": "financial-document-processor__5hb9wij",
+  "trial_uri": "file:///home/htpc/Desktop/dev/pim-agent/benchmarks/terminal_bench_2/runs/r2/2026-05-26__11-25-13/financial-document-processor__5hb9wij",
+  "task_id": {
+    "git_url": "https://github.com/laude-institute/terminal-bench-2.git",
+    "git_commit_id": "69671fbaac6d67a7ef0dfec016cc38a64ef7a77c",
+    "path": "financial-document-processor"
+  },
+  "source": "terminal-bench",
+  "task_checksum": "e8ee9e8948d949d0abe46d431736d1cf04e8aab76d98fc9c819fb26960ab1352",
+  "config": {
+    "task": {
+      "path": "financial-document-processor",
+      "git_url": "https://github.com/laude-institute/terminal-bench-2.git",
+      "git_commit_id": "69671fbaac6d67a7ef0dfec016cc38a64ef7a77c",
+      "name": null,
+      "ref": null,
+      "overwrite": false,
+      "download_dir": null,
+      "source": "terminal-bench"
+    },
+    "trial_name": "financial-document-processor__5hb9wij",
+    "trials_dir": "benchmarks/terminal_bench_2/runs/r2/2026-05-26__11-25-13",
+    "timeout_multiplier": 1.0,
+    "agent_timeout_multiplier": null,
+    "verifier_timeout_multiplier": null,
+    "agent_setup_timeout_multiplier": null,
+    "environment_build_timeout_multiplier": null,
+    "agent": {
+      "name": null,
+      "import_path": "benchmarks.terminal_bench_2.adapter:PimAgent",
+      "model_name": "ollama/Qwen3.6-35B-A3B-UD-Q6_K_XL",
+      "skills": [],
+      "override_timeout_sec": null,
+      "override_setup_timeout_sec": null,
+      "max_timeout_sec": null,
+      "kwargs": {},
+      "env": {},
+      "mcp_servers": []
+    },
+    "environment": {
+      "type": "docker",
+      "import_path": null,
+      "force_build": false,
+      "delete": true,
+      "override_cpus": null,
+      "override_memory_mb": null,
+      "override_storage_mb": null,
+      "override_gpus": null,
+      "suppress_override_warnings": false,
+      "mounts": null,
+      "extra_docker_compose": [
+        "/home/htpc/Desktop/dev/pim-agent/benchmarks/terminal_bench_2/overlay.yaml"
+      ],
+      "env": {},
+      "kwargs": {}
+    },
+    "verifier": {
+      "override_timeout_sec": null,
+      "max_timeout_sec": null,
+      "env": {},
+      "disable": false
+    },
+    "artifacts": [],
+    "extra_instruction_paths": [],
+    "job_id": "df285c20-b02f-4eb0-b400-d25d0552f11e"
+  },
+  "agent_info": {
+    "name": "pim",
+    "version": "0.75.5",
+    "model_info": {
+      "name": "Qwen3.6-35B-A3B-UD-Q6_K_XL",
+      "provider": "ollama"
+    }
+  },
+  "agent_result": {
+    "n_input_tokens": 99953,
+    "n_cache_tokens": 89467,
+    "n_output_tokens": 6349,
+    "cost_usd": null,
+    "rollout_details": null,
+    "metadata": null
+  },
+  "verifier_result": {
+    "rewards": {
+      "reward": 0.0
+    }
+  },
+  "exception_info": null,
+  "started_at": "2026-05-26T23:11:40.550559Z",
+  "finished_at": "2026-05-26T23:16:08.041140Z",
+  "environment_setup": {
+    "started_at": "2026-05-26T23:11:40.553402Z",
+    "finished_at": "2026-05-26T23:11:45.191079Z"
+  },
+  "agent_setup": {
+    "started_at": "2026-05-26T23:11:45.191095Z",
+    "finished_at": "2026-05-26T23:11:59.176893Z"
+  },
+  "agent_execution": {
+    "started_at": "2026-05-26T23:11:59.176930Z",
+    "finished_at": "2026-05-26T23:15:49.413794Z"
+  },
+  "verifier": {
+    "started_at": "2026-05-26T23:15:49.614185Z",
+    "finished_at": "2026-05-26T23:15:55.993900Z"
+  },
+  "step_results": null
+}
