@@ -48,7 +48,7 @@ export class JinaReaderClient {
 
   public async fetchUrl(input: JinaReaderFetchInput): Promise<WebFetchPage> {
     if (input.signal?.aborted) {
-      throw new JinaReaderClientError("Jina Reader request aborted.");
+      throw new JinaReaderClientError("Request aborted.");
     }
 
     let response: Response;
@@ -63,23 +63,23 @@ export class JinaReaderClient {
       const aborted = input.signal?.aborted ?? false;
 
       if (JinaReaderClient.isAbortError(error) || aborted) {
-        throw new JinaReaderClientError("Jina Reader request aborted.");
+        throw new JinaReaderClientError("Request aborted.");
       }
 
       if (error instanceof TimeoutError) {
         throw new JinaReaderClientError(
-          `Jina Reader request timed out after ${this.timeoutMs}ms.`
+          `Request timed out after ${this.timeoutMs}ms.`
         );
       }
 
       if (error instanceof HTTPError) {
         throw new JinaReaderClientError(
-          `Jina Reader request failed with HTTP ${error.response.status}: ${JinaReaderClient.excerpt(JinaReaderClient.stringifyErrorData(error.data))}`
+          `Request failed with HTTP ${error.response.status}: ${JinaReaderClient.excerpt(JinaReaderClient.stringifyErrorData(error.data))}`
         );
       }
 
       throw new JinaReaderClientError(
-        `Jina Reader request failed: ${describeError(error)}`
+        `Request failed: ${describeError(error)}`
       );
     }
 
@@ -116,7 +116,7 @@ export class JinaReaderClient {
 
     if (parsedJson === undefined) {
       if (declaresJson) {
-        throw new JinaReaderClientError("Jina Reader returned malformed JSON.");
+        throw new JinaReaderClientError("Response contained malformed JSON.");
       }
 
       return JinaReaderClient.createPage({
@@ -138,7 +138,7 @@ export class JinaReaderClient {
       JinaReaderClient.asRecord(responseRecord?.["data"]) ?? responseRecord;
 
     if (payload === undefined) {
-      throw new JinaReaderClientError("Jina Reader returned invalid payload.");
+      throw new JinaReaderClientError("Response contained invalid payload.");
     }
 
     return JinaReaderClient.createPage({
@@ -151,7 +151,7 @@ export class JinaReaderClient {
 
   private static createPage(page: WebFetchPage): WebFetchPage {
     if (page.content.trim().length === 0) {
-      throw new JinaReaderClientError("Jina Reader returned empty content.");
+      throw new JinaReaderClientError("Response contained empty content.");
     }
 
     return page;
@@ -168,7 +168,7 @@ export class JinaReaderClient {
   private static requiredString(value: unknown, name: string): string {
     if (typeof value !== "string") {
       throw new JinaReaderClientError(
-        `Jina Reader returned invalid payload: expected string ${name}.`
+        `Response contained invalid payload: expected string ${name}.`
       );
     }
 
@@ -185,7 +185,7 @@ export class JinaReaderClient {
 
     if (typeof value !== "string") {
       throw new JinaReaderClientError(
-        `Jina Reader returned invalid payload: expected string ${name}.`
+        `Response contained invalid payload: expected string ${name}.`
       );
     }
 

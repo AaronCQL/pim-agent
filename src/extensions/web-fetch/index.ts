@@ -26,7 +26,7 @@ export default function (pi: ExtensionAPI): void {
   Tools.register(pi, {
     name: "web_fetch",
     label: "web_fetch",
-    description: "Fetch a URL and return its markdown or HTML content.",
+    description: "Fetch a web page as markdown or HTML.",
     parameters: webFetchSchema,
     renderShell: "self",
     executionMode: "parallel",
@@ -45,7 +45,7 @@ export default function (pi: ExtensionAPI): void {
         webView,
         url: safeUrl,
         maxBytes: clampedMaxBytes,
-        format: format ?? "auto",
+        format: format ?? "markdown",
         ...(signal === undefined ? {} : { signal }),
       });
 
@@ -67,7 +67,7 @@ export default function (pi: ExtensionAPI): void {
       const state = context.state as WebFetchRenderState;
       return Renderer.renderToolCallTitle({
         label: "Web Fetch",
-        title: formatTitle(input.url, state.outcome),
+        title: formatTitle(input.url, input.format, state.outcome),
         theme,
         context,
       });

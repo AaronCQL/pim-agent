@@ -2,19 +2,25 @@ import { describe, expect, test } from "bun:test";
 import { formatTitle } from "./render";
 
 describe("formatTitle", () => {
-  test("returns placeholder when url is undefined", () => {
-    expect(formatTitle(undefined, undefined)).toBe("...");
+  test("returns placeholder and default format when url is undefined", () => {
+    expect(formatTitle(undefined, undefined, undefined)).toBe("... (Markdown)");
   });
 
-  test("returns bare url pre-result", () => {
-    expect(formatTitle("https://example.com", undefined)).toBe(
-      "https://example.com"
+  test("renders default markdown pre-result", () => {
+    expect(formatTitle("https://example.com", undefined, undefined)).toBe(
+      "https://example.com (Markdown)"
+    );
+  });
+
+  test("renders requested HTML pre-result", () => {
+    expect(formatTitle("https://example.com", "html", undefined)).toBe(
+      "https://example.com (HTML)"
     );
   });
 
   test("renders size + format label after result arrives", () => {
     expect(
-      formatTitle("https://example.com", {
+      formatTitle("https://example.com", undefined, {
         format: "markdown",
         totalBytes: 23 * 1024,
       })
@@ -23,7 +29,7 @@ describe("formatTitle", () => {
 
   test("strips trailing zeros and supports two decimals", () => {
     expect(
-      formatTitle("https://example.com", {
+      formatTitle("https://example.com", undefined, {
         format: "html",
         totalBytes: 5355,
       })
@@ -32,7 +38,7 @@ describe("formatTitle", () => {
 
   test("renders bytes for tiny payloads", () => {
     expect(
-      formatTitle("https://example.com", {
+      formatTitle("https://example.com", undefined, {
         format: "markdown",
         totalBytes: 512,
       })
@@ -41,7 +47,7 @@ describe("formatTitle", () => {
 
   test("renders MB for large payloads", () => {
     expect(
-      formatTitle("https://example.com", {
+      formatTitle("https://example.com", undefined, {
         format: "html",
         totalBytes: 2.5 * 1024 * 1024,
       })

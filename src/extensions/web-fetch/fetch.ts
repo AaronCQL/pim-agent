@@ -111,16 +111,10 @@ export async function executeFetch(
   };
 
   if (format === "html") {
-    const page = await webView.fetchUrl(fetchInput);
+    const page = await webView.fetchHtml(fetchInput);
     return formatOutcome(page, maxBytes, "html");
   }
 
-  if (format === "markdown") {
-    const page = await jina.fetchUrl(fetchInput);
-    return formatOutcome(page, maxBytes, "markdown");
-  }
-
-  let markdownError: unknown;
   try {
     const page = await jina.fetchUrl(fetchInput);
     return formatOutcome(page, maxBytes, "markdown");
@@ -128,19 +122,16 @@ export async function executeFetch(
     if (signal?.aborted) {
       throw error;
     }
-    markdownError = error;
   }
 
   try {
-    const page = await webView.fetchUrl(fetchInput);
-    return formatOutcome(page, maxBytes, "html");
-  } catch (htmlError) {
+    const page = await webView.fetchMarkdown(fetchInput);
+    return formatOutcome(page, maxBytes, "markdown");
+  } catch (error) {
     if (signal?.aborted) {
-      throw htmlError;
+      throw error;
     }
-    throw new Error(
-      `Markdown fetch failed: ${describeError(markdownError)} | HTML fallback failed: ${describeError(htmlError)}`
-    );
+    throw new Error(`Failed to fetch: ${describeError(error)}`);
   }
 }
 
