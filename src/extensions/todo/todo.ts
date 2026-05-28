@@ -90,6 +90,19 @@ export function makeDetails(items: readonly TodoItem[]): TodoDetails {
   };
 }
 
+export function formatUpdateSummary(items: readonly TodoItem[]): string {
+  const summary = summarizeItems(items);
+  const segments = [
+    summary.completed > 0 ? `${summary.completed} completed` : undefined,
+    summary.in_progress > 0 ? `${summary.in_progress} in progress` : undefined,
+    summary.pending > 0 ? `${summary.pending} pending` : undefined,
+    summary.cancelled > 0 ? `${summary.cancelled} cancelled` : undefined,
+  ].filter((segment) => segment !== undefined);
+  return segments.length === 0
+    ? "Todos cleared."
+    : `Todos updated: ${segments.join(", ")}.`;
+}
+
 export function formatChecklist(
   items: readonly TodoItem[],
   options: FormatChecklistOptions = {}

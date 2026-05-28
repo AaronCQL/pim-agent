@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { TodoItem } from "./schema";
 import {
   formatChecklist,
+  formatUpdateSummary,
   getCurrentItems,
   hasActiveItems,
   makeDetails,
@@ -158,6 +159,31 @@ describe("todo state", () => {
     expect(reconstructFromBranch(fakeSession(), branch)).toEqual([
       { content: "checkpointed", status: "in_progress" },
     ]);
+  });
+
+  test("update summary formats model-visible acknowledgement", () => {
+    expect(
+      formatUpdateSummary([
+        { content: "one", status: "completed" },
+        { content: "two", status: "completed" },
+        { content: "three", status: "in_progress" },
+        { content: "four", status: "pending" },
+        { content: "five", status: "pending" },
+      ])
+    ).toBe("Todos updated: 2 completed, 1 in progress, 2 pending.");
+  });
+
+  test("update summary omits zero counts and includes cancelled only when nonzero", () => {
+    expect(formatUpdateSummary(allStatuses)).toBe(
+      "Todos updated: 1 completed, 1 in progress, 1 pending, 1 cancelled."
+    );
+    expect(formatUpdateSummary([{ content: "next", status: "pending" }])).toBe(
+      "Todos updated: 1 pending."
+    );
+  });
+
+  test("update summary handles a cleared list", () => {
+    expect(formatUpdateSummary([])).toBe("Todos cleared.");
   });
 
   test("summary counts statuses", () => {

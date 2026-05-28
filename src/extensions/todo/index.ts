@@ -7,6 +7,7 @@ import { renderCall, renderResult, renderWidgetLines } from "./render";
 import { todoSchema } from "./schema";
 import {
   formatChecklist,
+  formatUpdateSummary,
   getCurrentItems,
   hasActiveItems,
   makeDetails,
@@ -72,7 +73,7 @@ export default function (pi: ExtensionAPI): void {
         content: [
           {
             type: "text",
-            text: formatChecklist(items),
+            text: formatUpdateSummary(items),
           },
         ],
         details: makeDetails(items),

@@ -47,6 +47,16 @@ describe("todo render", () => {
     expect(rendered).toContain("1 done, 2 pending, 1 cancelled");
   });
 
+  test("renderCall shows cleared when the todo list is empty", () => {
+    expect(formatCallTitle([])).toBe("cleared");
+    const rendered = renderCall({ todos: [] }, stubTheme, context).render(
+      120
+    )[0];
+
+    expect(rendered).toContain("**Todo**");
+    expect(rendered).toContain(": cleared");
+  });
+
   test("renderResult is hidden so the widget is the only TUI checklist", () => {
     expect(
       renderResult(

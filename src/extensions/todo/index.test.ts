@@ -148,14 +148,19 @@ describe("todo extension", () => {
     ]);
   });
 
-  test("todo tool executes sequentially and returns an empty checklist for a cleared list", async () => {
+  test("todo tool executes sequentially and returns a compact update summary", async () => {
     const pi = createPi();
     const ctx = createContext();
     registerTodo(pi.api);
 
     expect(pi.tools[0]?.executionMode).toBe("sequential");
     expect(await setTodos(pi, ctx, [])).toEqual({
-      content: [{ type: "text", text: "" }],
+      content: [
+        {
+          type: "text",
+          text: "Todos cleared.",
+        },
+      ],
       details: {
         todos: [],
         summary: {

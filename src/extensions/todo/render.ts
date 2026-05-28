@@ -153,7 +153,7 @@ function formatStatusSummary(items: readonly TodoItem[]): string {
     segments.push(`${cancelled} cancelled`);
   }
   if (segments.length === 0) {
-    return "0 pending";
+    return "cleared";
   }
   return segments.join(", ");
 }
