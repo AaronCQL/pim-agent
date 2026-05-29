@@ -41,14 +41,14 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     const renderKey = (key: string, muted: string | undefined): string => {
       const padding = " ".repeat(Math.max(0, keyCol - key.length));
       if (!muted) {
-        return theme.fg("mdCode", key + padding);
+        return theme.fg("warning", key + padding);
       }
       const idx = key.indexOf(muted);
       if (idx === -1) {
-        return theme.fg("mdCode", key + padding);
+        return theme.fg("warning", key + padding);
       }
       return (
-        theme.fg("mdCode", key.slice(0, idx)) +
+        theme.fg("warning", key.slice(0, idx)) +
         theme.fg("muted", muted) +
         key.slice(idx + muted.length) +
         padding
@@ -56,7 +56,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     };
 
     const title =
-      theme.bold(theme.fg("mdHeading", "PIM - Pi IMproved")) +
+      theme.bold(theme.fg("accent", "PIM - Pi IMproved")) +
       " " +
       theme.italic(theme.fg("muted", `v${version}`));
     ctx.ui.setWidget(SPLASH_ID, [
