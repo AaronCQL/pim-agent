@@ -56,7 +56,7 @@
     "mdQuote": "yellow",
     "mdQuoteBorder": "yellow",
     "mdHr": "gray",
-    "mdListBullet": "gray",
+    "mdListBullet": "",
 
     "toolDiffAdded": "green",
     "toolDiffRemoved": "red",

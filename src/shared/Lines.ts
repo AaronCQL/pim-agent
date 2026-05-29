@@ -28,6 +28,16 @@ export class Lines {
     return Lines.normalize(content).endsWith("\n");
   }
 
+  /**
+   * Given a truncated head prefix of a larger file, the 1-based line to resume
+   * reading at so the (possibly mid-line) cut point is re-read in full. Matches
+   * how `read` numbers lines via `split`, so the hint lands on the right line.
+   */
+  public static continuationLine(head: string): number {
+    const { lines, hasTrailingNewline } = Lines.splitWithTrailingNewline(head);
+    return Math.max(1, lines.length + (hasTrailingNewline ? 1 : 0));
+  }
+
   public static splitWithTrailingNewline(content: string): {
     readonly lines: readonly string[];
     readonly hasTrailingNewline: boolean;

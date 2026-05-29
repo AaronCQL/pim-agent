@@ -1,34 +1,36 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { SpillCache } from "../../shared/SpillCache";
 import {
-  clampMaxBytes,
   executeFetch,
   formatOutcome,
+  truncationFooter,
   validatePublicUrl,
 } from "./fetch";
-import {
-  DEFAULT_FETCH_BYTES,
-  MAX_FETCH_BYTES,
-  MIN_FETCH_BYTES,
-} from "./schema";
+import { WEB_FETCH_INLINE_BYTES } from "./schema";
 import type { JinaReaderClient } from "./JinaReaderClient";
 import type { WebViewFetchClient } from "./WebViewFetchClient";
 
-describe("clampMaxBytes", () => {
-  test("defaults when undefined", () => {
-    expect(clampMaxBytes(undefined)).toBe(DEFAULT_FETCH_BYTES);
-  });
+let previousPimHomeDir: string | undefined;
+let testPimHomeDir: string | undefined;
 
-  test("clamps below minimum", () => {
-    expect(clampMaxBytes(0)).toBe(MIN_FETCH_BYTES);
-  });
+beforeAll(async () => {
+  previousPimHomeDir = process.env.PIM_HOME_DIR;
+  testPimHomeDir = await mkdtemp(join(tmpdir(), "pim-fetch-home-"));
+  process.env.PIM_HOME_DIR = testPimHomeDir;
+});
 
-  test("clamps above maximum", () => {
-    expect(clampMaxBytes(MAX_FETCH_BYTES * 4)).toBe(MAX_FETCH_BYTES);
-  });
-
-  test("passes through valid values", () => {
-    expect(clampMaxBytes(8 * 1024)).toBe(8 * 1024);
-  });
+afterAll(async () => {
+  if (previousPimHomeDir === undefined) {
+    delete process.env.PIM_HOME_DIR;
+  } else {
+    process.env.PIM_HOME_DIR = previousPimHomeDir;
+  }
+  if (testPimHomeDir) {
+    await rm(testPimHomeDir, { recursive: true, force: true });
+  }
 });
 
 describe("validatePublicUrl", () => {
@@ -97,7 +99,6 @@ describe("executeFetch", () => {
       jina,
       webView,
       url: "https://example.test/",
-      maxBytes: 1024,
       format: "markdown",
     });
 
@@ -126,7 +127,6 @@ describe("executeFetch", () => {
       jina,
       webView,
       url: "https://example.test/",
-      maxBytes: 1024,
       format: "markdown",
     });
 
@@ -151,7 +151,6 @@ describe("executeFetch", () => {
         jina,
         webView,
         url: "https://example.test/",
-        maxBytes: 1024,
         format: "markdown",
       })
     ).rejects.toThrow("Failed to fetch: Request failed: unavailable");
@@ -175,7 +174,6 @@ describe("executeFetch", () => {
       jina,
       webView,
       url: "https://example.test/",
-      maxBytes: 1024,
       format: "html",
     });
 
@@ -191,8 +189,8 @@ describe("formatOutcome", () => {
     content: "hello world",
   };
 
-  test("formats untruncated page", () => {
-    const outcome = formatOutcome(page, 1024, "markdown");
+  test("formats untruncated page without spilling", async () => {
+    const outcome = await formatOutcome(page, "markdown");
     expect(outcome.text).toBe(
       [
         "title: Example",
@@ -206,17 +204,41 @@ describe("formatOutcome", () => {
     expect(outcome.returnedBytes).toBe(11);
     expect(outcome.totalBytes).toBe(11);
     expect(outcome.format).toBe("markdown");
+    expect(outcome.path).toBeNull();
   });
 
-  test("appends truncation footer when over cap", () => {
-    const long = { ...page, content: "x".repeat(2000) };
-    const outcome = formatOutcome(long, 100, "html");
+  test("spills the full body and points the footer at the resume line over the inline budget", async () => {
+    // 1 KiB newline-terminated lines: the 32 KiB head holds exactly 32 lines,
+    // so the footer should resume reading at line 33.
+    const line = `${"x".repeat(1023)}\n`;
+    const content = line.repeat(40);
+    const long = { ...page, content };
+    const outcome = await formatOutcome(long, "html");
     expect(outcome.truncated).toBe(true);
-    expect(outcome.returnedBytes).toBe(100);
-    expect(outcome.totalBytes).toBe(2000);
-    expect(outcome.text).toContain(
-      "[web_fetch tool: truncated — kept first 100 bytes of 2000;"
+    expect(outcome.returnedBytes).toBe(WEB_FETCH_INLINE_BYTES);
+    expect(outcome.totalBytes).toBe(content.length);
+    expect(outcome.path).toBeTruthy();
+    expect(outcome.path!.startsWith(join(SpillCache.dir(), "fetch-"))).toBe(
+      true
     );
-    expect(outcome.text).toContain(`cap ${MAX_FETCH_BYTES}`);
+    expect(outcome.path!.endsWith(".html")).toBe(true);
+    expect(outcome.text).toContain(
+      `use read with path=${outcome.path} and start=33 for the rest.]`
+    );
+    expect(await Bun.file(outcome.path!).text()).toBe(content);
+  });
+});
+
+describe("truncationFooter", () => {
+  test("points at the spill file with a resume line when one was written", () => {
+    expect(truncationFooter(100, 2000, "/tmp/pim/cache/fetch-abc.md", 7)).toBe(
+      "[web_fetch tool: showing first 100 bytes of 2000; use read with path=/tmp/pim/cache/fetch-abc.md and start=7 for the rest.]"
+    );
+  });
+
+  test("signals the rest is unavailable when the spill failed", () => {
+    expect(truncationFooter(100, 2000, null, 7)).toBe(
+      "[web_fetch tool: showing first 100 bytes of 2000; full content unavailable.]"
+    );
   });
 });

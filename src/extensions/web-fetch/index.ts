@@ -1,12 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Renderer } from "../../shared/Renderer";
+import { SpillCache } from "../../shared/SpillCache";
 import { Tools } from "../../shared/Tools";
-import {
-  clampMaxBytes,
-  executeFetch,
-  validatePublicUrl,
-  type WebFetchOutcome,
-} from "./fetch";
+import { executeFetch, validatePublicUrl, type WebFetchOutcome } from "./fetch";
 import { JinaReaderClient } from "./JinaReaderClient";
 import { formatTitle, type WebFetchTitleOutcome } from "./render";
 import { type WebFetchInput, webFetchSchema } from "./schema";
@@ -19,6 +15,8 @@ type WebFetchRenderState = {
 };
 
 export default function (pi: ExtensionAPI): void {
+  SpillCache.installSweeper();
+
   const apiKey = process.env["JINA_API_KEY"];
   const jina = new JinaReaderClient(apiKey ? { apiKey } : {});
   const webView = new WebViewFetchClient();
@@ -31,20 +29,18 @@ export default function (pi: ExtensionAPI): void {
     renderShell: "self",
     executionMode: "parallel",
     async execute(_id, params, signal) {
-      const { url, maxBytes, format } = params as WebFetchInput;
+      const { url, format } = params as WebFetchInput;
 
       if (signal?.aborted) {
         throw new Error("Web fetch aborted before execution.");
       }
 
       const safeUrl = validatePublicUrl(url);
-      const clampedMaxBytes = clampMaxBytes(maxBytes);
 
       const outcome = await executeFetch({
         jina,
         webView,
         url: safeUrl,
-        maxBytes: clampedMaxBytes,
         format: format ?? "markdown",
         ...(signal === undefined ? {} : { signal }),
       });
@@ -58,7 +54,7 @@ export default function (pi: ExtensionAPI): void {
           returnedBytes: outcome.returnedBytes,
           totalBytes: outcome.totalBytes,
           truncated: outcome.truncated,
-          maxBytes: outcome.maxBytes,
+          path: outcome.path,
         },
       };
     },

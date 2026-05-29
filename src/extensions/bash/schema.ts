@@ -24,6 +24,7 @@ export type CapturedStream = {
   readonly totalBytes: number;
   readonly truncated: boolean;
   readonly path: string | null;
+  readonly nextStart: number | null;
 };
 
 export type BashCommandResult = {

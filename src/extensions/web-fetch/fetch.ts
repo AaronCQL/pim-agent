@@ -1,10 +1,10 @@
 import { isIP } from "node:net";
+import { Lines } from "../../shared/Lines";
 import { OutputBudget } from "../../shared/OutputBudget";
+import { SpillCache } from "../../shared/SpillCache";
 import type { JinaReaderClient } from "./JinaReaderClient";
 import {
-  DEFAULT_FETCH_BYTES,
-  MAX_FETCH_BYTES,
-  MIN_FETCH_BYTES,
+  WEB_FETCH_INLINE_BYTES,
   type WebFetchFormat,
   type WebFetchResolvedFormat,
 } from "./schema";
@@ -24,12 +24,20 @@ export type WebFetchOutcome = {
   readonly returnedBytes: number;
   readonly totalBytes: number;
   readonly truncated: boolean;
-  readonly maxBytes: number;
+  readonly path: string | null;
 };
 
-export function clampMaxBytes(value: number | undefined): number {
-  const requested = value ?? DEFAULT_FETCH_BYTES;
-  return Math.min(MAX_FETCH_BYTES, Math.max(MIN_FETCH_BYTES, requested));
+export function truncationFooter(
+  returnedBytes: number,
+  totalBytes: number,
+  spillPath: string | null,
+  nextStart: number
+): string {
+  const base = `[web_fetch tool: showing first ${returnedBytes} bytes of ${totalBytes}`;
+  if (spillPath) {
+    return `${base}; use read with path=${spillPath} and start=${nextStart} for the rest.]`;
+  }
+  return `${base}; full content unavailable.]`;
 }
 
 export function validatePublicUrl(value: string): string {
@@ -57,13 +65,19 @@ export function validatePublicUrl(value: string): string {
   return url.href;
 }
 
-export function formatOutcome(
+export async function formatOutcome(
   page: WebFetchPage,
-  maxBytes: number,
   format: WebFetchResolvedFormat
-): WebFetchOutcome {
+): Promise<WebFetchOutcome> {
   const { body, returnedBytes, totalBytes, truncated } =
-    OutputBudget.truncateUtf8(page.content, maxBytes);
+    OutputBudget.truncateUtf8(page.content, WEB_FETCH_INLINE_BYTES);
+  const path = truncated
+    ? await SpillCache.write(
+        "fetch",
+        format === "html" ? "html" : "md",
+        page.content
+      )
+    : null;
 
   const lines = [
     `title: ${page.title}`,
@@ -74,9 +88,10 @@ export function formatOutcome(
   ];
 
   if (truncated) {
+    const nextStart = Lines.continuationLine(body);
     lines.push(
       "",
-      `[web_fetch tool: truncated — kept first ${returnedBytes} bytes of ${totalBytes}; raise maxBytes (cap ${MAX_FETCH_BYTES}) to fetch more.]`
+      truncationFooter(returnedBytes, totalBytes, path, nextStart)
     );
   }
 
@@ -88,7 +103,7 @@ export function formatOutcome(
     returnedBytes,
     totalBytes,
     truncated,
-    maxBytes,
+    path,
   };
 }
 
@@ -96,7 +111,6 @@ export type ExecuteFetchInput = {
   readonly jina: JinaReaderClient;
   readonly webView: WebViewFetchClient;
   readonly url: string;
-  readonly maxBytes: number;
   readonly format: WebFetchFormat;
   readonly signal?: AbortSignal;
 };
@@ -104,7 +118,7 @@ export type ExecuteFetchInput = {
 export async function executeFetch(
   input: ExecuteFetchInput
 ): Promise<WebFetchOutcome> {
-  const { jina, webView, url, maxBytes, format, signal } = input;
+  const { jina, webView, url, format, signal } = input;
   const fetchInput = {
     url,
     ...(signal === undefined ? {} : { signal }),
@@ -112,12 +126,12 @@ export async function executeFetch(
 
   if (format === "html") {
     const page = await webView.fetchHtml(fetchInput);
-    return formatOutcome(page, maxBytes, "html");
+    return formatOutcome(page, "html");
   }
 
   try {
     const page = await jina.fetchUrl(fetchInput);
-    return formatOutcome(page, maxBytes, "markdown");
+    return await formatOutcome(page, "markdown");
   } catch (error) {
     if (signal?.aborted) {
       throw error;
@@ -126,7 +140,7 @@ export async function executeFetch(
 
   try {
     const page = await webView.fetchMarkdown(fetchInput);
-    return formatOutcome(page, maxBytes, "markdown");
+    return await formatOutcome(page, "markdown");
   } catch (error) {
     if (signal?.aborted) {
       throw error;

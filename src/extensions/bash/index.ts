@@ -1,22 +1,10 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Renderer } from "../../shared/Renderer";
+import { SpillCache } from "../../shared/SpillCache";
 import { Tools } from "../../shared/Tools";
 import { detailsOf, formatResult, isErrorResult } from "./format";
-import {
-  BASH_SPILL_SWEEP_INTERVAL_MS,
-  cleanupOldBashSpillFiles,
-  killAllActiveBashGroups,
-  runBashCommand,
-} from "./run";
-import {
-  type BashInput,
-  bashSchema,
-  DEFAULT_TIMEOUT_MS,
-  STREAM_HEAD_BYTES,
-  STREAM_TAIL_BYTES,
-} from "./schema";
-
-const DEFAULT_TIMEOUT_SEC = DEFAULT_TIMEOUT_MS / 1000;
+import { killAllActiveBashGroups, runBashCommand } from "./run";
+import { type BashInput, bashSchema, DEFAULT_TIMEOUT_MS } from "./schema";
 
 const PREVIEW_LINES = 5;
 
@@ -28,15 +16,6 @@ function installLifecycleHandlers(): void {
   }
   lifecycleHandlersInstalled = true;
 
-  cleanupOldBashSpillFiles();
-  setInterval(() => {
-    cleanupOldBashSpillFiles();
-  }, BASH_SPILL_SWEEP_INTERVAL_MS).unref?.();
-
-  process.once("exit", () => {
-    cleanupOldBashSpillFiles();
-  });
-
   // Sweep bash subtrees that escaped our process group (double-forked
   // daemons via their own setsid) or that the parent harness is about to
   // strand by signalling us. Re-raise the signal so the default handler
@@ -46,15 +25,13 @@ function installLifecycleHandlers(): void {
       try {
         killAllActiveBashGroups(sig);
       } catch {}
-      try {
-        cleanupOldBashSpillFiles();
-      } catch {}
       process.kill(process.pid, sig);
     });
   }
 }
 
 export default function (pi: ExtensionAPI): void {
+  SpillCache.installSweeper();
   installLifecycleHandlers();
   Tools.register(pi, {
     name: "bash",
@@ -62,9 +39,7 @@ export default function (pi: ExtensionAPI): void {
     description:
       `Execute a bash command in the cwd. ` +
       `Returns exit code, signal (if any), and stdout/stderr captured separately. ` +
-      `Default timeout is ${DEFAULT_TIMEOUT_SEC}s — pass timeoutMs to raise it for long-running commands (builds, tests, training, installs). ` +
-      `Each stream is capped at ${STREAM_HEAD_BYTES} bytes head + ${STREAM_TAIL_BYTES} bytes tail; the middle is truncated. ` +
-      `Use bash with trimming args or pipe to head/tail/cut to keep output small.`,
+      `Prefer commands that emit only what you need; keep output as small as possible.`,
     parameters: bashSchema,
     renderShell: "self",
     executionMode: "sequential",

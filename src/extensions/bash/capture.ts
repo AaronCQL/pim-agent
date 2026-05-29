@@ -1,3 +1,4 @@
+import { Lines } from "../../shared/Lines";
 import {
   type CapturedStream,
   STREAM_HEAD_BYTES,
@@ -44,7 +45,13 @@ export class StreamCapture {
 
   snapshot(): CapturedStream {
     if (this.totalBytesAccum === 0) {
-      return { text: "", totalBytes: 0, truncated: false, path: null };
+      return {
+        text: "",
+        totalBytes: 0,
+        truncated: false,
+        path: null,
+        nextStart: null,
+      };
     }
     const dec = new TextDecoder();
     if (!this.truncated) {
@@ -53,6 +60,7 @@ export class StreamCapture {
         totalBytes: this.totalBytesAccum,
         truncated: false,
         path: null,
+        nextStart: null,
       };
     }
     const all = this.full();
@@ -66,6 +74,7 @@ export class StreamCapture {
       totalBytes: this.totalBytesAccum,
       truncated: true,
       path: null,
+      nextStart: Lines.continuationLine(headText),
     };
   }
 }

@@ -18,8 +18,20 @@ function makeResult(
   return {
     exitCode: 0,
     signal: null,
-    stdout: { text: "", totalBytes: 0, truncated: false, path: null },
-    stderr: { text: "", totalBytes: 0, truncated: false, path: null },
+    stdout: {
+      text: "",
+      totalBytes: 0,
+      truncated: false,
+      path: null,
+      nextStart: null,
+    },
+    stderr: {
+      text: "",
+      totalBytes: 0,
+      truncated: false,
+      path: null,
+      nextStart: null,
+    },
     timedOut: false,
     aborted: false,
     durationMs: 1,
@@ -46,10 +58,11 @@ describe("formatTruncationAffordance", () => {
       totalBytes: 12345,
       truncated: true,
       path: null,
+      nextStart: 1,
     });
     expect(out.startsWith("[bash tool:")).toBe(true);
     expect(out.endsWith("]")).toBe(true);
-    expect(out).toContain("stderr truncated");
+    expect(out).toContain("stderr showing first");
     expect(out).toContain(`first ${STREAM_HEAD_BYTES} bytes`);
     expect(out).toContain(`last ${STREAM_TAIL_BYTES} bytes`);
     expect(out).toContain("of 12345");
@@ -57,15 +70,17 @@ describe("formatTruncationAffordance", () => {
     expect(out).toContain("read");
   });
 
-  test("points to spill path when one is provided", () => {
+  test("points to spill path with a resume line when one is provided", () => {
     const out = formatTruncationAffordance("stdout", {
       text: "x",
       totalBytes: 99999,
       truncated: true,
       path: "/tmp/pim-bash-abc.out",
+      nextStart: 42,
     });
-    expect(out).toContain("/tmp/pim-bash-abc.out");
-    expect(out).toContain("full output saved");
+    expect(out).toContain(
+      "use read with path=/tmp/pim-bash-abc.out and start=42 for the rest."
+    );
     expect(out).not.toContain("redirect to a file");
   });
 });
@@ -79,6 +94,7 @@ describe("formatResult", () => {
           totalBytes: 6,
           truncated: false,
           path: null,
+          nextStart: null,
         },
       }),
       30_000
@@ -113,8 +129,20 @@ describe("formatResult", () => {
     const out = formatResult(
       makeResult({
         exitCode: 1,
-        stdout: { text: "out", totalBytes: 3, truncated: false, path: null },
-        stderr: { text: "err", totalBytes: 3, truncated: false, path: null },
+        stdout: {
+          text: "out",
+          totalBytes: 3,
+          truncated: false,
+          path: null,
+          nextStart: null,
+        },
+        stderr: {
+          text: "err",
+          totalBytes: 3,
+          truncated: false,
+          path: null,
+          nextStart: null,
+        },
       }),
       30_000
     );
@@ -129,6 +157,7 @@ describe("formatResult", () => {
           totalBytes: 99999,
           truncated: true,
           path: null,
+          nextStart: 1,
         },
       }),
       30_000
@@ -137,14 +166,20 @@ describe("formatResult", () => {
     expect(lines[0]).toBe("Exit code: 0");
     expect(lines[1]).toBe("stdout:");
     expect(lines[2]).toBe("head…tail");
-    expect(lines[3]?.startsWith("[bash tool: stdout truncated")).toBe(true);
+    expect(lines[3]?.startsWith("[bash tool: stdout showing first")).toBe(true);
     expect(lines[3]?.endsWith("]")).toBe(true);
   });
 
   test("does not append affordance when stream is not truncated", () => {
     const out = formatResult(
       makeResult({
-        stdout: { text: "ok", totalBytes: 2, truncated: false, path: null },
+        stdout: {
+          text: "ok",
+          totalBytes: 2,
+          truncated: false,
+          path: null,
+          nextStart: null,
+        },
       }),
       30_000
     );
@@ -158,8 +193,20 @@ describe("detailsOf", () => {
       makeResult({
         exitCode: 1,
         durationMs: 42,
-        stdout: { text: "x", totalBytes: 99999, truncated: true, path: null },
-        stderr: { text: "y", totalBytes: 5, truncated: false, path: null },
+        stdout: {
+          text: "x",
+          totalBytes: 99999,
+          truncated: true,
+          path: null,
+          nextStart: 1,
+        },
+        stderr: {
+          text: "y",
+          totalBytes: 5,
+          truncated: false,
+          path: null,
+          nextStart: null,
+        },
       })
     );
     expect(details).toEqual({

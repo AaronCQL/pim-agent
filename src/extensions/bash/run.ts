@@ -1,7 +1,4 @@
-import { readdirSync, statSync, unlinkSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { Paths } from "../../shared/Paths";
+import { SpillCache } from "../../shared/SpillCache";
 import { StreamCapture } from "./capture";
 import {
   type BashCommandResult,
@@ -11,17 +8,7 @@ import {
 
 type Reader = ReadableStreamDefaultReader<Uint8Array>;
 
-export const BASH_SPILL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-export const BASH_SPILL_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
-
-const BASH_SPILL_FILE_RE =
-  /^bash-[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(out|err)$/;
-
 const activePids = new Set<number>();
-
-export function pimCacheDir(): string {
-  return join(Paths.pimHomeDir(), "cache");
-}
 
 // Wired into the extension's signal handlers so a daemon that `setsid`s
 // out of our group (or harbor/parent SIGTERM) still tears down its subtree.
@@ -30,32 +17,6 @@ export function killAllActiveBashGroups(sig: NodeJS.Signals = "SIGTERM"): void {
     killGroup(pid, sig);
   }
   activePids.clear();
-}
-
-export function cleanupOldBashSpillFiles(
-  dir = pimCacheDir(),
-  now = Date.now()
-): void {
-  let entries: string[];
-  try {
-    entries = readdirSync(dir);
-  } catch {
-    return;
-  }
-
-  const cutoff = now - BASH_SPILL_TTL_MS;
-  for (const name of entries) {
-    if (!BASH_SPILL_FILE_RE.test(name)) {
-      continue;
-    }
-    const path = join(dir, name);
-    try {
-      const metadata = statSync(path);
-      if (metadata.isFile() && metadata.mtimeMs < cutoff) {
-        unlinkSync(path);
-      }
-    } catch {}
-  }
 }
 
 async function drain(reader: Reader | null, cap: StreamCapture): Promise<void> {
@@ -83,20 +44,12 @@ async function drain(reader: Reader | null, cap: StreamCapture): Promise<void> {
 
 async function spillIfTruncated(
   cap: StreamCapture,
-  suffix: ".out" | ".err"
+  ext: "out" | "err"
 ): Promise<string | null> {
   if (!cap.truncated) {
     return null;
   }
-  const dir = pimCacheDir();
-  const path = join(dir, `bash-${Bun.randomUUIDv7()}${suffix}`);
-  try {
-    await mkdir(dir, { recursive: true, mode: 0o700 });
-    await writeFile(path, cap.full(), { flag: "wx", mode: 0o600 });
-    return path;
-  } catch {
-    return null;
-  }
+  return SpillCache.write("bash", ext, cap.full());
 }
 
 function killGroup(pid: number | undefined, sig: NodeJS.Signals): void {
@@ -238,8 +191,8 @@ export async function runBashCommand(
   }
 
   const [stdoutPath, stderrPath] = await Promise.all([
-    spillIfTruncated(stdoutCap, ".out"),
-    spillIfTruncated(stderrCap, ".err"),
+    spillIfTruncated(stdoutCap, "out"),
+    spillIfTruncated(stderrCap, "err"),
   ]);
 
   return {

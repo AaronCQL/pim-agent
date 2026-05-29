@@ -14,9 +14,9 @@ export function formatTruncationAffordance(
   label: string,
   s: CapturedStream
 ): string {
-  const base = `[bash tool: ${label} truncated — kept first ${STREAM_HEAD_BYTES} bytes + last ${STREAM_TAIL_BYTES} bytes of ${s.totalBytes}`;
+  const base = `[bash tool: ${label} showing first ${STREAM_HEAD_BYTES} bytes + last ${STREAM_TAIL_BYTES} bytes of ${s.totalBytes}`;
   if (s.path) {
-    return `${base}; full output saved to ${s.path} — use read for the middle bytes.]`;
+    return `${base}; use read with path=${s.path} and start=${s.nextStart} for the rest.]`;
   }
   return `${base}; redirect to a file (e.g. \`cmd > /tmp/out.log\`) and use read for the full output.]`;
 }

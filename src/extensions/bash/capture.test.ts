@@ -24,6 +24,7 @@ describe("StreamCapture", () => {
       totalBytes: 0,
       truncated: false,
       path: null,
+      nextStart: null,
     });
   });
 
@@ -36,6 +37,7 @@ describe("StreamCapture", () => {
       totalBytes: 2,
       truncated: false,
       path: null,
+      nextStart: null,
     });
   });
 
@@ -48,6 +50,7 @@ describe("StreamCapture", () => {
       totalBytes: 11,
       truncated: false,
       path: null,
+      nextStart: null,
     });
   });
 
@@ -66,6 +69,21 @@ describe("StreamCapture", () => {
     expect(snap.text.startsWith(headChunk)).toBe(true);
     expect(snap.text.endsWith(tailChunk)).toBe(true);
     expect(snap.text).toContain(`... ${1000} bytes truncated ...`);
+    expect(snap.nextStart).toBe(1);
+  });
+
+  test("reports the resume line at the end of the head when truncated", () => {
+    const c = new StreamCapture();
+    const lineBytes = STREAM_HEAD_BYTES / 4;
+    const headChunk = `${"A".repeat(lineBytes - 1)}\n`.repeat(4);
+    c.push(u8(headChunk));
+    c.push(u8("X".repeat(1000)));
+    c.push(u8("B".repeat(STREAM_TAIL_BYTES)));
+
+    const snap = c.snapshot();
+    expect(snap.truncated).toBe(true);
+    // Head holds exactly 4 newline-terminated lines, so reading resumes at 5.
+    expect(snap.nextStart).toBe(5);
   });
 
   test("splits a single chunk between head and tail when needed", () => {
