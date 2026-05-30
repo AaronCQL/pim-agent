@@ -1,11 +1,15 @@
 {
   "name": "@aaroncql/pim-agent",
   "version": "0.1.0",
-  "description": "Pim Agent is to Pi Agent what Vim is to Vi.",
+  "description": "Pim is to Pi what Vim is to Vi.",
   "type": "module",
   "bin": {
-    "pim": "./bin/pim.ts"
+    "pim": "bin/pim.ts"
   },
+  "files": [
+    "bin/",
+    "src/"
+  ],
   "engines": {
     "bun": ">=1.2.7"
   },
@@ -22,7 +26,7 @@
     "typecheck": "tsgo --noEmit",
     "test": "bun test src --only-failures",
     "lint": "oxlint . --fix",
-    "format": "prettier --write --list-different package.json tsconfig.json .oxlintrc.json .prettierrc.json \"src/**/*.ts\" \"bin/**/*.ts\" \"**/*.md\"",
+    "format": "prettier --write --list-different package.json tsconfig.json .oxlintrc.json .prettierrc.json \"src/**/*.ts\" \"bin/**/*.ts\"",
     "check": "bun run typecheck && bun run test && bun run lint && bun run format"
   },
   "peerDependencies": {

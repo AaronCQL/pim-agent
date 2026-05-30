@@ -1,7 +1,7 @@
 # Run at repo root to generate: vhs ./assets/demo.tape
 # Docs: https://github.com/charmbracelet/vhs
 
-Output assets/demo.mp4
+Output assets/demo.gif
 
 Set Shell "bash"
 Set FontFamily "UbuntuMono Nerd Font Mono"

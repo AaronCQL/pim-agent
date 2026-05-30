@@ -1,6 +1,6 @@
 # Developer Guide
 
-Pim Agent is a Bun-native, opinionated extension pack for [Pi Agent](https://www.npmjs.com/package/@earendil-works/pi-coding-agent).
+Pim is an opinionated yet minimal, Bun-native extension pack for [Pi](https://pi.dev/).
 
 `bin/pim.ts` is a Bun launcher that resolves pi's `cli.js` and runs it under Bun, bypassing pi's Node shebang. Other pi extensions still work normally.
 
@@ -25,6 +25,7 @@ Telegram daemon: `pim --mode telegram --install` writes a user systemd/launchd u
 - Use comments sparingly, and only to explain why, not what or how.
 - Use instance classes for stateful services and lifecycle objects. Avoid static-only classes outside `src/shared/`; prefer named functions for stateless module-local helpers.
 - Shared utilities that cross module boundaries live in `src/shared/` and are exposed as a static-method class rather than a bare function. The filename must match the class name exactly (`Renderer.ts` exports `class Renderer`). Helpers with a single colocated caller stay as bare functions in lowercase files.
+- Use relative imports only. Do not use path aliases (`paths` in tsconfig, `imports` in package.json, or `@/`/`#`/`~/` prefixes).
 - When committing, check the commit history and use a similar semantic commit message.
 
 ## On-demand Docs
@@ -33,7 +34,7 @@ Read the topic doc only when its trigger applies to keep context lean.
 
 | When you are… | Read |
 | --- | --- |
-| touching the pi API surface (tools, events, ExtensionContext, commands, etc.) | [docs/pi-api.md](./docs/pi-api.md) |
+| touching the Pi API surface (tools, events, ExtensionContext, commands, etc.) | [docs/pi-api.md](./docs/pi-api.md) |
 | writing or changing a tool's `execute()` return, error handling, or truncation UX | [docs/tool-output.md](./docs/tool-output.md) |
 
-If a task spans multiple areas, read each relevant doc. Don't preemptively read all of them.
+If a task spans multiple areas, read each relevant doc.
