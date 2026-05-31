@@ -1,14 +1,28 @@
 {
   "name": "@aaroncql/pim-agent",
   "version": "0.1.0",
-  "description": "Pim is to Pi what Vim is to Vi.",
+  "description": "A Bun-native extension pack for Pi: web access, subagents, revamped core tools, ANSI-compatible themes, fzf-style completions, Telegram mode, and more.",
+  "license": "MIT",
   "type": "module",
+  "keywords": [
+    "pi-package",
+    "agent"
+  ],
+  "homepage": "https://github.com/AaronCQL/pim-agent#readme",
+  "bugs": {
+    "url": "https://github.com/AaronCQL/pim-agent/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AaronCQL/pim-agent.git"
+  },
   "bin": {
     "pim": "bin/pim.ts"
   },
   "files": [
     "bin/",
-    "src/"
+    "src/",
+    "!src/**/*.test.ts"
   ],
   "engines": {
     "bun": ">=1.2.7"
@@ -19,7 +33,8 @@
     ],
     "themes": [
       "./src/themes"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/AaronCQL/pim-agent/refs/heads/main/assets/demo.webp"
   },
   "scripts": {
     "dev": "bun link && pim",

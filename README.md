@@ -3,7 +3,7 @@
 
 _**Pim is to Pi what Vim is to Vi.**_
 
-An opinionated yet minimal, Bun-native extension pack for [Pi](https://pi.dev/): revamped tools, ANSI-compatible themes, fzf-style autocompletions, Telegram bot, and more. Scores up to [41.6% on Terminal-Bench 2.0](#terminal-bench-20) with locally hosted Qwen3.6-35B, matching Claude Code + Sonnet 4.5.
+A Bun-native extension pack for [Pi](https://pi.dev/): web access, subagents, revamped core tools, ANSI-compatible themes, fzf-style completions, Telegram mode, and more. Preliminary score of [37.8% on Terminal-Bench 2.0](#terminal-bench-20) with locally hosted Qwen3.6-35B, rivalling Claude Code + Sonnet 4.5.
 
 - [Quick Start](#quick-start)
   - [API Keys (Optional)](#api-keys-optional)
@@ -38,6 +38,12 @@ pim
 ```
 
 The `pim` command is a [thin Bun launcher](./bin/pim.ts) that wraps around `pi` so that Bun-specific tooling and APIs can be used. Other Pi extensions should continue to work normally.
+
+If `pim` cannot locate Pi, make sure `pi` is on your `PATH`, or set:
+
+```sh
+PIM_PI_CLI=/path/to/pi/dist/cli.js pim
+```
 
 ### API Keys (Optional)
 
@@ -98,7 +104,7 @@ Pim also ships with quality of life improvements for the TUI:
 - **fzf-style autocomplete** - `@path` file picker and `/command` picker with fuzzy search
 - **Git-aware powerline footer** - current dir, git branch and states, context usage, model and session cost (toggle with `/powerline`)
 - **TPS reporting** - per-cycle decode/prefill rate, TTFT, and cache read tokens (toggle with `/tps`)
-- **Concise tool headers** - minimal one-liner title across all tool calls, `Ctrl+O` to toggle full details
+- **Concise tool UI** - minimal one-liner title across all tool calls, `Ctrl+O` to toggle full details
 
 ## Telegram Bot
 
@@ -157,22 +163,25 @@ For development, run standalone with `pim --mode telegram` instead.
 
 ## Why Pim?
 
+Pim's philosophy is **opinionated but minimal**. Its goal is to improve the out-of-the-box experience for both users and agents, without sacrificing composability with other Pi extensions.
+
 ### Harness Design
 
-Pim overrides Pi's default tools (`bash`, `read`, `write`, `edit`) so that all tools produce consistent, structured output for the model, cross-reference each other where useful, and render uniformly in the TUI.
+Pim overrides Pi's default tools (`bash`, `read`, `write`, `edit`) so that all tools produce consistent behaviour and output for the model, cross-reference each other where useful, and render uniformly in the TUI.
 
 The system prompt is also kept as minimal as possible: at just ~3K tokens despite having 10+ tools (vs OpenCode's ~10K, Hermes' ~16K), with tool descriptions focusing on _how_ to use each tool instead of prescribing _when_. The rationale is that models already appear to internally encode when tools are needed, and prompting them to call tools can [suppress both necessary and unnecessary calls](https://arxiv.org/abs/2605.09252).
 
 ### Terminal-Bench 2.0
 
-Preliminary results from two full runs:
-
 | ID | Pim Version | LLM / Model | Results |
 | --- | --- | --- | --- |
 | [r1](./benchmarks/terminal_bench_2/results/r1/) | [`21d084d1`](https://github.com/AaronCQL/pim-agent/tree/21d084d1) | `Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf` | **41.6%** (37/89) |
 | [r2](./benchmarks/terminal_bench_2/results/r2/) | [`bfd792cf`](https://github.com/AaronCQL/pim-agent/tree/bfd792cf) | `Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf` | **36.0%** (32/89) |
+| [r3](./benchmarks/terminal_bench_2/results/r3/) | [`cd52f3a4`](https://github.com/AaronCQL/pim-agent/tree/cd52f3a4) | `Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf` | **36.0%** (32/89) |
 
-Comparing against the same Qwen3.6-35B model, Pim solves up to **70% more tasks** than [little-coder](https://github.com/itayinbarr/little-coder) (41.6% vs 24.6%). This puts Pim, with a locally hosted model, in a similar tier to Claude Code + Sonnet 4.5 (40.1%) and above Codex + GPT-5-Mini (31.9%).
+Preliminary aggregate score of **37.8%** from 3 independent runs. Each ran on an incremental build of pim, though changes between runs were minor and none were tuned to the benchmark.
+
+On average, Pim solves **~54% more tasks** than [little-coder](https://github.com/itayinbarr/little-coder) with the same Qwen3.6-35B model (37.8% vs 24.6%). This also places Pim in a similar tier to Claude Code + Sonnet 4.5 (40.1%), and above Codex + GPT-5-Mini (31.9%).
 
 The Qwen3.6-35B model is hosted via llama.cpp on an M4 Pro 48GB MacBook, with the following config:
 
@@ -196,11 +205,11 @@ llama-server \
   -np 1
 ```
 
-_Note 1_: results are preliminary as only 2 independent full runs were conducted; Terminal-Bench 2.0 requires 5 independent full runs for an official score.
+_Note 1_: results are preliminary as only 3 independent full runs were conducted; Terminal-Bench 2.0 requires 5 independent full runs under a fixed configuration for an official score.
 
 _Note 2_: the gap with little-coder may be partly explained by different inference configs (128K context vs 32K, Q6_K_XL vs Q4_K_M, higher thinking budget, etc.).
 
-_Note 3_: in r1, the recorded result is actually 1 higher at 38/89. However, the `code-from-image` trial was excluded because Qwen autonomously searched for the answer online after 27 legitimate turns (see line 822 in [trajectory.json](benchmarks/terminal_bench_2/results/r1/code-from-image/trajectory.json)).
+_Note 3_: in r1 and r3, the `code-from-image` trial was counted as non-passing because Qwen autonomously searched for the answer online after legitimately trying for a while.
 
 _Note 4_: see the [`benchmarks/terminal_bench_2`](./benchmarks/terminal_bench_2/) dir for breakdown of results and reproduction steps.
 

@@ -1,9 +1,20 @@
 #!/usr/bin/env bun
+import { realpath } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 const PI_PACKAGE = "@earendil-works/pi-coding-agent";
 
-function findPiCli(): string {
+async function findPiCli(): Promise<string> {
+  const envCli = await resolveEnvPiCli();
+  if (envCli) {
+    return envCli;
+  }
+
+  const pathCli = await resolvePathPiCli();
+  if (pathCli) {
+    return pathCli;
+  }
+
   const globalCli = resolveGlobalPiCli();
   if (globalCli) {
     return globalCli;
@@ -15,8 +26,49 @@ function findPiCli(): string {
   } catch {
     throw new Error(
       `Pim could not locate ${PI_PACKAGE}.\n` +
-        `Install it globally under Bun: bun install -g ${PI_PACKAGE}`
+        `Install Pi from https://pi.dev/docs/latest/quickstart, or set PIM_PI_CLI=/path/to/cli.js`
     );
+  }
+}
+
+async function resolveEnvPiCli(): Promise<string | null> {
+  const candidate = process.env["PIM_PI_CLI"]?.trim();
+  if (!candidate) {
+    return null;
+  }
+  return (await isFile(candidate)) ? candidate : null;
+}
+
+async function resolvePathPiCli(): Promise<string | null> {
+  const piBin = Bun.which("pi");
+  if (!piBin) {
+    return null;
+  }
+
+  const cliPath = await resolveRealPath(piBin);
+  const pkgPath = join(dirname(cliPath), "..", "package.json");
+
+  try {
+    const pkg = (await Bun.file(pkgPath).json()) as { readonly name?: string };
+    return pkg.name === PI_PACKAGE ? cliPath : null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveRealPath(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch {
+    return path;
+  }
+}
+
+async function isFile(path: string): Promise<boolean> {
+  try {
+    return (await Bun.file(path).stat()).isFile();
+  } catch {
+    return false;
   }
 }
 
@@ -78,7 +130,7 @@ if (mode === "telegram") {
   process.exit(0);
 }
 
-const piCli = findPiCli();
+const piCli = await findPiCli();
 const proc = Bun.spawn({
   cmd: [process.execPath, piCli, ...cliArgs],
   stdio: [
