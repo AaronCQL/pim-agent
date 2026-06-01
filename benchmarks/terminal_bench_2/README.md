@@ -1,6 +1,6 @@
 # Pim Agent · Terminal-Bench 2.0
 
-Run [Pim Agent](https://github.com/AaronCQL/pim-agent) on [Terminal-Bench 2.0](https://www.tbench.ai/leaderboard/terminal-bench/2.0) via [Harbor](https://www.harborframework.com) as an installed-agent (`BaseInstalledAgent`). Pim's source is bind-mounted into each task container; all of Pim's tools (Read/Write/Edit/Bash/Glob/Grep/WebFetch/WebSearch) run natively in-container against the task workspace.
+Run [Pim Agent](https://github.com/AaronCQL/pim-agent) on [Terminal-Bench 2.0](https://www.tbench.ai/leaderboard/terminal-bench/2.0) via [Harbor](https://www.harborframework.com) as an installed-agent (`BaseInstalledAgent`). Pim's source is bind-mounted into each task container; all of Pim's tools run natively in-container against the task workspace. The `subagent` extension is excluded by `adapter.py` to keep runs single-agent.
 
 ## Quick Start
 
