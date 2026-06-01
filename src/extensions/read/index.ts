@@ -3,10 +3,14 @@ import { Paths } from "../../shared/Paths";
 import { Renderer } from "../../shared/Renderer";
 import { Tools } from "../../shared/Tools";
 import { buildReadRange, readFile } from "./read";
-import { formatTitlePath } from "./render";
+import { renderTitlePath, type ReadTitleOutcome } from "./render";
 import { type ReadInput, readSchema } from "./schema";
 
 const PREVIEW_LINES = 10;
+
+type ReadRenderState = {
+  outcome?: ReadTitleOutcome;
+};
 
 export default function (pi: ExtensionAPI): void {
   Tools.register(pi, {
@@ -14,7 +18,6 @@ export default function (pi: ExtensionAPI): void {
     label: "read",
     description:
       "Read a local UTF-8 text file. Output is `LINE:CONTENT` with no space after the colon. Capped at 32KB per call; lines longer than 2000 chars are truncated.",
-    promptSnippet: "Read text files.",
     parameters: readSchema,
     renderShell: "self",
     executionMode: "parallel",
@@ -58,12 +61,17 @@ export default function (pi: ExtensionAPI): void {
     },
     renderCall(args, theme, context) {
       const input = (args ?? {}) as Partial<ReadInput>;
-      const title = formatTitlePath({
-        path: input.path,
-        cwd: context.cwd,
-        start: input.start,
-        end: input.end,
-      });
+      const state = context.state as ReadRenderState;
+      const title = renderTitlePath(
+        {
+          path: input.path,
+          cwd: context.cwd,
+          start: input.start,
+          end: input.end,
+          outcome: state.outcome,
+        },
+        theme
+      );
       return Renderer.renderToolCallTitle({
         label: "Read",
         title,
@@ -72,6 +80,23 @@ export default function (pi: ExtensionAPI): void {
       });
     },
     renderResult(result, options, theme, context) {
+      const state = context.state as ReadRenderState;
+
+      if (!options.isPartial && state.outcome === undefined) {
+        const details = result.details as ReadTitleOutcome | undefined;
+
+        if (
+          typeof details?.visibleStart === "number" &&
+          typeof details.visibleEnd === "number"
+        ) {
+          state.outcome = {
+            visibleStart: details.visibleStart,
+            visibleEnd: details.visibleEnd,
+          };
+          context.invalidate();
+        }
+      }
+
       return Renderer.renderBorderedResult({
         result,
         options,

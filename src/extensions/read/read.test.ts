@@ -48,6 +48,18 @@ describe("readFile", () => {
     expect(outcome.truncatedByEnd).toBe(false);
   });
 
+  test("reports the actual final line when end is beyond EOF", async () => {
+    const root = await tempRoot();
+    const path = join(root, "notes.txt");
+    await writeFile(path, "alpha\nbeta\ngamma", "utf8");
+
+    const outcome = await readFile(path, buildReadRange(undefined, 999));
+    expect(outcome.body).toBe(["1:alpha", "2:beta", "3:gamma"].join("\n"));
+    expect(outcome.totalLines).toBe(3);
+    expect(outcome.visibleEnd).toBe(3);
+    expect(outcome.truncatedByEnd).toBe(false);
+  });
+
   test("strips UTF-8 BOM from output and reports it in details", async () => {
     const root = await tempRoot();
     const path = join(root, "bom.txt");
