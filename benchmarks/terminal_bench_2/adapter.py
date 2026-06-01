@@ -31,7 +31,12 @@ OUTPUT_FILENAME = "pim.txt"
 DEFAULT_TIMEOUT_SEC = 10800  # 3h
 
 HOST_PI_MODELS = Path.home() / ".pi" / "agent" / "models.json"
-HOST_PI_SETTINGS = Path.home() / ".pi" / "agent" / "settings.json"
+
+# Fixed settings, not copied from the host's mutable ~/.pi/agent/settings.json,
+# so a host-side `pi config`/`pi install` can't leak into or corrupt a run.
+PI_SETTINGS_JSON = json.dumps(
+    {"retry": {"provider": {"timeoutMs": 300000, "maxRetries": 3}}}
+)
 
 log = logging.getLogger(__name__)
 
@@ -113,22 +118,21 @@ class PimAgent(BaseInstalledAgent):
             command=f"test -f {CONTAINER_PIM_DIR}/bin/pim.ts",
         )
 
-        # Provision pi's models.json and settings.json so the container's
-        # pi sees the same provider config and retry settings as the host.
+        # Provider/endpoint config from the host's models.json; settings are
+        # fixed (PI_SETTINGS_JSON), not read from the host.
         if HOST_PI_MODELS.exists():
             models_json = HOST_PI_MODELS.read_text()
-            env: dict[str, str] = {"PIM_MODELS_JSON": models_json}
-            cmd = (
-                "mkdir -p ~/.pi/agent && "
-                'printf "%s" "$PIM_MODELS_JSON" > ~/.pi/agent/models.json'
-            )
-            if HOST_PI_SETTINGS.exists():
-                env["PIM_SETTINGS_JSON"] = HOST_PI_SETTINGS.read_text()
-                cmd += ' && printf "%s" "$PIM_SETTINGS_JSON" > ~/.pi/agent/settings.json'
             await self.exec_as_agent(
                 environment,
-                command=cmd,
-                env=env,
+                command=(
+                    "mkdir -p ~/.pi/agent && "
+                    'printf "%s" "$PIM_MODELS_JSON" > ~/.pi/agent/models.json && '
+                    'printf "%s" "$PIM_SETTINGS_JSON" > ~/.pi/agent/settings.json'
+                ),
+                env={
+                    "PIM_MODELS_JSON": models_json,
+                    "PIM_SETTINGS_JSON": PI_SETTINGS_JSON,
+                },
             )
 
     @with_prompt_template
@@ -201,6 +205,7 @@ class PimAgent(BaseInstalledAgent):
             'export PATH="$HOME/.bun/bin:$PATH"; '
             "EXTS=''; "
             f"for f in {CONTAINER_PIM_DIR}/src/extensions/*/index.ts; do "
+            '  case "$f" in */subagent/index.ts) continue;; esac; '
             "  EXTS=\"$EXTS -e $f\"; "
             "done; "
             f"bun {CONTAINER_PIM_DIR}/bin/pim.ts "
