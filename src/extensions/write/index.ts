@@ -12,7 +12,7 @@ export default function (pi: ExtensionAPI): void {
     name: "write",
     label: "write",
     description:
-      "Create or overwrite UTF-8 text files. Use write only for new files or full rewrites - prefer edit for changes to existing files.",
+      "Create or overwrite UTF-8 text files. Use write only for new files or full rewrites.",
     parameters: writeSchema,
     renderShell: "self",
     executionMode: "sequential",
