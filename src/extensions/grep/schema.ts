@@ -25,7 +25,7 @@ export const grepSchema = Type.Object({
   glob: Type.Optional(
     Type.String({
       description:
-        "Relative glob filter under path when path is a directory. Gitignored files and dotfiles are skipped during directory scans unless includeIgnored/includeDotfiles is true.",
+        "Relative glob filter under path when path is a directory. Brace expansion spans sibling dirs (eg. {src,docs}/**/*.ts). Gitignored files and dotfiles are skipped during directory scans unless includeIgnored/includeDotfiles is true.",
     })
   ),
   exclude: Type.Optional(

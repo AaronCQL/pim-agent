@@ -212,7 +212,7 @@ describe("formatTitle", () => {
       glob: "**/*.ts",
       cwd: "/repo",
     });
-    expect(title).toBe("/alpha/ in src **/*.ts");
+    expect(title).toBe("/alpha/ in src/**/*.ts");
   });
 
   test("formats regex patterns with slashes", () => {
@@ -225,14 +225,24 @@ describe("formatTitle", () => {
     expect(title).toBe("/^alpha$/ in src");
   });
 
-  test("falls back to '.' when path is omitted", () => {
+  test("omits location when path is omitted", () => {
     const title = formatTitle({
       pattern: "alpha",
       path: undefined,
       glob: undefined,
       cwd: "/repo",
     });
-    expect(title).toBe("/alpha/ in .");
+    expect(title).toBe("/alpha/");
+  });
+
+  test("shows glob alone when path is omitted", () => {
+    const title = formatTitle({
+      pattern: "alpha",
+      path: undefined,
+      glob: "{src,docs}/**/*.ts",
+      cwd: "/repo",
+    });
+    expect(title).toBe("/alpha/ in {src,docs}/**/*.ts");
   });
 
   test("resolves relative paths in titles", () => {
@@ -253,7 +263,7 @@ describe("formatTitle", () => {
       cwd: "/repo",
       fileCount: 3,
     });
-    expect(title).toBe("/alpha/ in src **/*.ts (3 files)");
+    expect(title).toBe("/alpha/ in src/**/*.ts (3 files)");
   });
 
   test("uses singular noun for a single file", () => {
@@ -264,6 +274,6 @@ describe("formatTitle", () => {
       cwd: "/repo",
       fileCount: 1,
     });
-    expect(title).toBe("/alpha/ in . (1 file)");
+    expect(title).toBe("/alpha/ (1 file)");
   });
 });

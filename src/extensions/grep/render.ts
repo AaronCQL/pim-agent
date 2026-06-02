@@ -84,17 +84,31 @@ export type TitleOptions = {
 
 export function formatTitle(options: TitleOptions): string {
   const pattern = formatPattern(options.pattern);
-  const resolvedPath =
+  const resolved =
     options.path === undefined
       ? undefined
       : Paths.resolve(options.path, options.cwd);
-  const target = Paths.titleOr(resolvedPath, options.cwd, ".");
-  const glob = options.glob ? ` ${options.glob}` : "";
+  const dir =
+    resolved === undefined || resolved === options.cwd
+      ? undefined
+      : Paths.displayRelative(resolved, options.cwd);
+  const target = joinTarget(dir, options.glob);
+  const location = target ? ` in ${target}` : "";
   const suffix =
     options.fileCount === undefined
       ? ""
       : ` (${options.fileCount} ${options.fileCount === 1 ? "file" : "files"})`;
-  return `${pattern} in ${target}${glob}${suffix}`;
+  return `${pattern}${location}${suffix}`;
+}
+
+function joinTarget(
+  dir: string | undefined,
+  glob: string | undefined
+): string | undefined {
+  if (glob === undefined) {
+    return dir;
+  }
+  return dir === undefined ? glob : `${dir}/${glob}`;
 }
 
 function formatPattern(pattern: string | undefined): string {

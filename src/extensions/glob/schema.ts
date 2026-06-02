@@ -7,7 +7,8 @@ export const GLOB_PATH_FORMATS = ["relative", "absolute"] as const;
 
 export const globSchema = Type.Object({
   pattern: Type.String({
-    description: "Glob pattern relative to path (eg. **/*.ts).",
+    description:
+      "Glob pattern relative to path (eg. **/*.ts). Brace expansion spans sibling dirs (eg. {src,docs}/**/*.ts).",
   }),
   path: Type.Optional(
     Type.String({
