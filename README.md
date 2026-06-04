@@ -11,6 +11,7 @@ A Bun-native extension pack for [Pi](https://pi.dev/): web access, subagents, re
   - [Recommended Pi Settings (Optional)](#recommended-pi-settings-optional)
 - [Why Pim?](#why-pim)
   - [Lean System Prompt](#lean-system-prompt)
+  - [Model-Aware Tools](#model-aware-tools)
   - [Terminal-Bench 2.0](#terminal-bench-20)
 - [Agent Tools](#agent-tools)
 - [Terminal UI](#terminal-ui)
@@ -102,6 +103,12 @@ Pim's system prompt is just **~3K tokens** despite exposing 10+ tools, far leane
 
 This is achieved by having tool descriptions focus on _how_ to use each tool instead of prescribing _when_, since models already appear to internally encode when tools are needed, and prompting them to call tools can [suppress both necessary and unnecessary calls](https://arxiv.org/abs/2605.09252).
 
+### Model-Aware Tools
+
+LLMs are [increasingly post-trained](https://openai.com/index/introducing-codex) for specific agent harnesses, making tool schemas part of the model's learned interface. For text-file editing, Anthropic models are trained to use [string replacement operations](https://platform.claude.com/docs/en/agents-and-tools/tool-use/text-editor-tool), while OpenAI models use [V4A patch operations](https://developers.openai.com/api/docs/guides/tools-apply-patch).
+
+Pim keeps the active toolset model-aware instead of assuming one tool fits every LLM. It dynamically exposes the tools best suited to the selected model, giving each model the interface that best matches its learned behaviour while keeping the prompt lean.
+
 ### Terminal-Bench 2.0
 
 | ID | Pim Version | LLM / Model | Results |
@@ -148,6 +155,7 @@ _Note 4_: see the [`benchmarks/terminal_bench_2`](./benchmarks/terminal_bench_2/
 
 Pim revamps Pi's default tools (`bash`, `read`, `write`, `edit`) so they produce consistent behaviour and output, cross-reference each other where useful, and render uniformly in the TUI. It also adds:
 
+- **`apply_patch`** - V4A patch editing, dynamically exposed instead of `edit` for OpenAI models
 - **`glob`** - file enumeration by glob pattern, sorted newest-first, respects `.gitignore`
 - **`grep`** - regex search across files with context lines, multiline matching, respects `.gitignore`
 - **`web_search`** - search the web via [Exa](https://exa.ai) with ranked results and snippets
