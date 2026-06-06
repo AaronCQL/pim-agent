@@ -37,9 +37,9 @@ export default function (pi: ExtensionAPI): void {
     name: "bash",
     label: "bash",
     description:
-      `Execute a bash command in the cwd. ` +
-      `Returns exit code, signal (if any), and stdout/stderr captured separately. ` +
-      `Prefer commands that emit only what you need; keep output as small as possible.`,
+      "Execute a bash command in the cwd. " +
+      "Returns exit code, signal (if any), and stdout/stderr captured separately. " +
+      "Prefer commands that emit only what you need; keep output as small as possible.",
     parameters: bashSchema,
     renderShell: "self",
     executionMode: "sequential",

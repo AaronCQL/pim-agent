@@ -55,7 +55,9 @@ export default function (pi: ExtensionAPI): void {
     name: "grep",
     label: "grep",
     description:
-      "Search UTF-8 text files with a JavaScript regex. Directory scans skip binary files, gitignored paths, and dotfiles unless requested; direct file paths are always searched. Use grep to search file contents instead of bash with grep, rg, ag, find -exec, or similar.",
+      "Search UTF-8 text files with a JavaScript regex. " +
+      "Directory scans skip binary files, gitignored paths, and dotfiles unless requested; direct file paths are always searched. " +
+      "Use grep to search file contents instead of bash with grep, rg, ag, find -exec, or similar.",
     parameters: grepSchema,
     renderShell: "self",
     executionMode: "parallel",

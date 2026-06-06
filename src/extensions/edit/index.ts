@@ -12,7 +12,8 @@ export default function (pi: ExtensionAPI): void {
     name: "edit",
     label: "edit",
     description:
-      "Replace strings in a UTF-8 text file. Prefer edit over write for changes to existing files.",
+      "Replace strings in a UTF-8 text file. " +
+      "Prefer edit over write for changes to existing files.",
     parameters: editSchema,
     renderShell: "self",
     executionMode: "sequential",

@@ -61,9 +61,10 @@ export default function (pi: ExtensionAPI): void {
     name: "todo",
     label: "todo",
     description:
-      "Manage your to-dos. ALWAYS use for tasks with 3+ steps; skip only for trivial one-step tasks. " +
-      "Each call replaces the entire list; include every item in priority order. " +
-      "Keep at most one item in_progress, mark items completed immediately after finishing, and preserve skipped work as cancelled.",
+      "Update the session task list. " +
+      "Each call replaces the entire list; include every item that should remain, in priority order. " +
+      "Status values are pending, in_progress, completed, and cancelled. " +
+      "At most one item may be in_progress.",
     parameters: todoSchema,
     renderShell: "self",
     executionMode: "sequential",

@@ -17,7 +17,9 @@ export default function (pi: ExtensionAPI): void {
     name: "read",
     label: "read",
     description:
-      "Read a local UTF-8 text file. Output is `LINE:CONTENT` with no space after the colon. Capped at 32KB per call; lines longer than 2000 chars are truncated.",
+      "Read a local UTF-8 text file. " +
+      "Output is `LINE:CONTENT` with no space after the colon. " +
+      "Capped at 32KB per call; lines longer than 2000 chars are truncated.",
     parameters: readSchema,
     renderShell: "self",
     executionMode: "parallel",

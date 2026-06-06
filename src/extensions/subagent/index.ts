@@ -9,7 +9,10 @@ export default function (pi: ExtensionAPI): void {
     name: "subagent",
     label: "subagent",
     description:
-      "Delegate a task to an isolated subagent to keep your main context clean. The subagent inherits your currently active tools (except subagent itself) and runs in a fresh in-memory session. Multiple subagent calls in one turn run in parallel. Subagent responses are capped at 32KB; the full output is preserved in tool details.",
+      "Run a task in an isolated subagent with a fresh context. " +
+      "The subagent inherits the currently active tools, except subagent itself. " +
+      "Multiple subagent calls in one turn run in parallel. " +
+      "Subagent output returned to the main agent is capped at 32KB.",
     parameters: subagentSchema,
     renderShell: "self",
     executionMode: "parallel",

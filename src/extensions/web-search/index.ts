@@ -49,7 +49,8 @@ export default function (pi: ExtensionAPI): void {
     name: "web_search",
     label: "web_search",
     description:
-      "Search the web. Returns ranked results with title, URL, and a short snippet.",
+      "Search the web. " +
+      "Returns ranked results with title, URL, and a short snippet.",
     parameters: webSearchSchema,
     renderShell: "self",
     executionMode: "parallel",
