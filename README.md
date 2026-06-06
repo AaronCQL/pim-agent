@@ -1,6 +1,11 @@
 <!-- omit in toc -->
 # PIM - Pi IMproved
 
+[![npm version](https://img.shields.io/npm/v/@aaroncql/pim-agent?style=flat-square)](https://www.npmjs.com/package/@aaroncql/pim-agent)
+[![npm downloads](https://img.shields.io/npm/dm/@aaroncql/pim-agent?style=flat-square)](https://www.npmjs.com/package/@aaroncql/pim-agent)
+[![license](https://img.shields.io/npm/l/@aaroncql/pim-agent?style=flat-square)](./LICENSE)
+[![Bun](https://img.shields.io/badge/runtime-Bun-black?logo=bun&style=flat-square)](https://bun.com)
+
 _**Pim is to Pi what Vim is to Vi.**_
 
 A Bun-native extension pack for [Pi](https://pi.dev/): web access, subagents, revamped core tools, ANSI-compatible themes, fzf-style completions, Telegram mode, and more. Preliminary score of [37.8% on Terminal-Bench 2.0](#terminal-bench-20) with locally hosted Qwen3.6-35B, rivalling Claude Code + Sonnet 4.5.
@@ -19,6 +24,7 @@ A Bun-native extension pack for [Pi](https://pi.dev/): web access, subagents, re
   - [Setup](#setup)
   - [Commands](#commands)
   - [Features](#features)
+- [Changelog](#changelog)
 - [Developing](#developing)
 
 ![Pim Demo](https://raw.githubusercontent.com/AaronCQL/pim-agent/refs/heads/main/assets/demo.webp)
@@ -229,6 +235,10 @@ For development, run standalone with `pim --mode telegram` instead.
 - 📝 **Markdown formatting** - replies render Markdown out of the box, including tables converted to vertical lists for Telegram.
 - 📎 **Rich media** - send photos, documents, videos, audio, and voice messages directly in chat; your bot can also send files back to you.
 - 🧵 **Thread-specific prompts** - each chat (or thread) gets its own session and optional instructions; ask your bot to modify its instructions.
+
+## Changelog
+
+See [CHANGELOG.md](./CHANGELOG.md) for release notes.
 
 ## Developing
 
