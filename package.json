@@ -1,6 +1,6 @@
 {
   "name": "@aaroncql/pim-agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A Bun-native extension pack for Pi: web access, subagents, revamped core tools, ANSI-compatible themes, fzf-style completions, Telegram mode, and more.",
   "license": "MIT",
   "type": "module",
