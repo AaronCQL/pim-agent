@@ -1,0 +1,7 @@
+{
+  "id": "long-file",
+  "tag": "format",
+  "title": "two edits in a longer file (token scaling)",
+  "files": ["settings.ts"],
+  "instruction": "Make two changes to settings.ts: (1) change `export const CACHE_TTL_SECONDS = 300;` to `export const CACHE_TTL_SECONDS = 600;`; (2) change `export const LOG_LEVEL = \"info\";` to `export const LOG_LEVEL = \"debug\";`. Make no other changes."
+}

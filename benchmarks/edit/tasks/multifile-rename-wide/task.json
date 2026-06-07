@@ -1,0 +1,7 @@
+{
+  "id": "multifile-rename-wide",
+  "tag": "multifile",
+  "title": "rename an exported constant across six files",
+  "files": ["logger.ts", "auth.ts", "db.ts", "http.ts", "cache.ts", "queue.ts"],
+  "instruction": "Rename the exported constant `LOG_PREFIX` to `LOG_TAG` everywhere it appears across all six files (`logger.ts`, `auth.ts`, `db.ts`, `http.ts`, `cache.ts`, `queue.ts`): the declaration in logger.ts and the import plus usage in each of the other five files. Change nothing else."
+}

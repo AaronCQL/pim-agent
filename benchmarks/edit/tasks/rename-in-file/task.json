@@ -1,0 +1,7 @@
+{
+  "id": "rename-in-file",
+  "tag": "format",
+  "title": "rename an identifier at every call site",
+  "files": ["user.ts"],
+  "instruction": "Rename every occurrence of the identifier `getUser` to `fetchUser`. There are 4 occurrences (the declaration and 3 references); all must be renamed. Make no other changes."
+}

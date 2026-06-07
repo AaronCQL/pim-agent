@@ -1,0 +1,7 @@
+{
+  "id": "duplicate-blocks",
+  "tag": "context-ratio",
+  "title": "edit one of two identical blocks (needs context)",
+  "files": ["routes.ts"],
+  "instruction": "Inside the `handlePost` function only, change `send(200);` to `send(201);`. The identical `send(200);` line inside `handleGet` must remain unchanged. Make no other changes."
+}

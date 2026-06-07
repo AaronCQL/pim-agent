@@ -1,0 +1,7 @@
+{
+  "id": "many-field-edits",
+  "tag": "edit-density",
+  "title": "twelve independent field edits in one large repetitive file (one read, many edits)",
+  "files": ["routes.ts"],
+  "instruction": "In the `routes` array, change the `rateLimit` of exactly these twelve routes (identified by their `id`) to the given values, leaving every other route's `rateLimit` at `100`: r-004 → 250, r-009 → 300, r-015 → 150, r-022 → 500, r-028 → 200, r-033 → 750, r-037 → 125, r-041 → 400, r-046 → 600, r-052 → 175, r-055 → 900, r-060 → 350. Change nothing else."
+}

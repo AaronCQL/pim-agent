@@ -1,0 +1,7 @@
+{
+  "id": "delete-function",
+  "tag": "format",
+  "title": "delete a function and its call site",
+  "files": ["math.ts"],
+  "instruction": "Delete the entire `square` function (its three lines) along with the single blank line that follows it, and delete the line `  console.log(square(2));` from the `demo` function. Leave `cube` and everything else unchanged."
+}

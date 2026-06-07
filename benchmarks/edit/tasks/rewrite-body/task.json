@@ -1,0 +1,7 @@
+{
+  "id": "rewrite-body",
+  "tag": "block",
+  "title": "replace an entire function body",
+  "files": ["format.ts"],
+  "instruction": "Replace the entire body of the `formatDuration` function in `format.ts` with exactly the following, keeping the signature line `export function formatDuration(ms: number): string {` and the final closing brace unchanged:\n\n```\n  const totalSeconds = Math.floor(ms / 1000);\n  const hours = Math.floor(totalSeconds / 3600);\n  const minutes = Math.floor((totalSeconds % 3600) / 60);\n  const seconds = totalSeconds % 60;\n  const parts: string[] = [];\n  if (hours > 0) {\n    parts.push(`${hours}h`);\n  }\n  if (minutes > 0) {\n    parts.push(`${minutes}m`);\n  }\n  parts.push(`${seconds}s`);\n  return parts.join(\" \");\n```"
+}

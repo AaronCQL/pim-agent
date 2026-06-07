@@ -1,0 +1,7 @@
+{
+  "id": "scattered-edits",
+  "tag": "format",
+  "title": "three scattered edits in one file",
+  "files": ["handler.ts"],
+  "instruction": "Make these three changes to handler.ts: (1) change the first line from `import { readFile } from \"fs\";` to `import { readFile, writeFile } from \"fs\";`; (2) change `const MAX_RETRIES = 3;` to `const MAX_RETRIES = 5;`; (3) change `return error(400);` to `return error(422);`. Make no other changes."
+}

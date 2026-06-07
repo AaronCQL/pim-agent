@@ -1,0 +1,7 @@
+{
+  "id": "single-edit",
+  "tag": "format",
+  "title": "single literal edit",
+  "files": ["server.ts"],
+  "instruction": "Change the value of the `DEFAULT_TIMEOUT_MS` constant from `30000` to `60000`. Make no other changes."
+}

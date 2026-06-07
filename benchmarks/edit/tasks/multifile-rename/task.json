@@ -1,0 +1,7 @@
+{
+  "id": "multifile-rename",
+  "tag": "multifile",
+  "title": "rename an exported constant across three files",
+  "files": ["config.ts", "client.ts", "health.ts"],
+  "instruction": "Rename the exported constant `BASE_URL` to `API_BASE_URL` everywhere it appears across `config.ts`, `client.ts`, and `health.ts`: the declaration in config.ts, the two imports, and the two usages. Leave `TIMEOUT_MS` and everything else unchanged."
+}

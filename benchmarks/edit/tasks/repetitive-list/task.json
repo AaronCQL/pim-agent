@@ -1,0 +1,7 @@
+{
+  "id": "repetitive-list",
+  "tag": "context-ratio",
+  "title": "change one field deep in a repetitive list (uniqueness needs context)",
+  "files": ["routes.ts"],
+  "instruction": "In the `routes` array, find the route whose `id` is `\"r-006\"` and change that route's `rateLimit` from `100` to `250`. Every route currently has `rateLimit: 100`, so be sure to change only the `r-006` entry. Change nothing else."
+}
