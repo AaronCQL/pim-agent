@@ -48,16 +48,16 @@
     "@earendil-works/pi-coding-agent": "*"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "0.76.0",
+    "@earendil-works/pi-coding-agent": "0.79.2",
     "@types/bun": "latest",
-    "@typescript/native-preview": "^7.0.0-dev.20260505.1",
-    "oxlint": "^1.62.0",
-    "prettier": "^3.8.3"
+    "@typescript/native-preview": "^7.0.0-dev.20260612.1",
+    "oxlint": "^1.69.0",
+    "prettier": "^3.8.4"
   },
   "dependencies": {
     "diff": "^9.0.0",
     "fzf": "^0.5.2",
-    "grammy": "^1.42.0",
+    "grammy": "^1.43.0",
     "ignore": "^7.0.5",
     "ky": "^2.0.2"
   }
