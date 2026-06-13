@@ -47,10 +47,45 @@ describe("loadRelative — fast path (git ls-files)", () => {
     expect(paths).toContain("src/foo.ts");
     expect(paths).toContain("src/bar/baz.ts");
     for (const candidate of candidates) {
-      expect(candidate.isDirectory).toBe(false);
       expect(candidate.insertPath).toBe(candidate.displayPath);
       expect(candidate.matchHaystack).toBe(candidate.displayPath);
     }
+    const files = candidates.filter((c) => !c.isDirectory);
+    expect(files.map((c) => c.displayPath)).toEqual([
+      "README.md",
+      "src/bar/baz.ts",
+      "src/foo.ts",
+    ]);
+  });
+
+  test("derives directories from file prefixes", async () => {
+    const candidates = await loadRelative({
+      root: workspace,
+      gitSpawner: succeedingSpawner([
+        "src/foo.ts",
+        "src/bar/baz.ts",
+        "README.md",
+      ]),
+    });
+
+    const directories = candidates
+      .filter((c) => c.isDirectory)
+      .map((c) => c.displayPath);
+    expect(directories).toEqual(["src", "src/bar"]);
+  });
+
+  test("directories sort with their contents", async () => {
+    const candidates = await loadRelative({
+      root: workspace,
+      gitSpawner: succeedingSpawner(["src/foo.ts", "a.ts", "zzz.ts"]),
+    });
+
+    expect(candidates.map((c) => c.displayPath)).toEqual([
+      "a.ts",
+      "src",
+      "src/foo.ts",
+      "zzz.ts",
+    ]);
   });
 
   test("sorts ascending by relative path", async () => {
@@ -97,6 +132,9 @@ describe("loadRelative — fallback (Bun.Glob)", () => {
     expect(paths).toContain("nested/deep.ts");
     expect(paths).not.toContain("ignored.txt");
     expect(paths.some((p) => p.includes("node_modules"))).toBe(false);
+
+    const nested = candidates.find((c) => c.displayPath === "nested");
+    expect(nested?.isDirectory).toBe(true);
   });
 
   test("empty workspace produces an empty list", async () => {

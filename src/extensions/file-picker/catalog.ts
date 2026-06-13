@@ -178,16 +178,38 @@ function finalizeRelative(
   limit: number
 ): readonly FileCandidate[] {
   const normalized = paths.map(Paths.toForwardSlashes);
-  normalized.sort((a, b) => a.localeCompare(b));
 
-  const truncated =
-    normalized.length > limit ? normalized.slice(0, limit) : normalized;
-  return truncated.map((path) => ({
+  // git ls-files only emits files; recover directories from their prefixes.
+  const directories = new Set<string>();
+  for (const path of normalized) {
+    for (
+      let slash = path.indexOf("/");
+      slash !== -1;
+      slash = path.indexOf("/", slash + 1)
+    ) {
+      directories.add(path.slice(0, slash));
+    }
+  }
+
+  const candidates = [
+    ...[...directories].map((path) => toRelativeCandidate(path, true)),
+    ...normalized.map((path) => toRelativeCandidate(path, false)),
+  ];
+  candidates.sort((a, b) => a.insertPath.localeCompare(b.insertPath));
+
+  return candidates.length > limit ? candidates.slice(0, limit) : candidates;
+}
+
+function toRelativeCandidate(
+  path: string,
+  isDirectory: boolean
+): FileCandidate {
+  return {
     insertPath: path,
     displayPath: path,
     matchHaystack: path,
-    isDirectory: false,
-  }));
+    isDirectory,
+  };
 }
 
 async function findAnchor(absolutePath: string): Promise<string> {

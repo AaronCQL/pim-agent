@@ -9,6 +9,16 @@ import { rank } from "./ranker";
 const MAX_VISIBLE_ROWS = 50;
 const AT_PREFIX = /(?:^|\s)@(\S*)$/;
 
+// Pi cancels autocomplete after Tab; for directories we want to keep
+// drilling, so re-enter Tab on the next tick.
+function keepDrilling(): void {
+  setTimeout(() => {
+    try {
+      process.stdin.emit("data", "\t");
+    } catch {}
+  }, 0);
+}
+
 export type FilePickerProviderFactoryOptions = {
   readonly loadRelativeCatalog: () => Promise<readonly FileCandidate[]>;
 };
@@ -80,6 +90,41 @@ export function createFilePickerProviderFactory(
     },
 
     applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
+      // Pi appends a trailing space after file completions; apply @ items
+      // ourselves so Tab inserts the bare path.
+      if (prefix.startsWith("@")) {
+        const line = lines[cursorLine] ?? "";
+        const beforePrefix = line.slice(0, cursorCol - prefix.length);
+        const afterCursor = line.slice(cursorCol);
+        const hasTrailingQuote = item.value.endsWith('"');
+        const adjustedAfterCursor =
+          prefix.startsWith('@"') &&
+          hasTrailingQuote &&
+          afterCursor.startsWith('"')
+            ? afterCursor.slice(1)
+            : afterCursor;
+
+        const newLines = [...lines];
+        newLines[cursorLine] =
+          `${beforePrefix}${item.value}${adjustedAfterCursor}`;
+
+        const isDirectory = item.label.endsWith("/");
+        const cursorOffset =
+          isDirectory && hasTrailingQuote
+            ? item.value.length - 1
+            : item.value.length;
+
+        if (isDirectory) {
+          keepDrilling();
+        }
+
+        return {
+          lines: newLines,
+          cursorLine,
+          cursorCol: beforePrefix.length + cursorOffset,
+        };
+      }
+
       const result = current.applyCompletion(
         lines,
         cursorLine,
@@ -87,14 +132,8 @@ export function createFilePickerProviderFactory(
         item,
         prefix
       );
-      // Pi cancels autocomplete after Tab; for directories we want to keep
-      // drilling, so re-enter Tab on the next tick.
-      if (typeof item.value === "string" && item.value.endsWith("/")) {
-        setTimeout(() => {
-          try {
-            process.stdin.emit("data", "\t");
-          } catch {}
-        }, 0);
+      if (item.value.endsWith("/")) {
+        keepDrilling();
       }
       return result;
     },
