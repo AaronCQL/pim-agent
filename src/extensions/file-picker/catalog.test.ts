@@ -100,21 +100,15 @@ describe("loadRelative — fast path (git ls-files)", () => {
       "zeta.ts",
     ]);
   });
-
-  test("limit truncates after sort", async () => {
-    const candidates = await loadRelative({
-      root: workspace,
-      gitSpawner: succeedingSpawner(["c.ts", "a.ts", "b.ts", "d.ts"]),
-      limit: 2,
-    });
-
-    expect(candidates.map((c) => c.displayPath)).toEqual(["a.ts", "b.ts"]);
-  });
 });
 
 describe("loadRelative — fallback (Bun.Glob)", () => {
   test("walks the directory and skips gitignored entries", async () => {
-    await writeFile(join(workspace, ".gitignore"), "ignored.txt\n");
+    await mkdir(join(workspace, ".git"), { recursive: true });
+    await writeFile(
+      join(workspace, ".gitignore"),
+      "ignored.txt\nnode_modules/\n"
+    );
     await writeFile(join(workspace, "kept.ts"), "kept");
     await writeFile(join(workspace, "ignored.txt"), "ignored");
     await mkdir(join(workspace, "nested"), { recursive: true });

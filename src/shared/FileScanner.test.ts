@@ -38,20 +38,10 @@ describe("FileScanner.scan", () => {
 
   test("respects gitignore patterns", async () => {
     const root = await createTempDir();
+    await mkdir(join(root, ".git"), { recursive: true });
     await writeFile(join(root, ".gitignore"), "ignored.ts\n", "utf8");
     await writeFile(join(root, "kept.ts"), "", "utf8");
     await writeFile(join(root, "ignored.ts"), "", "utf8");
-
-    const files = await FileScanner.scan(root, "**/*.ts", defaultOptions);
-
-    expect(files).toEqual([join(root, "kept.ts")]);
-  });
-
-  test("respects always-ignored defaults like node_modules", async () => {
-    const root = await createTempDir();
-    await mkdir(join(root, "node_modules", "pkg"), { recursive: true });
-    await writeFile(join(root, "node_modules", "pkg", "x.ts"), "", "utf8");
-    await writeFile(join(root, "kept.ts"), "", "utf8");
 
     const files = await FileScanner.scan(root, "**/*.ts", defaultOptions);
 

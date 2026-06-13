@@ -1,6 +1,6 @@
 import { readdir, stat } from "node:fs/promises";
-import { isAbsolute, join, parse, relative, resolve, sep } from "node:path";
-import { GitignoreFilter } from "../../shared/GitignoreFilter";
+import { isAbsolute, join, parse, resolve, sep } from "node:path";
+import { FileEnumerator } from "../../shared/FileEnumerator";
 import { Paths } from "../../shared/Paths";
 
 export type FileCandidate = {
@@ -27,15 +27,12 @@ export type GitSpawner = (
 
 export type LoadRelativeOptions = {
   readonly root: string;
-  readonly limit?: number;
   readonly gitSpawner?: GitSpawner;
 };
 
 export type LoadAbsoluteOptions = {
   readonly query: string;
 };
-
-const DEFAULT_LIMIT = 10_000;
 
 const defaultGitSpawner: GitSpawner = async (args, options) => {
   try {
@@ -126,16 +123,15 @@ async function runLoadRelative(
   root: string,
   options: LoadRelativeOptions
 ): Promise<readonly FileCandidate[]> {
-  const limit = options.limit ?? DEFAULT_LIMIT;
   const spawner = options.gitSpawner ?? defaultGitSpawner;
 
   const fastPath = await tryGitListFiles(root, spawner);
   if (fastPath !== undefined) {
-    return finalizeRelative(fastPath, limit);
+    return finalizeRelative(fastPath);
   }
 
   const fallback = await scanWithGlob(root);
-  return finalizeRelative(fallback, limit);
+  return finalizeRelative(fallback);
 }
 
 async function tryGitListFiles(
@@ -155,28 +151,15 @@ async function tryGitListFiles(
 }
 
 async function scanWithGlob(root: string): Promise<readonly string[]> {
-  const filter = await GitignoreFilter.for(root);
-  const glob = new Bun.Glob("**/*");
-  const matches: string[] = [];
-
-  for await (const absolutePath of glob.scan({
-    cwd: root,
-    absolute: true,
-    onlyFiles: true,
-    dot: false,
-  })) {
-    if (!filter.ignores(absolutePath)) {
-      matches.push(Paths.toForwardSlashes(relative(root, absolutePath)));
-    }
-  }
-
-  return matches;
+  // FileEnumerator already returns ignore-respecting, root-relative POSIX file
+  // paths; directories are recovered from prefixes in finalizeRelative.
+  return FileEnumerator.enumerate(root, {
+    includeDotfiles: false,
+    includeIgnored: false,
+  });
 }
 
-function finalizeRelative(
-  paths: readonly string[],
-  limit: number
-): readonly FileCandidate[] {
+function finalizeRelative(paths: readonly string[]): readonly FileCandidate[] {
   const normalized = paths.map(Paths.toForwardSlashes);
 
   // git ls-files only emits files; recover directories from their prefixes.
@@ -197,7 +180,7 @@ function finalizeRelative(
   ];
   candidates.sort((a, b) => a.insertPath.localeCompare(b.insertPath));
 
-  return candidates.length > limit ? candidates.slice(0, limit) : candidates;
+  return candidates;
 }
 
 function toRelativeCandidate(

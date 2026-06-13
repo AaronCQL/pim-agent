@@ -1,5 +1,5 @@
-import { resolve } from "node:path";
-import { GitignoreFilter } from "./GitignoreFilter";
+import { join, resolve } from "node:path";
+import { FileEnumerator } from "./FileEnumerator";
 import { GlobExclusions } from "./GlobExclusions";
 
 export type FileScanOptions = {
@@ -15,25 +15,23 @@ export class FileScanner {
     options: FileScanOptions
   ): Promise<readonly string[]> {
     const absoluteRoot = resolve(root);
-    const filter = options.includeIgnored
-      ? undefined
-      : await GitignoreFilter.for(absoluteRoot);
+    const relativePaths = await FileEnumerator.enumerate(absoluteRoot, {
+      includeDotfiles: options.includeDotfiles,
+      includeIgnored: options.includeIgnored,
+    });
+    const matcher = new Bun.Glob(pattern);
     const excludes = GlobExclusions.compile(options.exclude);
-    const glob = new Bun.Glob(pattern);
     const files: string[] = [];
 
-    for await (const filePath of glob.scan({
-      cwd: absoluteRoot,
-      absolute: true,
-      onlyFiles: true,
-      dot: options.includeDotfiles,
-    })) {
-      if (
-        (filter === undefined || !filter.ignores(filePath)) &&
-        !GlobExclusions.ignores(excludes, absoluteRoot, filePath)
-      ) {
-        files.push(filePath);
+    for (const relativePath of relativePaths) {
+      if (!matcher.match(relativePath)) {
+        continue;
       }
+      const absolutePath = join(absoluteRoot, relativePath);
+      if (GlobExclusions.ignores(excludes, absoluteRoot, absolutePath)) {
+        continue;
+      }
+      files.push(absolutePath);
     }
 
     return files;

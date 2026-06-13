@@ -208,7 +208,7 @@ describe("findMatches", () => {
     ]);
   });
 
-  test("respects gitignore, dotfiles, and the always-ignored defaults", async () => {
+  test("respects gitignore (incl. node_modules) and dotfiles", async () => {
     const root = await tempRoot();
     const src = join(root, "src");
     const ignored = join(src, "ignored.ts");
@@ -217,9 +217,14 @@ describe("findMatches", () => {
     const dot = join(root, ".secret", "x.ts");
 
     await mkdir(src, { recursive: true });
+    await mkdir(join(root, ".git"), { recursive: true });
     await mkdir(join(root, "node_modules", "pkg"), { recursive: true });
     await mkdir(join(root, ".secret"), { recursive: true });
-    await writeFile(join(root, ".gitignore"), "ignored.ts\n", "utf8");
+    await writeFile(
+      join(root, ".gitignore"),
+      "ignored.ts\nnode_modules/\n",
+      "utf8"
+    );
     await writeFile(ignored, "needle\n", "utf8");
     await writeFile(kept, "needle\n", "utf8");
     await writeFile(nodeModules, "needle\n", "utf8");
