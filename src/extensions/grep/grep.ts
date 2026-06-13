@@ -2,7 +2,7 @@ import { FileScanner, type FileScanOptions } from "../../shared/FileScanner";
 import { FsErrors } from "../../shared/FsErrors";
 import { Lines } from "../../shared/Lines";
 
-const MATCH_CONCURRENCY = 32;
+const MATCH_CONCURRENCY = 16;
 
 export type GrepLine = {
   readonly lineNumber: number;
@@ -25,9 +25,32 @@ export type GrepMatch = {
 export type GrepMatcher = {
   readonly regex: RegExp;
   readonly matchAcrossLines: boolean;
+  /**
+   * Raw-byte needle for the literal fast path: present only when the pattern is
+   * a pure literal, case-sensitive, and single-line, so `matchFile` can reject a
+   * non-matching file with `Buffer.indexOf` before decoding it. Undefined
+   * otherwise, in which case the regex path runs unchanged.
+   */
+  readonly literal: Buffer | undefined;
 };
 
 export type GrepScanOptions = FileScanOptions;
+
+// Characters that stand for themselves in both a default-flag regex and raw
+// UTF-8 bytes (all ASCII, so they never alias a multibyte sequence). A pattern
+// made only of these is a literal we can scan on bytes.
+const PURE_LITERAL = /^[A-Za-z0-9_ \-/]+$/;
+
+function literalNeedle(
+  pattern: string,
+  caseInsensitive: boolean,
+  matchAcrossLines: boolean
+): Buffer | undefined {
+  if (caseInsensitive || matchAcrossLines || !PURE_LITERAL.test(pattern)) {
+    return undefined;
+  }
+  return Buffer.from(pattern, "utf8");
+}
 
 export function buildMatcher(options: {
   readonly pattern: string;
@@ -42,6 +65,11 @@ export function buildMatcher(options: {
     return {
       regex: new RegExp(options.pattern, flags),
       matchAcrossLines: options.matchAcrossLines,
+      literal: literalNeedle(
+        options.pattern,
+        options.caseInsensitive,
+        options.matchAcrossLines
+      ),
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -87,11 +115,26 @@ async function matchFile(
 ): Promise<GrepMatch | undefined> {
   const file = Bun.file(filePath);
 
+  // Binary skip reads only the first 8KB, so a binary file is never fully read.
   if (await Lines.isBinary(file)) {
     return undefined;
   }
 
-  const content = Lines.normalize(await file.text());
+  let text: string;
+  if (matcher.literal !== undefined) {
+    // Literal fast path: scan raw bytes and bail on a miss without decoding. An
+    // ASCII literal can't match across a normalized newline or alias a
+    // multibyte char, so a raw-byte hit/miss matches the decoded result.
+    const bytes = Buffer.from(await file.arrayBuffer());
+    if (bytes.indexOf(matcher.literal) < 0) {
+      return undefined;
+    }
+    text = bytes.toString("utf8");
+  } else {
+    text = await file.text();
+  }
+
+  const content = Lines.normalize(text);
   const fileLines = Lines.split(content);
   const ranges = matcher.matchAcrossLines
     ? regexRanges(content, matcher.regex)
