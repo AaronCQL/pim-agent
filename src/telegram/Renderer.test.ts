@@ -18,10 +18,43 @@ type EditedMessage = {
   readonly options: unknown;
 };
 
+type RichArg = string | { readonly html: string };
+
+const richText = (value: RichArg): string =>
+  typeof value === "string" ? value : value.html;
+
 class FakeApi {
   public readonly sent: SentMessage[] = [];
   public readonly edited: EditedMessage[] = [];
 
+  // Replies and status go through the typed rich-message methods; capture the
+  // html they carry so assertions read it as the message text.
+  public async sendRichMessage(
+    chatId: number,
+    richMessage: { readonly html: string },
+    options: unknown
+  ): Promise<{ readonly message_id: number }> {
+    this.sent.push({ chatId, text: richMessage.html, options });
+    return { message_id: this.sent.length };
+  }
+
+  // editMessageText takes rich content (object) on the happy path and a plain
+  // string on the degrade path; both resolve to the captured text.
+  public async editMessageText(
+    chatId: number,
+    messageId: number,
+    textOrRich: RichArg,
+    options?: unknown
+  ): Promise<void> {
+    this.edited.push({
+      chatId,
+      messageId,
+      text: richText(textOrRich),
+      options,
+    });
+  }
+
+  // Plain-text degrade path, exercised only when a rich send is rejected.
   public async sendMessage(
     chatId: number,
     text: string,
@@ -29,15 +62,6 @@ class FakeApi {
   ): Promise<{ readonly message_id: number }> {
     this.sent.push({ chatId, text, options });
     return { message_id: this.sent.length };
-  }
-
-  public async editMessageText(
-    chatId: number,
-    messageId: number,
-    text: string,
-    options: unknown
-  ): Promise<void> {
-    this.edited.push({ chatId, messageId, text, options });
   }
 
   public async sendChatAction(): Promise<void> {}
@@ -263,7 +287,7 @@ describe("Telegram Renderer apply_patch status", () => {
         "✏️ <code>config.ts</code>",
         "🗑️ <code>legacy.ts</code>",
         "✏️ <code>a.ts</code> ➝ <code>b.ts</code>",
-      ].join("\n"),
+      ].join("<br>"),
     ]);
   });
 
@@ -407,11 +431,9 @@ describe("Telegram Renderer todo status", () => {
     expect(api.edited.map((msg) => msg.text)).toEqual([
       [
         "📋 <b>Remember to buy milk</b>",
-        "",
         "First item is in progress. Now let me finish it and start the next one:",
-        "",
         "📋 <b>Remember to get water</b>",
-      ].join("\n"),
+      ].join("<br><br>"),
     ]);
   });
 

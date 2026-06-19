@@ -1,8 +1,14 @@
+type Align = "left" | "center" | "right";
+
 type TableRow = ReadonlyArray<string>;
 
 type Segment =
   | { readonly kind: "md"; readonly text: string }
-  | { readonly kind: "table"; readonly rows: ReadonlyArray<TableRow> };
+  | {
+      readonly kind: "table";
+      readonly rows: ReadonlyArray<TableRow>;
+      readonly aligns: ReadonlyArray<Align | undefined>;
+    };
 
 const SAFE_LINK = /^(https?:|tg:|mailto:)/i;
 
@@ -14,9 +20,9 @@ export class Markdown {
       out +=
         seg.kind === "md"
           ? Markdown.renderMd(seg.text)
-          : Markdown.renderTable(seg.rows);
+          : Markdown.renderTable(seg.rows, seg.aligns);
     }
-    return out.replace(/\n{3,}/g, "\n\n").trim();
+    return out.trim();
   }
 
   public static escape(s: string): string {
@@ -29,9 +35,11 @@ export class Markdown {
 
   private static readonly RENDERERS = {
     text: (c: string): string => Markdown.escape(c),
-    paragraph: (c: string): string => `${c}\n\n`,
-    heading: (c: string, meta?: { level?: number }): string =>
-      meta?.level === 1 ? `<u><b>${c}</b></u>\n\n` : `<b>${c}</b>\n\n`,
+    paragraph: (c: string): string => `<p>${c}</p>`,
+    heading: (c: string, meta?: { level?: number }): string => {
+      const level = Math.min(6, Math.max(1, meta?.level ?? 1));
+      return `<h${level}>${c}</h${level}>`;
+    },
     strong: (c: string): string => `<b>${c}</b>`,
     emphasis: (c: string): string => `<i>${c}</i>`,
     strikethrough: (c: string): string => `<s>${c}</s>`,
@@ -39,11 +47,14 @@ export class Markdown {
     code: (c: string, meta?: { language?: string }): string => {
       const body = c.replace(/\n+$/, "");
       const lang = meta?.language;
+      if (lang === "math") {
+        return `<tg-math-block>${body}</tg-math-block>`;
+      }
       const open = lang
         ? `<pre><code class="language-${Markdown.escape(lang)}">`
         : "<pre>";
       const close = lang ? "</code></pre>" : "</pre>";
-      return `${open}${body}${close}\n\n`;
+      return `${open}${body}${close}`;
     },
     link: (c: string, meta?: { href?: string }): string => {
       const href = meta?.href ?? "";
@@ -58,38 +69,28 @@ export class Markdown {
         ? `<a href="${Markdown.escape(src)}">${alt}</a>`
         : alt;
     },
-    blockquote: (c: string): string =>
-      `<blockquote>${c.replace(/\n+$/, "")}</blockquote>\n\n`,
-    list: (c: string, meta?: { depth?: number }): string =>
-      (meta?.depth ?? 0) > 0 ? `\n${c}` : `${c}\n`,
-    listItem: (
-      c: string,
-      meta?: {
-        depth?: number;
-        ordered?: boolean;
-        index?: number;
-        checked?: boolean;
+    blockquote: (c: string): string => `<blockquote>${c}</blockquote>`,
+    list: (c: string, meta?: { ordered?: boolean; start?: number }): string => {
+      if (meta?.ordered) {
+        const start = meta.start ?? 1;
+        const startAttr = start > 1 ? ` start="${start}"` : "";
+        return `<ol${startAttr}>${c}</ol>`;
       }
-    ): string => {
-      const depth = meta?.depth ?? 0;
-      const ordered = meta?.ordered ?? false;
-      const index = meta?.index ?? 0;
-      const checked = meta?.checked;
-      const indent = "    ".repeat(depth);
-      let marker: string;
-      if (checked === true) {
-        marker = "✅";
-      } else if (checked === false) {
-        marker = "⬜";
-      } else if (ordered) {
-        marker = `${index + 1}.`;
-      } else {
-        marker = depth === 0 ? "•" : "◦";
-      }
-      return `${indent}${marker} ${c.replace(/\n+$/, "")}\n`;
+      return `<ul>${c}</ul>`;
     },
-    hr: (): string => "───\n\n",
-    br: (): string => "\n",
+    listItem: (c: string, meta?: { checked?: boolean }): string => {
+      const body = c.replace(/\n+$/, "");
+      const checked = meta?.checked;
+      if (checked === true) {
+        return `<li><input type="checkbox" checked> ${body}</li>`;
+      }
+      if (checked === false) {
+        return `<li><input type="checkbox"> ${body}</li>`;
+      }
+      return `<li>${body}</li>`;
+    },
+    hr: (): string => "<hr/>",
+    br: (): string => "<br>",
     table: (c: string): string => c,
   };
 
@@ -98,6 +99,13 @@ export class Markdown {
       return "";
     }
     return Bun.markdown.render(md, Markdown.RENDERERS);
+  }
+
+  private static renderInline(md: string): string {
+    return Markdown.renderMd(md)
+      .replace(/^<p>/, "")
+      .replace(/<\/p>$/, "")
+      .trim();
   }
 
   private static split(md: string): ReadonlyArray<Segment> {
@@ -122,12 +130,13 @@ export class Markdown {
       ) {
         flushMd();
         const rows: string[][] = [Markdown.parseRow(line)];
+        const aligns = Markdown.parseAligns(next);
         i += 1;
         while (i + 1 < lines.length && Markdown.isPipeLine(lines[i + 1]!)) {
           i += 1;
           rows.push(Markdown.parseRow(lines[i]!));
         }
-        segments.push({ kind: "table", rows });
+        segments.push({ kind: "table", rows, aligns });
         continue;
       }
       buf.push(line);
@@ -149,7 +158,27 @@ export class Markdown {
     return trimmed.split("|").map((cell) => cell.trim());
   }
 
-  private static renderTable(rows: ReadonlyArray<TableRow>): string {
+  private static parseAligns(sep: string): (Align | undefined)[] {
+    return Markdown.parseRow(sep).map((cell) => {
+      const left = cell.startsWith(":");
+      const right = cell.endsWith(":");
+      if (left && right) {
+        return "center";
+      }
+      if (right) {
+        return "right";
+      }
+      if (left) {
+        return "left";
+      }
+      return undefined;
+    });
+  }
+
+  private static renderTable(
+    rows: ReadonlyArray<TableRow>,
+    aligns: ReadonlyArray<Align | undefined>
+  ): string {
     if (rows.length < 2) {
       return "";
     }
@@ -158,20 +187,24 @@ export class Markdown {
     if (dataRows.length === 0) {
       return "";
     }
-    const pieces: string[] = [];
+    const attr = (col: number): string => {
+      const align = aligns[col];
+      return align ? ` align="${align}"` : "";
+    };
+    const cells = (row: TableRow, tag: "th" | "td"): string =>
+      header
+        .map(
+          (_, c) =>
+            `<${tag}${attr(c)}>${Markdown.renderInline(row[c] ?? "")}</${tag}>`
+        )
+        .join("");
+
+    let out = "<table>";
+    out += `<tr>${cells(header, "th")}</tr>`;
     for (const row of dataRows) {
-      pieces.push("───");
-      for (let c = 0; c < header.length; c++) {
-        const label = Markdown.renderMd(header[c] ?? "").trim();
-        const value = Markdown.renderMd(row[c] ?? "").trim();
-        if (label) {
-          pieces.push(`<b>${label}</b>: ${value}`);
-        } else if (value) {
-          pieces.push(value);
-        }
-      }
+      out += `<tr>${cells(row, "td")}</tr>`;
     }
-    pieces.push("───");
-    return `${pieces.join("\n")}\n\n`;
+    out += "</table>";
+    return out;
   }
 }

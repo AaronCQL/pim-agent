@@ -54,7 +54,8 @@ const TOOL_EMOJI: Record<string, string> = {
   subagent: "🤖",
 };
 
-const MESSAGE_LIMIT = 4000;
+const MESSAGE_LIMIT = 32000;
+const BR = "<br>";
 
 export class Renderer {
   private readonly api: Api;
@@ -432,9 +433,9 @@ export class Renderer {
       if (entry.kind === "todo") {
         pieces.push(`${entry.emoji} <b>${Markdown.escape(entry.label)}</b>`);
       } else if (entry.kind === "thinking") {
-        pieces.push(`<i>${Markdown.toHtml(entry.label)}</i>`);
+        pieces.push(`<i>${Renderer.escapeInline(entry.label)}</i>`);
       } else if (entry.kind === "narration") {
-        pieces.push(Markdown.toHtml(entry.label));
+        pieces.push(Renderer.escapeInline(entry.label));
       } else {
         const isLastEntry = i === visible.length - 1;
         let suffix = "";
@@ -449,16 +450,16 @@ export class Renderer {
       const next = visible[i + 1];
       if (next) {
         pieces.push(
-          entry.kind === "tool" && next.kind === "tool" ? "\n" : "\n\n"
+          entry.kind === "tool" && next.kind === "tool" ? "<br>" : "<br><br>"
         );
       }
     }
 
     let body = pieces.join("");
     if (state === "cancelled") {
-      body += "\n\n❌ Cancelled";
+      body += "<br><br>❌ Cancelled";
     } else if (state === "error") {
-      body += "\n\n❌ Error";
+      body += "<br><br>❌ Error";
     }
     return Renderer.capStatus(body);
   }
@@ -477,47 +478,41 @@ export class Renderer {
     if (!html) {
       return undefined;
     }
-    const other = {
-      parse_mode: "HTML" as const,
-      message_thread_id: this.sessionId.threadId,
-      link_preview_options: { is_disabled: true },
-    };
+    const clean = Renderer.sanitize(html);
     try {
-      const msg = await this.api.sendMessage(
+      const msg = await this.api.sendRichMessage(
         this.sessionId.chatId,
-        Renderer.sanitize(html),
-        other
+        { html: clean },
+        { message_thread_id: this.sessionId.threadId }
       );
       console.log(
-        `[send] chatId=${this.sessionId.chatId} threadId=${this.sessionId.threadId ?? "main"} ${opts.status ? "status" : "answer"} ok (${html.length}b)`
+        `[send] chatId=${this.sessionId.chatId} threadId=${this.sessionId.threadId ?? "main"} ${opts.status ? "status" : "answer"} ok (${clean.length}b)`
       );
       return msg;
     } catch (err) {
       if (err instanceof GrammyError && err.error_code === 400) {
-        console.warn(`[send] HTML 400 (${err.description}) — retry plain`);
-        const msg = await this.api.sendMessage(
+        console.warn(`[send] rich 400 (${err.description}) — retry plain`);
+        return this.api.sendMessage(
           this.sessionId.chatId,
-          Renderer.stripHtml(Renderer.sanitize(html)),
+          Renderer.stripHtml(clean),
           {
             message_thread_id: this.sessionId.threadId,
             link_preview_options: { is_disabled: true },
           }
         );
-        return msg;
       }
       throw err;
     }
   }
 
   private async editMessage(html: string): Promise<void> {
+    const clean = Renderer.sanitize(html);
     try {
       await this.api.editMessageText(
         this.sessionId.chatId,
         this.statusMessageId!,
-        Renderer.sanitize(html),
         {
-          parse_mode: "HTML",
-          link_preview_options: { is_disabled: true },
+          html: clean,
         }
       );
     } catch (err) {
@@ -530,7 +525,7 @@ export class Renderer {
             .editMessageText(
               this.sessionId.chatId,
               this.statusMessageId!,
-              Renderer.stripHtml(Renderer.sanitize(html)),
+              Renderer.stripHtml(clean),
               {
                 link_preview_options: { is_disabled: true },
               }
@@ -575,7 +570,7 @@ export class Renderer {
     const label = [
       first.text,
       ...rest.map((op) => `${op.emoji} ${op.text}`),
-    ].join("\n");
+    ].join("<br>");
     return { emoji: first.emoji, label };
   }
 
@@ -720,7 +715,9 @@ export class Renderer {
     if (name === "subagent") {
       const prompt = Renderer.stringArg(obj, "prompt");
       return prompt
-        ? Markdown.toHtml(Renderer.truncate(Renderer.firstLine(prompt), 180))
+        ? Renderer.escapeInline(
+            Renderer.truncate(Renderer.firstLine(prompt), 180)
+          )
         : "";
     }
 
@@ -851,15 +848,15 @@ export class Renderer {
     if (text.length <= MESSAGE_LIMIT) {
       return text;
     }
-    const lines = text.split("\n");
+    const lines = text.split(BR);
     let dropped = 0;
     let total = text.length;
     while (total > MESSAGE_LIMIT && lines.length > 1) {
       const first = lines.shift()!;
-      total -= first.length + 1;
+      total -= first.length + BR.length;
       dropped += 1;
     }
-    return `… ${dropped} earlier entries\n${lines.join("\n")}`;
+    return `… ${dropped} earlier entries${BR}${lines.join(BR)}`;
   }
 
   private static chunk(html: string): readonly string[] {
@@ -869,15 +866,23 @@ export class Renderer {
     const chunks: string[] = [];
     let rest = html;
     while (rest.length > MESSAGE_LIMIT) {
-      const idx = rest.lastIndexOf("\n", MESSAGE_LIMIT);
-      const splitAt = idx > 0 ? idx : MESSAGE_LIMIT;
-      chunks.push(rest.slice(0, splitAt).trim());
-      rest = rest.slice(splitAt).trim();
+      const idx = rest.lastIndexOf(BR, MESSAGE_LIMIT);
+      if (idx > 0) {
+        chunks.push(rest.slice(0, idx).trim());
+        rest = rest.slice(idx + BR.length).trim();
+      } else {
+        chunks.push(rest.slice(0, MESSAGE_LIMIT).trim());
+        rest = rest.slice(MESSAGE_LIMIT).trim();
+      }
     }
     if (rest) {
       chunks.push(rest);
     }
     return chunks;
+  }
+
+  private static escapeInline(text: string): string {
+    return Markdown.escape(text).replace(/\n/g, BR);
   }
 
   private static sanitize(text: string): string {

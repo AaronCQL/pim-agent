@@ -2,12 +2,11 @@ import {
   defineTool,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { GrammyError, InputFile, type Api } from "grammy";
+import { InputFile, type Api } from "grammy";
 import { basename } from "node:path";
 
 import { FsErrors } from "../shared/FsErrors";
 import { Paths } from "../shared/Paths";
-import { Markdown } from "./Markdown";
 import {
   MAX_CAPTION_CHARS,
   MAX_DOCUMENT_BYTES,
@@ -73,22 +72,9 @@ export class SendFileTool {
     path: string,
     caption: string | undefined
   ): Promise<void> {
-    const html = caption ? Markdown.toHtml(caption) : undefined;
-    try {
-      await api.sendDocument(sessionId.chatId, new InputFile(path), {
-        message_thread_id: sessionId.threadId,
-        caption: html,
-        parse_mode: html ? "HTML" : undefined,
-      });
-    } catch (err) {
-      if (err instanceof GrammyError && err.error_code === 400 && html) {
-        await api.sendDocument(sessionId.chatId, new InputFile(path), {
-          message_thread_id: sessionId.threadId,
-          caption,
-        });
-        return;
-      }
-      throw err;
-    }
+    await api.sendDocument(sessionId.chatId, new InputFile(path), {
+      message_thread_id: sessionId.threadId,
+      caption,
+    });
   }
 }

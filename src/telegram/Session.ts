@@ -498,7 +498,7 @@ export class Session {
     }
     const username = this.deps.getBotUsername();
     const handle = username ? ` (@${username})` : "";
-    const systemIx = `You are running as a Telegram bot${handle} powered by Pim Agent. The telegram_user_instructions below are your editable instructions - edit the file at its \`path\` attribute to update your instructions.`;
+    const systemIx = `You are running as a Telegram bot${handle} powered by Pim Agent. The telegram_user_instructions below are your editable instructions - edit the file at its \`path\` attribute to update your instructions. Wrap LaTeX math in a \`\`\`math fenced block without the $$ delimitters; inline math is not supported.`;
     const userIx = `<telegram_user_instructions path="${path}">${userContent ? `\n${userContent}\n` : ""}</telegram_user_instructions>`;
     return `<telegram_system_instructions>\n${systemIx}\n${userIx}\n</telegram_system_instructions>`;
   }

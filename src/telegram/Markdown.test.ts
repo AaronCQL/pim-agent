@@ -4,19 +4,21 @@ import { Markdown } from "./Markdown";
 
 describe("toHtml", () => {
   test("escapes html-special characters in plain text", () => {
-    expect(Markdown.toHtml("a < b & c > d")).toBe("a &lt; b &amp; c &gt; d");
+    expect(Markdown.toHtml("a < b & c > d")).toBe(
+      "<p>a &lt; b &amp; c &gt; d</p>"
+    );
   });
 
   test("bold + italic + strike + inline code", () => {
     expect(Markdown.toHtml("**b** *i* ~~s~~ `c`")).toBe(
-      "<b>b</b> <i>i</i> <s>s</s> <code>c</code>"
+      "<p><b>b</b> <i>i</i> <s>s</s> <code>c</code></p>"
     );
   });
 
-  test("headings: h1 is underline+bold, others bold", () => {
-    expect(Markdown.toHtml("# H1")).toBe("<u><b>H1</b></u>");
-    expect(Markdown.toHtml("## H2")).toBe("<b>H2</b>");
-    expect(Markdown.toHtml("### H3")).toBe("<b>H3</b>");
+  test("headings become structural h-tags", () => {
+    expect(Markdown.toHtml("# H1")).toBe("<h1>H1</h1>");
+    expect(Markdown.toHtml("## H2")).toBe("<h2>H2</h2>");
+    expect(Markdown.toHtml("### H3")).toBe("<h3>H3</h3>");
   });
 
   test("fenced code block with language", () => {
@@ -35,61 +37,92 @@ describe("toHtml", () => {
     );
   });
 
+  test("math fence becomes a rich math block", () => {
+    expect(Markdown.toHtml("```math\nE = mc^2\n```")).toBe(
+      "<tg-math-block>E = mc^2</tg-math-block>"
+    );
+  });
+
   test("safe links pass through, javascript: dropped", () => {
     expect(Markdown.toHtml("[ok](https://example.com)")).toBe(
-      '<a href="https://example.com">ok</a>'
+      '<p><a href="https://example.com">ok</a></p>'
     );
-    expect(Markdown.toHtml("[bad](javascript:alert(1))")).toBe("bad");
+    expect(Markdown.toHtml("[bad](javascript:alert(1))")).toBe("<p>bad</p>");
   });
 
   test("images render as link to src", () => {
     expect(Markdown.toHtml("![alt](https://e.com/a.png)")).toBe(
-      '<a href="https://e.com/a.png">alt</a>'
+      '<p><a href="https://e.com/a.png">alt</a></p>'
     );
   });
 
-  test("blockquote wraps multi-line content", () => {
-    expect(Markdown.toHtml("> a\n> b")).toBe("<blockquote>a\nb</blockquote>");
+  test("blockquote wraps content", () => {
+    expect(Markdown.toHtml("> a\n> b")).toBe(
+      "<blockquote><p>a\nb</p></blockquote>"
+    );
   });
 
-  test("unordered list bullets and nested ◦", () => {
-    const out = Markdown.toHtml("- one\n- two\n  - nested\n  - also");
-    expect(out).toBe("• one\n• two\n    ◦ nested\n    ◦ also");
+  test("unordered list nests as real ul/li", () => {
+    expect(Markdown.toHtml("- one\n- two\n  - nested\n  - also")).toBe(
+      "<ul><li>one</li><li>two<ul><li>nested</li><li>also</li></ul></li></ul>"
+    );
   });
 
-  test("ordered list renders 1. 2. markers", () => {
-    expect(Markdown.toHtml("1. a\n2. b\n3. c")).toBe("1. a\n2. b\n3. c");
+  test("ordered list renders ol/li", () => {
+    expect(Markdown.toHtml("1. a\n2. b\n3. c")).toBe(
+      "<ol><li>a</li><li>b</li><li>c</li></ol>"
+    );
   });
 
-  test("task list checkboxes", () => {
-    const out = Markdown.toHtml("- [x] done\n- [ ] todo");
-    expect(out).toBe("✅ done\n⬜ todo");
+  test("ordered list preserves a non-one start", () => {
+    expect(Markdown.toHtml("3. three\n4. four")).toBe(
+      '<ol start="3"><li>three</li><li>four</li></ol>'
+    );
   });
 
-  test("thematic break renders em-dashes", () => {
-    expect(Markdown.toHtml("a\n\n───\n\nb")).toBe("a\n\n───\n\nb");
+  test("task list renders checkbox inputs", () => {
+    expect(Markdown.toHtml("- [x] done\n- [ ] todo")).toBe(
+      '<ul><li><input type="checkbox" checked> done</li>' +
+        '<li><input type="checkbox"> todo</li></ul>'
+    );
   });
 
-  test("collapses 3+ newlines to two", () => {
-    expect(Markdown.toHtml("a\n\n\n\nb")).toBe("a\n\nb");
+  test("thematic break becomes a horizontal rule", () => {
+    expect(Markdown.toHtml("a\n\n---\n\nb")).toBe("<p>a</p><hr/><p>b</p>");
+  });
+
+  test("does not insert separators between adjacent paragraphs", () => {
+    expect(Markdown.toHtml("a\n\n\n\nb")).toBe("<p>a</p><p>b</p>");
   });
 
   test("trims leading and trailing whitespace", () => {
-    expect(Markdown.toHtml("\n\nhello\n\n")).toBe("hello");
+    expect(Markdown.toHtml("\n\nhello\n\n")).toBe("<p>hello</p>");
   });
 
-  test("table renders as vertical labeled cards", () => {
+  test("table renders as a real html table", () => {
     const md = "| Name | Score |\n| ---- | ----- |\n| Aaron | 99 |\n| Bo | 7 |";
     expect(Markdown.toHtml(md)).toBe(
-      "───\n<b>Name</b>: Aaron\n<b>Score</b>: 99\n───\n<b>Name</b>: Bo\n<b>Score</b>: 7\n───"
+      "<table><tr><th>Name</th><th>Score</th></tr>" +
+        "<tr><td>Aaron</td><td>99</td></tr>" +
+        "<tr><td>Bo</td><td>7</td></tr></table>"
+    );
+  });
+
+  test("table carries column alignment", () => {
+    const md = "| L | C | R |\n|:--|:-:|--:|\n| a | b | c |";
+    expect(Markdown.toHtml(md)).toBe(
+      '<table><tr><th align="left">L</th><th align="center">C</th>' +
+        '<th align="right">R</th></tr>' +
+        '<tr><td align="left">a</td><td align="center">b</td>' +
+        '<td align="right">c</td></tr></table>'
     );
   });
 
   test("table renders markdown formatting in cells", () => {
     const md = "| a | b |\n| - | - |\n| **x** | `y` |";
     const out = Markdown.toHtml(md);
-    expect(out).toContain("<b>a</b>: <b>x</b>");
-    expect(out).toContain("<b>b</b>: <code>y</code>");
+    expect(out).toContain("<td><b>x</b></td>");
+    expect(out).toContain("<td><code>y</code></td>");
   });
 
   test("table escapes html inside cells", () => {
@@ -100,24 +133,28 @@ describe("toHtml", () => {
     expect(out).not.toContain("<pre>");
   });
 
-  test("table surrounded by prose is rendered with both segments", () => {
+  test("table surrounded by prose keeps both segments", () => {
     const md = "Hello\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\nDone.";
-    const out = Markdown.toHtml(md);
-    expect(out.startsWith("Hello")).toBe(true);
-    expect(out).toContain("───");
-    expect(out).toContain("<b>a</b>: 1");
-    expect(out).toContain("<b>b</b>: 2");
-    expect(out.endsWith("Done.")).toBe(true);
+    expect(Markdown.toHtml(md)).toBe(
+      "<p>Hello</p><table><tr><th>a</th><th>b</th></tr>" +
+        "<tr><td>1</td><td>2</td></tr></table><p>Done.</p>"
+    );
   });
 
   test("link inside emphasis nests correctly", () => {
     expect(Markdown.toHtml("*[a](https://e.com)*")).toBe(
-      '<i><a href="https://e.com">a</a></i>'
+      '<p><i><a href="https://e.com">a</a></i></p>'
     );
   });
 
-  test("paragraphs are separated by blank line", () => {
-    expect(Markdown.toHtml("one\n\ntwo")).toBe("one\n\ntwo");
+  test("paragraphs render as separate p blocks", () => {
+    expect(Markdown.toHtml("one\n\ntwo")).toBe("<p>one</p><p>two</p>");
+  });
+
+  test("dollar amounts stay literal text", () => {
+    expect(Markdown.toHtml("$15K/mth cash + ~$1.2M vest")).toBe(
+      "<p>$15K/mth cash + ~$1.2M vest</p>"
+    );
   });
 
   test("inline html in source is escaped, never passed through", () => {
@@ -137,7 +174,7 @@ describe("toHtml", () => {
 
   test('link href containing " is escaped to &quot;', () => {
     expect(Markdown.toHtml('[x](https://e.com/?q="a")')).toBe(
-      '<a href="https://e.com/?q=&quot;a&quot;">x</a>'
+      '<p><a href="https://e.com/?q=&quot;a&quot;">x</a></p>'
     );
   });
 });
