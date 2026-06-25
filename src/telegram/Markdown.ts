@@ -14,7 +14,7 @@ const SAFE_LINK = /^(https?:|tg:|mailto:)/i;
 
 export class Markdown {
   public static toHtml(md: string): string {
-    const segments = Markdown.split(md);
+    const segments = Markdown.split(Markdown.normalizeTildes(md));
     let out = "";
     for (const seg of segments) {
       out +=
@@ -93,6 +93,57 @@ export class Markdown {
     br: (): string => "<br>",
     table: (c: string): string => c,
   };
+
+  // Bun's GFM strikethrough treats a lone `~` as a delimiter, but Telegram
+  // (and CommonMark) only strike on `~~`. Escape every lone tilde in prose so
+  // doubled runs keep striking, while fenced blocks and inline code — whose
+  // tildes are literal content, not prose — are lifted out untouched.
+  private static readonly LIFT_TAG = "\uE000";
+  private static readonly LONE_TILDE = /(?<!~)~(?!~)/g;
+
+  private static normalizeTildes(md: string): string {
+    if (!md.includes("~")) {
+      return md;
+    }
+    const stash: string[] = [];
+    const hold = (raw: string): string =>
+      `${Markdown.LIFT_TAG}${stash.push(raw) - 1}${Markdown.LIFT_TAG}`;
+
+    // Fenced code blocks: stash verbatim so their tildes aren't escaped.
+    let out = "";
+    const lines = md.split("\n");
+    for (let i = 0; i < lines.length; ) {
+      const line = lines[i]!;
+      const open = /^(\s*)(`{3,}|~{3,})/.exec(line);
+      if (!open) {
+        out += `${line}\n`;
+        i++;
+        continue;
+      }
+      const fence = open[2]!;
+      const closer = new RegExp(`^\\s*${fence.charAt(0)}{${fence.length},}`);
+      const block: string[] = [line];
+      i++;
+      while (i < lines.length && !closer.test(lines[i]!)) {
+        block.push(lines[i]!);
+        i++;
+      }
+      if (i < lines.length) {
+        block.push(lines[i]!);
+        i++;
+      }
+      out += `${hold(block.join("\n"))}\n`;
+    }
+    out = out.replace(/\n$/, "");
+
+    // Inline code spans: stash verbatim (backslash escapes don't apply inside).
+    out = out.replace(/(`+)([^`]+?)(\1)/g, (w) => hold(w));
+
+    // Escape lone tildes; `~~` and `~~~` runs are left intact to strike or fence.
+    out = out.replace(Markdown.LONE_TILDE, "\\~");
+
+    return out.replace(/\uE000(\d+)\uE000/g, (_w, n) => stash[Number(n)]!);
+  }
 
   private static renderMd(md: string): string {
     if (!md.trim()) {

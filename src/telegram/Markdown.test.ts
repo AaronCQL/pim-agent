@@ -15,6 +15,28 @@ describe("toHtml", () => {
     );
   });
 
+  test("single tilde is literal text, not strikethrough", () => {
+    expect(Markdown.toHtml("~hi~")).toBe("<p>~hi~</p>");
+    expect(Markdown.toHtml("~hi there~")).toBe("<p>~hi there~</p>");
+    expect(Markdown.toHtml("cost ~ $5 ~ each")).toBe("<p>cost ~ $5 ~ each</p>");
+  });
+
+  test("double tilde still strikes", () => {
+    expect(Markdown.toHtml("~~struck~~")).toBe("<p><s>struck</s></p>");
+  });
+
+  test("single tilde inside inline code stays literal", () => {
+    expect(Markdown.toHtml("`~/path` and `~x~`")).toBe(
+      "<p><code>~/path</code> and <code>~x~</code></p>"
+    );
+  });
+
+  test("tilde inside fenced code block stays literal", () => {
+    expect(Markdown.toHtml("```\n~not struck~\n```")).toBe(
+      "<pre>~not struck~</pre>"
+    );
+  });
+
   test("headings become structural h-tags", () => {
     expect(Markdown.toHtml("# H1")).toBe("<h1>H1</h1>");
     expect(Markdown.toHtml("## H2")).toBe("<h2>H2</h2>");
