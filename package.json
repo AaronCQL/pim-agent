@@ -48,7 +48,7 @@
     "@earendil-works/pi-coding-agent": "*"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "0.79.2",
+    "@earendil-works/pi-coding-agent": "0.80.2",
     "@types/bun": "latest",
     "@typescript/native-preview": "^7.0.0-dev.20260612.1",
     "oxlint": "^1.69.0",
