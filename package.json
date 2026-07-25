@@ -45,10 +45,10 @@
     "check": "bun run typecheck && bun run test && bun run lint && bun run format"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.80.10"
+    "@earendil-works/pi-coding-agent": ">=0.82.0"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.80.10",
+    "@earendil-works/pi-coding-agent": "^0.82.0",
     "@types/bun": "latest",
     "@typescript/native-preview": "^7.0.0-dev.20260612.1",
     "oxlint": "^1.69.0",
