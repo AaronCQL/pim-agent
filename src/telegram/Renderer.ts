@@ -473,7 +473,11 @@ export class Renderer {
         pieces.push(`${entry.emoji} ${entry.label}${stats}${suffix}`);
       }
       const next = visible[i + 1];
-      if (next && entry.kind === "tool" && next.kind === "tool") {
+      if (
+        next &&
+        Renderer.isInlineEntry(entry) &&
+        Renderer.isInlineEntry(next)
+      ) {
         pieces.push(BR);
       }
     }
@@ -559,6 +563,10 @@ export class Renderer {
       }
       console.warn(`[send] status edit failed:`, err);
     }
+  }
+
+  private static isInlineEntry(entry: TrackerEntry): boolean {
+    return entry.kind === "tool" || entry.kind === "todo";
   }
 
   private entryVisible(entry: TrackerEntry): boolean {

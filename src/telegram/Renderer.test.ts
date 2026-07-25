@@ -408,6 +408,20 @@ describe("Telegram Renderer todo status", () => {
     ]);
   });
 
+  test("breaks between a todo header and an adjacent tool entry", async () => {
+    const { api, renderer } = makeRenderer();
+
+    renderer.handleEvent(
+      todoStart([{ content: "Do X", status: "in_progress" }])
+    );
+    renderer.handleEvent(toolStart("task", { action: "list" }, "task-1"));
+    await renderer.finish("", "ok");
+
+    expect(api.sent.map((msg) => msg.text)).toEqual([
+      "📋 <b>Do X</b><br>⏰ List tasks",
+    ]);
+  });
+
   test("keeps todo entries in event order instead of replacing the prior one", async () => {
     const { api, renderer } = makeRenderer();
 
