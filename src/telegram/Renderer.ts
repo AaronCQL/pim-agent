@@ -280,9 +280,10 @@ export class Renderer {
     if (base === undefined) {
       return;
     }
-    const details = (payload as { readonly details?: SubagentDetails } | null)
-      ?.details;
-    if (!details) {
+    const details = (
+      payload as { readonly details?: Partial<SubagentDetails> } | null
+    )?.details;
+    if (!details?.toolCalls || !details.activeToolNames) {
       return;
     }
     const count = details.toolCalls.length + details.activeToolNames.length;

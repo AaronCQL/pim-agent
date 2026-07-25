@@ -490,6 +490,51 @@ describe("Telegram Renderer todo status", () => {
   });
 });
 
+describe("Telegram Renderer subagent status", () => {
+  test("appends a tool count from subagent progress details", async () => {
+    const { api, renderer } = makeRenderer();
+
+    renderer.handleEvent(
+      toolStart("subagent", { prompt: "review the diff" }, "sa-1")
+    );
+    renderer.handleEvent({
+      type: "tool_execution_update",
+      toolCallId: "sa-1",
+      toolName: "subagent",
+      partialResult: {
+        content: [],
+        details: {
+          toolCalls: [{ name: "read", isError: false }],
+          activeToolNames: ["grep"],
+        },
+      },
+    } as AgentSessionEvent);
+    await renderer.finish("", "ok");
+
+    expect(api.sent.some((msg) => msg.text.includes("(2 tools)"))).toBe(true);
+  });
+
+  // pi replaces a failed tool result with `createErrorToolResult`, whose
+  // `details` is an empty object; the label update must not choke on it.
+  test("ignores a failed subagent result with empty details", async () => {
+    const { renderer } = makeRenderer();
+
+    renderer.handleEvent(
+      toolStart("subagent", { prompt: "do the thing" }, "sa-2")
+    );
+    expect(() =>
+      renderer.handleEvent({
+        type: "tool_execution_end",
+        toolCallId: "sa-2",
+        toolName: "subagent",
+        result: { content: [{ type: "text", text: "boom" }], details: {} },
+        isError: true,
+      } as AgentSessionEvent)
+    ).not.toThrow();
+    await renderer.finish("", "ok");
+  });
+});
+
 describe("Telegram Renderer status length", () => {
   test("keeps long narration entries within the rich-message budget", async () => {
     const { api, renderer } = makeRenderer();
