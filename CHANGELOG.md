@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.6.1
+
+### Bug Fixes
+
+- Bind extensions in Telegram sessions so `session_start` reaches them and MCP initializes, and emit `session_shutdown` before disposing agents (#13)
+- Break between adjacent todo and tool status entries in Telegram status messages (52559a2)
+- Guard the Telegram subagent label update against empty error details (51efbcd)
+
+### Improvements
+
+- Bump `pi-coding-agent` to 0.82.0 (9164756)
+
 ## v0.6.0
 
 ### Features
