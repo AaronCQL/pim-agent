@@ -82,9 +82,9 @@ export class SessionRegistry {
   }
 
   public async disposeAll(): Promise<void> {
-    for (const session of this.cache.values()) {
-      session.dispose();
-    }
+    await Promise.all(
+      Array.from(this.cache.values(), (session) => session.dispose())
+    );
     this.cache.clear();
     if (this.initialized) {
       await this.flushSettings();
@@ -164,7 +164,7 @@ export class SessionRegistry {
       return;
     }
     const entry = this.cache.get(oldestKey)!;
-    entry.dispose();
     this.cache.delete(oldestKey);
+    void entry.dispose();
   }
 }

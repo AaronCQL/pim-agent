@@ -166,7 +166,7 @@ export class Session {
         try {
           await work(agent);
         } finally {
-          agent.dispose();
+          await Session.disposeAgent(agent);
           await unlink(sessionPath).catch((err: unknown) => {
             if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
               console.warn(
@@ -288,12 +288,13 @@ export class Session {
     });
   }
 
-  public dispose(): void {
+  public async dispose(): Promise<void> {
     if (this.cached) {
+      const agent = this.cached;
       this.cachedUnsubscribe?.();
-      this.cached.dispose();
       this.cached = undefined;
       this.cachedUnsubscribe = undefined;
+      await Session.disposeAgent(agent);
     }
   }
 
@@ -431,16 +432,41 @@ export class Session {
       customTools: [Tools.wrap(sendFile), Tools.wrap(taskTool)],
     });
 
+    // Emits session_start, which extensions (e.g. MCP adapters) rely on to
+    // initialize. Without it their tools are registered but never usable.
+    await agent.bindExtensions({
+      mode: "print",
+      onError: (err) => {
+        console.warn(
+          `[session ${Session.encodeId(this.id)}] extension ${err.extensionPath} (${err.event}):`,
+          err.error
+        );
+      },
+    });
+
     return { agent, cwd };
+  }
+
+  private static async disposeAgent(agent: AgentSession): Promise<void> {
+    try {
+      await agent.extensionRunner.emit({
+        type: "session_shutdown",
+        reason: "quit",
+      });
+    } catch (err) {
+      console.warn(`[session] extension shutdown failed:`, err);
+    }
+    agent.dispose();
   }
 
   private async tearDownCached(): Promise<void> {
     if (this.cached) {
+      const agent = this.cached;
       this.cachedUnsubscribe?.();
-      this.cached.dispose();
       this.cached = undefined;
       this.cachedUnsubscribe = undefined;
       this.cachedSystemInstruction = undefined;
+      await Session.disposeAgent(agent);
     }
     const path = this.currentSettings.sessionPath ?? this.defaultSessionPath();
     const archived = `${path}.archived-${new Date().toISOString().replace(/[:.]/g, "-")}`;
