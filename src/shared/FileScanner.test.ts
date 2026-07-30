@@ -145,4 +145,38 @@ describe("FileScanner.scan", () => {
       ].sort()
     );
   });
+
+  test("expands a bare directory pattern to everything under it", async () => {
+    const root = await createTempDir();
+    await mkdir(join(root, "a", "b"), { recursive: true });
+    await writeFile(join(root, "top.ts"), "", "utf8");
+    await writeFile(join(root, "a", "mid.ts"), "", "utf8");
+    await writeFile(join(root, "a", "b", "deep.ts"), "", "utf8");
+
+    for (const pattern of ["a", "a/", "./a"]) {
+      const files = await FileScanner.scan(root, pattern, defaultOptions);
+
+      expect(files.toSorted()).toEqual(
+        [join(root, "a", "mid.ts"), join(root, "a", "b", "deep.ts")].sort()
+      );
+    }
+  });
+
+  test("expands an empty pattern to the whole tree", async () => {
+    const root = await createTempDir();
+    await writeFile(join(root, "top.ts"), "", "utf8");
+
+    expect(await FileScanner.scan(root, "", defaultOptions)).toEqual([
+      join(root, "top.ts"),
+    ]);
+  });
+
+  test("leaves a file pattern untouched", async () => {
+    const root = await createTempDir();
+    await writeFile(join(root, "top.ts"), "", "utf8");
+
+    expect(await FileScanner.scan(root, "top.ts", defaultOptions)).toEqual([
+      join(root, "top.ts"),
+    ]);
+  });
 });
