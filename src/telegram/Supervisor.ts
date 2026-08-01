@@ -144,6 +144,9 @@ export class Supervisor {
         : [
             ["bun", "install", "-g", `${PI_PACKAGE}@latest`],
             ["bun", "install", "-g", `${NPM_PACKAGE}@latest`],
+            // The bun-global copy is only the launcher; pi loads extensions
+            // from its own package dir, whose semver range pins 0.x minors.
+            ["pi", "install", `npm:${NPM_PACKAGE}@latest`],
           ];
     const cwd = mode.kind === "dev" ? mode.packageRoot : undefined;
     try {
