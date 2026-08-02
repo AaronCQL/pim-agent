@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.7.0
+
+### Features
+
+- Expand a bare directory passed to grep's `glob` or the glob tool's `pattern` into a recursive glob instead of returning zero matches (3501231)
+
+### Bug Fixes
+
+- Update the pi-managed pim package during Telegram `/update`, so pi no longer loads a stale extension copy from its own package dir (4351a55)
+
 ## v0.6.1
 
 ### Bug Fixes
