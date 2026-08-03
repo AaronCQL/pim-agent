@@ -1,4 +1,12 @@
-import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  rm,
+  symlink,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "bun:test";
@@ -388,5 +396,90 @@ describe("findMatches", () => {
     ).rejects.toThrow(
       `Path not found: ${missing}. Use glob to locate the file or directory, or verify the path.`
     );
+  });
+
+  test("skips a symlink to a directory without failing the scan", async () => {
+    const root = await tempRoot();
+    const target = join(root, "target");
+    const readable = join(root, "readable.txt");
+
+    await mkdir(target);
+    await writeFile(join(target, "inner.txt"), "alpha", "utf8");
+    await writeFile(readable, "alpha", "utf8");
+    await symlink(target, join(root, "linkdir"));
+
+    const matches = await findMatches(
+      root,
+      undefined,
+      makeMatcher("alpha"),
+      defaultScanOptions
+    );
+
+    expect(matches.map((match) => match.filePath).toSorted()).toEqual([
+      readable,
+      join(target, "inner.txt"),
+    ]);
+  });
+
+  test("skips a broken symlink without failing the scan", async () => {
+    const root = await tempRoot();
+    const readable = join(root, "readable.txt");
+
+    await writeFile(readable, "alpha", "utf8");
+    await symlink(join(root, "missing-target"), join(root, "broken.txt"));
+
+    const matches = await findMatches(
+      root,
+      undefined,
+      makeMatcher("alpha"),
+      defaultScanOptions
+    );
+
+    expect(matches.map((match) => match.filePath)).toEqual([readable]);
+  });
+
+  test.skipIf(process.getuid?.() === 0)(
+    "skips an unreadable file without failing the scan",
+    async () => {
+      const root = await tempRoot();
+      const readable = join(root, "readable.txt");
+      const locked = join(root, "locked.txt");
+
+      await writeFile(readable, "alpha", "utf8");
+      await writeFile(locked, "alpha", "utf8");
+      await chmod(locked, 0o000);
+
+      const matches = await findMatches(
+        root,
+        undefined,
+        makeMatcher("alpha"),
+        defaultScanOptions
+      );
+
+      await chmod(locked, 0o644);
+
+      expect(matches.map((match) => match.filePath)).toEqual([readable]);
+    }
+  );
+
+  test("still resolves a symlinked directory passed directly as the path", async () => {
+    const root = await tempRoot();
+    const target = join(root, "target");
+    const link = join(root, "linkdir");
+
+    await mkdir(target);
+    await writeFile(join(target, "inner.txt"), "alpha", "utf8");
+    await symlink(target, link);
+
+    const matches = await findMatches(
+      link,
+      undefined,
+      makeMatcher("alpha"),
+      defaultScanOptions
+    );
+
+    expect(matches.map((match) => match.filePath)).toEqual([
+      join(link, "inner.txt"),
+    ]);
   });
 });

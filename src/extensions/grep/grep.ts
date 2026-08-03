@@ -109,29 +109,41 @@ export async function findMatches(
   return results;
 }
 
+/**
+ * A scan enumerates symlinks without resolving them (matching `fd`, which lists
+ * a symlinked directory without descending into it), so an entry here may not
+ * be a readable regular file: a symlink to a directory fails with EISDIR, a
+ * broken symlink with ENOENT, and an unreadable file with EACCES. None of those
+ * should abort the whole search, so treat any unreadable entry as a non-match —
+ * the same way `grep` and `rg` warn and continue.
+ */
 async function matchFile(
   filePath: string,
   matcher: GrepMatcher
 ): Promise<GrepMatch | undefined> {
   const file = Bun.file(filePath);
 
-  // Binary skip reads only the first 8KB, so a binary file is never fully read.
-  if (await Lines.isBinary(file)) {
-    return undefined;
-  }
-
   let text: string;
-  if (matcher.literal !== undefined) {
-    // Literal fast path: scan raw bytes and bail on a miss without decoding. An
-    // ASCII literal can't match across a normalized newline or alias a
-    // multibyte char, so a raw-byte hit/miss matches the decoded result.
-    const bytes = Buffer.from(await file.arrayBuffer());
-    if (bytes.indexOf(matcher.literal) < 0) {
+  try {
+    // Binary skip reads only the first 8KB, so a binary file is never fully read.
+    if (await Lines.isBinary(file)) {
       return undefined;
     }
-    text = bytes.toString("utf8");
-  } else {
-    text = await file.text();
+
+    if (matcher.literal !== undefined) {
+      // Literal fast path: scan raw bytes and bail on a miss without decoding. An
+      // ASCII literal can't match across a normalized newline or alias a
+      // multibyte char, so a raw-byte hit/miss matches the decoded result.
+      const bytes = Buffer.from(await file.arrayBuffer());
+      if (bytes.indexOf(matcher.literal) < 0) {
+        return undefined;
+      }
+      text = bytes.toString("utf8");
+    } else {
+      text = await file.text();
+    }
+  } catch {
+    return undefined;
   }
 
   const content = Lines.normalize(text);
