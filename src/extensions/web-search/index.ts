@@ -6,8 +6,12 @@ import {
 } from "../../shared/Renderer";
 import { PimSettings } from "../../shared/PimSettings";
 import { Tools } from "../../shared/Tools";
-import { ExaMcpClient } from "./ExaMcpClient";
+import { DuckDuckGoProvider } from "./providers/DuckDuckGoProvider";
+import { ExaProvider } from "./providers/ExaProvider";
+import { FirecrawlProvider } from "./providers/FirecrawlProvider";
 import { formatTitle } from "./render";
+import { SearchBreaker } from "./SearchBreaker";
+import { SearchChain } from "./SearchChain";
 import { type WebSearchInput, webSearchSchema } from "./schema";
 import { clampNumResults, formatResults } from "./search";
 
@@ -15,15 +19,32 @@ const PREVIEW_LINES = 6;
 
 type WebSearchCallState = StatefulToolCallTitleState & {
   resultCount?: number;
+  provider?: string;
 };
 
 type WebSearchRenderContext = StatefulToolCallTitleContext & {
   readonly args?: WebSearchInput;
 };
 
-async function createClient(): Promise<ExaMcpClient> {
-  const apiKey = await PimSettings.getExaApiKey();
-  return new ExaMcpClient(apiKey ? { apiKey } : {});
+async function createChain(): Promise<SearchChain> {
+  const [exaApiKey, firecrawlApiKey, jinaApiKey] = await Promise.all([
+    PimSettings.getExaApiKey(),
+    PimSettings.getFirecrawlApiKey(),
+    PimSettings.getJinaApiKey(),
+  ]);
+
+  return new SearchChain({
+    breaker: new SearchBreaker(),
+    providers: [
+      new ExaProvider(exaApiKey === undefined ? {} : { apiKey: exaApiKey }),
+      new FirecrawlProvider(
+        firecrawlApiKey === undefined ? {} : { apiKey: firecrawlApiKey }
+      ),
+      new DuckDuckGoProvider(
+        jinaApiKey === undefined ? {} : { apiKey: jinaApiKey }
+      ),
+    ],
+  });
 }
 
 function renderTitle(
@@ -35,15 +56,15 @@ function renderTitle(
   const count = state.resultCount ?? clampNumResults(input.numResults);
   return Renderer.renderStatefulToolCallTitle({
     label: "Web Search",
-    title: formatTitle(input.query, count),
+    title: formatTitle(input.query, count, state.provider),
     theme,
     context,
   });
 }
 
 export default function (pi: ExtensionAPI): void {
-  let clientPromise: Promise<ExaMcpClient> | undefined;
-  const getClient = () => (clientPromise ??= createClient());
+  let chainPromise: Promise<SearchChain> | undefined;
+  const getChain = () => (chainPromise ??= createChain());
 
   Tools.register(pi, {
     name: "web_search",
@@ -69,25 +90,28 @@ export default function (pi: ExtensionAPI): void {
       }
 
       const clamped = clampNumResults(numResults);
-      const client = await getClient();
-      const results = await client.search({
+      const chain = await getChain();
+      const outcome = await chain.search({
         query: trimmed,
         numResults: clamped,
         ...(signal === undefined ? {} : { signal }),
       });
 
-      if (results.length === 0) {
+      if (outcome.results.length === 0) {
         throw new Error(
-          `No web results for "${trimmed}". Try broader keywords or different phrasing.`
+          `No web results for "${trimmed}" (via ${outcome.provider}). ` +
+            "Try broader keywords or different phrasing."
         );
       }
 
       return {
-        content: [{ type: "text", text: formatResults(results) }],
+        content: [{ type: "text", text: formatResults(outcome.results) }],
         details: {
           query: trimmed,
           numResults: clamped,
-          count: results.length,
+          count: outcome.results.length,
+          provider: outcome.provider,
+          fellBack: outcome.fellBack,
         },
       };
     },
@@ -100,10 +124,13 @@ export default function (pi: ExtensionAPI): void {
     },
     renderResult(result, options, theme, context) {
       const state = context.state as WebSearchCallState;
-      const details = result.details as { readonly count?: number } | undefined;
+      const details = result.details as
+        | { readonly count?: number; readonly provider?: string }
+        | undefined;
 
-      if (details?.count !== undefined) {
-        state.resultCount = details.count;
+      if (details?.count !== undefined || details?.provider !== undefined) {
+        state.resultCount = details.count ?? state.resultCount;
+        state.provider = details.provider ?? state.provider;
         renderTitle(context.args ?? {}, theme, context);
       }
 

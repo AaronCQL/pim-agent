@@ -1,4 +1,4 @@
-import type { ExaSearchResult } from "./ExaMcpClient";
+import type { SearchResult } from "./providers/SearchProvider";
 import {
   DEFAULT_NUM_RESULTS,
   MAX_NUM_RESULTS,
@@ -10,7 +10,7 @@ export function clampNumResults(value: number | undefined): number {
   return Math.min(MAX_NUM_RESULTS, Math.max(MIN_NUM_RESULTS, requested));
 }
 
-export function formatResults(results: readonly ExaSearchResult[]): string {
+export function formatResults(results: readonly SearchResult[]): string {
   return results
     .map((result) =>
       [

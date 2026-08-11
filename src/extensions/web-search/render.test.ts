@@ -13,6 +13,12 @@ describe("formatTitle", () => {
     expect(formatTitle("pi agent", 3)).toBe("pi agent (3)");
   });
 
+  test("names the provider once it is known", () => {
+    expect(formatTitle("pi agent", 3, "firecrawl")).toBe(
+      "pi agent (3 · firecrawl)"
+    );
+  });
+
   test("uses a placeholder while keeping the count visible", () => {
     expect(formatTitle(undefined, undefined)).toBe(
       `... (${DEFAULT_NUM_RESULTS})`

@@ -175,7 +175,7 @@ export class Renderer {
       }
       this.updateSubagentLabel(event.toolCallId, event.toolName, event.result);
       if (!event.isError) {
-        this.applyDiffStats(event.toolCallId, event.toolName, event.result);
+        this.applyResultStats(event.toolCallId, event.toolName, event.result);
       }
       const idx = this.toolIndex.get(event.toolCallId);
       if (idx !== undefined) {
@@ -297,7 +297,7 @@ export class Renderer {
     this.scheduleEdit();
   }
 
-  private applyDiffStats(
+  private applyResultStats(
     toolCallId: string,
     toolName: string,
     result: unknown
@@ -308,6 +308,15 @@ export class Renderer {
     }
     const name = toolName.toLowerCase();
     const details = (result as { readonly details?: unknown } | null)?.details;
+    if (name === "web_search") {
+      const provider = (details as { readonly provider?: unknown } | undefined)
+        ?.provider;
+      if (typeof provider === "string" && provider.length > 0) {
+        this.entries[idx]!.stats = `· ${Markdown.escape(provider)}`;
+        this.scheduleEdit();
+      }
+      return;
+    }
     if (name === "edit" || name === "write") {
       const diff = (details as { readonly diff?: ToolDiff } | undefined)?.diff;
       const stats = Renderer.formatPlainStats(DiffView.countStats(diff));
