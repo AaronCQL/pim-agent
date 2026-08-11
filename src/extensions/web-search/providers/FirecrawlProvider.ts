@@ -73,13 +73,16 @@ export class FirecrawlProvider implements SearchProvider {
         ...(input.signal === undefined ? {} : { signal: input.signal }),
       });
     } catch (error) {
-      throw this.toProviderError(error, input.signal);
+      throw await this.toProviderError(error, input.signal);
     }
 
     return this.parse(await response.text());
   }
 
-  private toProviderError(error: unknown, signal?: AbortSignal): unknown {
+  private async toProviderError(
+    error: unknown,
+    signal?: AbortSignal
+  ): Promise<unknown> {
     if (signal?.aborted || isAbortError(error)) {
       return error;
     }
@@ -88,7 +91,11 @@ export class FirecrawlProvider implements SearchProvider {
       const { status, headers } = error.response;
 
       if (status === 429) {
-        const retryAfterMs = parseRetryAfterMs(headers.get("retry-after"));
+        // Firecrawl meters a rolling 24h window, not a calendar day, and
+        // reports the remainder in the body rather than a Retry-After header.
+        const retryAfterMs =
+          readRetryAfterMs(error.data) ??
+          parseRetryAfterMs(headers.get("retry-after"));
 
         return new ProviderQuotaError(
           this.name,
@@ -165,6 +172,23 @@ export class FirecrawlProvider implements SearchProvider {
       url,
       snippet: normalizeSnippet(readString(record["description"])),
     };
+  }
+}
+
+function readRetryAfterMs(data: unknown): number | undefined {
+  const payload = typeof data === "string" ? tryParseJson(data) : data;
+  const seconds = asRecord(payload)?.["retry_after_seconds"];
+
+  return typeof seconds === "number" && Number.isFinite(seconds)
+    ? Math.max(0, seconds) * 1000
+    : undefined;
+}
+
+function tryParseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
   }
 }
 

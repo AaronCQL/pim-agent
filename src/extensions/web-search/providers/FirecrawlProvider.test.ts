@@ -145,6 +145,32 @@ describe("FirecrawlProvider", () => {
     expect((error as ProviderQuotaError).retryAfterMs).toBe(120_000);
   });
 
+  test("prefers the rolling-window hint firecrawl puts in the body", async () => {
+    const { provider } = providerWith(
+      429,
+      JSON.stringify({
+        success: false,
+        error: "keyless free tier rate limit",
+        reason: "credits",
+        retry_after_seconds: 82417,
+      }),
+      { "retry-after": "120" }
+    );
+
+    const error = await provider.search(input).catch((e: unknown) => e);
+
+    expect((error as ProviderQuotaError).retryAfterMs).toBe(82_417_000);
+  });
+
+  test("falls back to no hint when the 429 body is unparseable", async () => {
+    const { provider } = providerWith(429, "nope");
+
+    const error = await provider.search(input).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ProviderQuotaError);
+    expect((error as ProviderQuotaError).retryAfterMs).toBeUndefined();
+  });
+
   test("raises a plain search error on other http failures", async () => {
     const { provider } = providerWith(500, "{}");
 
