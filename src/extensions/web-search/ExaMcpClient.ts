@@ -1,5 +1,9 @@
 import { McpClient, type McpFetch } from "../../shared/McpClient";
 import { RateLimiter } from "../../shared/RateLimiter";
+import {
+  normalizeSnippet,
+  type SearchResult,
+} from "./providers/SearchProvider";
 
 type ExaMcpClientOptions = {
   readonly endpoint?: string;
@@ -14,12 +18,6 @@ type ExaSearchInput = {
   readonly signal?: AbortSignal;
 };
 
-export type ExaSearchResult = {
-  readonly title: string;
-  readonly url: string;
-  readonly snippet: string;
-};
-
 class ExaSearchError extends Error {
   public constructor(message: string) {
     super(message);
@@ -30,8 +28,10 @@ class ExaSearchError extends Error {
 export class ExaMcpClient {
   private static readonly defaultEndpoint = "https://mcp.exa.ai/mcp";
   private static readonly toolName = "web_search_exa";
-  private static readonly maxRequestsPerWindow = 3;
-  private static readonly windowMs = 1000;
+  // The keyless endpoint enforces a sliding window of 2 requests per second;
+  // stay strictly under it so a 429 reliably means the daily cap, not QPS.
+  private static readonly maxRequestsPerWindow = 2;
+  private static readonly windowMs = 1100;
 
   private readonly client: McpClient;
 
@@ -58,9 +58,7 @@ export class ExaMcpClient {
     });
   }
 
-  public async search(
-    input: ExaSearchInput
-  ): Promise<readonly ExaSearchResult[]> {
+  public async search(input: ExaSearchInput): Promise<readonly SearchResult[]> {
     const result = await this.client.callTool({
       name: ExaMcpClient.toolName,
       arguments: {
@@ -74,7 +72,7 @@ export class ExaMcpClient {
   }
 }
 
-function extractResults(result: unknown): readonly ExaSearchResult[] {
+function extractResults(result: unknown): readonly SearchResult[] {
   const record = asRecord(result);
   const content = record?.["content"];
 
@@ -114,7 +112,7 @@ function readTextBlock(block: unknown): string {
 
 function extractPlainTextResults(
   textBlocks: readonly string[]
-): readonly ExaSearchResult[] | undefined {
+): readonly SearchResult[] | undefined {
   for (const textBlock of textBlocks) {
     const blocks = textBlock
       .split(/\n---\n/u)
@@ -132,7 +130,7 @@ function extractPlainTextResults(
   return undefined;
 }
 
-function parsePlainTextResult(block: string): ExaSearchResult | undefined {
+function parsePlainTextResult(block: string): SearchResult | undefined {
   const lines = block
     .split(/\r?\n/u)
     .map((line) => line.trim())
@@ -147,7 +145,7 @@ function parsePlainTextResult(block: string): ExaSearchResult | undefined {
   return {
     title,
     url,
-    snippet: readPlainTextSnippet(lines),
+    snippet: normalizeSnippet(readPlainTextSnippet(lines)),
   };
 }
 
@@ -217,11 +215,11 @@ function findFirstObjectArray(
 
 function projectResult(
   result: Readonly<Record<string, unknown>>
-): ExaSearchResult {
+): SearchResult {
   return {
     title: readResultString(result, "title"),
     url: readResultString(result, "url"),
-    snippet: readSnippet(result),
+    snippet: normalizeSnippet(readSnippet(result)),
   };
 }
 

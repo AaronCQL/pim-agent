@@ -31,6 +31,12 @@ const Schema = Type.Object({
     },
     { default: {} }
   ),
+  firecrawl: Type.Object(
+    {
+      apiKey: Type.Optional(Type.String()),
+    },
+    { default: {} }
+  ),
 });
 
 type Settings = Static<typeof Schema>;
@@ -90,6 +96,13 @@ export class PimSettings {
     return (
       PimSettings.normalize(process.env["JINA_API_KEY"]) ??
       PimSettings.normalize((await PimSettings.get("jina")).apiKey)
+    );
+  }
+
+  public static async getFirecrawlApiKey(): Promise<string | undefined> {
+    return (
+      PimSettings.normalize(process.env["FIRECRAWL_API_KEY"]) ??
+      PimSettings.normalize((await PimSettings.get("firecrawl")).apiKey)
     );
   }
 

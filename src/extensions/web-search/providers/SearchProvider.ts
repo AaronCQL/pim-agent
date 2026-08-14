@@ -1,0 +1,78 @@
+export type SearchResult = {
+  readonly title: string;
+  readonly url: string;
+  readonly snippet: string;
+};
+
+export type ProviderSearchInput = {
+  readonly query: string;
+  readonly numResults: number;
+  readonly signal?: AbortSignal;
+};
+
+export type SearchProvider = {
+  readonly name: string;
+  search(input: ProviderSearchInput): Promise<readonly SearchResult[]>;
+};
+
+/**
+ * A provider refused the call because its quota or rate limit is exhausted.
+ * Distinct from a generic failure: the chain fails over on any error, but only
+ * a quota error opens the circuit breaker and sidelines the provider.
+ */
+export class ProviderQuotaError extends Error {
+  public readonly provider: string;
+  public readonly retryAfterMs: number | undefined;
+
+  public constructor(provider: string, message: string, retryAfterMs?: number) {
+    super(message);
+    this.name = "ProviderQuotaError";
+    this.provider = provider;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+export class ProviderSearchError extends Error {
+  public readonly provider: string;
+
+  public constructor(provider: string, message: string) {
+    super(message);
+    this.name = "ProviderSearchError";
+    this.provider = provider;
+  }
+}
+
+const MAX_SNIPPET_LENGTH = 500;
+
+/**
+ * Providers disagree wildly on snippet size: Firecrawl returns whole scraped
+ * pages in `description`, DuckDuckGo returns two lines. Normalize so a
+ * fallback does not blow up the context window relative to the primary.
+ */
+export function normalizeSnippet(value: string | undefined): string {
+  const collapsed = (value ?? "").replaceAll(/\s+/gu, " ").trim();
+
+  return collapsed.length > MAX_SNIPPET_LENGTH
+    ? `${collapsed.slice(0, MAX_SNIPPET_LENGTH)}...`
+    : collapsed;
+}
+
+export function parseRetryAfterMs(value: string | null): number | undefined {
+  if (value === null) {
+    return undefined;
+  }
+
+  const seconds = Number(value.trim());
+
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return seconds * 1000;
+  }
+
+  const date = Date.parse(value);
+
+  return Number.isNaN(date) ? undefined : Math.max(0, date - Date.now());
+}
+
+export function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
