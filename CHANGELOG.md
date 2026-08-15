@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.8.0
+
+### Features
+
+- Fall back across keyless web search providers, adding Firecrawl and DuckDuckGo behind Exa, with a disk-backed circuit breaker for quota rejections and the serving provider surfaced in the TUI, tool details, and Telegram (#15)
+
+### Bug Fixes
+
+- Skip unreadable entries during a grep scan instead of aborting the whole search (675711b)
+
 ## v0.7.0
 
 ### Features
