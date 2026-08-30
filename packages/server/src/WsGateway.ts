@@ -9,6 +9,7 @@ import type { SessionRegistry } from "../../core/src/session/SessionRegistry";
 import type { SessionHost } from "../../core/src/session/SessionHost";
 import type { Command } from "../../protocol/src/Command";
 import { PROTOCOL_VERSION } from "../../protocol/src/Protocol";
+import type { SessionSummaryView } from "../../protocol/src/ServerEvent";
 import { ClientConnection } from "./ClientConnection";
 import { SessionStream } from "./SessionStream";
 import { UploadEndpoint } from "./UploadEndpoint";
@@ -34,7 +35,11 @@ export type WsGatewayDeps = {
 type Outcome = {
   readonly error?: string;
   readonly items?: readonly PickerItem[];
+  readonly sessions?: readonly SessionSummaryView[];
 };
+
+/** Enough rows to fill a switcher; the catalogue is read newest-first. */
+const DEFAULT_SESSION_LIMIT = 50;
 
 const DEFAULT_PORT = 4319;
 
@@ -174,13 +179,17 @@ export class WsGateway {
       return;
     }
     try {
-      const { error, items } = await this.dispatch(connection, command);
+      const { error, items, sessions } = await this.dispatch(
+        connection,
+        command
+      );
       connection.send({
         type: "response",
         id: command.id,
         success: error === undefined,
         ...(error === undefined ? {} : { error }),
         ...(items === undefined ? {} : { items }),
+        ...(sessions === undefined ? {} : { sessions }),
       });
     } catch (err) {
       connection.send({
@@ -198,6 +207,11 @@ export class WsGateway {
   ): Promise<Outcome> {
     if (command.type === "attach") {
       return await this.attach(connection, command);
+    }
+    // The catalogue is what a client reads *before* it has a session, so it is
+    // the one command that answers without one.
+    if (command.type === "list_sessions") {
+      return { sessions: await this.listSessions(command) };
     }
     const stream = connection.sessionId
       ? this.streams.get(connection.sessionId)
@@ -266,6 +280,20 @@ export class WsGateway {
     });
     await connection.attach(stream, command.fromSeq);
     return {};
+  }
+
+  private async listSessions(
+    command: Command & { readonly type: "list_sessions" }
+  ): Promise<readonly SessionSummaryView[]> {
+    const summaries = await this.registry.list(command.cwd);
+    return summaries
+      .slice(0, command.limit ?? DEFAULT_SESSION_LIMIT)
+      .map(({ sessionId, cwd, createdAt, modifiedAt }) => ({
+        sessionId,
+        cwd,
+        createdAt,
+        modifiedAt,
+      }));
   }
 
   private async ensureStream(

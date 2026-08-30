@@ -19,6 +19,9 @@ const DEBOUNCE_MS = 30;
  * Nothing about the catalog lives here. One query string goes out and at most
  * `limit` ranked rows come back, so a phone never holds a repo's path list —
  * this is an LSP completion request, not a synced index.
+ *
+ * Every API it touches exists in a browser as well as in Bun, because the
+ * clients that drive it are the CLI probe *and* pim-web.
  */
 export class RemoteFilePickerSuggestionEngine implements FilePickerSuggestionEngine {
   private readonly cache = new Map<string, readonly PickerItem[]>();
@@ -45,7 +48,7 @@ export class RemoteFilePickerSuggestionEngine implements FilePickerSuggestionEng
       return cached;
     }
     const mine = ++this.generation;
-    await Bun.sleep(this.debounceMs);
+    await new Promise((resolve) => setTimeout(resolve, this.debounceMs));
     if (mine !== this.generation || options.signal?.aborted === true) {
       return [];
     }

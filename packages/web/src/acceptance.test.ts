@@ -50,13 +50,18 @@ describe("Phase 5 acceptance", () => {
   });
 
   test("only ui/ touches a platform overlay primitive", async () => {
+    // Authoring one, not naming one: a test may assert on the DOM a wrapper
+    // produced, but nothing outside `ui/` may build or drive the primitive
+    // itself — that is what keeps swapping in Ark or Kobalte an internals
+    // change rather than a rewrite.
+    const authored =
+      /<details|<dialog|popover=|showModal\(|showPopover\(|hidePopover\(/;
     for (const path of await sources()) {
       if (path.includes("/ui/")) {
         continue;
       }
       const text = await Bun.file(path).text();
-      const raw = /<details|<dialog|\bpopover\b|showModal\(/.test(text);
-      expect(`${path}: ${raw}`).toEndWith("false");
+      expect(`${path}: ${authored.test(text)}`).toEndWith("false");
     }
   });
 

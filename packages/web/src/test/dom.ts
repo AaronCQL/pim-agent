@@ -6,12 +6,32 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
  * `document`, and ES modules evaluate in declaration order, so a leading
  * side-effect import is what puts one there in time.
  *
- * Per file rather than from `bunfig.toml` because the registrator also swaps
- * `fetch` and `WebSocket`, which the gateway tests need real. `test:web` runs
- * with `--isolate`, so the globals never outlive the file that asked for them.
+ * Per file rather than from `bunfig.toml` because the registrator is a whole
+ * environment, not a shim; `test:web` runs with `--isolate`, so the globals
+ * never outlive the file that asked for them.
+ *
+ * The network globals are put back afterwards. The registrator's own are a
+ * browser's — same-origin policy included, and a `Response` `Bun.serve`
+ * refuses — and a test that drives the real gateway is not a browser talking
+ * to a foreign origin, it is this process talking to itself.
  */
+const NETWORK_GLOBALS = [
+  "fetch",
+  "WebSocket",
+  "Request",
+  "Response",
+  "Headers",
+  "FormData",
+  "Blob",
+  "File",
+] as const;
+
 if (!("document" in globalThis)) {
+  const native = Object.fromEntries(
+    NETWORK_GLOBALS.map((name) => [name, globalThis[name]])
+  );
   GlobalRegistrator.register();
+  Object.assign(globalThis, native);
 }
 
 export function mountPoint(): HTMLElement {

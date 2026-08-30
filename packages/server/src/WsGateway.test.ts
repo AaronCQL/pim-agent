@@ -371,6 +371,47 @@ test("survives a restart with sessions resumable from disk", async () => {
   expect(durable(after)).toEqual(before);
 });
 
+test("lists pi's sessions, before any attach and after one", async () => {
+  const probe = await connect();
+  const sessionId = probe.sessionId!;
+  const mark = probe.events.length;
+  await probe.prompt("say hello");
+  await idle(probe, mark);
+
+  const listed = await probe.listSessions();
+  expect(listed.map((row) => row.sessionId)).toContain(sessionId);
+  const mine = listed.find((row) => row.sessionId === sessionId)!;
+  expect(mine.cwd).toBe(tmp);
+  expect(mine.modifiedAt).toBeGreaterThan(0);
+  // The catalogue is pi's directory layout, not a store of ours.
+  expect(Object.keys(mine).sort()).toEqual([
+    "createdAt",
+    "cwd",
+    "modifiedAt",
+    "sessionId",
+  ]);
+
+  expect(await probe.listSessions("/nowhere")).toEqual([]);
+
+  // Picking a session is what a client does instead of already having one, so
+  // this is the one command that answers without an attach.
+  const socket = new WebSocket(gateway.url);
+  await new Promise((resolve) => socket.addEventListener("open", resolve));
+  const answer = new Promise<string>((resolve) => {
+    socket.addEventListener("message", (event) => {
+      resolve(String(event.data));
+    });
+  });
+  socket.send(JSON.stringify({ id: "1", type: "list_sessions" }));
+  const response = JSON.parse(await answer) as {
+    readonly success: boolean;
+    readonly sessions: readonly { readonly sessionId: string }[];
+  };
+  expect(response.success).toBe(true);
+  expect(response.sessions.map((row) => row.sessionId)).toContain(sessionId);
+  socket.close();
+});
+
 test("rejects a client speaking another protocol version", async () => {
   const probe = new ProbeClient({
     url: gateway.url,

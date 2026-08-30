@@ -1,5 +1,5 @@
 import { Dynamic } from "@solidjs/web";
-import { For, Show, type Component } from "solid-js";
+import { createMemo, For, Show, type Component } from "solid-js";
 
 import type {
   DiffHunk,
@@ -7,6 +7,8 @@ import type {
   ViewBlock,
 } from "../../../core/src/view/ViewBlock";
 import { Markdown } from "../markdown/Markdown";
+import { Collapsible } from "../ui/Collapsible";
+import { CopyButton } from "../ui/CopyButton";
 import {
   DIFF_LINE_CLASSES,
   FRAME_CLASSES,
@@ -112,7 +114,12 @@ function SectionBlock(props: { readonly block: BlockOf<"section"> }) {
 
 function CodeBlock(props: { readonly block: BlockOf<"code"> }) {
   return (
-    <pre class="overflow-x-auto p-2 font-mono text-xs leading-snug">
+    <pre class="group/code relative overflow-x-auto p-2 font-mono text-xs leading-snug">
+      <CopyButton
+        text={() => props.block.text}
+        label="Copy code"
+        class="absolute right-1 top-1 opacity-0 group-hover/code:opacity-100"
+      />
       <code data-lang={props.block.lang}>
         <For each={props.block.text.split("\n")}>
           {(line, index) => (
@@ -133,18 +140,39 @@ function CodeBlock(props: { readonly block: BlockOf<"code"> }) {
 
 function DiffBlock(props: { readonly block: BlockOf<"diff"> }) {
   return (
-    <div class="font-mono text-xs leading-snug">
+    <div class="group/diff relative font-mono text-xs leading-snug">
+      <CopyButton
+        text={() => patchText(props.block.hunks)}
+        label="Copy patch"
+        class="absolute right-1 top-1 opacity-0 group-hover/diff:opacity-100"
+      />
       <For each={props.block.hunks}>{(hunk) => <Hunk hunk={hunk} />}</For>
     </div>
   );
 }
 
+/**
+ * One hunk, one disclosure. A rename touching thirty files arrives as one
+ * `diff` block, and the reason to read it on a phone is usually one hunk of
+ * it — so each is foldable on its own and opens by default.
+ */
 function Hunk(props: { readonly hunk: DiffHunk }) {
+  const stat = createMemo(() => ({
+    added: props.hunk.lines.filter((line) => line.kind === "added").length,
+    removed: props.hunk.lines.filter((line) => line.kind === "removed").length,
+  }));
+
   return (
-    <div>
-      <div class="px-2 text-neutral-500">
-        {`@@ -${props.hunk.oldStart},${props.hunk.oldLines} +${props.hunk.newStart},${props.hunk.newLines} @@`}
-      </div>
+    <Collapsible
+      open
+      summary={
+        <span class="flex items-baseline gap-2 px-1 text-neutral-500">
+          <span>{hunkRange(props.hunk)}</span>
+          <span class="text-emerald-400">{`+${stat().added}`}</span>
+          <span class="text-red-400">{`-${stat().removed}`}</span>
+        </span>
+      }
+    >
       <For each={props.hunk.lines}>
         {(line) => (
           <div class={`whitespace-pre px-2 ${DIFF_LINE_CLASSES[line.kind]}`}>
@@ -152,8 +180,23 @@ function Hunk(props: { readonly hunk: DiffHunk }) {
           </div>
         )}
       </For>
-    </div>
+    </Collapsible>
   );
+}
+
+function hunkRange(hunk: DiffHunk): string {
+  return `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`;
+}
+
+function patchText(hunks: readonly DiffHunk[]): string {
+  return hunks
+    .map((hunk) =>
+      [
+        hunkRange(hunk),
+        ...hunk.lines.map((line) => `${DIFF_MARKERS[line.kind]}${line.text}`),
+      ].join("\n")
+    )
+    .join("\n");
 }
 
 const DIFF_MARKERS = {

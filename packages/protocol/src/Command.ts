@@ -65,6 +65,18 @@ export type Command =
       readonly type: "set_cwd" | "set_model" | "set_thinking";
       readonly sessionId: string;
       readonly value: string;
+    }
+  /**
+   * The session catalogue, read straight off pi's sessions directory. Answers
+   * before any `attach`, because picking a session is what a client does
+   * *instead of* already having one.
+   */
+  | {
+      readonly id: string;
+      readonly type: "list_sessions";
+      /** Restrict to one working directory; omit for every session on disk. */
+      readonly cwd?: string;
+      readonly limit?: number;
     };
 
 export type CommandType = Command["type"];

@@ -149,6 +149,19 @@ export type EphemeralEvent =
   /** A frame the server could not attribute to any command. */
   | { readonly type: "error"; readonly message: string };
 
+/**
+ * One row of the session catalogue. Pi's own on-disk grouping, keyed on its
+ * session UUID (Resolved Decision 4) — the server's path to the JSONL is
+ * deliberately not here, because a client has no use for it and no filesystem
+ * to resolve it against.
+ */
+export type SessionSummaryView = {
+  readonly sessionId: string;
+  readonly cwd: string;
+  readonly createdAt: number;
+  readonly modifiedAt: number;
+};
+
 /** Answer to one `Command`, correlated by its `id`. Never sequenced. */
 export type ResponseEvent = {
   readonly type: "response";
@@ -157,6 +170,8 @@ export type ResponseEvent = {
   readonly error?: string;
   /** Ranked rows, for the commands that answer with data (`pick_*`). */
   readonly items?: readonly PickerItem[];
+  /** The catalogue, for `list_sessions`. */
+  readonly sessions?: readonly SessionSummaryView[];
 };
 
 export type ServerEvent = DurableEvent | EphemeralEvent | ResponseEvent;

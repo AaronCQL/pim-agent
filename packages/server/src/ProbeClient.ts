@@ -7,6 +7,7 @@ import {
   isDurableEvent,
   type ResponseEvent,
   type ServerEvent,
+  type SessionSummaryView,
 } from "../../protocol/src/ServerEvent";
 import { RemoteFilePickerSuggestionEngine } from "./RemoteFilePickerSuggestionEngine";
 
@@ -147,6 +148,20 @@ export class ProbeClient {
       ...(limit === undefined ? {} : { limit }),
     });
     return ProbeClient.itemsOf(response);
+  }
+
+  /** Pi's session catalogue; answers whether or not this probe is attached. */
+  public async listSessions(
+    cwd?: string
+  ): Promise<readonly SessionSummaryView[]> {
+    const response = await this.send({
+      type: "list_sessions",
+      ...(cwd === undefined ? {} : { cwd }),
+    });
+    if (!response.success) {
+      throw new Error(response.error ?? "list_sessions failed");
+    }
+    return response.sessions ?? [];
   }
 
   /**

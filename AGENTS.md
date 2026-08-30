@@ -17,7 +17,7 @@ Bun workspaces (`packages/*`), no build step — Bun and pi both resolve the TS 
 | `packages/telegram` | Telegram frontend: grammy bot, chat-keyed session map, daemon `Supervisor`. |
 | `packages/protocol` | Versioned client/server wire types. Imported by server and web **only** — never by the TUI, and nothing in it may assume a browser. |
 | `packages/server` | Transport plus the remote approval policy: `WsGateway` (Bun WebSocket, resume handshake, fanout), `SessionStream`/`SessionProjection` (pi's JSONL → wire events), `ClientConnection` (backpressure), `ApprovalRouter` (the three-tier tool gate), and the `ProbeClient`/`bun run probe` CLI. Workspace-only; never published. |
-| `packages/web` | Solid 2 browser client: the HTML `ViewBlock` painter (`view/`), the streaming `Markdown` component, `ui/` (our own wrappers over platform primitives), `transcript/`, and `replay/` (the committed session fixture and its generator). Workspace-only; never published. |
+| `packages/web` | Solid 2 browser client: `ws/` (`WsClient` — socket, resume cursor, reconnect), `session/` (`SessionStore` — the reactive state and the only place an intent becomes a command), the HTML `ViewBlock` painter (`view/`), the streaming `Markdown` component, `ui/` (our own wrappers over platform primitives), `transcript/`, `input/`, `approvals/`, `sessions/`, and `replay/` (the committed session fixture and its generator). Workspace-only; never published. |
 
 The root `package.json` is the published `@aaroncql/pim-agent`: a workspace root that ships `bin/` plus `core`, `tui`, and `telegram`. `protocol` and `server` stay out of `files`; `bun pm pack --dry-run` is the check.
 
@@ -49,6 +49,8 @@ The web client is **Solid 2, client-only**. Read [notes/solid2-notes.md](./notes
 Markdown is rendered by `streaming-markdown`, chosen by measuring partial input in `packages/web/src/markdown/renderer-choice.test.ts` — it is the only candidate that never repaints text already on screen, because it writes into the DOM append-only instead of re-parsing the whole prefix. Re-run that file before swapping it.
 
 Solid's JSX needs a compiler, which `bun test` has no Vite to provide, so `bunfig.toml` preloads `packages/web/src/test/preload.ts` (the same Oxc compiler). Bun's runtime plugins have no `onResolve`, so the browser builds of `solid-js`/`@solidjs/web` are selected with `--conditions=browser` — which is why the web tests are their own invocation. A test that renders must `import "../test/dom"` first, and `--isolate` keeps those globals from leaking.
+
+The web client's resume cursor is the highest durable `seq` it has painted; a dropped socket re-sends `attach` with `fromSeq` set to it, and everything between that `attach` and its `attached` is discarded so a session switch cannot leak the old session's tail into the new cursor. The trailing in-flight bucket is shaped as an ordinary assistant `message`, which is what lets `toRows` merge live tool calls with durable ones on `callId` with no special case. `list_sessions` is the one command that answers before an `attach`.
 
 Pi's session JSONL is the only event store — no database, no index (`notes/split-architecture-plan.md`, Resolved Decision 2). The wire `seq` is a line's physical ordinal in that file; pi appends and never rewrites, so ordinals are stable and resume is `seq > n`. Read it through `EventLog`, never by hand.
 

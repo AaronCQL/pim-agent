@@ -18,6 +18,7 @@ const USAGE = `pim probe — CLI client for pim-server, dumps every frame as JSO
   --prompt <text>          send a user message once attached
   --pick-files <query>     ask the server to complete an @ path, print the rows
   --pick-commands <query>  ask the server for matching skills and commands
+  --list-sessions          print pi's session catalogue and exit
   --upload <path>          transfer a local file to the server, attach it to
                            --prompt (repeatable)
   --steer <text>           steer the turn in flight instead of prompting
@@ -38,6 +39,7 @@ const { values } = parseArgs({
     prompt: { type: "string" },
     "pick-files": { type: "string" },
     "pick-commands": { type: "string" },
+    "list-sessions": { type: "boolean", default: false },
     upload: { type: "string", multiple: true },
     steer: { type: "string" },
     cancel: { type: "boolean", default: false },
@@ -93,6 +95,11 @@ if (values["pick-files"] !== undefined) {
   );
   for (const item of items ?? []) {
     process.stdout.write(`${JSON.stringify(item)}\n`);
+  }
+}
+if (values["list-sessions"]) {
+  for (const summary of await probe.listSessions(values.cwd)) {
+    process.stdout.write(`${JSON.stringify(summary)}\n`);
   }
 }
 if (values["pick-commands"] !== undefined) {

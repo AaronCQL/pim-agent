@@ -7,6 +7,11 @@ export type MessageRow = {
   readonly role: "user" | "assistant";
   readonly text: string;
   readonly thinking?: string;
+  /**
+   * The turn still in flight. The markdown renderer must not be flushed while
+   * this is set, or every delta would repaint the whole message.
+   */
+  readonly streaming?: boolean;
 };
 
 export type ToolRow = {
@@ -29,13 +34,19 @@ export type NoticeRow = {
 export type Row = MessageRow | ToolRow | NoticeRow;
 
 /**
- * Flattens durable events into the rows a transcript draws. A tool appears
- * twice on the wire — once as the requesting message's `toolCalls`, once as
- * its own `tool_result` — and the protocol says to dedupe on `callId`, so the
- * result upgrades the row in place rather than appending a second one. That
- * keeps a call that never finished visible as a partial row.
+ * Flattens durable events into the rows a transcript draws. A tool appears at
+ * least twice on the wire — as the requesting message's `toolCalls`, as its
+ * own `tool_result`, and again in the in-flight bucket while it runs — and the
+ * protocol says to dedupe on `callId`, so each later sighting upgrades the row
+ * in place rather than appending a second one. That is also what lets the live
+ * turn be appended as an ordinary assistant `message` with no special case:
+ * its tool rows merge with the durable ones for free. A call whose result
+ * never landed stays a partial row.
  */
-export function toRows(events: readonly DurableEvent[]): readonly Row[] {
+export function toRows(
+  events: readonly DurableEvent[],
+  streamingId?: string
+): readonly Row[] {
   const rows: Row[] = [];
   const toolIndex = new Map<string, number>();
 
@@ -51,18 +62,28 @@ export function toRows(events: readonly DurableEvent[]): readonly Row[] {
             ...(event.thinking === undefined
               ? {}
               : { thinking: event.thinking }),
+            ...(event.messageId === streamingId ? { streaming: true } : {}),
           });
         }
         for (const call of event.toolCalls ?? []) {
-          toolIndex.set(call.callId, rows.length);
-          rows.push({
+          const row: ToolRow = {
             kind: "tool",
             id: call.callId,
             name: call.name,
             view: call.view,
             isError: false,
             isPartial: true,
-          });
+          };
+          const at = toolIndex.get(call.callId);
+          if (at === undefined) {
+            toolIndex.set(call.callId, rows.length);
+            rows.push(row);
+          } else if ((rows[at] as ToolRow).isPartial) {
+            // The live turn re-states the calls its durable message already
+            // listed; the later view is the fresher one, and a landed result
+            // outranks both.
+            rows[at] = row;
+          }
         }
         break;
       }
