@@ -1,13 +1,8 @@
-import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Paths } from "../../shared/Paths";
-import {
-  Renderer,
-  type StatefulToolCallTitleContext,
-  type StatefulToolCallTitleState,
-} from "../../shared/Renderer";
 import { Tools } from "../../shared/Tools";
 import { buildMatcher, findMatches } from "./grep";
-import { formatTitle, renderMatches } from "./render";
+import { buildView, type GrepViewDetails, renderMatches } from "./render";
 import {
   GREP_HEAD_LIMIT_MAX,
   type GrepInput,
@@ -16,39 +11,8 @@ import {
   grepSchema,
 } from "./schema";
 
-const PREVIEW_LINES = 10;
 const DEFAULT_OUTPUT_MODE: GrepOutputMode = "files_with_matches";
 const DEFAULT_PATH_FORMAT: GrepPathFormat = "relative";
-
-type GrepCallState = StatefulToolCallTitleState & {
-  fileCount?: number;
-};
-
-type GrepRenderContext = StatefulToolCallTitleContext & {
-  readonly args?: GrepInput;
-  readonly cwd: string;
-};
-
-function renderTitle(
-  input: Partial<GrepInput>,
-  theme: Theme,
-  context: GrepRenderContext
-) {
-  const state = context.state as GrepCallState;
-  const title = formatTitle({
-    pattern: input.pattern,
-    path: input.path,
-    glob: input.glob,
-    cwd: context.cwd,
-    fileCount: state.fileCount,
-  });
-  return Renderer.renderStatefulToolCallTitle({
-    label: "Grep",
-    title,
-    theme,
-    context,
-  });
-}
 
 export default function (pi: ExtensionAPI): void {
   Tools.register(pi, {
@@ -134,26 +98,13 @@ export default function (pi: ExtensionAPI): void {
         },
       };
     },
-    renderCall(args, theme, context) {
-      return renderTitle((args ?? {}) as Partial<GrepInput>, theme, context);
-    },
-    renderResult(result, options, theme, context) {
-      const state = context.state as GrepCallState;
-      const details = result.details as
-        | { readonly fileCount?: number }
-        | undefined;
-
-      if (details?.fileCount !== undefined) {
-        state.fileCount = details.fileCount;
-        renderTitle(context.args ?? {}, theme, context);
-      }
-
-      return Renderer.renderBorderedResult({
-        result,
-        options,
-        theme,
-        context,
-        previewLines: PREVIEW_LINES,
+    toViewModel({ args, result, cwd }) {
+      const first = result?.content?.[0];
+      return buildView({
+        args: (args ?? {}) as Partial<GrepInput>,
+        body: first && "text" in first ? (first.text ?? "") : "",
+        details: result?.details as GrepViewDetails | undefined,
+        cwd,
       });
     },
   });

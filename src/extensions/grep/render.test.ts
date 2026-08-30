@@ -1,7 +1,20 @@
 import { describe, expect, test } from "bun:test";
+import type { Theme } from "@earendil-works/pi-coding-agent";
 import { OutputBudget } from "../../shared/OutputBudget";
+import { AnsiPainter } from "../../shared/view/AnsiPainter";
 import type { GrepMatch } from "./grep";
-import { formatTitle, renderMatches } from "./render";
+import { buildView, formatTitle, renderMatches } from "./render";
+
+// Marks every themed span so an assertion catches colour the old renderer
+// never emitted.
+const markerTheme = {
+  bold: (text: string) => text,
+  fg: (color: string, text: string) => `<${color}>${text}</${color}>`,
+} as unknown as Theme;
+
+function paintBody(input: Parameters<typeof buildView>[0]): string {
+  return AnsiPainter.paint(buildView(input).body ?? [], markerTheme).join("\n");
+}
 
 const fixture: readonly GrepMatch[] = [
   {
@@ -201,6 +214,69 @@ describe("renderMatches", () => {
     expect(Buffer.byteLength(outcome.body, "utf8")).toBeLessThanOrEqual(
       OutputBudget.maxBytes
     );
+  });
+});
+
+describe("buildView", () => {
+  const base = { args: { pattern: "alpha" }, cwd: "/repo" } as const;
+
+  test("supplies the title-cased display label", () => {
+    expect(buildView({ ...base, body: "" }).label).toBe("Grep");
+  });
+
+  test("titles from args alone while the call is in flight", () => {
+    const view = buildView({ args: { path: "src" }, body: "", cwd: "/repo" });
+    expect(AnsiPainter.paint(view.title, markerTheme).join(" ")).toBe(
+      "... in src"
+    );
+  });
+
+  test("titles with the file count once the result settles", () => {
+    const view = buildView({
+      ...base,
+      body: "a.ts",
+      details: { outputMode: "files_with_matches", fileCount: 1 },
+    });
+    expect(AnsiPainter.paint(view.title, markerTheme).join(" ")).toBe(
+      "/alpha/ (1 file)"
+    );
+  });
+
+  test("files_with_matches paints one bare path per row", () => {
+    expect(
+      paintBody({
+        ...base,
+        body: "newer.ts\nolder.ts",
+        details: { outputMode: "files_with_matches" },
+      })
+    ).toBe("newer.ts\nolder.ts");
+  });
+
+  test("content and count keep the rendered body verbatim", () => {
+    const content = "  a.ts:1:intro\n> a.ts:2:alpha\n--\n> a.ts:9:alpha";
+    expect(
+      paintBody({ ...base, body: content, details: { outputMode: "content" } })
+    ).toBe(content);
+    expect(
+      paintBody({
+        ...base,
+        body: "a.ts:2\nb.ts:1",
+        details: { outputMode: "count" },
+      })
+    ).toBe("a.ts:2\nb.ts:1");
+  });
+
+  test("a no-match body stays text rather than becoming a bogus path", () => {
+    const view = buildView({
+      ...base,
+      body: "No matches.",
+      details: { outputMode: "files_with_matches" },
+    });
+    expect(view.body).toEqual([{ kind: "text", text: "No matches." }]);
+  });
+
+  test("falls back to text when a persisted entry has no details", () => {
+    expect(paintBody({ ...base, body: "a.ts\nb.ts" })).toBe("a.ts\nb.ts");
   });
 });
 

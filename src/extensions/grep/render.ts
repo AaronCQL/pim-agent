@@ -1,7 +1,10 @@
 import { OutputBudget } from "../../shared/OutputBudget";
 import { Paths } from "../../shared/Paths";
+import type { ToolView, ViewBlock } from "../../shared/view/ViewBlock";
 import type { GrepLineRange, GrepMatch } from "./grep";
-import type { GrepOutputMode, GrepPathFormat } from "./schema";
+import type { GrepInput, GrepOutputMode, GrepPathFormat } from "./schema";
+
+const NO_MATCHES = "No matches.";
 
 export type RenderOutcome = {
   readonly body: string;
@@ -49,7 +52,7 @@ export function renderMatches(
 
   if (lines.length === 0) {
     return {
-      body: "No matches.",
+      body: NO_MATCHES,
       totalItems: 0,
       visibleItems: 0,
       truncated: false,
@@ -99,6 +102,64 @@ export function formatTitle(options: TitleOptions): string {
       ? ""
       : ` (${options.fileCount} ${options.fileCount === 1 ? "file" : "files"})`;
   return `${pattern}${location}${suffix}`;
+}
+
+export type GrepViewDetails = {
+  readonly outputMode?: GrepOutputMode;
+  readonly fileCount?: number;
+};
+
+export type GrepViewInput = {
+  /** Partially streamed while the call is in flight; every field is optional. */
+  readonly args: Partial<GrepInput>;
+  /** The result body the tool already rendered for the model; empty in flight. */
+  readonly body: string;
+  readonly details?: GrepViewDetails;
+  readonly cwd: string;
+};
+
+export function buildView({
+  args,
+  body,
+  details,
+  cwd,
+}: GrepViewInput): ToolView {
+  return {
+    label: "Grep",
+    title: [
+      {
+        kind: "text",
+        text: formatTitle({
+          pattern: args.pattern,
+          path: args.path,
+          glob: args.glob,
+          cwd,
+          fileCount: details?.fileCount,
+        }),
+      },
+    ],
+    body: bodyBlocks(body, details?.outputMode),
+  };
+}
+
+/**
+ * `files_with_matches` rows are whole paths, so they model as `file` blocks.
+ * `content` and `count` pack a path and a per-row payload (`:line:text`,
+ * `:count`, plus context markers and `--` separators) into a single line, which
+ * no block kind expresses inline, so those keep the pre-rendered text.
+ */
+function bodyBlocks(
+  body: string,
+  outputMode: GrepOutputMode | undefined
+): readonly ViewBlock[] {
+  if (
+    outputMode === "files_with_matches" &&
+    body !== "" &&
+    body !== NO_MATCHES
+  ) {
+    return body.split("\n").map((path) => ({ kind: "file", path }) as const);
+  }
+  return [{ kind: "text", text: body }];
 }
 
 function joinTarget(
