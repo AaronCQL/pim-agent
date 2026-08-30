@@ -1,12 +1,12 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Renderer } from "../../shared/Renderer";
 import { SpillCache } from "../../shared/SpillCache";
 import { Tools } from "../../shared/Tools";
 import { detailsOf, formatResult, isErrorResult } from "./format";
+import { bashView } from "./render";
 import { killAllActiveBashGroups, runBashCommand } from "./run";
 import { type BashInput, bashSchema, DEFAULT_TIMEOUT_MS } from "./schema";
 
-const PREVIEW_LINES = 5;
+const ERROR_PREVIEW_LINES = 5;
 
 let lifecycleHandlersInstalled = false;
 
@@ -61,26 +61,7 @@ export default function (pi: ExtensionAPI): void {
         details: detailsOf(result),
       };
     },
-    renderCall(args, theme, context) {
-      const cmd =
-        typeof args?.command === "string" && args.command
-          ? args.command
-          : "...";
-      return Renderer.renderToolCallTitle({
-        label: "Bash",
-        title: cmd,
-        theme,
-        context,
-      });
-    },
-    renderResult(result, options, theme, context) {
-      return Renderer.renderBorderedResult({
-        result,
-        options,
-        theme,
-        context,
-        previewLines: PREVIEW_LINES,
-      });
-    },
+    toViewModel: bashView,
+    previewLines: ERROR_PREVIEW_LINES,
   });
 }
