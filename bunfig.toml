@@ -3,3 +3,8 @@
 # hoisted, so develop against the same layout.
 [install]
 linker = "hoisted"
+
+# `bun test` runs without Vite, so Solid's JSX compiler has to be installed as
+# a Bun plugin. Scoped to `.tsx`, which only `packages/web` has.
+[test]
+preload = ["./packages/web/src/test/preload.ts"]

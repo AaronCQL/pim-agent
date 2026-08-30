@@ -1,0 +1,87 @@
+import { Dynamic } from "@solidjs/web";
+import { For, Show, type Component } from "solid-js";
+
+import type { DurableEvent } from "../../../protocol/src/ServerEvent";
+import { Markdown } from "../markdown/Markdown";
+import { Collapsible } from "../ui/Collapsible";
+import { ToolCard } from "../view/ToolCard";
+import { NOTICE_CLASSES } from "../view/tokens";
+import {
+  toRows,
+  type MessageRow,
+  type NoticeRow,
+  type Row,
+  type ToolRow,
+} from "./rows";
+
+type RowOf<TKind extends Row["kind"]> = Extract<Row, { kind: TKind }>;
+
+type RowMap = {
+  readonly [TKind in Row["kind"]]: Component<{
+    readonly row: RowOf<TKind>;
+  }>;
+};
+
+/** The whole conversation, painted from durable events alone. */
+export function Transcript(props: {
+  readonly events: readonly DurableEvent[];
+}) {
+  return (
+    <div class="flex flex-col gap-3">
+      <For each={toRows(props.events)}>
+        {(row) => (
+          <Dynamic
+            component={ROWS[row.kind] as Component<{ row: Row }>}
+            row={row}
+          />
+        )}
+      </For>
+    </div>
+  );
+}
+
+function MessageBubble(props: { readonly row: MessageRow }) {
+  return (
+    <article
+      class={{
+        "min-w-0 rounded-lg px-3 py-2": true,
+        "self-end max-w-[80%] bg-sky-950/50 text-neutral-100":
+          props.row.role === "user",
+        "bg-neutral-900/40 text-neutral-200": props.row.role === "assistant",
+      }}
+    >
+      <Show when={props.row.thinking}>
+        {(thinking) => (
+          <Collapsible summary={<span class="text-neutral-500">Thinking</span>}>
+            <p class="whitespace-pre-wrap text-neutral-500">{thinking()}</p>
+          </Collapsible>
+        )}
+      </Show>
+      <Markdown text={props.row.text} />
+    </article>
+  );
+}
+
+function ToolRowView(props: { readonly row: ToolRow }) {
+  return (
+    <ToolCard
+      view={props.row.view}
+      isError={props.row.isError}
+      isPartial={props.row.isPartial}
+    />
+  );
+}
+
+function NoticeRowView(props: { readonly row: NoticeRow }) {
+  return (
+    <p class={`text-center text-xs ${NOTICE_CLASSES[props.row.severity]}`}>
+      {props.row.text}
+    </p>
+  );
+}
+
+const ROWS: RowMap = {
+  message: MessageBubble,
+  tool: ToolRowView,
+  notice: NoticeRowView,
+};

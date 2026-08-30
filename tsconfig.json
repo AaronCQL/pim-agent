@@ -2,6 +2,9 @@
   "compilerOptions": {
     "target": "ESNext",
     "module": "ESNext",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "jsx": "preserve",
+    "jsxImportSource": "@solidjs/web",
     "moduleResolution": "bundler",
     "strict": true,
     "noUncheckedIndexedAccess": true,
@@ -9,6 +12,7 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
     "noEmit": true,
     "types": ["bun-types"]
   },

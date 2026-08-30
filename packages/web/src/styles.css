@@ -1,0 +1,53 @@
+/* Markdown is written into the DOM by streaming-markdown, so its elements
+   never carry utility classes and have to be styled by tag. */
+.pim-markdown > * + * {
+  margin-top: 0.6em;
+}
+.pim-markdown h1,
+.pim-markdown h2,
+.pim-markdown h3 {
+  font-weight: 600;
+  color: rgb(245 245 245);
+}
+.pim-markdown code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.875em;
+  border-radius: 0.25rem;
+  background: rgb(38 38 38);
+  padding: 0.05em 0.3em;
+}
+.pim-markdown pre {
+  overflow-x: auto;
+  border-radius: 0.375rem;
+  background: rgb(23 23 23);
+  padding: 0.6rem;
+}
+.pim-markdown pre code {
+  background: none;
+  padding: 0;
+}
+.pim-markdown a {
+  color: rgb(56 189 248);
+  text-decoration: underline;
+}
+.pim-markdown ul,
+.pim-markdown ol {
+  margin-left: 1.25rem;
+  list-style: revert;
+}
+.pim-markdown table {
+  display: block;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+.pim-markdown th,
+.pim-markdown td {
+  border: 1px solid rgb(64 64 64);
+  padding: 0.2rem 0.5rem;
+  text-align: left;
+}
+.pim-markdown blockquote {
+  border-left: 2px solid rgb(64 64 64);
+  padding-left: 0.6rem;
+  color: rgb(163 163 163);
+}

@@ -48,9 +48,13 @@
     "serve": "bun packages/server/src/serve.ts",
     "probe": "bun packages/server/src/probe.ts",
     "typecheck": "tsgo --noEmit",
-    "test": "bun test ./packages --only-failures",
+    "test": "bun run test:agent && bun run test:web",
+    "test:agent": "bun test ./packages --path-ignore-patterns='**/packages/web/**' --only-failures",
+    "test:web": "bun test ./packages/web --conditions=browser --isolate --only-failures",
+    "build:web": "cd packages/web && vite build",
+    "dev:web": "cd packages/web && vite",
     "lint": "oxlint . --fix",
-    "format": "prettier --write --list-different package.json tsconfig.json .oxlintrc.json .prettierrc.json \"packages/*/package.json\" \"packages/**/*.ts\" \"bin/**/*.ts\"",
+    "format": "prettier --write --list-different package.json tsconfig.json .oxlintrc.json .prettierrc.json \"packages/*/package.json\" \"packages/**/*.{ts,tsx}\" \"bin/**/*.ts\"",
     "check": "bun run typecheck && bun run test && bun run lint && bun run format"
   },
   "peerDependencies": {
@@ -58,10 +62,24 @@
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.84.1",
+    "@happy-dom/global-registrator": "^20.12.0",
+    "@iconify-json/lucide": "^1.2.127",
+    "@solidjs/vite-plugin": "3.0.0-next.36",
+    "@solidjs/web": "^2.0.0-rc.4",
     "@types/bun": "latest",
+    "@types/markdown-it": "^14.2.0",
     "@typescript/native-preview": "^7.0.0-dev.20260612.1",
+    "happy-dom": "^20.12.0",
+    "markdown-it": "^15.0.1",
+    "marked": "^18.0.11",
+    "micromark": "^4.0.2",
+    "micromark-extension-gfm": "^3.0.0",
     "oxlint": "^1.69.0",
-    "prettier": "^3.8.4"
+    "prettier": "^3.8.4",
+    "solid-js": "^2.0.0-rc.4",
+    "streaming-markdown": "^0.2.15",
+    "unocss": "^66.8.1",
+    "vite": "^8.2.2"
   },
   "dependencies": {
     "diff": "^9.0.0",
