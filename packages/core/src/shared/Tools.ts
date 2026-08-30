@@ -30,6 +30,37 @@ export type ToolViewInput<TParams extends TSchema, TDetails> = {
 };
 
 /**
+ * What a call to this tool can do to the machine the agent runs on. The
+ * remote approval policy is derived from this and nothing else: declaring it
+ * next to the tool keeps the risk profile with the code that carries the risk,
+ * instead of in a name list the next tool would silently miss.
+ *
+ * A tool that declares nothing is treated as `unbounded` — an unknown tool
+ * (MCP, another extension pack) must not be able to opt itself into
+ * auto-approval by omission.
+ */
+export type ToolEffect<TParams extends TSchema = TSchema> =
+  /** Nothing outside the agent's own session changes; auto-approved. */
+  | { readonly kind: "readOnly" }
+  /** Mutates exactly the paths `paths` reads out of the call's arguments. */
+  | {
+      readonly kind: "writesPaths";
+      /**
+       * Paths as the model wrote them, relative or absolute; the caller
+       * resolves them against the session cwd. Throwing is allowed and means
+       * "cannot be determined", which is treated as `unbounded`.
+       */
+      readonly paths: (args: Static<TParams>) => readonly string[];
+    }
+  /** Effects the arguments do not bound; always needs a human. */
+  | { readonly kind: "unbounded" };
+
+/** `ToolEffect` with its parameter type erased, for name-keyed lookup. */
+export type ErasedToolEffect = ToolEffect<TSchema> & {
+  readonly paths?: (args: unknown) => readonly string[];
+};
+
+/**
  * Pi's tool definition plus pim's optional view model. `toViewModel` must be
  * pure over `(args, result, cwd)` so a persisted session entry replays
  * identically with no live process state.
@@ -42,6 +73,8 @@ export type PimToolDefinition<
   readonly toViewModel?: (input: ToolViewInput<TParams, TDetails>) => ToolView;
   /** Error-output lines shown before the row is expanded. Defaults to 10. */
   readonly previewLines?: number;
+  /** Omitted means `unbounded`; see `ToolEffect`. */
+  readonly effect?: ToolEffect<TParams>;
 };
 
 /**
@@ -75,6 +108,16 @@ type JsonSchema = {
 
 export class Tools {
   private static readonly viewFactories = new Map<string, ToolViewFactory>();
+  private static readonly effects = new Map<string, ErasedToolEffect>();
+
+  /**
+   * What a registered tool declared it can do, or undefined when it declared
+   * nothing. Callers deciding approval must read an absent entry as
+   * `unbounded`; see `ToolEffect`.
+   */
+  static effectOf(toolName: string): ErasedToolEffect | undefined {
+    return Tools.effects.get(toolName);
+  }
 
   /**
    * The view model a registered tool paints itself with, or undefined for a
@@ -124,9 +167,12 @@ export class Tools {
   ): ToolDefinition<TParams, TDetails, TState> {
     const schema = def.parameters as unknown as JsonSchema;
     // Pi rejects unknown definition fields, so strip pim-only ones here.
-    const { toViewModel, previewLines: _previewLines, ...piDef } = def;
+    const { toViewModel, previewLines: _previewLines, effect, ...piDef } = def;
     if (toViewModel !== undefined) {
       Tools.viewFactories.set(def.name, toViewModel as ToolViewFactory);
+    }
+    if (effect !== undefined) {
+      Tools.effects.set(def.name, effect as ErasedToolEffect);
     }
     return {
       ...piDef,

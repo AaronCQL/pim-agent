@@ -103,6 +103,16 @@ export class ProbeClient {
     });
   }
 
+  /** Answer a parked `approval_request`; only the first answer counts. */
+  public approve(callId: string, approved = true): Promise<ResponseEvent> {
+    return this.send({
+      type: "approve_tool",
+      sessionId: this.sessionId ?? "",
+      callId,
+      approved,
+    });
+  }
+
   /** `from` skips frames already received, so a repeated state can be awaited. */
   public waitFor(
     test: (event: ServerEvent) => boolean,

@@ -9,6 +9,11 @@ import type {
   EphemeralEvent,
   ServerEvent,
 } from "../../protocol/src/ServerEvent";
+import {
+  ApprovalRouter,
+  type ApprovalRequest,
+  type ApprovalResolveResult,
+} from "./ApprovalRouter";
 import { SessionProjection } from "./SessionProjection";
 
 export type StreamListener = (event: ServerEvent) => void;
@@ -32,9 +37,11 @@ export class SessionStream {
   public readonly sessionId: string;
   public readonly host: SessionHost;
   private readonly projection: SessionProjection;
+  private readonly approvals: ApprovalRouter;
   private readonly listeners = new Set<StreamListener>();
   private readonly liveTools = new Map<string, LiveTool>();
   private unsubscribe: (() => void) | undefined;
+  private uninstallApprovals: (() => void) | undefined;
   private liveMessageId = 0;
   private streamedText = "";
   private turnStartedAt = 0;
@@ -47,12 +54,35 @@ export class SessionStream {
     this.sessionId = sessionId;
     this.host = host;
     this.projection = new SessionProjection(sessionPath, () => host.cwd);
+    this.approvals = new ApprovalRouter({
+      cwd: () => host.cwd,
+      onRequest: (request) => {
+        this.emit(approvalRequestEvent(request, host.cwd));
+      },
+      onResolved: (request, outcome) => {
+        this.emit({
+          type: "approval_resolved",
+          callId: request.callId,
+          approved: outcome.approved,
+          reason: outcome.reason,
+        });
+      },
+    });
   }
 
   public start(agent: AgentSession): void {
     this.unsubscribe ??= agent.subscribe((event) => {
       this.onAgentEvent(event);
     });
+    this.uninstallApprovals ??= this.approvals.install(agent);
+  }
+
+  /** Answer a tool call this session parked; the first answer is the one used. */
+  public resolveApproval(
+    callId: string,
+    approved: boolean
+  ): ApprovalResolveResult {
+    return this.approvals.resolve(callId, approved);
   }
 
   /** Project whatever pi has appended since the last read; returns the head. */
@@ -104,6 +134,11 @@ export class SessionStream {
         }),
       });
     }
+    // A parked approval is the whole reason a late client attaches at all, so
+    // it is part of the snapshot rather than something only live clients saw.
+    for (const request of this.approvals.pending) {
+      events.push(approvalRequestEvent(request, this.host.cwd));
+    }
     events.push(this.sessionState());
     return events;
   }
@@ -129,6 +164,9 @@ export class SessionStream {
   public dispose(): void {
     this.unsubscribe?.();
     this.unsubscribe = undefined;
+    this.uninstallApprovals?.();
+    this.uninstallApprovals = undefined;
+    this.approvals.dispose();
     this.listeners.clear();
   }
 
@@ -243,6 +281,24 @@ export class SessionStream {
       listener(event);
     }
   }
+}
+
+function approvalRequestEvent(
+  request: ApprovalRequest,
+  cwd: string
+): EphemeralEvent {
+  return {
+    type: "approval_request",
+    callId: request.callId,
+    name: request.name,
+    view: Tools.viewOf({
+      name: request.name,
+      args: request.args,
+      isPartial: true,
+      cwd,
+    }),
+    reason: request.reason,
+  };
 }
 
 function textOf(content: unknown): string {

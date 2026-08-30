@@ -42,6 +42,10 @@ export default function (pi: ExtensionAPI): void {
       "Prefer commands that emit only what you need; keep output as small as possible.",
     parameters: bashSchema,
     renderShell: "self",
+    // A command line has no target path to contain: `>`, `git push` and `curl`
+    // all live in the same string. Statically deciding what a shell will touch
+    // is the halting problem with extra steps, so bash always asks.
+    effect: { kind: "unbounded" },
     executionMode: "sequential",
     async execute(_id, params, signal, _onUpdate, ctx) {
       const { command, timeoutMs: requestedTimeoutMs } = params as BashInput;

@@ -100,6 +100,31 @@ export type EphemeralEvent =
       readonly callId: string;
       readonly view: ToolView;
     }
+  /**
+   * A tool call the server refuses to run unattended (Resolved Decision 8,
+   * tier 3). The turn is blocked until some client answers with
+   * `approve_tool`, so this is re-sent in the in-flight snapshot on every
+   * attach: a client that connects an hour later still sees the question.
+   */
+  | {
+      readonly type: "approval_request";
+      readonly callId: string;
+      readonly name: string;
+      readonly view: ToolView;
+      /** Why the policy could not decide on its own, in plain words. */
+      readonly reason: string;
+    }
+  /**
+   * The pending request for `callId` is gone. Broadcast to every attached
+   * client, including the one that answered, so a second client's prompt
+   * clears instead of hanging on a question nobody can answer any more.
+   */
+  | {
+      readonly type: "approval_resolved";
+      readonly callId: string;
+      readonly approved: boolean;
+      readonly reason: string;
+    }
   | { readonly type: "turn_end"; readonly stats: TurnStats }
   | {
       readonly type: "session_state";

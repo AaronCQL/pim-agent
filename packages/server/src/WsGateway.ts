@@ -210,7 +210,10 @@ export class WsGateway {
         await host.setThinkingLevel(command.value as ThinkingLevel);
         stream.push(stream.sessionState());
         return undefined;
-      case "approve_tool":
+      case "approve_tool": {
+        const result = stream.resolveApproval(command.callId, command.approved);
+        return result.ok ? undefined : result.error;
+      }
       case "pick_files":
       case "pick_commands":
         return `${command.type} is not implemented yet`;

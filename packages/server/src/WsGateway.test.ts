@@ -36,6 +36,7 @@ function pingTool(): PimToolDefinition<typeof pingSchema, { echoed: string }> {
     label: "ping",
     description: "echo a string back",
     parameters: pingSchema,
+    effect: { kind: "readOnly" },
     execute: async (_id, params) => ({
       content: [{ type: "text" as const, text: `pong: ${params.text}` }],
       details: { echoed: params.text },

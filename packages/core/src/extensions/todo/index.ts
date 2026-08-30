@@ -67,6 +67,8 @@ export default function (pi: ExtensionAPI): void {
       "At most one item may be in_progress.",
     parameters: todoSchema,
     renderShell: "self",
+    // Writes only pi's own session entries, never the user's filesystem.
+    effect: { kind: "readOnly" },
     executionMode: "sequential",
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const items = replaceItems(ctx.sessionManager, params.todos);

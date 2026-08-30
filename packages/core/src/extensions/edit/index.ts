@@ -16,6 +16,7 @@ export default function (pi: ExtensionAPI): void {
       "Prefer edit over write for changes to existing files.",
     parameters: editSchema,
     renderShell: "self",
+    effect: { kind: "writesPaths", paths: ({ path }) => [path] },
     executionMode: "sequential",
     async execute(_id, params, signal, _onUpdate, ctx) {
       const { path, edits } = params as EditInput;

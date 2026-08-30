@@ -16,7 +16,7 @@ Bun workspaces (`packages/*`), no build step — Bun and pi both resolve the TS 
 | `packages/tui` | Terminal frontend: splash/`_init`, file & command pickers, powerline footer, tps, working indicator, `themes/`. |
 | `packages/telegram` | Telegram frontend: grammy bot, chat-keyed session map, daemon `Supervisor`. |
 | `packages/protocol` | Versioned client/server wire types. Imported by server and web **only** — never by the TUI, and nothing in it may assume a browser. |
-| `packages/server` | Transport only: `WsGateway` (Bun WebSocket, resume handshake, fanout), `SessionStream`/`SessionProjection` (pi's JSONL → wire events), `ClientConnection` (backpressure), and the `ProbeClient`/`bun run probe` CLI. Workspace-only; never published. |
+| `packages/server` | Transport plus the remote approval policy: `WsGateway` (Bun WebSocket, resume handshake, fanout), `SessionStream`/`SessionProjection` (pi's JSONL → wire events), `ClientConnection` (backpressure), `ApprovalRouter` (the three-tier tool gate), and the `ProbeClient`/`bun run probe` CLI. Workspace-only; never published. |
 
 The root `package.json` is the published `@aaroncql/pim-agent`: a workspace root that ships `bin/` plus `core`, `tui`, and `telegram`. `protocol` and `server` stay out of `files`; `bun pm pack --dry-run` is the check.
 
@@ -34,6 +34,8 @@ Cross-package imports are ordinary relative paths (`../../core/src/shared/Tools`
 - `bun run typecheck` / `bun run lint` / `bun run format`: individual steps if you want to isolate.
 
 Inside a running `pim` session, `/reload` re-loads Pim Agent after edits without restarting.
+
+Remote tool approvals are async request/response events, not a modal prompt. `ApprovalRouter` auto-approves tools that declare `effect: { kind: "readOnly" }` and writes whose canonical target stays inside the session cwd; everything else — anything `unbounded`, and anything that declares no `effect` at all — blocks that session's turn until a client answers `approve_tool`. The tier comes from the tool's own declaration in `PimToolDefinition`, never from a name list.
 
 Pi's session JSONL is the only event store — no database, no index (`notes/split-architecture-plan.md`, Resolved Decision 2). The wire `seq` is a line's physical ordinal in that file; pi appends and never rewrites, so ordinals are stable and resume is `seq > n`. Read it through `EventLog`, never by hand.
 

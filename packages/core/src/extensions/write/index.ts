@@ -16,6 +16,7 @@ export default function (pi: ExtensionAPI): void {
       "Use write only for new files or full rewrites.",
     parameters: writeSchema,
     renderShell: "self",
+    effect: { kind: "writesPaths", paths: ({ path }) => [path] },
     executionMode: "sequential",
     async execute(_id, params, signal, _onUpdate, ctx) {
       const { path, content } = params as WriteInput;

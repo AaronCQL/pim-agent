@@ -22,6 +22,7 @@ export default function (pi: ExtensionAPI): void {
       "Use glob to enumerate files instead of bash with find, fd, ls -R, or similar.",
     parameters: globSchema,
     renderShell: "self",
+    effect: { kind: "readOnly" },
     executionMode: "parallel",
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const {

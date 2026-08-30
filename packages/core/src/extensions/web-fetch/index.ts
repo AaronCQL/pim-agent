@@ -26,6 +26,7 @@ export default function (pi: ExtensionAPI): void {
     description: "Fetch a web page as markdown or HTML.",
     parameters: webFetchSchema,
     renderShell: "self",
+    effect: { kind: "readOnly" },
     executionMode: "parallel",
     async execute(_id, params, signal) {
       const { url, format } = params as WebFetchInput;

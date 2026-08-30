@@ -24,6 +24,17 @@ export default function (pi: ExtensionAPI): void {
     parameters: applyPatchSchema,
     prepareArguments: prepareApplyPatchArguments,
     renderShell: "self",
+    // A patch that will not parse cannot be bounded, and `parsePatch` throwing
+    // is exactly how the caller learns that.
+    effect: {
+      kind: "writesPaths",
+      paths: ({ input }) =>
+        parsePatch(input).hunks.flatMap((hunk) =>
+          hunk.kind === "update" && hunk.movePath
+            ? [hunk.path, hunk.movePath]
+            : [hunk.path]
+        ),
+    },
     executionMode: "sequential",
     previewLines: ERROR_PREVIEW_LINES,
     async execute(_id, params, signal, _onUpdate, ctx) {

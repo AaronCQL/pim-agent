@@ -15,6 +15,7 @@ export default function (pi: ExtensionAPI): void {
       "Capped at 32KB per call; lines longer than 2000 chars are truncated.",
     parameters: readSchema,
     renderShell: "self",
+    effect: { kind: "readOnly" },
     executionMode: "parallel",
     async execute(_id, params, signal, _onUpdate, ctx) {
       const { path, start, end } = params as ReadInput;

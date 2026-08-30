@@ -45,6 +45,7 @@ export default function (pi: ExtensionAPI): void {
       "Returns ranked results with title, URL, and a short snippet.",
     parameters: webSearchSchema,
     renderShell: "self",
+    effect: { kind: "readOnly" },
     executionMode: "parallel",
     async execute(_id, params, signal) {
       const { query, numResults } = params as WebSearchInput;

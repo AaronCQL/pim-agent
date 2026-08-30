@@ -24,6 +24,7 @@ export default function (pi: ExtensionAPI): void {
       "Use grep to search file contents instead of bash with grep, rg, ag, find -exec, or similar.",
     parameters: grepSchema,
     renderShell: "self",
+    effect: { kind: "readOnly" },
     executionMode: "parallel",
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const {
