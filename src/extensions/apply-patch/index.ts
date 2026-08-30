@@ -1,16 +1,17 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { DiffRenderState } from "../../shared/DiffView";
 import { Tools } from "../../shared/Tools";
 import { computeActiveTools } from "./coordinator";
 import { applyPatch, formatApplySummary } from "./executor";
 import { isGptModel } from "./model";
 import { parsePatch } from "./parser";
-import { renderApplyPatchCall, renderApplyPatchResult } from "./render";
+import { applyPatchView } from "./render";
 import {
   type ApplyPatchInput,
   applyPatchSchema,
   prepareApplyPatchArguments,
 } from "./schema";
+
+const ERROR_PREVIEW_LINES = 12;
 
 export default function (pi: ExtensionAPI): void {
   Tools.register(pi, {
@@ -24,6 +25,7 @@ export default function (pi: ExtensionAPI): void {
     prepareArguments: prepareApplyPatchArguments,
     renderShell: "self",
     executionMode: "sequential",
+    previewLines: ERROR_PREVIEW_LINES,
     async execute(_id, params, signal, _onUpdate, ctx) {
       const { input } = params as ApplyPatchInput;
 
@@ -39,21 +41,7 @@ export default function (pi: ExtensionAPI): void {
         details: { entries: outcome.entries },
       };
     },
-    renderCall(args, theme, context) {
-      return renderApplyPatchCall(
-        args as Record<string, unknown> | undefined,
-        theme,
-        context as typeof context & { state: DiffRenderState }
-      );
-    },
-    renderResult(result, options, theme, context) {
-      return renderApplyPatchResult(
-        result,
-        options,
-        theme,
-        context as typeof context & { state: DiffRenderState }
-      );
-    },
+    toViewModel: applyPatchView,
   });
 
   const reconcile = (isGpt: boolean): void => {

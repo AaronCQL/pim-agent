@@ -1,82 +1,108 @@
-import type {
-  AgentToolResult,
-  Theme,
-  ToolRenderResultOptions,
-} from "@earendil-works/pi-coding-agent";
-import { type Component, Container } from "@earendil-works/pi-tui";
 import type { ToolDiff } from "../../shared/DiffLines";
-import {
-  type DiffRenderState,
-  type DiffStats,
-  DiffView,
-} from "../../shared/DiffView";
 import { Paths } from "../../shared/Paths";
 import { PatchSummary } from "../../shared/PatchSummary";
-import { type RenderContext, Renderer } from "../../shared/Renderer";
+import type { ToolViewInput } from "../../shared/Tools";
+import { DiffBlocks } from "../../shared/view/DiffBlocks";
+import type { Span, ToolView, ViewBlock } from "../../shared/view/ViewBlock";
 import type { ApplyEntry } from "./executor";
+import type { applyPatchSchema } from "./schema";
 
-const ERROR_PREVIEW_LINES = 12;
 // Rename separator. ➝ (U+279D) reads more vertically centered than → in most
 // terminal fonts; swap here if a font renders it double-width.
 const ARROW = "➝";
 
-type ApplyPatchDetails = {
+export type ApplyPatchDetails = {
   readonly entries?: readonly ApplyEntry[];
 };
 
-type ApplyPatchRenderContext = RenderContext & {
-  readonly cwd: string;
-  readonly state: DiffRenderState;
-};
+export type ApplyPatchViewInput = ToolViewInput<
+  typeof applyPatchSchema,
+  ApplyPatchDetails
+>;
 
 type EntryView = {
   readonly label: string;
-  readonly title: string;
-  readonly stats: DiffStats;
-  // Body to render under the title; undefined => title only (delete, rename).
+  readonly title: readonly Span[];
+  /** A composed rename title is not a plain path, so it is not a `file` block. */
+  readonly path: string | undefined;
+  readonly stats: readonly Span[];
+  /** Diff to render under the title; undefined => title only (delete, rename). */
   readonly body: ToolDiff | undefined;
 };
 
-// Draw an "Edit: <path>" title as soon as the call starts (mirroring the edit
-// tool) so there's never a blank row and an error still gets a header. The
-// title is for the first file and is updated in place on result.
-export function renderApplyPatchCall(
-  args: Record<string, unknown> | undefined,
-  theme: Theme,
-  context: ApplyPatchRenderContext
-): Component {
-  const input = typeof args?.input === "string" ? args.input : undefined;
-  const firstPath = input ? PatchSummary.firstPath(input) : undefined;
-  return DiffView.renderDiffCall({
-    label: "Edit",
-    rawPath: firstPath ? Paths.resolve(firstPath, context.cwd) : undefined,
-    theme,
-    context,
-  });
-}
+/**
+ * The first file owns the row title (mirroring the edit tool) so there is never
+ * a blank row and an error still gets a header; before the result settles the
+ * title comes from the raw patch text. Every further file is appended to the
+ * body as its own section.
+ */
+export function applyPatchView({
+  args,
+  result,
+  cwd,
+}: ApplyPatchViewInput): ToolView {
+  const [first, ...rest] = visibleEntries(result?.details).map((entry) =>
+    describeEntry(entry, cwd)
+  );
 
-function blankLine(): Component {
+  if (first === undefined) {
+    return {
+      label: "Edit",
+      title: [{ kind: "file", path: callPath(args, cwd) }],
+    };
+  }
+
   return {
-    render: () => [""],
-    invalidate() {},
+    label: first.label,
+    title: [titleBlock(first), ...statsBlocks(first)],
+    body: [
+      ...DiffBlocks.body(first.body),
+      ...rest.flatMap((entry) => [
+        sectionBlock(entry),
+        ...DiffBlocks.body(entry.body),
+      ]),
+    ],
+    // The diffs are the whole point of the row; never hide them behind expand.
+    collapsed: false,
   };
 }
 
-function describeEntry(
-  entry: ApplyEntry,
-  cwd: string,
-  theme: Theme
-): EntryView {
+/** A no-op update (rewrote identical content) has nothing to show; skip it. */
+function visibleEntries(
+  details: ApplyPatchDetails | undefined
+): readonly ApplyEntry[] {
+  return (details?.entries ?? []).filter(
+    (entry) => !(entry.action.kind === "update" && entry.diff === undefined)
+  );
+}
+
+function callPath(
+  args: ApplyPatchViewInput["args"] | undefined,
+  cwd: string
+): string {
+  const input = typeof args?.input === "string" ? args.input : undefined;
+  const firstPath = input ? PatchSummary.firstPath(input) : undefined;
+  return Paths.titleOr(
+    firstPath ? Paths.resolve(firstPath, cwd) : undefined,
+    cwd
+  );
+}
+
+function describeEntry(entry: ApplyEntry, cwd: string): EntryView {
   const rel = (p: string): string =>
     Paths.toForwardSlashes(Paths.displayRelative(Paths.resolve(p, cwd), cwd));
-  const stats = DiffView.countStats(entry.diff);
+  const stats = DiffBlocks.statSpans(entry.diff);
+  const plain = (path: string): Pick<EntryView, "title" | "path"> => ({
+    title: [{ text: rel(path) }],
+    path: rel(path),
+  });
 
   switch (entry.action.kind) {
     case "add":
       // A new file: reuse the write-tool look (green content body).
       return {
         label: "Write",
-        title: rel(entry.action.path),
+        ...plain(entry.action.path),
         stats,
         body: entry.diff,
       };
@@ -84,37 +110,60 @@ function describeEntry(
       // Title only with a -N stat; don't dump the removed file as a red diff.
       return {
         label: "Delete",
-        title: rel(entry.action.path),
+        ...plain(entry.action.path),
         stats,
         body: undefined,
       };
     case "move":
-      // A pure move has no body; a move with content changes still renders as an edit.
+      // A pure move has no body; a move with content changes renders as an edit.
       return {
         label: entry.diff ? "Edit" : "Move",
-        title: formatMoveTitle(
+        title: moveTitle(
           rel(entry.action.path),
-          rel(entry.action.movePath ?? entry.action.path),
-          theme
+          rel(entry.action.movePath ?? entry.action.path)
         ),
+        path: undefined,
         stats,
         body: entry.diff,
       };
     default:
       return {
         label: "Edit",
-        title: rel(entry.action.path),
+        ...plain(entry.action.path),
         stats,
         body: entry.diff,
       };
   }
 }
 
-function formatMoveTitle(
-  oldPath: string,
-  newPath: string,
-  theme: Theme
-): string {
+function titleBlock(entry: EntryView): ViewBlock {
+  return entry.path === undefined
+    ? { kind: "spans", spans: entry.title }
+    : { kind: "file", path: entry.path };
+}
+
+function statsBlocks(entry: EntryView): readonly ViewBlock[] {
+  return entry.stats.length === 0
+    ? []
+    : [{ kind: "spans", spans: entry.stats }];
+}
+
+function sectionBlock(entry: EntryView): ViewBlock {
+  return {
+    kind: "section",
+    label: entry.label,
+    content:
+      entry.stats.length === 0
+        ? entry.title
+        : [...entry.title, { text: " " }, ...entry.stats],
+  };
+}
+
+/**
+ * Collapses a rename to the segments that actually changed, striking the old
+ * ones: `aaa/{bbb ➝ ccc}/t.txt`.
+ */
+function moveTitle(oldPath: string, newPath: string): readonly Span[] {
   const oldParts = oldPath.split("/");
   const newParts = newPath.split("/");
   let commonPrefix = 0;
@@ -158,104 +207,22 @@ function formatMoveTitle(
     const suffix =
       commonSuffix > 0 ? `/${oldParts.slice(-commonSuffix).join("/")}` : "";
 
-    return (
-      prefix +
-      dim(theme, "{") +
-      dim(theme, theme.strikethrough(oldChanged.join("/"))) +
-      dim(theme, ` ${ARROW} `) +
-      normalTitle(theme, newChanged.join("/")) +
-      dim(theme, "}") +
-      normalTitle(theme, suffix)
-    );
+    return [
+      { text: prefix },
+      { text: "{", tone: "dim" },
+      { text: oldChanged.join("/"), tone: "dim", strike: true },
+      { text: ` ${ARROW} `, tone: "dim" },
+      { text: newChanged.join("/"), tone: "title" },
+      { text: "}", tone: "dim" },
+      { text: suffix, tone: "title" },
+    ];
   }
 
-  return `${dim(theme, theme.strikethrough(oldPath))} ${dim(
-    theme,
-    ARROW
-  )} ${normalTitle(theme, newPath)}`;
-}
-
-function dim(theme: Theme, text: string): string {
-  return theme.fg("dim", text);
-}
-
-function normalTitle(theme: Theme, text: string): string {
-  return text === "" ? "" : theme.fg("toolTitle", text);
-}
-
-export function renderApplyPatchResult(
-  result: AgentToolResult<unknown>,
-  options: ToolRenderResultOptions,
-  theme: Theme,
-  context: ApplyPatchRenderContext
-): Component {
-  const state = context.state;
-  const container =
-    (context.lastComponent as Container | undefined) ?? new Container();
-  container.clear();
-
-  if (options.isPartial) {
-    return container;
-  }
-
-  if (context.isError) {
-    return Renderer.renderBorderedResult({
-      result,
-      options,
-      theme,
-      context: { ...context, isPartial: false },
-      previewLines: ERROR_PREVIEW_LINES,
-    });
-  }
-
-  const details = result.details as ApplyPatchDetails | undefined;
-  // A no-op update (rewrote identical content) has nothing to show; skip it.
-  const entries = (details?.entries ?? []).filter(
-    (entry) => !(entry.action.kind === "update" && entry.diff === undefined)
-  );
-  const markerColor = Renderer.markerColorFor(false, false);
-
-  entries.forEach((entry, index) => {
-    const view = describeEntry(entry, context.cwd, theme);
-
-    if (index === 0 && state?.titleComponent) {
-      // Reuse the call title for the first file, updating it in place.
-      DiffView.buildTitle({
-        label: view.label,
-        path: view.title,
-        stats: view.stats,
-        theme,
-        markerColor,
-        lastComponent: state.titleComponent,
-      });
-    } else {
-      // A blank padding row separates each file from the previous one.
-      if (index > 0) {
-        container.addChild(blankLine());
-      }
-      container.addChild(
-        DiffView.buildTitle({
-          label: view.label,
-          path: view.title,
-          stats: view.stats,
-          theme,
-          markerColor,
-          lastComponent: undefined,
-        })
-      );
-    }
-
-    if (view.body) {
-      container.addChild(
-        DiffView.buildBlock({
-          diff: view.body,
-          theme,
-          lastComponent: undefined,
-        })
-      );
-    }
-  });
-
-  container.invalidate();
-  return container;
+  return [
+    { text: oldPath, tone: "dim", strike: true },
+    { text: " " },
+    { text: ARROW, tone: "dim" },
+    { text: " " },
+    { text: newPath, tone: "title" },
+  ];
 }

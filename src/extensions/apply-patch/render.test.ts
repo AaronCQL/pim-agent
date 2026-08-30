@@ -1,39 +1,25 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentToolResult, Theme } from "@earendil-works/pi-coding-agent";
-import { Container } from "@earendil-works/pi-tui";
+import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { DiffLines, type ToolDiff } from "../../shared/DiffLines";
-import type { DiffRenderState } from "../../shared/DiffView";
+import { AnsiPainter } from "../../shared/view/AnsiPainter";
 import type { ApplyEntry } from "./executor";
-import { renderApplyPatchCall, renderApplyPatchResult } from "./render";
+import { type ApplyPatchViewInput, applyPatchView } from "./render";
 
-const stubTheme = {
+const theme = {
   name: "test",
-  fg: (_color: string, text: string) => text,
-  bold: (text: string) => text,
-  strikethrough: (text: string) => text,
-} as unknown as Theme;
-
-const styledTheme = {
-  name: "styled-test",
-  fg: (color: string, text: string) =>
-    color === "dim" ? `<dim>${text}</dim>` : text,
+  fg: (color: ThemeColor, text: string) => `<${color}>${text}</${color}>`,
   bold: (text: string) => text,
   strikethrough: (text: string) => `<s>${text}</s>`,
 } as unknown as Theme;
 
-const ctx = (state: DiffRenderState) => ({
-  cwd: "/repo",
-  isPartial: false,
-  isError: false,
-  lastComponent: undefined,
-  state,
-});
+const added = (n: number) => `<toolDiffAdded>+${n}</toolDiffAdded>`;
+const removed = (n: number) => `<toolDiffRemoved>-${n}</toolDiffRemoved>`;
+const dim = (text: string) => `<dim>${text}</dim>`;
+const titled = (text: string) => `<toolTitle>${text}</toolTitle>`;
+const header = (label: string, title: string) =>
+  `<success> ▪</success> <toolTitle>${label}</toolTitle><toolTitle>: ${title}</toolTitle>`;
 
-// A title component left in `state` by the call, for the result to reuse.
-const calledState = (): DiffRenderState => ({
-  titleComponent: { render: () => [], invalidate() {} },
-  path: "a",
-});
+const cwd = "/repo";
 
 const changeDiff = (path: string): ToolDiff =>
   DiffLines.buildToolDiff(
@@ -59,89 +45,103 @@ const removeDiff = (path: string): ToolDiff =>
     3
   )!;
 
-const resultWith = (entries: readonly ApplyEntry[]): AgentToolResult<unknown> =>
-  ({
-    content: [{ type: "text", text: "ok" }],
-    details: { entries },
-  }) as unknown as AgentToolResult<unknown>;
+function view(
+  entries: readonly ApplyEntry[] | undefined,
+  args: ApplyPatchViewInput["args"] = { input: "" }
+): ReturnType<typeof applyPatchView> {
+  return applyPatchView({
+    args,
+    result:
+      entries === undefined
+        ? undefined
+        : {
+            content: [{ type: "text", text: "ok" }],
+            details: { entries },
+          },
+    cwd,
+  });
+}
 
-const renderText = (
-  entries: readonly ApplyEntry[],
-  state: DiffRenderState = {},
-  theme: Theme = stubTheme
-): string =>
-  (
-    renderApplyPatchResult(
-      resultWith(entries),
-      { expanded: false, isPartial: false },
-      theme,
-      ctx(state)
-    ) as Container
-  )
-    .render(240)
-    .join("\n");
+function paintTitle(
+  entries: readonly ApplyEntry[] | undefined,
+  args?: ApplyPatchViewInput["args"]
+): string {
+  return AnsiPainter.paint(view(entries, args).title, theme).join(" ");
+}
 
-describe("renderApplyPatchCall", () => {
-  test("draws a title up front and stores it in state for reuse", () => {
-    const state: DiffRenderState = {};
-    const comp = renderApplyPatchCall(
-      {
-        input:
-          "*** Begin Patch\n*** Update File: a.txt\n@@\n-x\n+y\n*** End Patch",
-      },
-      stubTheme,
-      ctx(state)
-    );
-    expect(comp).toBeDefined();
-    expect(state.titleComponent).toBeDefined();
+function paintBody(entries: readonly ApplyEntry[]): string {
+  return AnsiPainter.paint(view(entries).body ?? [], theme).join("\n");
+}
+
+const patchText = "*** Begin Patch\n*** Update File: a.txt\n@@\n-x\n+y";
+
+describe("applyPatchView in flight", () => {
+  test("titles the row from the first path in the raw patch text", () => {
+    expect(paintTitle(undefined, { input: patchText })).toBe("a.txt");
+    expect(view(undefined, { input: patchText }).label).toBe("Edit");
+  });
+
+  test("placeholder when the patch text has not streamed in yet", () => {
+    expect(paintTitle(undefined, { input: "" })).toBe("...");
+    expect(
+      paintTitle(undefined, undefined as unknown as ApplyPatchViewInput["args"])
+    ).toBe("...");
+  });
+
+  test("keeps the call title when the result carries no entries", () => {
+    expect(paintTitle([], { input: patchText })).toBe("a.txt");
+  });
+
+  test("skips a no-op update that rewrote identical content", () => {
+    expect(
+      paintTitle(
+        [{ action: { kind: "update", path: "/repo/a.txt" }, diff: undefined }],
+        { input: patchText }
+      )
+    ).toBe("a.txt");
   });
 });
 
-describe("renderApplyPatchResult", () => {
-  test("update reuses the call title; container holds just the diff body", () => {
-    const out = renderApplyPatchResult(
-      resultWith([
-        {
-          action: { kind: "update", path: "/repo/a.txt" },
-          diff: changeDiff("/repo/a.txt"),
-        },
-      ]),
-      { expanded: false, isPartial: false },
-      stubTheme,
-      ctx(calledState())
-    );
-    expect((out as Container).children).toHaveLength(1);
+describe("applyPatchView first entry", () => {
+  test("update titles the row with the path and its stats", () => {
+    const entries: ApplyEntry[] = [
+      {
+        action: { kind: "update", path: "/repo/a.txt" },
+        diff: changeDiff("/repo/a.txt"),
+      },
+    ];
+    expect(view(entries).label).toBe("Edit");
+    expect(paintTitle(entries)).toBe(`a.txt ${added(1)}/${removed(1)}`);
+    expect(paintBody(entries)).toContain("BETA");
   });
 
-  test("add renders a Write label with green content", () => {
-    const text = renderText([
+  test("add renders a Write label with the created content as the body", () => {
+    const entries: ApplyEntry[] = [
       {
         action: { kind: "add", path: "/repo/new.ts" },
         diff: addDiff("/repo/new.ts"),
       },
-    ]);
-    expect(text).toContain("Write");
-    expect(text).toContain("new.ts");
-    expect(text).toContain("+2"); // added-line stat in the title
-    expect(text).toContain("one"); // green content body
-    expect(text).toContain("two");
+    ];
+    expect(view(entries).label).toBe("Write");
+    expect(paintTitle(entries)).toBe(`new.ts ${added(2)}`);
+    expect(paintBody(entries)).toContain("one");
+    expect(paintBody(entries)).toContain("two");
   });
 
   test("delete renders a Delete label, title only with a -N stat", () => {
-    const text = renderText([
+    const entries: ApplyEntry[] = [
       {
         action: { kind: "delete", path: "/repo/old.ts" },
         diff: removeDiff("/repo/old.ts"),
       },
-    ]);
-    expect(text).toContain("Delete");
-    expect(text).toContain("-3");
-    // No removed-content body.
-    expect(text).not.toContain("-x");
+    ];
+    expect(view(entries).label).toBe("Delete");
+    expect(paintTitle(entries)).toBe(`old.ts ${removed(3)}`);
+    expect(paintBody(entries)).toBe("");
   });
 
   test("pure rename renders Move with a compact arrow title and no body", () => {
-    const text = renderText([
+    const entries: ApplyEntry[] = [
       {
         action: {
           kind: "move",
@@ -150,15 +150,17 @@ describe("renderApplyPatchResult", () => {
         },
         diff: undefined,
       },
-    ]);
-    expect(text).toContain("Move");
-    expect(text).toContain(".pim-edit-tool-test/{beta.txt ➝ gamma.txt}");
-    expect(text).not.toContain("Edit");
+    ];
+    expect(view(entries).label).toBe("Move");
+    expect(paintTitle(entries)).toBe(
+      `.pim-edit-tool-test/${dim("{")}${dim("<s>beta.txt</s>")}${dim(" ➝ ")}${titled("gamma.txt")}${dim("}")}`
+    );
+    expect(paintBody(entries)).toBe("");
   });
 
-  test("pure rename dims structure and strikes the old changed segment", () => {
-    const text = renderText(
-      [
+  test("rename keeps the common prefix and suffix outside the braces", () => {
+    expect(
+      paintTitle([
         {
           action: {
             kind: "move",
@@ -167,44 +169,112 @@ describe("renderApplyPatchResult", () => {
           },
           diff: undefined,
         },
-      ],
-      {},
-      styledTheme
-    );
-    expect(text).toContain(
-      "aaa/<dim>{</dim><dim><s>bbb</s></dim><dim> ➝ </dim>ccc<dim>}</dim>/test.txt"
+      ])
+    ).toBe(
+      `aaa/${dim("{")}${dim("<s>bbb</s>")}${dim(" ➝ ")}${titled("ccc")}${dim("}")}${titled("/test.txt")}`
     );
   });
 
-  test("move + edit renders Edit with the compact arrow title and a diff", () => {
-    const text = renderText([
+  test("rename without a shared segment falls back to a plain arrow", () => {
+    expect(
+      paintTitle([
+        {
+          action: {
+            kind: "move",
+            path: "/repo/aaa/one.txt",
+            movePath: "/repo/bbb/two.md",
+          },
+          diff: undefined,
+        },
+      ])
+    ).toBe(`${dim("<s>aaa/one.txt</s>")} ${dim("➝")} ${titled("bbb/two.md")}`);
+  });
+
+  test("move + edit renders Edit with the arrow title and a diff", () => {
+    const entries: ApplyEntry[] = [
       {
         action: { kind: "move", path: "/repo/a.ts", movePath: "/repo/b.ts" },
         diff: changeDiff("/repo/b.ts"),
       },
+    ];
+    expect(view(entries).label).toBe("Edit");
+    expect(paintTitle(entries)).toBe(
+      `${dim("{")}${dim("<s>a.ts</s>")}${dim(" ➝ ")}${titled("b.ts")}${dim("}")} ${added(1)}/${removed(1)}`
+    );
+    expect(paintBody(entries)).toContain("BETA");
+  });
+});
+
+describe("applyPatchView trailing entries", () => {
+  test("appends each further file after a blank padding row", () => {
+    const body = paintBody([
+      {
+        action: { kind: "update", path: "/repo/a.txt" },
+        diff: changeDiff("/repo/a.txt"),
+      },
+      {
+        action: { kind: "add", path: "/repo/b.txt" },
+        diff: addDiff("/repo/b.txt"),
+      },
+      {
+        action: { kind: "delete", path: "/repo/c.txt" },
+        diff: removeDiff("/repo/c.txt"),
+      },
+    ]).split("\n");
+
+    const headers = body.filter((line) => line.startsWith("<success>"));
+    expect(headers).toEqual([
+      header("Write", `b.txt ${added(2)}`),
+      header("Delete", `c.txt ${removed(3)}`),
     ]);
-    expect(text).toContain("Edit");
-    expect(text).toContain("{a.ts ➝ b.ts}");
-    expect(text).toContain("BETA");
+    expect(body.at(-1)).toBe(header("Delete", `c.txt ${removed(3)}`));
+    expect(body.filter((line) => line === "")).toHaveLength(2);
   });
 
-  test("multi-file appends further files with a padding row between", () => {
-    const out = renderApplyPatchResult(
-      resultWith([
+  test("a section carries its own separator, even after a body-less entry", () => {
+    const body = paintBody([
+      {
+        action: { kind: "delete", path: "/repo/a.txt" },
+        diff: removeDiff("/repo/a.txt"),
+      },
+      {
+        action: { kind: "add", path: "/repo/b.txt" },
+        diff: addDiff("/repo/b.txt"),
+      },
+    ]).split("\n");
+
+    expect(body[0]).toBe("");
+    expect(body[1]).toBe(header("Write", `b.txt ${added(2)}`));
+  });
+
+  test("a section without stats carries the bare title", () => {
+    const body = paintBody([
+      {
+        action: { kind: "update", path: "/repo/a.txt" },
+        diff: changeDiff("/repo/a.txt"),
+      },
+      {
+        action: { kind: "move", path: "/repo/x.txt", movePath: "/repo/y.txt" },
+        diff: undefined,
+      },
+    ]).split("\n");
+
+    expect(body.at(-1)).toBe(
+      header(
+        "Move",
+        `${dim("{")}${dim("<s>x.txt</s>")}${dim(" ➝ ")}${titled("y.txt")}${dim("}")}`
+      )
+    );
+  });
+
+  test("forces the body open so diffs are never hidden behind an expand", () => {
+    expect(
+      view([
         {
           action: { kind: "update", path: "/repo/a.txt" },
           diff: changeDiff("/repo/a.txt"),
         },
-        {
-          action: { kind: "update", path: "/repo/b.txt" },
-          diff: changeDiff("/repo/b.txt"),
-        },
-      ]),
-      { expanded: false, isPartial: false },
-      stubTheme,
-      ctx(calledState())
-    );
-    // body(file1) + blank + title(file2) + body(file2)
-    expect((out as Container).children).toHaveLength(4);
+      ]).collapsed
+    ).toBe(false);
   });
 });
