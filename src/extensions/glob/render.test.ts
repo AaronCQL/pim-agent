@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import type { AgentToolResult, Theme } from "@earendil-works/pi-coding-agent";
+import { AnsiPainter } from "../../shared/view/AnsiPainter";
 import type { GlobMatch } from "./glob";
-import { formatTitle, renderFiles } from "./render";
+import { globView, renderFiles } from "./render";
+import type { GlobDetails, GlobInput } from "./schema";
 
 const fixture: readonly GlobMatch[] = [
   { path: "/repo/newer.ts", mtime: 2_000 },
@@ -16,6 +19,63 @@ const absoluteOptions = {
   cwd: "/repo",
   pathFormat: "absolute",
 } as const;
+
+const stubTheme = {
+  bold: (text: string) => text,
+  fg: (_color: string, text: string) => text,
+} as unknown as Theme;
+
+function result(
+  body: string,
+  details: Partial<GlobDetails> = {}
+): AgentToolResult<GlobDetails> {
+  return {
+    content: [{ type: "text", text: body }],
+    details: {
+      absolutePath: "/repo",
+      pattern: "**/*.ts",
+      exclude: undefined,
+      includeDotfiles: false,
+      includeIgnored: false,
+      pathFormat: "relative",
+      fileCount: 2,
+      totalItems: 2,
+      visibleItems: 2,
+      truncated: false,
+      ...details,
+    },
+  };
+}
+
+function title(
+  args: Partial<GlobInput>,
+  settled?: AgentToolResult<GlobDetails>
+): string {
+  const view = globView({
+    args: args as GlobInput,
+    result: settled,
+    cwd: "/repo",
+  });
+  return AnsiPainter.paint(view.title, stubTheme).join(" ");
+}
+
+function body(settled: AgentToolResult<GlobDetails>): string[] {
+  const view = globView({
+    args: { pattern: "**/*.ts" },
+    result: settled,
+    cwd: "/repo",
+  });
+  return AnsiPainter.paint(view.body ?? [], stubTheme);
+}
+
+describe("globView", () => {
+  test("supplies the title-cased display label", () => {
+    expect(
+      globView({ args: { pattern: "**/*.ts" } as GlobInput, cwd: "/repo" })
+        .label
+    ).toBe("Glob");
+  });
+});
 
 describe("renderFiles", () => {
   test("joins paths with newlines, newest first, relative by default", () => {
@@ -48,79 +108,66 @@ describe("renderFiles", () => {
   });
 });
 
-describe("formatTitle", () => {
+describe("globView title", () => {
   test("uses relative path under cwd", () => {
-    const title = formatTitle({
-      pattern: "**/*.ts",
-      path: "/repo/src",
-      cwd: "/repo",
-    });
-    expect(title).toBe("**/*.ts in src");
+    expect(title({ pattern: "**/*.ts", path: "/repo/src" })).toBe(
+      "**/*.ts in src"
+    );
   });
 
   test("omits location when path is undefined", () => {
-    const title = formatTitle({
-      pattern: "**/*.ts",
-      path: undefined,
-      cwd: "/repo",
-    });
-    expect(title).toBe("**/*.ts");
+    expect(title({ pattern: "**/*.ts" })).toBe("**/*.ts");
   });
 
   test("omits location when path resolves to cwd", () => {
-    const title = formatTitle({
-      pattern: "**/*.ts",
-      path: ".",
-      cwd: "/repo",
-    });
-    expect(title).toBe("**/*.ts");
+    expect(title({ pattern: "**/*.ts", path: "." })).toBe("**/*.ts");
   });
 
   test("omits location when path is the absolute cwd", () => {
-    const title = formatTitle({
-      pattern: "**/*.ts",
-      path: "/repo",
-      cwd: "/repo",
-    });
-    expect(title).toBe("**/*.ts");
+    expect(title({ pattern: "**/*.ts", path: "/repo" })).toBe("**/*.ts");
   });
 
-  test("uses '...' placeholder when pattern is undefined", () => {
-    const title = formatTitle({
-      pattern: undefined,
-      path: undefined,
-      cwd: "/repo",
-    });
-    expect(title).toBe("...");
+  test("uses '...' placeholder while the pattern is still streaming", () => {
+    expect(title({})).toBe("...");
   });
 
-  test("appends pluralized file count when provided", () => {
-    const title = formatTitle({
-      pattern: "**/*.ts",
-      path: "/repo/src",
-      cwd: "/repo",
-      fileCount: 3,
-    });
-    expect(title).toBe("**/*.ts in src (3 files)");
+  test("appends pluralized file count once the call settles", () => {
+    expect(
+      title(
+        { pattern: "**/*.ts", path: "/repo/src" },
+        result("src/a.ts", { fileCount: 3 })
+      )
+    ).toBe("**/*.ts in src (3 files)");
   });
 
   test("uses singular noun for a single file", () => {
-    const title = formatTitle({
-      pattern: "**/*.ts",
-      path: undefined,
-      cwd: "/repo",
-      fileCount: 1,
-    });
-    expect(title).toBe("**/*.ts (1 file)");
+    expect(
+      title({ pattern: "**/*.ts" }, result("a.ts", { fileCount: 1 }))
+    ).toBe("**/*.ts (1 file)");
   });
 
   test("shows zero count without omitting the suffix", () => {
-    const title = formatTitle({
-      pattern: "**/*.ts",
-      path: undefined,
-      cwd: "/repo",
-      fileCount: 0,
-    });
-    expect(title).toBe("**/*.ts (0 files)");
+    expect(
+      title({ pattern: "**/*.ts" }, result("No matches.", { fileCount: 0 }))
+    ).toBe("**/*.ts (0 files)");
+  });
+});
+
+describe("globView body", () => {
+  test("paints one line per matched path", () => {
+    expect(body(result("src/a.ts\nsrc/b.ts"))).toEqual([
+      "src/a.ts",
+      "src/b.ts",
+    ]);
+  });
+
+  test("keeps the no-match message as plain text", () => {
+    expect(body(result("No matches.", { fileCount: 0 }))).toEqual([
+      "No matches.",
+    ]);
+  });
+
+  test("is empty when the result carries no text", () => {
+    expect(body(result(""))).toEqual([]);
   });
 });

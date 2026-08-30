@@ -51,3 +51,17 @@ export const globSchema = Type.Object({
 
 export type GlobInput = Static<typeof globSchema>;
 export type GlobPathFormat = (typeof GLOB_PATH_FORMATS)[number];
+
+/** Structured result payload the view model renders from. */
+export type GlobDetails = {
+  readonly absolutePath: string;
+  readonly pattern: string;
+  readonly exclude: readonly string[] | undefined;
+  readonly includeDotfiles: boolean;
+  readonly includeIgnored: boolean;
+  readonly pathFormat: GlobPathFormat;
+  readonly fileCount: number;
+  readonly totalItems: number;
+  readonly visibleItems: number;
+  readonly truncated: boolean;
+};

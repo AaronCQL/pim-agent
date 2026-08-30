@@ -1,7 +1,14 @@
 import { OutputBudget } from "../../shared/OutputBudget";
 import { Paths } from "../../shared/Paths";
+import type { ToolViewInput } from "../../shared/Tools";
+import type { ToolView, ViewBlock } from "../../shared/view/ViewBlock";
 import type { GlobMatch } from "./glob";
-import type { GlobPathFormat } from "./schema";
+import type {
+  GlobDetails,
+  GlobInput,
+  GlobPathFormat,
+  globSchema,
+} from "./schema";
 
 export type RenderOutcome = {
   readonly body: string;
@@ -42,14 +49,51 @@ export function renderFiles(
   };
 }
 
-export type TitleOptions = {
+type GlobViewInput = ToolViewInput<typeof globSchema, GlobDetails>;
+
+export function globView({ args, result, cwd }: GlobViewInput): ToolView {
+  const input = (args ?? {}) as Partial<GlobInput>;
+  return {
+    label: "Glob",
+    title: [
+      {
+        kind: "text",
+        text: formatTitle({
+          pattern: input.pattern,
+          path: input.path,
+          cwd,
+          fileCount: result?.details?.fileCount,
+        }),
+      },
+    ],
+    body: formatBody(result),
+  };
+}
+
+/**
+ * The rendered listing is already baked into the result content by `execute`,
+ * so replaying a persisted entry never re-resolves paths.
+ */
+function formatBody(result: GlobViewInput["result"]): readonly ViewBlock[] {
+  const first = result?.content?.[0];
+  const text = first && "text" in first ? (first.text ?? "") : "";
+  if (text === "") {
+    return [];
+  }
+  if (result?.details?.fileCount === 0) {
+    return [{ kind: "text", text }];
+  }
+  return text.split("\n").map((path) => ({ kind: "file", path }));
+}
+
+type TitleOptions = {
   readonly pattern: string | undefined;
   readonly path: string | undefined;
   readonly cwd: string;
   readonly fileCount?: number;
 };
 
-export function formatTitle(options: TitleOptions): string {
+function formatTitle(options: TitleOptions): string {
   const pattern = options.pattern ?? "...";
   const resolved =
     options.path === undefined

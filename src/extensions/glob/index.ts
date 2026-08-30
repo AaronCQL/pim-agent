@@ -1,13 +1,8 @@
-import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Paths } from "../../shared/Paths";
-import {
-  Renderer,
-  type StatefulToolCallTitleContext,
-  type StatefulToolCallTitleState,
-} from "../../shared/Renderer";
 import { Tools } from "../../shared/Tools";
 import { findFiles } from "./glob";
-import { formatTitle, renderFiles } from "./render";
+import { globView, renderFiles } from "./render";
 import {
   GLOB_HEAD_LIMIT_MAX,
   type GlobInput,
@@ -15,37 +10,7 @@ import {
   globSchema,
 } from "./schema";
 
-const PREVIEW_LINES = 10;
 const DEFAULT_PATH_FORMAT: GlobPathFormat = "relative";
-
-type GlobCallState = StatefulToolCallTitleState & {
-  fileCount?: number;
-};
-
-type GlobRenderContext = StatefulToolCallTitleContext & {
-  readonly args?: GlobInput;
-  readonly cwd: string;
-};
-
-function renderTitle(
-  input: Partial<GlobInput>,
-  theme: Theme,
-  context: GlobRenderContext
-) {
-  const state = context.state as GlobCallState;
-  const title = formatTitle({
-    pattern: input.pattern,
-    path: input.path,
-    cwd: context.cwd,
-    fileCount: state.fileCount,
-  });
-  return Renderer.renderStatefulToolCallTitle({
-    label: "Glob",
-    title,
-    theme,
-    context,
-  });
-}
 
 export default function (pi: ExtensionAPI): void {
   Tools.register(pi, {
@@ -112,27 +77,6 @@ export default function (pi: ExtensionAPI): void {
         },
       };
     },
-    renderCall(args, theme, context) {
-      return renderTitle((args ?? {}) as Partial<GlobInput>, theme, context);
-    },
-    renderResult(result, options, theme, context) {
-      const state = context.state as GlobCallState;
-      const details = result.details as
-        | { readonly fileCount?: number }
-        | undefined;
-
-      if (details?.fileCount !== undefined) {
-        state.fileCount = details.fileCount;
-        renderTitle(context.args ?? {}, theme, context);
-      }
-
-      return Renderer.renderBorderedResult({
-        result,
-        options,
-        theme,
-        context,
-        previewLines: PREVIEW_LINES,
-      });
-    },
+    toViewModel: globView,
   });
 }
