@@ -21,3 +21,14 @@ export const webFetchSchema = Type.Object({
 });
 
 export type WebFetchInput = Static<typeof webFetchSchema>;
+
+/** Structured result payload the view model renders from. */
+export type WebFetchDetails = {
+  readonly url: string;
+  readonly title: string;
+  readonly format: WebFetchResolvedFormat;
+  readonly returnedBytes: number;
+  readonly totalBytes: number;
+  readonly truncated: boolean;
+  readonly path: string | null;
+};

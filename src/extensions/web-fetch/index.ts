@@ -1,19 +1,12 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { PimSettings } from "../../shared/PimSettings";
-import { Renderer } from "../../shared/Renderer";
 import { SpillCache } from "../../shared/SpillCache";
 import { Tools } from "../../shared/Tools";
-import { executeFetch, validatePublicUrl, type WebFetchOutcome } from "./fetch";
+import { executeFetch, validatePublicUrl } from "./fetch";
 import { JinaReaderClient } from "./JinaReaderClient";
-import { formatTitle, type WebFetchTitleOutcome } from "./render";
+import { webFetchView } from "./render";
 import { type WebFetchInput, webFetchSchema } from "./schema";
 import { WebViewFetchClient } from "./WebViewFetchClient";
-
-const PREVIEW_LINES = 10;
-
-type WebFetchRenderState = {
-  outcome?: WebFetchTitleOutcome;
-};
 
 async function createJina(): Promise<JinaReaderClient> {
   const apiKey = await PimSettings.getJinaApiKey();
@@ -65,43 +58,6 @@ export default function (pi: ExtensionAPI): void {
         },
       };
     },
-    renderCall(args, theme, context) {
-      const input = (args ?? {}) as Partial<WebFetchInput>;
-      const state = context.state as WebFetchRenderState;
-      return Renderer.renderToolCallTitle({
-        label: "Web Fetch",
-        title: formatTitle(input.url, input.format, state.outcome),
-        theme,
-        context,
-      });
-    },
-    renderResult(result, options, theme, context) {
-      const state = context.state as WebFetchRenderState;
-
-      if (!options.isPartial && state.outcome === undefined) {
-        const details = result.details as
-          | Pick<WebFetchOutcome, "format" | "totalBytes">
-          | undefined;
-
-        if (
-          details?.format !== undefined &&
-          typeof details.totalBytes === "number"
-        ) {
-          state.outcome = {
-            format: details.format,
-            totalBytes: details.totalBytes,
-          };
-          context.invalidate();
-        }
-      }
-
-      return Renderer.renderBorderedResult({
-        result,
-        options,
-        theme,
-        context,
-        previewLines: PREVIEW_LINES,
-      });
-    },
+    toViewModel: webFetchView,
   });
 }
