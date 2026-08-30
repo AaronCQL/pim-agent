@@ -122,6 +122,11 @@ export class SessionHost {
     return this.currentSettings;
   }
 
+  /** Where auth, models, skills, and sessions live for this host. */
+  public get agentDir(): string {
+    return this.deps.agentDir;
+  }
+
   /** Where this session's tools resolve relative paths, session override first. */
   public get cwd(): string {
     return this.currentSettings.cwd ?? this.deps.defaults.cwd;

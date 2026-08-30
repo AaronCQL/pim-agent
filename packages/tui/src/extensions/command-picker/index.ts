@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { rank } from "./ranker";
+import { rankCommands } from "../../../../core/src/picker/commandRanker";
 
 const MAX_VISIBLE_ROWS = 10;
 const SLASH_PREFIX = /^\/([^\s]*)$/;
@@ -22,7 +22,7 @@ export default function (pi: ExtensionAPI): void {
           return null;
         }
 
-        const items = rank(slashMatch[1] ?? "", all.items, {
+        const items = rankCommands(slashMatch[1] ?? "", all.items, {
           limit: MAX_VISIBLE_ROWS,
         });
         if (items.length === 0) {

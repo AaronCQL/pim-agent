@@ -1,7 +1,7 @@
 import { readdir, stat } from "node:fs/promises";
 import { isAbsolute, join, parse, resolve, sep } from "node:path";
-import { FileEnumerator } from "../../../../core/src/shared/FileEnumerator";
-import { Paths } from "../../../../core/src/shared/Paths";
+import { FileEnumerator } from "../shared/FileEnumerator";
+import { Paths } from "../shared/Paths";
 
 export type FileCandidate = {
   readonly insertPath: string;

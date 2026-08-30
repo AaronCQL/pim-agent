@@ -12,8 +12,8 @@ Bun workspaces (`packages/*`), no build step — Bun and pi both resolve the TS 
 
 | Package | Contents |
 | --- | --- |
-| `packages/core` | Tools, schemas, `shared/` utilities, `view/` (the `ViewBlock`/`ToolView` contract plus the ANSI and Markdown painters), and `session/` (`SessionHost` — one in-process `createAgentSession()`; `EventLog` — a thin reader over pi's session JSONL; `SessionRegistry` — keyed on pi's session UUID). Frontend-agnostic; depends on nothing else in `packages/`. |
-| `packages/tui` | Terminal frontend: splash/`_init`, file & command pickers, powerline footer, tps, working indicator, `themes/`. |
+| `packages/core` | Tools, schemas, `shared/` utilities, `view/` (the `ViewBlock`/`ToolView` contract plus the ANSI and Markdown painters), `session/` (`SessionHost` — one in-process `createAgentSession()`; `EventLog` — a thin reader over pi's session JSONL; `SessionRegistry` — keyed on pi's session UUID), `picker/` (the headless `@`-path and command/skill query: catalog, ranker, worker, `PickerService`), and `attachments/` (`AttachmentStore`). Frontend-agnostic; depends on nothing else in `packages/`. |
+| `packages/tui` | Terminal frontend: splash/`_init`, the autocomplete providers that drive `core/picker`, powerline footer, tps, working indicator, `themes/`. |
 | `packages/telegram` | Telegram frontend: grammy bot, chat-keyed session map, daemon `Supervisor`. |
 | `packages/protocol` | Versioned client/server wire types. Imported by server and web **only** — never by the TUI, and nothing in it may assume a browser. |
 | `packages/server` | Transport plus the remote approval policy: `WsGateway` (Bun WebSocket, resume handshake, fanout), `SessionStream`/`SessionProjection` (pi's JSONL → wire events), `ClientConnection` (backpressure), `ApprovalRouter` (the three-tier tool gate), and the `ProbeClient`/`bun run probe` CLI. Workspace-only; never published. |
@@ -36,6 +36,10 @@ Cross-package imports are ordinary relative paths (`../../core/src/shared/Tools`
 Inside a running `pim` session, `/reload` re-loads Pim Agent after edits without restarting.
 
 Remote tool approvals are async request/response events, not a modal prompt. `ApprovalRouter` auto-approves tools that declare `effect: { kind: "readOnly" }` and writes whose canonical target stays inside the session cwd; everything else — anything `unbounded`, and anything that declares no `effect` at all — blocks that session's turn until a client answers `approve_tool`. The tier comes from the tool's own declaration in `PimToolDefinition`, never from a name list.
+
+Pickers are always a server-side query, because `@` names a file the *agent* must open and a skill is a capability on the agent's disk (Guiding Decision 8). `PickerService` is per session, keyed on its cwd; ranking never leaves the machine — what crosses the wire is one query and at most `limit` rows. A client caches per query and drops that cache on `picker_invalidate`, which the server pushes when the cwd moves or a tool that is not declared `readOnly` finishes. `RemoteFilePickerSuggestionEngine` is the client half and implements the same `FilePickerSuggestionEngine` the TUI drives in-process.
+
+An upload is not a picker: client bytes must be *transferred into* the server's world before the agent can see them, and a client-local path must never reach the conversation. `AttachmentStore` is that one flow — Telegram's `getFile` and the gateway's `POST /upload` are two adapters over it. Images are inlined as base64 `PromptOptions.images`; everything else is referenced by **server** path.
 
 Pi's session JSONL is the only event store — no database, no index (`notes/split-architecture-plan.md`, Resolved Decision 2). The wire `seq` is a line's physical ordinal in that file; pi appends and never rewrites, so ordinals are stable and resume is `seq > n`. Read it through `EventLog`, never by hand.
 

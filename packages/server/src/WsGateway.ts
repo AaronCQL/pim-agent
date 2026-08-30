@@ -1,12 +1,17 @@
 import type { Server, ServerWebSocket } from "bun";
 
+import type { ImageContent } from "@earendil-works/pi-ai";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+
+import { AttachmentStore } from "../../core/src/attachments/AttachmentStore";
+import type { PickerItem } from "../../core/src/picker/PickerItem";
 import type { SessionRegistry } from "../../core/src/session/SessionRegistry";
 import type { SessionHost } from "../../core/src/session/SessionHost";
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Command } from "../../protocol/src/Command";
 import { PROTOCOL_VERSION } from "../../protocol/src/Protocol";
 import { ClientConnection } from "./ClientConnection";
 import { SessionStream } from "./SessionStream";
+import { UploadEndpoint } from "./UploadEndpoint";
 
 /** Close code for a client speaking a protocol this server does not. */
 export const CLOSE_PROTOCOL_MISMATCH = 4001;
@@ -21,6 +26,14 @@ export type WsGatewayDeps = {
   readonly hostname?: string;
   /** 0 asks the OS for a free port; read it back from `port`. */
   readonly port?: number;
+  /** Where `POST /upload` materialises bytes; defaults to `~/.pim/attachments`. */
+  readonly attachmentsRoot?: string;
+};
+
+/** What a command answered with: an error, rows, or neither. */
+type Outcome = {
+  readonly error?: string;
+  readonly items?: readonly PickerItem[];
 };
 
 const DEFAULT_PORT = 4319;
@@ -42,6 +55,7 @@ export class WsGateway {
   private readonly registry: SessionRegistry;
   private readonly hostname: string;
   private readonly requestedPort: number;
+  private readonly uploads: UploadEndpoint;
   private readonly streams = new Map<string, SessionStream>();
   private readonly opening = new Map<string, Promise<SessionStream>>();
   private readonly connections = new Map<
@@ -54,6 +68,9 @@ export class WsGateway {
     this.registry = deps.registry;
     this.hostname = deps.hostname ?? "127.0.0.1";
     this.requestedPort = deps.port ?? DEFAULT_PORT;
+    this.uploads = new UploadEndpoint(
+      deps.attachmentsRoot === undefined ? {} : { root: deps.attachmentsRoot }
+    );
   }
 
   public get port(): number {
@@ -77,8 +94,12 @@ export class WsGateway {
       port: this.requestedPort,
       idleTimeout: 0,
       fetch: (req, server) => {
-        if (new URL(req.url).pathname === "/health") {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/health") {
           return Response.json({ ok: true, protocolVersion: PROTOCOL_VERSION });
+        }
+        if (pathname === "/upload") {
+          return this.uploads.handle(req);
         }
         return server.upgrade(req)
           ? undefined
@@ -153,12 +174,13 @@ export class WsGateway {
       return;
     }
     try {
-      const error = await this.dispatch(connection, command);
+      const { error, items } = await this.dispatch(connection, command);
       connection.send({
         type: "response",
         id: command.id,
         success: error === undefined,
         ...(error === undefined ? {} : { error }),
+        ...(items === undefined ? {} : { items }),
       });
     } catch (err) {
       connection.send({
@@ -170,11 +192,10 @@ export class WsGateway {
     }
   }
 
-  /** Returns an error message, or undefined when the command succeeded. */
   private async dispatch(
     connection: ClientConnection,
     command: Command
-  ): Promise<string | undefined> {
+  ): Promise<Outcome> {
     if (command.type === "attach") {
       return await this.attach(connection, command);
     }
@@ -182,50 +203,59 @@ export class WsGateway {
       ? this.streams.get(connection.sessionId)
       : undefined;
     if (!stream) {
-      return "not attached: send `attach` first";
+      return { error: "not attached: send `attach` first" };
     }
     const host = stream.host;
     switch (command.type) {
       case "user_message":
-        this.prompt(host, command.text, "followUp");
-        return undefined;
+        this.promptWithAttachments(stream, command);
+        return {};
       case "steer":
         this.prompt(host, command.text, "steer");
-        return undefined;
+        return {};
       case "cancel":
-        return (await host.cancel()) ? undefined : "nothing to cancel";
+        return (await host.cancel()) ? {} : { error: "nothing to cancel" };
       case "set_cwd": {
         const result = await host.setCwd(command.value);
         stream.push(stream.sessionState());
-        return result.ok ? undefined : result.error;
+        if (!result.ok) {
+          return { error: result.error };
+        }
+        stream.invalidatePickers("all");
+        return {};
       }
       case "set_model": {
         const result = await host.setModel(command.value);
         stream.push(stream.sessionState());
         return result.ok
-          ? undefined
-          : `${result.kind} model "${command.value}"; candidates: ${result.candidates.join(", ")}`;
+          ? {}
+          : {
+              error: `${result.kind} model "${command.value}"; candidates: ${result.candidates.join(", ")}`,
+            };
       }
       case "set_thinking":
         await host.setThinkingLevel(command.value as ThinkingLevel);
         stream.push(stream.sessionState());
-        return undefined;
+        return {};
       case "approve_tool": {
         const result = stream.resolveApproval(command.callId, command.approved);
-        return result.ok ? undefined : result.error;
+        return result.ok ? {} : { error: result.error };
       }
       case "pick_files":
+        return {
+          items: await stream.picker.files(command.query, command.limit),
+        };
       case "pick_commands":
-        return `${command.type} is not implemented yet`;
+        return { items: stream.picker.commands(command.query, command.limit) };
       default:
-        return `unknown command: ${(command as Command).type}`;
+        return { error: `unknown command: ${(command as Command).type}` };
     }
   }
 
   private async attach(
     connection: ClientConnection,
     command: Command & { readonly type: "attach" }
-  ): Promise<string | undefined> {
+  ): Promise<Outcome> {
     const stream = await this.ensureStream(command.sessionId, command.cwd);
     connection.send({
       type: "attached",
@@ -235,7 +265,7 @@ export class WsGateway {
       head: await stream.refresh(),
     });
     await connection.attach(stream, command.fromSeq);
-    return undefined;
+    return {};
   }
 
   private async ensureStream(
@@ -291,6 +321,24 @@ export class WsGateway {
   }
 
   /**
+   * Resolves the ids `POST /upload` handed out into what the agent is told:
+   * inline bytes for an image, a server path for anything else. The client's
+   * own path for those bytes was never sent and never enters the history.
+   */
+  private promptWithAttachments(
+    stream: SessionStream,
+    command: Command & { readonly type: "user_message" }
+  ): void {
+    const taken = this.uploads.take(
+      stream.sessionId,
+      (command.attachments ?? []).map((ref) => ref.id)
+    );
+    const { lines, images } = AttachmentStore.toPrompt(taken);
+    const text = [command.text, ...lines].filter(Boolean).join("\n\n").trim();
+    this.prompt(stream.host, text, "followUp", images);
+  }
+
+  /**
    * Turns are fire-and-forget: the response says the prompt was accepted, not
    * that the agent finished. Waiting would tie the turn to the connection,
    * which is exactly what this architecture exists to avoid.
@@ -298,12 +346,14 @@ export class WsGateway {
   private prompt(
     host: SessionHost,
     text: string,
-    streamingBehavior: "steer" | "followUp"
+    streamingBehavior: "steer" | "followUp",
+    images: readonly ImageContent[] = []
   ): void {
+    const attached = images.length === 0 ? {} : { images: [...images] };
     const agent = host.agentSession;
     if (agent && host.isStreaming) {
       void agent
-        .prompt(text, { streamingBehavior, source: "rpc" })
+        .prompt(text, { streamingBehavior, source: "rpc", ...attached })
         .catch((err: unknown) => {
           console.error(`[gateway] ${streamingBehavior} failed:`, err);
         });
@@ -311,7 +361,7 @@ export class WsGateway {
     }
     void host
       .run(async (session) => {
-        await session.prompt(text, { source: "rpc" });
+        await session.prompt(text, { source: "rpc", ...attached });
       })
       .catch((err: unknown) => {
         console.error(`[gateway] turn failed:`, err);

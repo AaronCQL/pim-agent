@@ -1,10 +1,10 @@
 import { basename } from "node:path";
-import type { AutocompleteItem } from "@earendil-works/pi-tui";
+import type { PickerItem } from "./PickerItem";
 import {
   FuzzyMatcher,
   type FuzzyCandidate,
   type FuzzyIndex,
-} from "../../../../core/src/shared/FuzzyMatcher";
+} from "../shared/FuzzyMatcher";
 import { type FileCandidate, loadAbsolute } from "./catalog";
 
 export type FileRankOptions = {
@@ -69,7 +69,7 @@ class RelativeRankingIndex {
     this.loweredSource = lowered;
   }
 
-  public rank(query: string, limit: number | undefined): AutocompleteItem[] {
+  public rank(query: string, limit: number | undefined): PickerItem[] {
     const scoped = this.scopedCandidates(query);
     if (scoped !== undefined) {
       return rankCandidates(scoped.candidates, scoped.residualQuery, limit, {
@@ -139,7 +139,7 @@ class RelativeRankingIndex {
   private literalRank(
     query: string,
     limit: number | undefined
-  ): AutocompleteItem[] | undefined {
+  ): PickerItem[] | undefined {
     const needle = query.trim().toLocaleLowerCase();
     if (needle.length === 0 || query.includes("/")) {
       return undefined;
@@ -186,7 +186,7 @@ class RelativeRankingIndex {
 export async function rank(
   query: string,
   options: FileRankOptions
-): Promise<AutocompleteItem[] | undefined> {
+): Promise<PickerItem[] | undefined> {
   if (isAbsoluteQuery(query)) {
     const { candidates, residualQuery } = await loadAbsolute({ query });
     return rankCandidates(candidates, residualQuery, options.limit);
@@ -208,7 +208,7 @@ const rankCandidates = (
   query: string,
   limit: number | undefined,
   options: RankCandidatesOptions = {}
-): AutocompleteItem[] => {
+): PickerItem[] => {
   if (query.trim().length === 0) {
     return candidates.slice(0, limit).map((candidate) => toItem(candidate));
   }
@@ -232,7 +232,7 @@ const prepareIndex = (
   return FuzzyMatcher.prepare(fuzzy);
 };
 
-const toItem = (candidate: FileCandidate): AutocompleteItem => {
+const toItem = (candidate: FileCandidate): PickerItem => {
   const suffix = candidate.isDirectory ? "/" : "";
   const value = `${candidate.insertPath}${suffix}`;
   const label = `${basename(candidate.insertPath)}${suffix}`;

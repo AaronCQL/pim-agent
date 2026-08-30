@@ -3,8 +3,8 @@ import type {
   ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteProvider } from "@earendil-works/pi-tui";
-import type { FilePickerSuggestionEngine } from "./FilePickerSuggestionEngine";
-import { WorkerFilePickerSuggestionEngine } from "./WorkerFilePickerSuggestionEngine";
+import type { FilePickerSuggestionEngine } from "../../../../core/src/picker/FilePickerSuggestionEngine";
+import { WorkerFilePickerSuggestionEngine } from "../../../../core/src/picker/WorkerFilePickerSuggestionEngine";
 
 const MAX_VISIBLE_ROWS = 50;
 const AT_PREFIX = /(?:^|\s)@(\S*)$/;

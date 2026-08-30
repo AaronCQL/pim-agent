@@ -1,13 +1,14 @@
 import type { ProtocolVersion } from "./Protocol";
 
 /**
- * An image the client has already transferred into the server's world via
- * `/upload`. Never a client-local path: the agent has exactly one filesystem
- * and it is the server's (Guiding Decision 8).
+ * A file the client has already transferred into the server's world via
+ * `POST /upload`, named by the id that endpoint answered with. Never a
+ * client-local path: the agent has exactly one filesystem and it is the
+ * server's (Guiding Decision 8), so the client's own path for the bytes is
+ * meaningless here and must never reach the conversation.
  */
-export type ImageRef = {
+export type AttachmentRef = {
   readonly id: string;
-  readonly mimeType: string;
 };
 
 /** Client → server. Every command carries an `id` so its response correlates. */
@@ -29,7 +30,7 @@ export type Command =
       readonly type: "user_message";
       readonly sessionId: string;
       readonly text: string;
-      readonly images?: readonly ImageRef[];
+      readonly attachments?: readonly AttachmentRef[];
     }
   | {
       readonly id: string;
@@ -57,6 +58,7 @@ export type Command =
       readonly type: "pick_commands";
       readonly sessionId: string;
       readonly query: string;
+      readonly limit?: number;
     }
   | {
       readonly id: string;

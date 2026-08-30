@@ -3,6 +3,7 @@ import type {
   AgentSessionEvent,
 } from "@earendil-works/pi-coding-agent";
 
+import { PickerService } from "../../core/src/picker/PickerService";
 import type { SessionHost } from "../../core/src/session/SessionHost";
 import { Tools } from "../../core/src/shared/Tools";
 import type {
@@ -36,6 +37,7 @@ type LiveTool = {
 export class SessionStream {
   public readonly sessionId: string;
   public readonly host: SessionHost;
+  public readonly picker: PickerService;
   private readonly projection: SessionProjection;
   private readonly approvals: ApprovalRouter;
   private readonly listeners = new Set<StreamListener>();
@@ -54,6 +56,11 @@ export class SessionStream {
     this.sessionId = sessionId;
     this.host = host;
     this.projection = new SessionProjection(sessionPath, () => host.cwd);
+    this.picker = new PickerService({
+      cwd: () => host.cwd,
+      agentDir: host.agentDir,
+      agent: () => host.agentSession,
+    });
     this.approvals = new ApprovalRouter({
       cwd: () => host.cwd,
       onRequest: (request) => {
@@ -148,6 +155,16 @@ export class SessionStream {
     this.emit(event);
   }
 
+  /**
+   * Drop the server's picker caches and tell every client to drop theirs. The
+   * results are a function of the filesystem, so anything that moves the cwd
+   * or writes into it makes them stale.
+   */
+  public invalidatePickers(scope: "files" | "commands" | "all"): void {
+    this.picker.invalidate();
+    this.emit({ type: "picker_invalidate", scope, cwd: this.host.cwd });
+  }
+
   public sessionState(): EphemeralEvent {
     const tps = this.host.tps;
     return {
@@ -236,6 +253,11 @@ export class SessionStream {
         return;
       case "tool_execution_end":
         this.liveTools.delete(event.toolCallId);
+        // The watcher tick, without a watcher: a tool that is not declared
+        // read-only may have just changed what the file picker would answer.
+        if (Tools.effectOf(event.toolName)?.kind !== "readOnly") {
+          this.invalidatePickers("files");
+        }
         return;
       case "entry_appended":
         void this.flushDurable();

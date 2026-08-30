@@ -1,10 +1,14 @@
-import type { CommandDraft } from "../../protocol/src/Command";
+import { basename } from "node:path";
+
+import type { PickerItem } from "../../core/src/picker/PickerItem";
+import type { AttachmentRef, CommandDraft } from "../../protocol/src/Command";
 import { PROTOCOL_VERSION } from "../../protocol/src/Protocol";
 import {
   isDurableEvent,
   type ResponseEvent,
   type ServerEvent,
 } from "../../protocol/src/ServerEvent";
+import { RemoteFilePickerSuggestionEngine } from "./RemoteFilePickerSuggestionEngine";
 
 export type ProbeOptions = {
   readonly url: string;
@@ -16,6 +20,16 @@ export type ProbeOptions = {
   readonly onEvent?: (event: ServerEvent) => void;
   /** Sent instead of the real one, to exercise version rejection. */
   readonly protocolVersion?: number;
+  /** Keystroke debounce for `files`; 0 makes tests deterministic. */
+  readonly debounceMs?: number;
+};
+
+/** What `POST /upload` answers with, all of it server-side. */
+export type UploadedFile = {
+  readonly id: string;
+  readonly path: string;
+  readonly mimeType: string;
+  readonly isImage: boolean;
 };
 
 type Pending = {
@@ -32,6 +46,8 @@ export class ProbeClient {
   public sessionId: string | undefined;
   public seq: number;
   public readonly events: ServerEvent[] = [];
+  /** The `@` picker, answered by the server one query at a time. */
+  public readonly files: RemoteFilePickerSuggestionEngine;
   private readonly options: ProbeOptions;
   private readonly pending = new Map<string, Pending>();
   private readonly waiters = new Set<{
@@ -48,6 +64,10 @@ export class ProbeClient {
     this.options = options;
     this.sessionId = options.sessionId;
     this.seq = options.fromSeq ?? 0;
+    this.files = new RemoteFilePickerSuggestionEngine(
+      (query, limit) => this.pickFiles(query, limit),
+      options.debounceMs
+    );
   }
 
   /** Connects and completes the resume handshake; resolves once replay ends. */
@@ -101,6 +121,70 @@ export class ProbeClient {
       sessionId: this.sessionId ?? "",
       text,
     });
+  }
+
+  public async pickFiles(
+    query: string,
+    limit = 50
+  ): Promise<readonly PickerItem[]> {
+    const response = await this.send({
+      type: "pick_files",
+      sessionId: this.sessionId ?? "",
+      query,
+      limit,
+    });
+    return ProbeClient.itemsOf(response);
+  }
+
+  public async pickCommands(
+    query: string,
+    limit?: number
+  ): Promise<readonly PickerItem[]> {
+    const response = await this.send({
+      type: "pick_commands",
+      sessionId: this.sessionId ?? "",
+      query,
+      ...(limit === undefined ? {} : { limit }),
+    });
+    return ProbeClient.itemsOf(response);
+  }
+
+  /**
+   * Transfers a client-local file into the server's world. The path given here
+   * is read locally and then forgotten — only the bytes and the bare filename
+   * are sent, and only the server's own path comes back.
+   */
+  public async upload(localPath: string): Promise<UploadedFile> {
+    const file = Bun.file(localPath);
+    const form = new FormData();
+    form.append("file", file, basename(localPath));
+    const response = await fetch(
+      `${this.httpUrl}/upload?session=${encodeURIComponent(this.sessionId ?? "")}`,
+      { method: "POST", body: form }
+    );
+    const body = (await response.json()) as UploadedFile & {
+      readonly error?: string;
+    };
+    if (!response.ok) {
+      throw new Error(`upload failed: ${body.error ?? response.status}`);
+    }
+    return body;
+  }
+
+  public promptWith(
+    text: string,
+    attachments: readonly AttachmentRef[]
+  ): Promise<ResponseEvent> {
+    return this.send({
+      type: "user_message",
+      sessionId: this.sessionId ?? "",
+      text,
+      attachments,
+    });
+  }
+
+  public get httpUrl(): string {
+    return this.options.url.replace(/^ws/, "http");
   }
 
   /** Answer a parked `approval_request`; only the first answer counts. */
@@ -158,6 +242,13 @@ export class ProbeClient {
     this.socket = undefined;
   }
 
+  private static itemsOf(response: ResponseEvent): readonly PickerItem[] {
+    if (!response.success) {
+      throw new Error(response.error ?? "picker query failed");
+    }
+    return response.items ?? [];
+  }
+
   private receive(raw: string): void {
     const event = JSON.parse(raw) as ServerEvent;
     this.events.push(event);
@@ -165,6 +256,8 @@ export class ProbeClient {
       this.seq = Math.max(this.seq, event.seq);
     } else if (event.type === "attached") {
       this.sessionId = event.sessionId;
+    } else if (event.type === "picker_invalidate") {
+      void this.files.refreshRelative();
     } else if (event.type === "response") {
       this.pending.get(event.id)?.resolve(event);
       this.pending.delete(event.id);

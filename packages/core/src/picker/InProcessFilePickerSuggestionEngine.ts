@@ -1,4 +1,4 @@
-import type { AutocompleteItem } from "@earendil-works/pi-tui";
+import type { PickerItem } from "./PickerItem";
 import type { FileCandidate } from "./catalog";
 import type {
   FilePickerSuggestionEngine,
@@ -39,7 +39,7 @@ export class InProcessFilePickerSuggestionEngine implements FilePickerSuggestion
   public async rank(
     query: string,
     options: RankFilePickerOptions
-  ): Promise<readonly AutocompleteItem[] | undefined> {
+  ): Promise<readonly PickerItem[] | undefined> {
     if (options.signal?.aborted === true) {
       return [];
     }

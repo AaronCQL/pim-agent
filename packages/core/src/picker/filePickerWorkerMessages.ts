@@ -1,4 +1,4 @@
-import type { AutocompleteItem } from "@earendil-works/pi-tui";
+import type { PickerItem } from "./PickerItem";
 
 export type FilePickerWorkerRequest =
   | {
@@ -29,7 +29,7 @@ export type FilePickerWorkerResponse =
       readonly id: number;
       readonly type: "rank";
       readonly ok: true;
-      readonly items: readonly AutocompleteItem[] | undefined;
+      readonly items: readonly PickerItem[] | undefined;
     }
   | {
       readonly id: number;

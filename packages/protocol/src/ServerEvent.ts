@@ -1,3 +1,4 @@
+import type { PickerItem } from "../../core/src/picker/PickerItem";
 import type { NoticeSeverity, ToolView } from "../../core/src/view/ViewBlock";
 import type { ProtocolVersion } from "./Protocol";
 
@@ -125,6 +126,16 @@ export type EphemeralEvent =
       readonly approved: boolean;
       readonly reason: string;
     }
+  /**
+   * Every picker answer this session's clients hold is stale: the cwd moved,
+   * or a tool wrote to it. Clients drop their result cache and re-query on the
+   * next keystroke; the catalog itself never leaves the server.
+   */
+  | {
+      readonly type: "picker_invalidate";
+      readonly scope: "files" | "commands" | "all";
+      readonly cwd: string;
+    }
   | { readonly type: "turn_end"; readonly stats: TurnStats }
   | {
       readonly type: "session_state";
@@ -144,6 +155,8 @@ export type ResponseEvent = {
   readonly id: string;
   readonly success: boolean;
   readonly error?: string;
+  /** Ranked rows, for the commands that answer with data (`pick_*`). */
+  readonly items?: readonly PickerItem[];
 };
 
 export type ServerEvent = DurableEvent | EphemeralEvent | ResponseEvent;

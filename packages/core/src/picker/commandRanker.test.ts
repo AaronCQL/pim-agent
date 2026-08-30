@@ -1,15 +1,15 @@
 import { expect, test } from "bun:test";
-import type { AutocompleteItem } from "@earendil-works/pi-tui";
-import { rank } from "./ranker";
+import type { PickerItem } from "./PickerItem";
+import { rankCommands } from "./commandRanker";
 
-const item = (name: string, description?: string): AutocompleteItem => ({
+const item = (name: string, description?: string): PickerItem => ({
   value: name,
   label: name,
   ...(description !== undefined && { description }),
 });
 
 test("empty query returns items alphabetically by label", () => {
-  const items = rank("", [
+  const items = rankCommands("", [
     item("rename", "Rename the session."),
     item("clear", "Clear the session."),
     item("help", "Show help."),
@@ -19,7 +19,7 @@ test("empty query returns items alphabetically by label", () => {
 });
 
 test("query ranks fuzzy matches by score", () => {
-  const items = rank("cl", [
+  const items = rankCommands("cl", [
     item("rename", "Rename the session."),
     item("clear", "Clear the session."),
     item("help", "Show help."),
@@ -29,7 +29,7 @@ test("query ranks fuzzy matches by score", () => {
 });
 
 test("matches against description when label doesn't contain query", () => {
-  const items = rank("rename", [
+  const items = rankCommands("rename", [
     item("noop", "fully unrelated"),
     item("x", "rename the session"),
   ]);
@@ -38,7 +38,7 @@ test("matches against description when label doesn't contain query", () => {
 });
 
 test("limit caps the returned items", () => {
-  const items = rank("", [item("c"), item("a"), item("b"), item("d")], {
+  const items = rankCommands("", [item("c"), item("a"), item("b"), item("d")], {
     limit: 2,
   });
 

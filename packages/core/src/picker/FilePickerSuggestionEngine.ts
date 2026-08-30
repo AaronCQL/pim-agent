@@ -1,4 +1,4 @@
-import type { AutocompleteItem } from "@earendil-works/pi-tui";
+import type { PickerItem } from "./PickerItem";
 
 export type RankFilePickerOptions = {
   readonly limit?: number;
@@ -10,5 +10,5 @@ export type FilePickerSuggestionEngine = {
   readonly rank: (
     query: string,
     options: RankFilePickerOptions
-  ) => Promise<readonly AutocompleteItem[] | undefined>;
+  ) => Promise<readonly PickerItem[] | undefined>;
 };

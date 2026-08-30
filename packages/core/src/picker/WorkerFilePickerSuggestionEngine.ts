@@ -1,4 +1,4 @@
-import type { AutocompleteItem } from "@earendil-works/pi-tui";
+import type { PickerItem } from "./PickerItem";
 import type {
   FilePickerSuggestionEngine,
   RankFilePickerOptions,
@@ -16,7 +16,7 @@ type RankRequest = {
   readonly id: number;
   readonly query: string;
   readonly limit: number | undefined;
-  readonly resolve: (items: readonly AutocompleteItem[] | undefined) => void;
+  readonly resolve: (items: readonly PickerItem[] | undefined) => void;
   readonly reject: (error: unknown) => void;
   readonly signal: AbortSignal | undefined;
   readonly abortListener: (() => void) | undefined;
@@ -43,7 +43,7 @@ export class WorkerFilePickerSuggestionEngine implements FilePickerSuggestionEng
   public rank(
     query: string,
     options: RankFilePickerOptions
-  ): Promise<readonly AutocompleteItem[] | undefined> {
+  ): Promise<readonly PickerItem[] | undefined> {
     if (options.signal?.aborted === true) {
       return Promise.resolve([]);
     }
@@ -134,7 +134,7 @@ export class WorkerFilePickerSuggestionEngine implements FilePickerSuggestionEng
 
   private resolveRank(
     request: RankRequest,
-    items: readonly AutocompleteItem[] | undefined
+    items: readonly PickerItem[] | undefined
   ): void {
     if (request.settled) {
       return;

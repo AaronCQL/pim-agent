@@ -1,15 +1,12 @@
 import type { PromptOptions } from "@earendil-works/pi-coding-agent";
 import type { Context, Filter } from "grammy";
-import { mkdir } from "node:fs/promises";
-import { basename, extname, join } from "node:path";
+import { extname, join } from "node:path";
 
+import {
+  AttachmentStore,
+  type StoredAttachment,
+} from "../../core/src/attachments/AttachmentStore";
 import type { SessionId } from "./Session";
-
-type DownloadedFile = {
-  readonly path: string;
-  readonly mimeType: string;
-  readonly imageBase64: string | undefined;
-};
 
 type FileRef = {
   readonly fileId: string;
@@ -24,7 +21,6 @@ export type Prompt = {
   readonly options: Pick<PromptOptions, "images">;
 };
 
-const IMAGE_BYTES_LIMIT = 4 * 1024 * 1024;
 const REPLY_QUOTE_HEAD = 128;
 const REPLY_QUOTE_TAIL = 128;
 
@@ -39,21 +35,7 @@ export class Message {
     const text = ("text" in message ? message.text : undefined) ?? "";
     const caption = ("caption" in message ? message.caption : undefined) ?? "";
     const files = await Message.download(ctx, token, configDir, sessionId);
-
-    const attachments: string[] = [];
-    const images: NonNullable<PromptOptions["images"]> = [];
-    for (const file of files) {
-      if (file.imageBase64) {
-        images.push({
-          type: "image",
-          data: file.imageBase64,
-          mimeType: file.mimeType,
-        });
-        attachments.push(`[Image attachment: ${file.path}]`);
-        continue;
-      }
-      attachments.push(`[Attachment: ${file.path}]`);
-    }
+    const { lines: attachments, images } = AttachmentStore.toPrompt(files);
 
     const body = (text || caption || "").trim();
     if (!body && images.length === 0 && attachments.length === 0) {
@@ -97,20 +79,20 @@ export class Message {
     return `${label}\n${quoted}`;
   }
 
+  /** Telegram's half of the shared upload flow: fetch bytes, then store them. */
   private static async download(
     ctx: Filter<Context, "message">,
     token: string,
     configDir: string,
     sessionId: SessionId
-  ): Promise<ReadonlyArray<DownloadedFile>> {
+  ): Promise<ReadonlyArray<StoredAttachment>> {
     const refs = Message.refs(ctx);
     if (refs.length === 0) {
       return [];
     }
 
-    const dir = join(configDir, "attachments", String(sessionId.chatId));
-    await mkdir(dir, { recursive: true });
-    const out: DownloadedFile[] = [];
+    const store = new AttachmentStore(join(configDir, "attachments"));
+    const out: StoredAttachment[] = [];
     for (const ref of refs) {
       const telegramFile = await ctx.api.getFile(ref.fileId);
       if (!telegramFile.file_path) {
@@ -121,23 +103,17 @@ export class Message {
       if (!response.ok) {
         throw new Error(`Telegram file download failed: ${response.status}`);
       }
-      const ext =
-        extname(telegramFile.file_path) || extname(ref.name ?? "") || ref.ext;
-      const filename = Message.safeName(
-        `${ref.uniqueId ?? ref.fileId}-${Date.now()}${ext}`
+      out.push(
+        await store.store(String(sessionId.chatId), {
+          bytes: await response.arrayBuffer(),
+          mimeType: ref.mimeType,
+          stem: ref.uniqueId ?? ref.fileId,
+          ext:
+            extname(telegramFile.file_path) ||
+            extname(ref.name ?? "") ||
+            ref.ext,
+        })
       );
-      const path = join(dir, filename);
-      const bytes = await response.arrayBuffer();
-      await Bun.write(path, bytes);
-      const isImage = ref.mimeType.startsWith("image/");
-      out.push({
-        path,
-        mimeType: ref.mimeType,
-        imageBase64:
-          isImage && bytes.byteLength <= IMAGE_BYTES_LIMIT
-            ? Buffer.from(bytes).toString("base64")
-            : undefined,
-      });
     }
     return out;
   }
@@ -203,9 +179,5 @@ export class Message {
       ];
     }
     return [];
-  }
-
-  private static safeName(name: string): string {
-    return basename(name).replace(/[^a-zA-Z0-9._-]/g, "_");
   }
 }

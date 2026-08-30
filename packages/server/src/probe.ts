@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
 
+import type { AttachmentRef } from "../../protocol/src/Command";
 import {
   isDurableEvent,
   type ServerEvent,
@@ -15,6 +16,10 @@ const USAGE = `pim probe — CLI client for pim-server, dumps every frame as JSO
   --cwd <path>             cwd for a session this probe creates
   --from-seq <n>           resume from this durable seq (default 0)
   --prompt <text>          send a user message once attached
+  --pick-files <query>     ask the server to complete an @ path, print the rows
+  --pick-commands <query>  ask the server for matching skills and commands
+  --upload <path>          transfer a local file to the server, attach it to
+                           --prompt (repeatable)
   --steer <text>           steer the turn in flight instead of prompting
   --cancel                 cancel the current turn
   --approve                answer every approval request with yes
@@ -31,6 +36,9 @@ const { values } = parseArgs({
     cwd: { type: "string" },
     "from-seq": { type: "string", default: "0" },
     prompt: { type: "string" },
+    "pick-files": { type: "string" },
+    "pick-commands": { type: "string" },
+    upload: { type: "string", multiple: true },
     steer: { type: "string" },
     cancel: { type: "boolean", default: false },
     approve: { type: "boolean", default: false },
@@ -76,6 +84,32 @@ if (!attached.success) {
 }
 
 const mark = probe.events.length;
+if (values["pick-files"] !== undefined) {
+  const started = Bun.nanoseconds();
+  const items = await probe.files.rank(values["pick-files"], { limit: 50 });
+  const ms = (Bun.nanoseconds() - started) / 1e6;
+  process.stderr.write(
+    `pick-files: ${items?.length ?? 0} rows in ${ms.toFixed(1)}ms\n`
+  );
+  for (const item of items ?? []) {
+    process.stdout.write(`${JSON.stringify(item)}\n`);
+  }
+}
+if (values["pick-commands"] !== undefined) {
+  const items = await probe.pickCommands(values["pick-commands"]);
+  process.stderr.write(`pick-commands: ${items.length} rows\n`);
+  for (const item of items) {
+    process.stdout.write(`${JSON.stringify(item)}\n`);
+  }
+}
+
+const uploaded: AttachmentRef[] = [];
+for (const path of values.upload ?? []) {
+  const file = await probe.upload(path);
+  uploaded.push({ id: file.id });
+  process.stderr.write(`uploaded: ${JSON.stringify(file)}\n`);
+}
+
 if (values.cancel) {
   const response = await probe.send({
     type: "cancel",
@@ -91,7 +125,7 @@ if (values.steer !== undefined) {
   });
 }
 if (values.prompt !== undefined) {
-  await probe.prompt(values.prompt);
+  await probe.promptWith(values.prompt, uploaded);
 }
 
 if (values.prompt !== undefined || values.steer !== undefined) {
