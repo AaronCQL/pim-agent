@@ -19,3 +19,12 @@ export const webSearchSchema = Type.Object({
 });
 
 export type WebSearchInput = Static<typeof webSearchSchema>;
+
+/** Structured result payload the view model renders from. */
+export type WebSearchDetails = {
+  readonly query: string;
+  readonly numResults: number;
+  readonly count: number;
+  readonly provider: string;
+  readonly fellBack: boolean;
+};

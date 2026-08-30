@@ -1,30 +1,16 @@
-import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
-import {
-  Renderer,
-  type StatefulToolCallTitleContext,
-  type StatefulToolCallTitleState,
-} from "../../shared/Renderer";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { PimSettings } from "../../shared/PimSettings";
 import { Tools } from "../../shared/Tools";
 import { DuckDuckGoProvider } from "./providers/DuckDuckGoProvider";
 import { ExaProvider } from "./providers/ExaProvider";
 import { FirecrawlProvider } from "./providers/FirecrawlProvider";
-import { formatTitle } from "./render";
+import { webSearchView } from "./render";
 import { SearchBreaker } from "./SearchBreaker";
 import { SearchChain } from "./SearchChain";
 import { type WebSearchInput, webSearchSchema } from "./schema";
 import { clampNumResults, formatResults } from "./search";
 
-const PREVIEW_LINES = 6;
-
-type WebSearchCallState = StatefulToolCallTitleState & {
-  resultCount?: number;
-  provider?: string;
-};
-
-type WebSearchRenderContext = StatefulToolCallTitleContext & {
-  readonly args?: WebSearchInput;
-};
+const ERROR_PREVIEW_LINES = 6;
 
 async function createChain(): Promise<SearchChain> {
   const [exaApiKey, firecrawlApiKey, jinaApiKey] = await Promise.all([
@@ -44,21 +30,6 @@ async function createChain(): Promise<SearchChain> {
         jinaApiKey === undefined ? {} : { apiKey: jinaApiKey }
       ),
     ],
-  });
-}
-
-function renderTitle(
-  input: Partial<WebSearchInput>,
-  theme: Theme,
-  context: WebSearchRenderContext
-) {
-  const state = context.state as WebSearchCallState;
-  const count = state.resultCount ?? clampNumResults(input.numResults);
-  return Renderer.renderStatefulToolCallTitle({
-    label: "Web Search",
-    title: formatTitle(input.query, count, state.provider),
-    theme,
-    context,
   });
 }
 
@@ -115,32 +86,7 @@ export default function (pi: ExtensionAPI): void {
         },
       };
     },
-    renderCall(args, theme, context) {
-      return renderTitle(
-        (args ?? {}) as Partial<WebSearchInput>,
-        theme,
-        context
-      );
-    },
-    renderResult(result, options, theme, context) {
-      const state = context.state as WebSearchCallState;
-      const details = result.details as
-        | { readonly count?: number; readonly provider?: string }
-        | undefined;
-
-      if (details?.count !== undefined || details?.provider !== undefined) {
-        state.resultCount = details.count ?? state.resultCount;
-        state.provider = details.provider ?? state.provider;
-        renderTitle(context.args ?? {}, theme, context);
-      }
-
-      return Renderer.renderBorderedResult({
-        result,
-        options,
-        theme,
-        context,
-        previewLines: PREVIEW_LINES,
-      });
-    },
+    toViewModel: webSearchView,
+    previewLines: ERROR_PREVIEW_LINES,
   });
 }
