@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import type { AgentToolResult, Theme } from "@earendil-works/pi-coding-agent";
+import type { Component } from "@earendil-works/pi-tui";
 import { Type, type TSchema } from "typebox";
 import { StringEnum, validateToolArguments } from "@earendil-works/pi-ai";
-import { Tools } from "./Tools";
+import { type PimToolDefinition, Tools } from "./Tools";
 
 function runValidator(parameters: TSchema, args: unknown): Error {
   try {
@@ -388,5 +390,189 @@ describe("Tools.register", () => {
     expect(() => captured!.prepareArguments!({})).toThrow(
       'Validation failed for tool "read":\n  - missing required property: path'
     );
+  });
+});
+
+describe("Tools.wrap view model synthesis", () => {
+  const params = Type.Object({ path: Type.String() });
+
+  type ReadDetails = {
+    readonly visibleStart: number;
+    readonly visibleEnd: number;
+  };
+
+  type WrappedDef = ReturnType<
+    typeof Tools.wrap<typeof params, ReadDetails, unknown>
+  >;
+  type CallContext = Parameters<NonNullable<WrappedDef["renderCall"]>>[2];
+  type ResultContext = Parameters<NonNullable<WrappedDef["renderResult"]>>[3];
+
+  const theme = {
+    bold: (text: string) => text,
+    fg: (_color: string, text: string) => text,
+  } as unknown as Theme;
+
+  function context(overrides: Partial<CallContext> = {}): ResultContext {
+    return {
+      args: { path: "src/foo.ts" },
+      toolCallId: "call-1",
+      invalidate: () => {},
+      lastComponent: undefined,
+      state: {},
+      cwd: "/work/repo",
+      executionStarted: true,
+      argsComplete: true,
+      isPartial: false,
+      expanded: false,
+      showImages: false,
+      isError: false,
+      ...overrides,
+    } as ResultContext;
+  }
+
+  // Shaped like a session-JSONL entry: no live state, details only.
+  function persistedResult(): AgentToolResult<ReadDetails> {
+    return {
+      content: [{ type: "text", text: "1:alpha\n2:beta" }],
+      details: { visibleStart: 1, visibleEnd: 2 },
+    };
+  }
+
+  function readLikeDef(): PimToolDefinition<typeof params, ReadDetails> {
+    return {
+      name: "read",
+      label: "Read",
+      description: "test",
+      parameters: params,
+      async execute() {
+        return persistedResult();
+      },
+      toViewModel({ args, result }) {
+        const details = result?.details;
+        const body = result?.content?.[0];
+        return {
+          title: [
+            {
+              kind: "file",
+              path: args.path,
+              ...(details === undefined
+                ? {}
+                : {
+                    range: [details.visibleStart, details.visibleEnd] as const,
+                  }),
+            },
+          ],
+          body: [
+            {
+              kind: "text",
+              text: body && "text" in body ? (body.text ?? "") : "",
+            },
+          ],
+        };
+      },
+    };
+  }
+
+  test("strips pim-only fields before pi sees the definition", () => {
+    const wrapped = Tools.wrap({ ...readLikeDef(), previewLines: 3 });
+    expect("toViewModel" in wrapped).toBe(false);
+    expect("previewLines" in wrapped).toBe(false);
+  });
+
+  test("does not synthesize renderers without a view model", () => {
+    const { toViewModel: _drop, ...plain } = readLikeDef();
+    const wrapped = Tools.wrap(plain);
+    expect(wrapped.renderCall).toBeUndefined();
+    expect(wrapped.renderResult).toBeUndefined();
+  });
+
+  test("synthesizes a title from the view model", () => {
+    const wrapped = Tools.wrap(readLikeDef());
+    const lines = wrapped.renderCall!(
+      { path: "src/foo.ts" },
+      theme,
+      context()
+    ).render(80);
+    expect(lines[0]?.trimEnd()).toBe(" ▪ Read: src/foo.ts");
+  });
+
+  test("title picks up result details once the call settles", () => {
+    const wrapped = Tools.wrap(readLikeDef());
+    const ctx = context();
+    wrapped.renderResult!(
+      persistedResult(),
+      { expanded: false, isPartial: false },
+      theme,
+      ctx
+    );
+    const lines = wrapped.renderCall!(
+      { path: "src/foo.ts" },
+      theme,
+      ctx
+    ).render(80);
+    expect(lines[0]?.trimEnd()).toBe(" ▪ Read: src/foo.ts:1-2");
+  });
+
+  test("renders a persisted result with no live state", () => {
+    const wrapped = Tools.wrap(readLikeDef());
+    const component = wrapped.renderResult!(
+      persistedResult(),
+      { expanded: true, isPartial: false },
+      theme,
+      context()
+    );
+    expect(component.render(80)).toEqual([" │ 1:alpha", " │ 2:beta"]);
+  });
+
+  test("collapsed:false opens the body without an expanded row", () => {
+    const def = readLikeDef();
+    const wrapped = Tools.wrap({
+      ...def,
+      toViewModel: (input) => ({
+        ...def.toViewModel!(input),
+        collapsed: false,
+      }),
+    });
+    const component = wrapped.renderResult!(
+      persistedResult(),
+      { expanded: false, isPartial: false },
+      theme,
+      context()
+    );
+    expect(component.render(80)).toEqual([" │ 1:alpha", " │ 2:beta"]);
+  });
+
+  test("errors bypass the view body and show the raw error text", () => {
+    const wrapped = Tools.wrap(readLikeDef());
+    const component = wrapped.renderResult!(
+      {
+        content: [{ type: "text", text: "Path not found: src/foo.ts" }],
+        details: undefined as never,
+      },
+      { expanded: true, isPartial: false },
+      theme,
+      context({ isError: true })
+    );
+    expect(component.render(80)).toEqual([" │ Path not found: src/foo.ts"]);
+  });
+
+  test("explicit renderers always win", () => {
+    const marker: Component = { render: () => ["explicit"], invalidate() {} };
+    const wrapped = Tools.wrap({
+      ...readLikeDef(),
+      renderCall: () => marker,
+      renderResult: () => marker,
+    });
+    expect(wrapped.renderCall!({ path: "src/foo.ts" }, theme, context())).toBe(
+      marker
+    );
+    expect(
+      wrapped.renderResult!(
+        persistedResult(),
+        { expanded: true, isPartial: false },
+        theme,
+        context()
+      )
+    ).toBe(marker);
   });
 });

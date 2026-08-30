@@ -1,10 +1,44 @@
 import type {
+  AgentToolResult,
   ExtensionAPI,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import type { Static, TSchema } from "typebox";
 import { Levenshtein } from "./Levenshtein";
+import { Renderer } from "./Renderer";
+import { AnsiPainter } from "./view/AnsiPainter";
+import type { ToolView } from "./view/ViewBlock";
+
+const DEFAULT_PREVIEW_LINES = 10;
+
+export type ToolViewInput<TParams extends TSchema, TDetails> = {
+  /** Partially streamed while the call is in flight; treat fields as optional. */
+  readonly args: Static<TParams>;
+  /** Undefined while the call is in flight. */
+  readonly result?: AgentToolResult<TDetails>;
+  readonly cwd: string;
+};
+
+/**
+ * Pi's tool definition plus pim's optional view model. `toViewModel` must be
+ * pure over `(args, result, cwd)` so a persisted session entry replays
+ * identically with no live process state.
+ */
+export type PimToolDefinition<
+  TParams extends TSchema,
+  TDetails = unknown,
+  TState = unknown,
+> = ToolDefinition<TParams, TDetails, TState> & {
+  readonly toViewModel?: (input: ToolViewInput<TParams, TDetails>) => ToolView;
+  /** Body lines shown before the row is expanded. Defaults to 10. */
+  readonly previewLines?: number;
+};
+
+/** Renderer-owned plumbing that hands the result back to the title renderer. */
+type ViewRenderState<TDetails> = {
+  viewResult?: AgentToolResult<TDetails>;
+};
 
 type Issue = { readonly path: string; readonly message: string };
 
@@ -32,11 +66,16 @@ export class Tools {
    * pass into `customTools`.
    */
   static wrap<TParams extends TSchema, TDetails = unknown, TState = unknown>(
-    def: ToolDefinition<TParams, TDetails, TState>
+    def: PimToolDefinition<TParams, TDetails, TState>
   ): ToolDefinition<TParams, TDetails, TState> {
     const schema = def.parameters as unknown as JsonSchema;
+    // Pi rejects unknown definition fields, so strip pim-only ones here.
+    const { toViewModel, previewLines: _previewLines, ...piDef } = def;
     return {
-      ...def,
+      ...piDef,
+      ...(toViewModel === undefined
+        ? {}
+        : synthesizeRenderers(def, toViewModel)),
       prepareArguments: (rawArgs: unknown): Static<TParams> => {
         const prepared = def.prepareArguments
           ? def.prepareArguments(rawArgs)
@@ -80,7 +119,7 @@ export class Tools {
     TParams extends TSchema,
     TDetails = unknown,
     TState = unknown,
-  >(pi: ExtensionAPI, def: ToolDefinition<TParams, TDetails, TState>): void {
+  >(pi: ExtensionAPI, def: PimToolDefinition<TParams, TDetails, TState>): void {
     pi.registerTool(Tools.wrap(def));
   }
 
@@ -111,6 +150,80 @@ export class Tools {
     }
     return `${header}\n${issues.map((s) => `  - ${s}`).join("\n")}`;
   }
+}
+
+/**
+ * Build the renderers a `toViewModel` tool did not write itself. An explicit
+ * `renderCall`/`renderResult` always wins, so adoption stays incremental.
+ */
+function synthesizeRenderers<TParams extends TSchema, TDetails, TState>(
+  def: PimToolDefinition<TParams, TDetails, TState>,
+  toViewModel: (input: ToolViewInput<TParams, TDetails>) => ToolView
+): Pick<
+  ToolDefinition<TParams, TDetails, TState>,
+  "renderCall" | "renderResult"
+> {
+  const previewLines = def.previewLines ?? DEFAULT_PREVIEW_LINES;
+
+  return {
+    renderCall:
+      def.renderCall ??
+      ((args, theme, context) => {
+        const state = context.state as ViewRenderState<TDetails>;
+        const view = toViewModel({
+          args,
+          result: state.viewResult,
+          cwd: context.cwd,
+        });
+        return Renderer.renderToolCallTitle({
+          label: def.label,
+          title: AnsiPainter.paint(view.title, theme).join(" "),
+          theme,
+          context,
+        });
+      }),
+    renderResult:
+      def.renderResult ??
+      ((result, options, theme, context) => {
+        const state = context.state as ViewRenderState<TDetails>;
+        // The title may depend on `details`, which only renderResult receives;
+        // stash it and redraw so the synthesized renderCall can see it too.
+        if (!options.isPartial && state.viewResult === undefined) {
+          state.viewResult = result;
+          context.invalidate();
+        }
+
+        if (context.isError) {
+          return Renderer.renderBorderedResult({
+            result,
+            options,
+            theme,
+            context,
+            previewLines,
+          });
+        }
+
+        const view = toViewModel({
+          args: context.args,
+          result,
+          cwd: context.cwd,
+        });
+        const body = AnsiPainter.paint(view.body ?? [], theme).join("\n");
+
+        return Renderer.renderBorderedResult({
+          // Painted lines ride in as content so the border, preview cap and
+          // expand behaviour stay the single implementation in Renderer.
+          result: { ...result, content: [{ type: "text", text: body }] },
+          options: {
+            ...options,
+            expanded: options.expanded || view.collapsed === false,
+          },
+          theme,
+          context,
+          previewLines,
+        });
+      }),
+  };
 }
 
 function parseIssues(message: string): Issue[] {
