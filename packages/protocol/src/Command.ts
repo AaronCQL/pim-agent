@@ -12,11 +12,16 @@ export type ImageRef = {
 
 /** Client → server. Every command carries an `id` so its response correlates. */
 export type Command =
+  /**
+   * Opening frame of every connection. Omit `sessionId` to start a new
+   * session in `cwd` — pi assigns the UUID, which comes back on `attached`.
+   */
   | {
       readonly id: string;
       readonly type: "attach";
       readonly protocolVersion: ProtocolVersion;
-      readonly sessionId: string;
+      readonly sessionId?: string;
+      readonly cwd?: string;
       readonly fromSeq: number;
     }
   | {
@@ -61,3 +66,13 @@ export type Command =
     };
 
 export type CommandType = Command["type"];
+
+/**
+ * A command before the transport stamps its correlation id. Distributive, so
+ * each member keeps its own fields instead of collapsing to the shared ones.
+ */
+export type CommandDraft = Command extends infer T
+  ? T extends Command
+    ? Omit<T, "id">
+    : never
+  : never;

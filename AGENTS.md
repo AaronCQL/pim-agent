@@ -16,8 +16,11 @@ Bun workspaces (`packages/*`), no build step — Bun and pi both resolve the TS 
 | `packages/tui` | Terminal frontend: splash/`_init`, file & command pickers, powerline footer, tps, working indicator, `themes/`. |
 | `packages/telegram` | Telegram frontend: grammy bot, chat-keyed session map, daemon `Supervisor`. |
 | `packages/protocol` | Versioned client/server wire types. Imported by server and web **only** — never by the TUI, and nothing in it may assume a browser. |
+| `packages/server` | Transport only: `WsGateway` (Bun WebSocket, resume handshake, fanout), `SessionStream`/`SessionProjection` (pi's JSONL → wire events), `ClientConnection` (backpressure), and the `ProbeClient`/`bun run probe` CLI. Workspace-only; never published. |
 
-The root `package.json` is the published `@aaroncql/pim-agent`: a workspace root that ships `bin/` plus `core`, `tui`, and `telegram`. Session runtime lives in `core/src/session/` rather than a server package precisely so the published tarball stays `core` + `tui` + `telegram` while Telegram still gets `SessionHost`. `protocol` is workspace-only and stays out of `files`. Dependencies are declared once, at the root, because the root is the published manifest; workspace members carry a name and nothing else.
+The root `package.json` is the published `@aaroncql/pim-agent`: a workspace root that ships `bin/` plus `core`, `tui`, and `telegram`. `protocol` and `server` stay out of `files`; `bun pm pack --dry-run` is the check.
+
+`bun run serve` starts the gateway on `127.0.0.1:4319`; `bun run probe` is the CLI client that validates it (`bun run probe --help`). Session runtime lives in `core/src/session/` rather than in `server` precisely so the published tarball stays `core` + `tui` + `telegram` while Telegram still gets `SessionHost`; `server` holds transport and nothing else. Dependencies are declared once, at the root, because the root is the published manifest; workspace members carry a name and nothing else.
 
 Cross-package imports are ordinary relative paths (`../../core/src/shared/Tools`), never package names — that is what keeps the packed tarball working without workspace resolution.
 

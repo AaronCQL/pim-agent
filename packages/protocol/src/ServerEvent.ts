@@ -1,4 +1,5 @@
-import type { ToolView } from "../../core/src/view/ViewBlock";
+import type { NoticeSeverity, ToolView } from "../../core/src/view/ViewBlock";
+import type { ProtocolVersion } from "./Protocol";
 
 /**
  * What the agent is doing right now. The spinner is presentation and stays a
@@ -14,67 +15,93 @@ export type TurnStats = {
   readonly durationMs: number;
 };
 
+/** A tool call as it appears on a persisted assistant message. */
+export type ToolCallView = {
+  readonly callId: string;
+  readonly name: string;
+  readonly view: ToolView;
+};
+
 /**
- * Server → client.
- *
- * `seq` **is** pi's own JSONL mutation seq, unmodified — we do not renumber and
- * we do not keep a second store (Resolved Decision 2). A client resumes by
- * replaying `seq > N`. Command responses carry no `seq` because they change no
- * state.
- *
- * `text_delta` is ephemeral: never persisted individually, so on reconnect the
- * server sends the coalesced in-flight buffer as one block instead.
+ * Events projected from pi's session JSONL. `seq` **is** the physical line
+ * ordinal of the entry they came from, unmodified (Resolved Decision 2), so a
+ * client resumes by asking for `seq > n`. One line produces at most one durable
+ * event, which is what makes that cursor exact: a client that has processed
+ * seq N has processed every byte of the log up to line N.
  *
  * The client never receives raw tool `content` — that is the model's channel.
- * It only ever sees a `ToolView` derived from `details`.
+ * It only ever sees a `ToolView` derived from it plus `details`.
  */
-export type ServerEvent =
+export type DurableEvent =
   | {
       readonly seq: number;
-      readonly type: "message_start";
-      readonly role: "user" | "assistant";
+      readonly type: "message";
       readonly messageId: string;
+      readonly role: "user" | "assistant";
+      readonly text: string;
+      readonly thinking?: string;
+      readonly toolCalls?: readonly ToolCallView[];
     }
   | {
       readonly seq: number;
+      readonly type: "tool_result";
+      readonly callId: string;
+      readonly name: string;
+      readonly view: ToolView;
+      readonly isError: boolean;
+    }
+  | {
+      readonly seq: number;
+      readonly type: "notice";
+      readonly severity: NoticeSeverity;
+      readonly text: string;
+    };
+
+/**
+ * The live preview of the turn in flight, and the session state around it.
+ * Deliberately **unsequenced**: none of it is persisted line by line, so none
+ * of it can be replayed by ordinal. A reconnecting client is instead handed the
+ * coalesced in-flight buffer — one `message_start` plus one `text_delta`
+ * carrying everything streamed so far — and then the durable event supersedes
+ * it once pi appends the finished message.
+ *
+ * A client renders these into a trailing "in flight" bucket and clears that
+ * bucket whenever a durable `message` with `role: "assistant"` arrives. Live
+ * `tool_call` events therefore re-appear inside that message's `toolCalls`;
+ * dedupe on `callId`.
+ */
+export type EphemeralEvent =
+  | {
+      readonly type: "attached";
+      readonly protocolVersion: ProtocolVersion;
+      readonly sessionId: string;
+      readonly cwd: string;
+      /** Highest durable `seq` at attach time; replay follows immediately. */
+      readonly head: number;
+    }
+  | {
+      readonly type: "message_start";
+      readonly role: "assistant";
+      readonly messageId: string;
+    }
+  | {
       readonly type: "text_delta";
       readonly messageId: string;
       readonly delta: string;
     }
   | {
-      readonly seq: number;
       readonly type: "tool_call";
       readonly callId: string;
       readonly name: string;
       readonly view: ToolView;
     }
   | {
-      readonly seq: number;
       readonly type: "tool_update";
       readonly callId: string;
       readonly view: ToolView;
     }
+  | { readonly type: "turn_end"; readonly stats: TurnStats }
   | {
-      readonly seq: number;
-      readonly type: "tool_result";
-      readonly callId: string;
-      readonly view: ToolView;
-      readonly isError: boolean;
-    }
-  | {
-      readonly seq: number;
-      readonly type: "approval_request";
-      readonly callId: string;
-      readonly name: string;
-      readonly view: ToolView;
-    }
-  | {
-      readonly seq: number;
-      readonly type: "turn_end";
-      readonly stats: TurnStats;
-    }
-  | {
-      readonly seq: number;
       readonly type: "session_state";
       readonly cwd: string;
       readonly model: string;
@@ -83,12 +110,21 @@ export type ServerEvent =
       readonly status: SessionStatus;
       readonly tps?: number;
     }
-  | { readonly seq: number; readonly type: "picker_invalidate" }
-  | {
-      readonly type: "response";
-      readonly id: string;
-      readonly success: boolean;
-      readonly error?: string;
-    };
+  /** A frame the server could not attribute to any command. */
+  | { readonly type: "error"; readonly message: string };
+
+/** Answer to one `Command`, correlated by its `id`. Never sequenced. */
+export type ResponseEvent = {
+  readonly type: "response";
+  readonly id: string;
+  readonly success: boolean;
+  readonly error?: string;
+};
+
+export type ServerEvent = DurableEvent | EphemeralEvent | ResponseEvent;
 
 export type ServerEventType = ServerEvent["type"];
+
+export function isDurableEvent(event: ServerEvent): event is DurableEvent {
+  return "seq" in event;
+}

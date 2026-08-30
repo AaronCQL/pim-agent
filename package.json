@@ -45,6 +45,8 @@
   },
   "scripts": {
     "dev": "bun link && pim",
+    "serve": "bun packages/server/src/serve.ts",
+    "probe": "bun packages/server/src/probe.ts",
     "typecheck": "tsgo --noEmit",
     "test": "bun test ./packages --only-failures",
     "lint": "oxlint . --fix",

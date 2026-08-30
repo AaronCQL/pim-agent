@@ -6,7 +6,6 @@ import { GrammyError, type Api } from "grammy";
 
 import { Tools } from "../../core/src/shared/Tools";
 import { MarkdownPainter } from "../../core/src/view/MarkdownPainter";
-import type { ToolView } from "../../core/src/view/ViewBlock";
 import type { LogsMode } from "./Config";
 import { Markdown } from "./Markdown";
 import type { Session, SessionId } from "./Session";
@@ -243,14 +242,14 @@ export class Renderer {
     result: AgentToolResult<unknown> | undefined,
     isPartial: boolean
   ): { readonly icon: string; readonly label: string } {
-    const view = Tools.viewFor(toolName)?.({
-      args,
-      ...(result === undefined ? {} : { result }),
-      isPartial,
-      cwd: this.cwd,
-    });
     const painted = MarkdownPainter.paintTool(
-      view ?? genericView(toolName, args)
+      Tools.viewOf({
+        name: toolName,
+        args,
+        ...(result === undefined ? {} : { result }),
+        isPartial,
+        cwd: this.cwd,
+      })
     );
     return { icon: painted.icon, label: painted.lines.join(BR) };
   }
@@ -768,32 +767,3 @@ export class Renderer {
       .replace(/&amp;/g, "&");
   }
 }
-
-/**
- * The view for a tool that ships no `toViewModel` — an MCP tool, or one from
- * another extension pack. Names the tool and echoes whichever argument reads
- * most like its subject, which is all a stranger's schema will honestly give.
- */
-function genericView(toolName: string, args: unknown): ToolView {
-  const record =
-    args && typeof args === "object" ? (args as Record<string, unknown>) : {};
-  const subject = GENERIC_ARG_KEYS.map((key) => record[key]).find(
-    (value): value is string => typeof value === "string" && value !== ""
-  );
-  return {
-    title: [
-      {
-        kind: "spans",
-        spans: [{ text: subject ? `${toolName} ${subject}` : toolName }],
-      },
-    ],
-  };
-}
-
-const GENERIC_ARG_KEYS = [
-  "path",
-  "command",
-  "query",
-  "pattern",
-  "url",
-] as const;

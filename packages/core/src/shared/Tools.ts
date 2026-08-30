@@ -87,6 +87,27 @@ export class Tools {
   }
 
   /**
+   * The view for one call, with a generic fallback for a tool that registered
+   * none. Every frontend paints tool rows through this, so an unported or MCP
+   * tool still renders instead of disappearing.
+   */
+  static viewOf(input: {
+    readonly name: string;
+    readonly args: unknown;
+    readonly result?: AgentToolResult<unknown>;
+    readonly isPartial: boolean;
+    readonly cwd: string;
+  }): ToolView {
+    const { name, result, ...rest } = input;
+    return (
+      Tools.viewFor(name)?.({
+        ...rest,
+        ...(result === undefined ? {} : { result }),
+      }) ?? genericView(name, input.args)
+    );
+  }
+
+  /**
    * Wrap a tool definition so pi's validator errors get rewritten before they
    * reach the model. Pi runs `prepareArguments` before validation, so we call
    * pi's validator ourselves inside it, rewrite any throw, and return the
@@ -186,6 +207,35 @@ export class Tools {
     }
     return `${header}\n${issues.map((s) => `  - ${s}`).join("\n")}`;
   }
+}
+
+const GENERIC_ARG_KEYS = [
+  "path",
+  "command",
+  "query",
+  "pattern",
+  "url",
+] as const;
+
+/**
+ * The view for a tool that ships no `toViewModel` — an MCP tool, or one from
+ * another extension pack. Names the tool and echoes whichever argument reads
+ * most like its subject, which is all a stranger's schema will honestly give.
+ */
+function genericView(toolName: string, args: unknown): ToolView {
+  const record =
+    args && typeof args === "object" ? (args as Record<string, unknown>) : {};
+  const subject = GENERIC_ARG_KEYS.map((key) => record[key]).find(
+    (value): value is string => typeof value === "string" && value !== ""
+  );
+  return {
+    title: [
+      {
+        kind: "spans",
+        spans: [{ text: subject ? `${toolName} ${subject}` : toolName }],
+      },
+    ],
+  };
 }
 
 /**

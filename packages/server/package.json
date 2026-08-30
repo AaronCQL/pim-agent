@@ -1,0 +1,6 @@
+{
+  "name": "@pim/server",
+  "private": true,
+  "type": "module",
+  "description": "Transport for pim-server: the WebSocket gateway, its session projection, and the CLI probe client. Session runtime lives in core."
+}
