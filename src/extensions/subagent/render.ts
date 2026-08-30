@@ -1,25 +1,11 @@
-import type {
-  AgentToolResult,
-  Theme,
-  ThemeColor,
-  ToolRenderResultOptions,
-} from "@earendil-works/pi-coding-agent";
-import type {
-  Component,
-  DefaultTextStyle,
-  MarkdownTheme,
-} from "@earendil-works/pi-tui";
-import { Container, Markdown, visibleWidth } from "@earendil-works/pi-tui";
-import { type PrefixSpec, Renderer } from "../../shared/Renderer";
+import type { ToolViewInput } from "../../shared/Tools";
+import type { Span, ToolView, ViewBlock } from "../../shared/view/ViewBlock";
+import type { subagentSchema } from "./schema";
 import type { SubagentDetails, SubagentSnapshot } from "./subagent";
 
 const DOT = "⬝";
 
-type RenderContext = {
-  readonly lastComponent: Component | undefined;
-  readonly isPartial: boolean;
-  readonly isError: boolean;
-};
+type SubagentViewInput = ToolViewInput<typeof subagentSchema, SubagentDetails>;
 
 type StatusFields = Pick<
   SubagentSnapshot,
@@ -32,72 +18,24 @@ type StatusFields = Pick<
   | "contextWindow"
 >;
 
-type MarkdownBlockArgs = {
-  readonly text: string;
-  readonly theme: Theme;
-  readonly prefix: PrefixSpec;
-  readonly lineColor?: ThemeColor;
-};
-
-class MarkdownTitle implements Component {
-  private label = "";
-  private title = "";
-  private theme: Theme | undefined;
-  private context: RenderContext | undefined;
-  private labelColor: ThemeColor | undefined;
-
-  public set(args: {
-    readonly label: string;
-    readonly title: string;
-    readonly theme: Theme;
-    readonly context: RenderContext;
-    readonly labelColor?: ThemeColor;
-  }): void {
-    this.label = args.label;
-    this.title = args.title;
-    this.theme = args.theme;
-    this.context = args.context;
-    this.labelColor = args.labelColor;
-  }
-
-  public render(width: number): string[] {
-    const theme = this.theme;
-    const context = this.context;
-    if (!theme || !context) {
-      return [];
-    }
-
-    const markerColor = Renderer.markerColorFor(
-      Boolean(context.isPartial),
-      Boolean(context.isError)
-    );
-    const prefix =
-      theme.fg(markerColor, " ▪") +
-      " " +
-      theme.fg(this.labelColor ?? "toolTitle", theme.bold(this.label)) +
-      theme.fg("toolTitle", ": ");
-    const inner = Math.max(1, width - visibleWidth(prefix));
-    const titleLines = renderMarkdownLines({
-      text: this.title,
-      theme,
-      width: inner,
-    });
-    const lines = titleLines.length > 0 ? titleLines : [""];
-    const out = [padLine(prefix + (lines[0] ?? ""), width)];
-
-    for (const line of lines.slice(1)) {
-      out.push(
-        padLine(
-          theme.fg("toolOutput", Renderer.GAPPED_PREFIX.prefix) + line,
-          width
-        )
-      );
-    }
-
-    return out;
-  }
-
-  public invalidate(): void {}
+/**
+ * The status line lives on `summary` so it stays visible while the subagent
+ * streams and while the row is collapsed; the final message is `body`, which
+ * only the expanded row shows. `details` carries everything both need, so a
+ * replayed session renders exactly like the live run did.
+ */
+export function subagentView({
+  args,
+  result,
+  isPartial,
+}: SubagentViewInput): ToolView {
+  return {
+    label: "Subagent",
+    labelTone: labelTone(result, isPartial),
+    title: [{ kind: "markdown", text: formatCallTitle(args?.prompt) }],
+    summary: summaryBlocks(result?.details, isPartial),
+    body: bodyBlocks(result),
+  };
 }
 
 export function formatCallTitle(prompt: string | undefined): string {
@@ -113,194 +51,46 @@ export function formatTopLine(snapshot: StatusFields): string {
   ].join(` ${DOT} `);
 }
 
-export function renderCall(
-  args: { readonly prompt?: string } | undefined,
-  theme: Theme,
-  context: RenderContext
-): Component {
-  const component =
-    context.lastComponent instanceof MarkdownTitle
-      ? context.lastComponent
-      : new MarkdownTitle();
-  component.set({
-    label: "Subagent",
-    title: formatCallTitle(args?.prompt),
-    theme,
-    context,
-    labelColor: titleColorFor(context),
-  });
-  return component;
+/**
+ * A finished run always reports its usage, so a result that carries no details
+ * is one pi built out of a thrown failure.
+ */
+function labelTone(
+  result: SubagentViewInput["result"],
+  isPartial: boolean
+): ToolView["labelTone"] {
+  if (isPartial || result === undefined) {
+    return "warning";
+  }
+  return result.details === undefined ? "error" : "accent";
 }
 
-export function renderResult(
-  result: AgentToolResult<SubagentDetails>,
-  options: ToolRenderResultOptions,
-  theme: Theme,
-  context: RenderContext
-): Component {
-  const container =
-    context.lastComponent instanceof Container
-      ? context.lastComponent
-      : new Container();
-  container.clear();
-
-  const details = result.details;
-  const first = result.content?.[0];
-  const body = first && "text" in first ? (first.text ?? "") : "";
+/** Dots stay muted so the segments they separate read as one line of stats. */
+function summaryBlocks(
+  details: SubagentDetails | undefined,
+  isPartial: boolean
+): readonly ViewBlock[] {
   const topLine = details?.topLine;
-
-  if (topLine) {
-    container.addChild(
-      Renderer.makePrefixedBlock({
-        text: styleDottedLine({
-          text: topLine,
-          theme,
-          lineColor: options.isPartial ? "warning" : "accent",
-        }),
-        theme,
-        prefix: Renderer.GAPPED_PREFIX,
-      })
-    );
+  if (!topLine) {
+    return [];
   }
 
-  if (!options.isPartial && (!topLine || options.expanded) && body) {
-    container.addChild(
-      options.expanded
-        ? makePrefixedMarkdownBlock({
-            text: body,
-            theme,
-            prefix: Renderer.GAPPED_PREFIX,
-            lineColor: expandedResultColor(details, context.isError),
-          })
-        : Renderer.makePrefixedBlock({
-            text: body,
-            theme,
-            prefix: Renderer.GAPPED_PREFIX,
-            lineColor: resultColor(details, context.isError),
-          })
-    );
-  }
+  const tone = isPartial ? "warning" : "accent";
+  const spans: Span[] = [];
+  topLine.split(DOT).forEach((part, index) => {
+    if (index > 0) {
+      spans.push({ text: DOT, tone: "muted" });
+    }
+    spans.push({ text: part, tone });
+  });
 
-  container.invalidate();
-  return container;
+  return [{ kind: "spans", spans }];
 }
 
-function makePrefixedMarkdownBlock(args: MarkdownBlockArgs): Component {
-  const markdown = new Markdown(
-    args.text,
-    0,
-    0,
-    makeMarkdownTheme(args.theme),
-    defaultStyle(args.theme, args.lineColor)
-  );
-
-  return {
-    render(width: number): string[] {
-      const inner = Math.max(1, width - args.prefix.width);
-      return markdown.render(inner).map((line) => {
-        return (
-          args.theme.fg("toolOutput", args.prefix.prefix) +
-          trimRenderedLine(line)
-        );
-      });
-    },
-    invalidate(): void {
-      markdown.invalidate();
-    },
-  };
-}
-
-function renderMarkdownLines(args: {
-  readonly text: string;
-  readonly theme: Theme;
-  readonly width: number;
-  readonly lineColor?: ThemeColor;
-}): string[] {
-  const markdown = new Markdown(
-    args.text,
-    0,
-    0,
-    makeMarkdownTheme(args.theme),
-    defaultStyle(args.theme, args.lineColor)
-  );
-  return markdown.render(args.width).map(trimRenderedLine);
-}
-
-function defaultStyle(
-  theme: Theme,
-  lineColor: ThemeColor | undefined
-): DefaultTextStyle | undefined {
-  return lineColor
-    ? { color: (text: string) => theme.fg(lineColor, text) }
-    : undefined;
-}
-
-function makeMarkdownTheme(theme: Theme): MarkdownTheme {
-  return {
-    heading: (text: string) => theme.fg("mdHeading", text),
-    link: (text: string) => theme.fg("mdLink", text),
-    linkUrl: (text: string) => theme.fg("mdLinkUrl", text),
-    code: (text: string) => theme.fg("mdCode", text),
-    codeBlock: (text: string) => theme.fg("mdCodeBlock", text),
-    codeBlockBorder: (text: string) => theme.fg("mdCodeBlockBorder", text),
-    quote: (text: string) => theme.fg("mdQuote", text),
-    quoteBorder: (text: string) => theme.fg("mdQuoteBorder", text),
-    hr: (text: string) => theme.fg("mdHr", text),
-    listBullet: (text: string) => theme.fg("mdListBullet", text),
-    bold: (text: string) => theme.bold(text),
-    italic: (text: string) => theme.italic(text),
-    underline: (text: string) => theme.underline(text),
-    strikethrough: (text: string) => theme.strikethrough(text),
-  };
-}
-
-function trimRenderedLine(line: string): string {
-  return line.trimEnd();
-}
-
-function padLine(line: string, width: number): string {
-  return line + " ".repeat(Math.max(0, width - visibleWidth(line)));
-}
-
-function styleDottedLine(args: {
-  readonly text: string;
-  readonly theme: Theme;
-  readonly lineColor: ThemeColor;
-}): string {
-  return args.text
-    .split(DOT)
-    .map((part) => args.theme.fg(args.lineColor, part))
-    .join(args.theme.fg("muted", DOT));
-}
-
-function titleColorFor(context: RenderContext): ThemeColor {
-  if (context.isPartial) {
-    return "warning";
-  }
-  if (context.isError) {
-    return "error";
-  }
-  return "accent";
-}
-
-function resultColor(
-  details: SubagentDetails | undefined,
-  isError: boolean
-): "toolOutput" | "error" | "warning" {
-  if (details?.stopReason === "aborted") {
-    return "warning";
-  }
-  return isError ? "error" : "toolOutput";
-}
-
-function expandedResultColor(
-  details: SubagentDetails | undefined,
-  isError: boolean
-): "error" | "warning" | undefined {
-  if (details?.stopReason === "aborted") {
-    return "warning";
-  }
-  return isError ? "error" : undefined;
+function bodyBlocks(result: SubagentViewInput["result"]): readonly ViewBlock[] {
+  const first = result?.content?.[0];
+  const text = first && "text" in first ? (first.text ?? "") : "";
+  return text === "" ? [] : [{ kind: "markdown", text }];
 }
 
 function formatActivity(snapshot: StatusFields): string {

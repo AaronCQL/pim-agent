@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Tools } from "../../shared/Tools";
-import { renderCall, renderResult } from "./render";
+import { subagentView } from "./render";
 import { subagentSchema, type SubagentInput } from "./schema";
 import { runSubagent, type SubagentDetails } from "./subagent";
 
@@ -27,7 +27,6 @@ export default function (pi: ExtensionAPI): void {
         pi.getActiveTools()
       );
     },
-    renderCall,
-    renderResult,
+    toViewModel: subagentView,
   });
 }

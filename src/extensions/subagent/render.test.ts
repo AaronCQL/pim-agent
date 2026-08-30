@@ -1,49 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import type {
-  AgentToolResult,
-  Theme,
-  ThemeColor,
-} from "@earendil-works/pi-coding-agent";
+import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
+import type { ToolViewInput } from "../../shared/Tools";
+import { AnsiPainter } from "../../shared/view/AnsiPainter";
+import type { subagentSchema } from "./schema";
 import type { SubagentDetails } from "./subagent";
-import {
-  formatCallTitle,
-  formatTopLine,
-  renderCall,
-  renderResult,
-} from "./render";
+import { formatCallTitle, formatTopLine, subagentView } from "./render";
+
+type SubagentViewInput = ToolViewInput<typeof subagentSchema, SubagentDetails>;
 
 const stubTheme = {
   bold: (text: string) => text,
   italic: (text: string) => text,
   strikethrough: (text: string) => text,
   underline: (text: string) => text,
-  fg: (_color: string, text: string) => text,
+  fg: (color: ThemeColor, text: string) => `<${color}>${text}</${color}>`,
 } as unknown as Theme;
-
-type ColorCall = {
-  readonly color: ThemeColor;
-  readonly text: string;
-};
-
-function tracingTheme(): {
-  readonly theme: Theme;
-  readonly calls: ColorCall[];
-} {
-  const calls: ColorCall[] = [];
-  return {
-    calls,
-    theme: {
-      bold: (text: string) => text,
-      italic: (text: string) => text,
-      strikethrough: (text: string) => text,
-      underline: (text: string) => text,
-      fg: (color: ThemeColor, text: string) => {
-        calls.push({ color, text });
-        return text;
-      },
-    } as unknown as Theme,
-  };
-}
 
 const baseDetails: SubagentDetails = {
   returnedOutput: "body",
@@ -69,8 +40,27 @@ const baseDetails: SubagentDetails = {
   topLine: "$0.23 ⬝ 0.4%/1.0M ⬝ deepseek-v4-flash ⬝ 3 turns ⬝ 1 tool",
 };
 
-function result(text: string): AgentToolResult<SubagentDetails> {
-  return { content: [{ type: "text", text }], details: baseDetails };
+function viewInput(args: {
+  readonly prompt?: string;
+  readonly text?: string;
+  readonly details?: SubagentDetails;
+  readonly isPartial?: boolean;
+  readonly settled?: boolean;
+}): SubagentViewInput {
+  const settled = args.settled ?? true;
+  return {
+    args: { prompt: args.prompt ?? "investigate" },
+    ...(settled
+      ? {
+          result: {
+            content: [{ type: "text", text: args.text ?? "body" }],
+            details: args.details as SubagentDetails,
+          },
+        }
+      : {}),
+    isPartial: args.isPartial ?? false,
+    cwd: "/repo",
+  };
 }
 
 describe("subagent render formatting", () => {
@@ -85,208 +75,71 @@ describe("subagent render formatting", () => {
       "$0.23 ⬝ 0.4%/1.0M ⬝ deepseek-v4-flash ⬝ 3 turns ⬝ 1 tool"
     );
   });
+});
 
-  test("call title renders prompt markdown", () => {
-    const component = renderCall(
-      { prompt: "Review **bold** and `code`" },
-      stubTheme,
-      {
-        lastComponent: undefined,
-        isPartial: false,
-        isError: false,
-      }
+describe("subagentView", () => {
+  test("titles the row with the prompt as markdown", () => {
+    const view = subagentView(
+      viewInput({ prompt: "Review **bold** and `code`", details: baseDetails })
     );
 
-    expect(component.render(80)[0]?.trimEnd()).toBe(
-      " ▪ Subagent: Review bold and code"
-    );
-  });
-
-  test("call title uses the default color for prompt text", () => {
-    const rendered = tracingTheme();
-    renderCall({ prompt: "plain prompt" }, rendered.theme, {
-      lastComponent: undefined,
-      isPartial: false,
-      isError: false,
-    }).render(80);
-
-    expect(rendered.calls).not.toContainEqual({
-      color: "toolTitle",
-      text: "plain prompt",
-    });
-  });
-
-  test("call title colors the Subagent label by running status", () => {
-    const pending = tracingTheme();
-    renderCall({ prompt: "investigate" }, pending.theme, {
-      lastComponent: undefined,
-      isPartial: true,
-      isError: false,
-    }).render(80);
-
-    expect(pending.calls).toContainEqual({
-      color: "warning",
-      text: "Subagent",
-    });
-
-    const done = tracingTheme();
-    renderCall({ prompt: "investigate" }, done.theme, {
-      lastComponent: undefined,
-      isPartial: false,
-      isError: false,
-    }).render(80);
-
-    expect(done.calls).toContainEqual({ color: "accent", text: "Subagent" });
-  });
-
-  test("top line uses muted dots with accent or warning content", () => {
-    const done = tracingTheme();
-    renderResult(
-      result("body"),
-      { expanded: false, isPartial: false },
-      done.theme,
-      { lastComponent: undefined, isPartial: false, isError: false }
-    ).render(80);
-
-    expect(done.calls).toContainEqual({ color: "accent", text: "$0.23 " });
-    expect(done.calls).toContainEqual({ color: "muted", text: "⬝" });
-
-    const running = tracingTheme();
-    renderResult(
-      {
-        content: [{ type: "text", text: "ignored body" }],
-        details: { ...baseDetails, stopReason: undefined },
-      },
-      { expanded: false, isPartial: true },
-      running.theme,
-      { lastComponent: undefined, isPartial: true, isError: false }
-    ).render(80);
-
-    expect(running.calls).toContainEqual({ color: "warning", text: "$0.23 " });
-    expect(running.calls).toContainEqual({ color: "muted", text: "⬝" });
-  });
-
-  test("partial render displays only the running top line", () => {
-    const runningDetails: SubagentDetails = {
-      ...baseDetails,
-      toolCalls: [],
-      activeToolNames: ["grep"],
-      stopReason: undefined,
-      topLine: "$0.23 ⬝ 0.4%/1.0M ⬝ deepseek-v4-flash ⬝ 3 turns ⬝ grep",
-    };
-    const component = renderResult(
-      {
-        content: [{ type: "text", text: "ignored body" }],
-        details: runningDetails,
-      },
-      { expanded: false, isPartial: true },
-      stubTheme,
-      { lastComponent: undefined, isPartial: true, isError: false }
-    );
-
-    expect(component.render(80)).toEqual([` │ ${runningDetails.topLine}`]);
-  });
-
-  test("collapsed done render hides the final message", () => {
-    const body = Array.from({ length: 12 }, (_, i) => `line ${i + 1}`).join(
-      "\n"
-    );
-    const component = renderResult(
-      result(body),
-      { expanded: false, isPartial: false },
-      stubTheme,
-      { lastComponent: undefined, isPartial: false, isError: false }
-    );
-
-    expect(component.render(80)).toEqual([` │ ${baseDetails.topLine}`]);
-  });
-
-  test("expanded done render keeps the top line above the final message", () => {
-    const component = renderResult(
-      result("line 1\nline 2"),
-      { expanded: true, isPartial: false },
-      stubTheme,
-      { lastComponent: undefined, isPartial: false, isError: false }
-    );
-
-    expect(component.render(80)).toEqual([
-      ` │ ${baseDetails.topLine}`,
-      " │ line 1",
-      " │ line 2",
+    expect(view.label).toBe("Subagent");
+    expect(view.title).toEqual([
+      { kind: "markdown", text: "Review **bold** and `code`" },
     ]);
   });
 
-  test("expanded done render renders final message markdown", () => {
-    const component = renderResult(
-      result("Final **answer** and `code`"),
-      { expanded: true, isPartial: false },
-      stubTheme,
-      { lastComponent: undefined, isPartial: false, isError: false }
+  test("colors the label by state", () => {
+    expect(subagentView(viewInput({ settled: false })).labelTone).toBe(
+      "warning"
     );
+    expect(
+      subagentView(viewInput({ details: baseDetails, isPartial: true }))
+        .labelTone
+    ).toBe("warning");
+    expect(subagentView(viewInput({ details: baseDetails })).labelTone).toBe(
+      "accent"
+    );
+    expect(subagentView(viewInput({ text: "boom" })).labelTone).toBe("error");
+  });
 
-    expect(component.render(80)).toEqual([
-      ` │ ${baseDetails.topLine}`,
-      " │ Final answer and code",
+  test("summarizes the top line with muted dots", () => {
+    const view = subagentView(viewInput({ details: baseDetails }));
+
+    expect(AnsiPainter.paint(view.summary ?? [], stubTheme)).toEqual([
+      "<accent>$0.23 </accent><muted>⬝</muted><accent> 0.4%/1.0M </accent>" +
+        "<muted>⬝</muted><accent> deepseek-v4-flash </accent>" +
+        "<muted>⬝</muted><accent> 3 turns </accent><muted>⬝</muted>" +
+        "<accent> 1 tool</accent>",
     ]);
   });
 
-  test("expanded done render uses configured markdown theme tokens", () => {
-    const rendered = tracingTheme();
-    renderResult(
-      result(
-        [
-          "# Heading",
-          "",
-          "[docs](https://example.test)",
-          "",
-          "`inline`",
-          "",
-          "> quoted",
-          "",
-          "- item",
-          "",
-          "```",
-          "plain code",
-          "```",
-          "",
-          "---",
-        ].join("\n")
-      ),
-      { expanded: true, isPartial: false },
-      rendered.theme,
-      { lastComponent: undefined, isPartial: false, isError: false }
-    ).render(120);
+  test("warns on the summary while the run is still streaming", () => {
+    const view = subagentView(
+      viewInput({ details: baseDetails, isPartial: true })
+    );
 
-    const colors = new Set(rendered.calls.map((call) => call.color));
-    const expectedColors = [
-      "mdHeading",
-      "mdLink",
-      "mdCode",
-      "mdQuote",
-      "mdQuoteBorder",
-      "mdListBullet",
-      "mdCodeBlock",
-      "mdCodeBlockBorder",
-      "mdHr",
-    ] satisfies readonly ThemeColor[];
-
-    for (const color of expectedColors) {
-      expect(colors.has(color)).toBe(true);
-    }
+    expect(AnsiPainter.paint(view.summary ?? [], stubTheme)[0]).toContain(
+      "<warning>$0.23 </warning>"
+    );
   });
 
-  test("expanded done render uses the default color for final message text", () => {
-    const rendered = tracingTheme();
-    renderResult(
-      result("plain final"),
-      { expanded: true, isPartial: false },
-      rendered.theme,
-      { lastComponent: undefined, isPartial: false, isError: false }
-    ).render(80);
+  test("has no summary before any details land", () => {
+    expect(subagentView(viewInput({ settled: false })).summary).toEqual([]);
+  });
 
-    expect(rendered.calls).not.toContainEqual({
-      color: "toolOutput",
-      text: "plain final",
-    });
+  test("keeps the final message as an expand-only markdown body", () => {
+    const view = subagentView(
+      viewInput({ text: "Final **answer**", details: baseDetails })
+    );
+
+    expect(view.body).toEqual([{ kind: "markdown", text: "Final **answer**" }]);
+    expect(view.collapsed).toBeUndefined();
+  });
+
+  test("omits an empty body", () => {
+    expect(
+      subagentView(viewInput({ text: "", details: baseDetails })).body
+    ).toEqual([]);
   });
 });
