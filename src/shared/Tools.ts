@@ -176,7 +176,7 @@ function synthesizeRenderers<TParams extends TSchema, TDetails, TState>(
           cwd: context.cwd,
         });
         return Renderer.renderToolCallTitle({
-          label: def.label,
+          label: view.label ?? def.label,
           title: AnsiPainter.paint(view.title, theme).join(" "),
           theme,
           context,

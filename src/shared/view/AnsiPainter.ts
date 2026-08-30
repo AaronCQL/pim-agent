@@ -83,10 +83,15 @@ function paintDiff(block: BlockOf<"diff">, theme: Theme): readonly string[] {
 }
 
 function paintFile(block: BlockOf<"file">, theme: Theme): readonly string[] {
-  const range = block.range ? `:${block.range[0]}-${block.range[1]}` : "";
+  const range = block.range ? formatRange(block.range) : "";
   const truncated = block.truncated === true ? " (truncated)" : "";
   const suffix = `${range}${truncated}`;
   return [suffix === "" ? block.path : block.path + theme.fg("muted", suffix)];
+}
+
+function formatRange(range: readonly [number, number | undefined]): string {
+  const [start, end] = range;
+  return end === undefined ? `:${start}` : `:${start}-${end}`;
 }
 
 function paintList(block: BlockOf<"list">, theme: Theme): readonly string[] {

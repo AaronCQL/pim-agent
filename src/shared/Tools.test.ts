@@ -441,7 +441,7 @@ describe("Tools.wrap view model synthesis", () => {
   function readLikeDef(): PimToolDefinition<typeof params, ReadDetails> {
     return {
       name: "read",
-      label: "Read",
+      label: "read",
       description: "test",
       parameters: params,
       async execute() {
@@ -451,6 +451,7 @@ describe("Tools.wrap view model synthesis", () => {
         const details = result?.details;
         const body = result?.content?.[0];
         return {
+          label: "Read",
           title: [
             {
               kind: "file",
@@ -484,6 +485,31 @@ describe("Tools.wrap view model synthesis", () => {
     const wrapped = Tools.wrap(plain);
     expect(wrapped.renderCall).toBeUndefined();
     expect(wrapped.renderResult).toBeUndefined();
+  });
+
+  test("keeps the definition's lowercase label as pi-facing metadata", () => {
+    expect(Tools.wrap(readLikeDef()).label).toBe("read");
+  });
+
+  test("falls back to the definition label when the view omits one", () => {
+    const def = readLikeDef();
+    const wrapped = Tools.wrap({
+      ...def,
+      toViewModel: ({ args, result, cwd }) => {
+        const { label: _drop, ...view } = def.toViewModel!({
+          args,
+          result,
+          cwd,
+        });
+        return view;
+      },
+    });
+    const lines = wrapped.renderCall!(
+      { path: "src/foo.ts" },
+      theme,
+      context()
+    ).render(80);
+    expect(lines[0]?.trimEnd()).toBe(" ▪ read: src/foo.ts");
   });
 
   test("synthesizes a title from the view model", () => {

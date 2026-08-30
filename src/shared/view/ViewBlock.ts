@@ -27,7 +27,8 @@ export type ViewBlock =
   | {
       readonly kind: "file";
       readonly path: string;
-      readonly range?: readonly [number, number];
+      /** An undefined end is an open-ended range (`:40`), not a missing one. */
+      readonly range?: readonly [number, number | undefined];
       readonly truncated?: boolean;
     }
   | {
@@ -47,6 +48,11 @@ export type ViewBlock =
     };
 
 export type ToolView = {
+  /**
+   * Display label for the title row, e.g. `"Read"`. Defaults to the
+   * definition's `label`, which stays lowercase pi-facing metadata.
+   */
+  readonly label?: string;
   /** Painted as one line: blocks are joined with a single space. */
   readonly title: readonly ViewBlock[];
   readonly body?: readonly ViewBlock[];

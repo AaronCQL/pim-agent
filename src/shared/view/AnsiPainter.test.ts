@@ -84,6 +84,20 @@ describe("AnsiPainter file", () => {
       })
     ).toEqual(["src/foo.ts<muted>:1-7 (truncated)</muted>"]);
   });
+
+  test("an undefined range end renders open-ended and still muted", () => {
+    expect(
+      paint({ kind: "file", path: "src/foo.ts", range: [40, undefined] })
+    ).toEqual(["src/foo.ts<muted>:40</muted>"]);
+    expect(
+      paint({
+        kind: "file",
+        path: "src/foo.ts",
+        range: [40, undefined],
+        truncated: true,
+      })
+    ).toEqual(["src/foo.ts<muted>:40 (truncated)</muted>"]);
+  });
 });
 
 describe("AnsiPainter list", () => {
