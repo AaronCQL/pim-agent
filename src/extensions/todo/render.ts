@@ -1,11 +1,7 @@
-import type {
-  AgentToolResult,
-  Theme,
-  ToolRenderResultOptions,
-} from "@earendil-works/pi-coding-agent";
-import type { Component } from "@earendil-works/pi-tui";
-import { Renderer } from "../../shared/Renderer";
-import type { TodoItem } from "./schema";
+import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { ToolViewInput } from "../../shared/Tools";
+import type { ToolView } from "../../shared/view/ViewBlock";
+import type { TodoInput, TodoItem, todoSchema } from "./schema";
 import type { TodoDetails } from "./todo";
 
 const MAX_WIDGET_LINES = 7;
@@ -16,44 +12,18 @@ const MAX_TRUNCATED_WIDGET_TODOS =
   MAX_UNTRUNCATED_WIDGET_TODOS - WIDGET_HINT_LINES;
 const WIDGET_ANCHOR_SLOT = Math.floor(MAX_WIDGET_LINES / 2) - 1;
 
-type RenderContext = {
-  readonly lastComponent: Component | undefined;
-  readonly isPartial: boolean;
-  readonly isError: boolean;
-};
+export type TodoViewInput = ToolViewInput<typeof todoSchema, TodoDetails>;
 
-class HiddenTodoToolRender implements Component {
-  public render(): string[] {
-    return [];
-  }
-
-  public invalidate(): void {}
-}
-
-export function renderCall(
-  args: { readonly todos?: readonly TodoItem[] } | undefined,
-  theme: Theme,
-  context: RenderContext
-): Component {
-  return Renderer.renderToolCallTitle({
+/**
+ * Body-less on purpose: the checklist lives in the persistent widget, so a
+ * per-call copy in the transcript would duplicate it on every update.
+ */
+export function todoView({ args }: TodoViewInput): ToolView {
+  const input = (args ?? {}) as Partial<TodoInput>;
+  return {
     label: "Todo",
-    title: formatCallTitle(args?.todos ?? []),
-    theme,
-    context,
-  });
-}
-
-export function renderResult(
-  _result: AgentToolResult<TodoDetails>,
-  _options: ToolRenderResultOptions,
-  _theme: Theme,
-  context: RenderContext
-): Component {
-  return reuseHiddenComponent(context);
-}
-
-export function formatCallTitle(items: readonly TodoItem[]): string {
-  return formatStatusSummary(items);
+    title: [{ kind: "text", text: formatStatusSummary(input.todos ?? []) }],
+  };
 }
 
 export function formatWidgetTitle(
@@ -82,12 +52,6 @@ export function renderWidgetLines(
     ...visibleItems.map((item) => styleItem(item, theme)),
     ...(hidden > 0 ? [theme.fg("muted", `… +${hidden} more`)] : []),
   ];
-}
-
-function reuseHiddenComponent(context: RenderContext): Component {
-  return context.lastComponent instanceof HiddenTodoToolRender
-    ? context.lastComponent
-    : new HiddenTodoToolRender();
 }
 
 function selectVisibleWidgetItems(

@@ -1,16 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import type {
-  AgentToolResult,
-  Theme,
-  ToolRenderResultOptions,
-} from "@earendil-works/pi-coding-agent";
+import type { Theme } from "@earendil-works/pi-coding-agent";
+import { AnsiPainter } from "../../shared/view/AnsiPainter";
 import type { TodoItem } from "./schema";
 import {
-  formatCallTitle,
   formatWidgetTitle,
-  renderCall,
-  renderResult,
   renderWidgetLines,
+  type TodoViewInput,
+  todoView,
 } from "./render";
 import { makeDetails } from "./todo";
 
@@ -27,45 +23,29 @@ const stubTheme = {
   strikethrough: (text: string) => `~~${text}~~`,
 } as unknown as Theme;
 
-const expandedOptions = {
-  expanded: true,
-  isPartial: false,
-} as ToolRenderResultOptions;
-const context = {
-  lastComponent: undefined,
-  isPartial: false,
-  isError: false,
-};
+describe("todo view model", () => {
+  test("title is the compact status summary", () => {
+    const view = todoView(viewInput({ todos: items }, makeDetails(items)));
 
-describe("todo render", () => {
-  test("renderCall shows only the compact status summary", () => {
-    expect(formatCallTitle(items)).toBe("1 done, 2 pending, 1 cancelled");
-    const rendered = renderCall({ todos: items }, stubTheme, context).render(
-      120
-    )[0];
-    expect(rendered).toContain("**Todo**");
-    expect(rendered).toContain("1 done, 2 pending, 1 cancelled");
+    expect(view.label).toBe("Todo");
+    expect(title(view)).toBe("1 done, 2 pending, 1 cancelled");
   });
 
-  test("renderCall shows cleared when the todo list is empty", () => {
-    expect(formatCallTitle([])).toBe("cleared");
-    const rendered = renderCall({ todos: [] }, stubTheme, context).render(
-      120
-    )[0];
-
-    expect(rendered).toContain("**Todo**");
-    expect(rendered).toContain(": cleared");
+  test("title shows cleared when the todo list is empty", () => {
+    expect(title(todoView(viewInput({ todos: [] })))).toBe("cleared");
   });
 
-  test("renderResult is hidden so the widget is the only TUI checklist", () => {
+  test("title renders from partial args alone", () => {
+    expect(title(todoView(viewInput({})))).toBe("cleared");
+    expect(title(todoView(viewInput({ todos: [items[1]!] })))).toBe(
+      "1 pending"
+    );
+  });
+
+  test("body stays empty so the widget is the only TUI checklist", () => {
     expect(
-      renderResult(
-        toolResult(items),
-        expandedOptions,
-        stubTheme,
-        context
-      ).render(120)
-    ).toEqual([]);
+      todoView(viewInput({ todos: items }, makeDetails(items))).body
+    ).toBeUndefined();
   });
 
   test("widget title bolds total and wraps status summary", () => {
@@ -160,13 +140,21 @@ describe("todo render", () => {
   });
 });
 
-function toolResult(
-  items: readonly TodoItem[]
-): AgentToolResult<ReturnType<typeof makeDetails>> {
+function viewInput(
+  args: { readonly todos?: readonly TodoItem[] },
+  details?: ReturnType<typeof makeDetails>
+): TodoViewInput {
   return {
-    content: [{ type: "text", text: "" }],
-    details: makeDetails(items),
+    args: args as TodoViewInput["args"],
+    ...(details === undefined
+      ? {}
+      : { result: { content: [{ type: "text", text: "" }], details } }),
+    cwd: "/repo",
   };
+}
+
+function title(view: ReturnType<typeof todoView>): string {
+  return AnsiPainter.paint(view.title, stubTheme).join(" ");
 }
 
 function makePendingItems(

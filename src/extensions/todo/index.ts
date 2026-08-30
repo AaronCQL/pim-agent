@@ -3,7 +3,7 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Tools } from "../../shared/Tools";
-import { renderCall, renderResult, renderWidgetLines } from "./render";
+import { renderWidgetLines, todoView } from "./render";
 import { todoSchema } from "./schema";
 import {
   formatChecklist,
@@ -80,8 +80,7 @@ export default function (pi: ExtensionAPI): void {
         details: makeDetails(items),
       };
     },
-    renderCall,
-    renderResult,
+    toViewModel: todoView,
   });
 
   pi.on("session_start", (_event, ctx) => {
