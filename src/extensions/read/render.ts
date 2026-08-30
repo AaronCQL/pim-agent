@@ -1,61 +1,70 @@
-import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Paths } from "../../shared/Paths";
+import type { ToolView, ViewBlock } from "../../shared/view/ViewBlock";
+import type { ReadInput } from "./schema";
 
-export type ReadTitleOutcome = {
-  readonly visibleStart: number;
-  readonly visibleEnd: number;
+type ReadResultLike = {
+  readonly content?: ReadonlyArray<{
+    readonly type: string;
+    readonly text?: string;
+  }>;
+  readonly details?: unknown;
 };
 
-export type TitlePathOptions = {
-  readonly path: string | undefined;
+export type ReadViewInput = {
+  /** Partially streamed while the call is in flight; every field is optional. */
+  readonly args: Partial<ReadInput> | undefined;
+  readonly result?: ReadResultLike;
   readonly cwd: string;
-  readonly start: number | undefined;
-  readonly end: number | undefined;
-  readonly outcome?: ReadTitleOutcome;
 };
 
-export function formatTitlePath(options: TitlePathOptions): string {
-  const { path, range } = formatTitlePathParts(options);
-  return `${path}${range}`;
+export function readView({ args, result, cwd }: ReadViewInput): ToolView {
+  const input = args ?? {};
+  return {
+    label: "Read",
+    title: [titleBlock(input, result?.details, cwd)],
+    body: [{ kind: "text", text: bodyText(result) }],
+  };
 }
 
-export function renderTitlePath(
-  options: TitlePathOptions,
-  theme: Theme
-): string {
-  const { path, range } = formatTitlePathParts(options);
-  return `${path}${range === "" ? "" : theme.fg("muted", range)}`;
+function titleBlock(
+  input: Partial<ReadInput>,
+  details: unknown,
+  cwd: string
+): ViewBlock {
+  const path = Paths.titleOr(input.path, cwd);
+  const visible = visibleRange(details);
+
+  if (visible) {
+    return { kind: "file", path, range: visible };
+  }
+
+  if (input.start === undefined && input.end === undefined) {
+    return { kind: "file", path };
+  }
+
+  return { kind: "file", path, range: [input.start ?? 1, input.end] };
 }
 
-function formatTitlePathParts(options: TitlePathOptions): {
-  readonly path: string;
-  readonly range: string;
-} {
-  const path = options.path
-    ? Paths.displayRelative(options.path, options.cwd)
-    : "...";
-  const range = formatRange(options.start, options.end, options.outcome);
-  return { path, range };
+/**
+ * The settled range wins over the requested one so an overlarge `end` (or a
+ * byte-capped read) reports what was actually shown.
+ */
+function visibleRange(details: unknown): readonly [number, number] | undefined {
+  if (typeof details !== "object" || details === null) {
+    return undefined;
+  }
+
+  const { visibleStart, visibleEnd } = details as {
+    readonly visibleStart?: unknown;
+    readonly visibleEnd?: unknown;
+  };
+
+  return typeof visibleStart === "number" && typeof visibleEnd === "number"
+    ? [visibleStart, visibleEnd]
+    : undefined;
 }
 
-function formatRange(
-  start: number | undefined,
-  end: number | undefined,
-  outcome: ReadTitleOutcome | undefined
-): string {
-  if (outcome !== undefined) {
-    return `:${outcome.visibleStart}-${outcome.visibleEnd}`;
-  }
-
-  if (start === undefined && end === undefined) {
-    return "";
-  }
-
-  const startLine = start ?? 1;
-
-  if (end === undefined) {
-    return `:${startLine}`;
-  }
-
-  return `:${startLine}-${end}`;
+function bodyText(result: ReadResultLike | undefined): string {
+  const first = result?.content?.[0];
+  return first?.text ?? "";
 }
