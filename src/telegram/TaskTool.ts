@@ -1,9 +1,10 @@
 import {
   defineTool,
   type AgentToolResult,
-  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 
+import type { PimToolDefinition } from "../shared/Tools";
+import type { Span, ToolView } from "../shared/view/ViewBlock";
 import type { SessionId } from "./Session";
 import type { TaskScheduler } from "./TaskScheduler";
 import { taskToolSchema, type TaskToolInput } from "./TaskSchema";
@@ -14,30 +15,44 @@ export type TaskToolDeps = {
 };
 
 export class TaskTool {
-  public static build(deps: TaskToolDeps): ToolDefinition {
-    return defineTool({
-      name: "task",
-      label: "task",
-      description:
-        "Manage scheduled/recurring tasks for this Telegram chat/thread.",
-      parameters: taskToolSchema,
-      async execute(_id, params) {
-        const input = params as TaskToolInput;
-        switch (input.action) {
-          case "create":
-            return await TaskTool.create(deps, input);
-          case "list":
-            return await TaskTool.list(deps);
-          case "delete":
-            return await TaskTool.delete(deps, input);
-          case "pause":
-          case "resume":
-            return await TaskTool.setStatus(deps, input);
-          case "update_prompt":
-            return await TaskTool.updatePrompt(deps, input);
-        }
-      },
-    });
+  public static build(
+    deps: TaskToolDeps
+  ): PimToolDefinition<typeof taskToolSchema> {
+    return {
+      ...defineTool({
+        name: "task",
+        label: "task",
+        description:
+          "Manage scheduled/recurring tasks for this Telegram chat/thread.",
+        parameters: taskToolSchema,
+        async execute(_id, params) {
+          const input = params as TaskToolInput;
+          switch (input.action) {
+            case "create":
+              return await TaskTool.create(deps, input);
+            case "list":
+              return await TaskTool.list(deps);
+            case "delete":
+              return await TaskTool.delete(deps, input);
+            case "pause":
+            case "resume":
+              return await TaskTool.setStatus(deps, input);
+            case "update_prompt":
+              return await TaskTool.updatePrompt(deps, input);
+          }
+        },
+      }),
+      toViewModel: ({ args }): ToolView => ({
+        label: "Task",
+        icon: "clock",
+        title: [
+          {
+            kind: "spans",
+            spans: taskSpans((args ?? {}) as Partial<TaskToolInput>),
+          },
+        ],
+      }),
+    };
   }
 
   private static async create(
@@ -156,4 +171,56 @@ export class TaskTool {
       details: task,
     };
   }
+}
+
+/** Mirrors the schema's action union; a new action gets a bare verb, not a crash. */
+function taskSpans(input: Partial<TaskToolInput>): readonly Span[] {
+  const action = input.action;
+  if (!action) {
+    return [{ text: "..." }];
+  }
+  if (action === "list") {
+    return [{ text: "List tasks" }];
+  }
+  if (action === "create") {
+    const schedule = scheduleSummary(input);
+    return [
+      { text: "Schedule task" },
+      ...(input.prompt ? [{ text: ": " }, code(input.prompt)] : []),
+      ...(schedule ? [{ text: ` (${schedule})` }] : []),
+    ];
+  }
+  if (action === "update_prompt") {
+    return input.prompt
+      ? [{ text: "Update task: " }, code(input.prompt)]
+      : [{ text: "Update task" }];
+  }
+  const verb = VERBS[action] ?? action;
+  return input.id
+    ? [{ text: `${verb} task: ` }, code(input.id)]
+    : [{ text: `${verb} task` }];
+}
+
+const VERBS: Readonly<Record<string, string>> = {
+  delete: "Delete",
+  pause: "Pause",
+  resume: "Resume",
+};
+
+function code(text: string): Span {
+  return { text, code: true };
+}
+
+function scheduleSummary(input: Partial<TaskToolInput>): string | undefined {
+  const schedule = input.schedule;
+  if (!schedule) {
+    return undefined;
+  }
+  if (schedule.type === "once") {
+    return `once @ ${schedule.at}`;
+  }
+  if (schedule.type === "interval") {
+    return `every ${schedule.every}`;
+  }
+  return `cron ${schedule.expr}`;
 }

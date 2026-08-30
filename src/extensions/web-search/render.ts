@@ -17,6 +17,7 @@ export function webSearchView({ args, result }: WebSearchViewInput): ToolView {
   const details = result?.details;
   return {
     label: "Web Search",
+    icon: "globe",
     title: [
       {
         kind: "text",

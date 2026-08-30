@@ -19,6 +19,7 @@ export function webFetchView({ args, result }: WebFetchViewInput): ToolView {
   const input = (args ?? {}) as Partial<WebFetchInput>;
   return {
     label: "Web Fetch",
+    icon: "globe",
     // A `link` block would paint the URL in link colours; the title has always
     // been plain, so it stays a text block.
     title: [

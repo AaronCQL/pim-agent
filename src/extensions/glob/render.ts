@@ -55,6 +55,7 @@ export function globView({ args, result, cwd }: GlobViewInput): ToolView {
   const input = (args ?? {}) as Partial<GlobInput>;
   return {
     label: "Glob",
+    icon: "search",
     title: [
       {
         kind: "text",

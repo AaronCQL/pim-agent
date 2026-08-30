@@ -139,8 +139,11 @@ function spansText(spans: readonly Span[], theme: Theme): string {
   return spans
     .filter((span) => span.text !== "")
     .map((span) => {
-      const text =
+      let text =
         span.strike === true ? theme.strikethrough(span.text) : span.text;
+      if (span.strong === true) {
+        text = theme.bold(text);
+      }
       const tone = span.tone ?? "default";
       return tone === "default" ? text : theme.fg(TONE_COLORS[tone], text);
     })
@@ -163,7 +166,7 @@ function paintSection(
     "",
     Renderer.toolTitleText({
       label: block.label,
-      title: spansText(block.content, theme),
+      title: AnsiPainter.paint(block.content, theme).join(" "),
       theme,
       markerColor: "success",
     }),

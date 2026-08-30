@@ -109,6 +109,11 @@ export class Session {
     return this.currentSettings;
   }
 
+  /** Where this session's tools resolve relative paths, session override first. */
+  public get cwd(): string {
+    return this.currentSettings.cwd ?? this.deps.config.cwd;
+  }
+
   public get isStreaming(): boolean {
     return this.cached?.isStreaming ?? false;
   }
@@ -137,7 +142,7 @@ export class Session {
     if (this.cached) {
       return this.cached.thinkingLevel as ThinkingLevelOpt;
     }
-    const cwd = this.currentSettings.cwd ?? this.deps.config.cwd;
+    const cwd = this.cwd;
     const sm = this.deps.settingsManagerFor(cwd);
     return (sm.getDefaultThinkingLevel() as ThinkingLevelOpt) ?? "medium";
   }
@@ -381,7 +386,7 @@ export class Session {
     sessionPath: string,
     wrapped: string | undefined
   ): Promise<{ readonly agent: AgentSession; readonly cwd: string }> {
-    const cwd = this.currentSettings.cwd ?? this.deps.config.cwd;
+    const cwd = this.cwd;
     const sessionManager = SessionManager.open(sessionPath, undefined, cwd);
     const settingsManager = this.deps.settingsManagerFor(cwd);
     const promptRef = { wrapped };
@@ -544,7 +549,7 @@ export class Session {
         return r.model;
       }
     }
-    const cwd = this.currentSettings.cwd ?? this.deps.config.cwd;
+    const cwd = this.cwd;
     const sm = this.deps.settingsManagerFor(cwd);
     const provider = sm.getDefaultProvider();
     const modelId = sm.getDefaultModel();

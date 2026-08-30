@@ -1,9 +1,39 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type {
+  AgentSessionEvent,
+  ExtensionAPI,
+} from "@earendil-works/pi-coding-agent";
 import type { Api } from "grammy";
 
+import applyPatchExtension from "../extensions/apply-patch/index";
+import editExtension from "../extensions/edit/index";
+import subagentExtension from "../extensions/subagent/index";
+import todoExtension from "../extensions/todo/index";
+import writeExtension from "../extensions/write/index";
+import { Tools } from "../shared/Tools";
 import { Renderer } from "./Renderer";
 import type { Session } from "./Session";
+import { TaskTool } from "./TaskTool";
+
+// The renderer paints whatever view a tool registered, so the tests register
+// the real ones the same way a session does: by loading the extensions.
+const fakePi = {
+  registerTool: () => {},
+  on: () => {},
+  getActiveTools: () => [],
+  getAllTools: () => [],
+} as unknown as ExtensionAPI;
+
+for (const extension of [
+  applyPatchExtension,
+  editExtension,
+  subagentExtension,
+  todoExtension,
+  writeExtension,
+]) {
+  extension(fakePi);
+}
+Tools.wrap(TaskTool.build({} as never));
 
 type SentMessage = {
   readonly chatId: number;
@@ -70,6 +100,7 @@ class FakeApi {
 const session = {
   id: { chatId: 123, threadId: undefined },
   settings: { logsMode: "text" },
+  cwd: "/repo",
 } as unknown as Session;
 
 function makeRenderer(logsMode = "text"): {
@@ -224,7 +255,23 @@ describe("Telegram Renderer apply_patch status", () => {
     expect(api.sent.map((m) => m.text)).toEqual(["✏️ <code>foo.ts</code>"]);
   });
 
-  test("labels a delete with the trash emoji", async () => {
+  test("labels a delete with the trash emoji once the entries land", async () => {
+    const { api, renderer } = makeRenderer();
+    renderer.handleEvent(
+      applyPatchStart({
+        input: "*** Begin Patch\n*** Delete File: src/old.ts\n*** End Patch",
+      })
+    );
+    renderer.handleEvent(
+      applyPatchEnd([{ action: { kind: "delete", path: "src/old.ts" } }])
+    );
+    await renderer.finish("", "ok");
+    expect(api.sent.map((m) => m.text)).toEqual(["🗑️ <code>old.ts</code>"]);
+  });
+
+  // Before the result lands there are no entries to describe, so the row shows
+  // the patch's first path under the tool's own icon.
+  test("names the first patched file while the patch is still running", async () => {
     const { api, renderer } = makeRenderer();
     renderer.handleEvent(
       applyPatchStart({
@@ -232,21 +279,7 @@ describe("Telegram Renderer apply_patch status", () => {
       })
     );
     await renderer.finish("", "ok");
-    expect(api.sent.map((m) => m.text)).toEqual(["🗑️ <code>old.ts</code>"]);
-  });
-
-  test("labels a rename with the edit emoji and an arrow", async () => {
-    const { api, renderer } = makeRenderer();
-    renderer.handleEvent(
-      applyPatchStart({
-        input:
-          "*** Begin Patch\n*** Update File: src/a.ts\n*** Move to: src/b.ts\n*** End Patch",
-      })
-    );
-    await renderer.finish("", "ok");
-    expect(api.sent.map((m) => m.text)).toEqual([
-      "✏️ <code>a.ts</code> ➝ <code>b.ts</code>",
-    ]);
+    expect(api.sent.map((m) => m.text)).toEqual(["✏️ <code>old.ts</code>"]);
   });
 
   test("refines a move with the arrow and line stats on finish", async () => {
@@ -267,7 +300,7 @@ describe("Telegram Renderer apply_patch status", () => {
     );
     await renderer.finish("", "ok");
     expect(api.sent.map((m) => m.text)).toEqual([
-      "✏️ <code>a.ts</code> ➝ <code>b.ts</code> +1/-1",
+      "✏️ src/{<s>a.ts</s> ➝ b.ts} +1/-1",
     ]);
   });
 
@@ -288,12 +321,22 @@ describe("Telegram Renderer apply_patch status", () => {
         ].join("\n"),
       })
     );
+    renderer.handleEvent(
+      applyPatchEnd([
+        {
+          action: { kind: "update", path: "src/config.ts" },
+          diff: fakeDiff(1, 1),
+        },
+        { action: { kind: "delete", path: "src/legacy.ts" } },
+        { action: { kind: "move", path: "src/a.ts", movePath: "src/b.ts" } },
+      ])
+    );
     await renderer.finish("", "ok");
     expect(api.sent.map((m) => m.text)).toEqual([
       [
-        "✏️ <code>config.ts</code>",
+        "✏️ <code>config.ts</code> +1/-1",
         "🗑️ <code>legacy.ts</code>",
-        "✏️ <code>a.ts</code> ➝ <code>b.ts</code>",
+        "✏️ src/{<s>a.ts</s> ➝ b.ts}",
       ].join("<br>"),
     ]);
   });
@@ -359,7 +402,7 @@ describe("Telegram Renderer apply_patch status", () => {
       )
     );
     await renderer.finish("", "ok");
-    expect(api.sent.map((m) => m.text)).toEqual(["🗑️ <code>old.ts</code>"]);
+    expect(api.sent.map((m) => m.text)).toEqual(["✏️ <code>old.ts</code>"]);
   });
 });
 
@@ -392,7 +435,7 @@ describe("Telegram Renderer edit/write stats", () => {
 });
 
 describe("Telegram Renderer todo status", () => {
-  test("renders the latest in-progress todo in bold", async () => {
+  test("renders the latest in-progress todo in bold under the tally", async () => {
     const { api, renderer } = makeRenderer();
 
     renderer.handleEvent(
@@ -404,7 +447,7 @@ describe("Telegram Renderer todo status", () => {
     await renderer.finish("", "ok");
 
     expect(api.sent.map((msg) => msg.text)).toEqual([
-      "📋 <b>Second &lt;task&gt; &amp; verify</b>",
+      "📋 2 pending<br>📋 <b>Second &lt;task&gt; &amp; verify</b>",
     ]);
   });
 
@@ -418,7 +461,7 @@ describe("Telegram Renderer todo status", () => {
     await renderer.finish("", "ok");
 
     expect(api.sent.map((msg) => msg.text)).toEqual([
-      "📋 <b>Do X</b><br>⏰ List tasks",
+      "📋 1 pending<br>📋 <b>Do X</b><br>⏰ List tasks",
     ]);
   });
 
@@ -447,18 +490,18 @@ describe("Telegram Renderer todo status", () => {
     await renderer.finish("", "ok");
 
     expect(api.sent.map((msg) => msg.text)).toEqual([
-      "📋 <b>Remember to buy milk</b>",
+      "📋 1 pending<br>📋 <b>Remember to buy milk</b> 🟡",
     ]);
     expect(api.edited.map((msg) => msg.text)).toEqual([
       [
-        "📋 <b>Remember to buy milk</b>",
+        "📋 1 pending<br>📋 <b>Remember to buy milk</b>",
         "<p>First item is in progress. Now let me finish it and start the next one:</p>",
-        "📋 <b>Remember to get water</b>",
+        "📋 1 done, 1 pending<br>📋 <b>Remember to get water</b>",
       ].join(""),
     ]);
   });
 
-  test("does not render todo calls with no in-progress item", async () => {
+  test("shows only the tally for a todo call with nothing in progress", async () => {
     const { api, renderer } = makeRenderer();
 
     renderer.handleEvent(
@@ -469,8 +512,7 @@ describe("Telegram Renderer todo status", () => {
     );
     await renderer.finish("", "ok");
 
-    expect(api.sent).toEqual([]);
-    expect(api.edited).toEqual([]);
+    expect(api.sent.map((msg) => msg.text)).toEqual(["📋 1 done, 1 pending"]);
   });
 
   test("ignores malformed todo args", async () => {
@@ -481,11 +523,10 @@ describe("Telegram Renderer todo status", () => {
     ).not.toThrow();
     await renderer.finish("", "ok");
 
-    expect(api.sent).toEqual([]);
-    expect(api.edited).toEqual([]);
+    expect(api.sent.map((msg) => msg.text)).toEqual(["📋 cleared"]);
   });
 
-  test("does not emit a new todo entry when no item remains in progress", async () => {
+  test("drops the in-progress line once the item completes", async () => {
     const { api, renderer } = makeRenderer();
 
     renderer.handleEvent(
@@ -498,14 +539,14 @@ describe("Telegram Renderer todo status", () => {
     await flush(renderer);
 
     expect(api.sent.map((msg) => msg.text)).toEqual([
-      "📋 <b>Build feature</b>",
+      "📋 1 pending<br>📋 <b>Build feature</b> 🟡",
     ]);
     expect(api.edited).toEqual([]);
   });
 });
 
 describe("Telegram Renderer subagent status", () => {
-  test("appends a tool count from subagent progress details", async () => {
+  test("appends the subagent's progress line to its prompt", async () => {
     const { api, renderer } = makeRenderer();
 
     renderer.handleEvent(
@@ -520,12 +561,15 @@ describe("Telegram Renderer subagent status", () => {
         details: {
           toolCalls: [{ name: "read", isError: false }],
           activeToolNames: ["grep"],
+          topLine: "$0.01 ⬝ ?/200K ⬝ sonnet ⬝ 1 turn ⬝ 2 tools",
         },
       },
     } as AgentSessionEvent);
     await renderer.finish("", "ok");
 
-    expect(api.sent.some((msg) => msg.text.includes("(2 tools)"))).toBe(true);
+    expect(api.sent.map((msg) => msg.text)).toEqual([
+      "🤖 review the diff $0.01 ⬝ ?/200K ⬝ sonnet ⬝ 1 turn ⬝ 2 tools",
+    ]);
   });
 
   // pi replaces a failed tool result with `createErrorToolResult`, whose

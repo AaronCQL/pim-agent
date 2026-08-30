@@ -44,6 +44,18 @@ export type PimToolDefinition<
   readonly previewLines?: number;
 };
 
+/**
+ * A registered `toViewModel` with its parameter types erased, so a frontend
+ * that only knows a tool by name (an event stream carries no schema) can still
+ * ask for its view.
+ */
+export type ToolViewFactory = (input: {
+  readonly args: unknown;
+  readonly result?: AgentToolResult<unknown>;
+  readonly isPartial: boolean;
+  readonly cwd: string;
+}) => ToolView;
+
 /** Renderer-owned plumbing that hands the result back to the title renderer. */
 type ViewRenderState<TDetails> = {
   viewResult?: AgentToolResult<TDetails>;
@@ -62,6 +74,18 @@ type JsonSchema = {
 };
 
 export class Tools {
+  private static readonly viewFactories = new Map<string, ToolViewFactory>();
+
+  /**
+   * The view model a registered tool paints itself with, or undefined for a
+   * tool that has none (an MCP tool, or one not ported yet). Registration is
+   * the only key-by-name map in the system: every frontend reads this instead
+   * of keeping its own table of tool names.
+   */
+  static viewFor(toolName: string): ToolViewFactory | undefined {
+    return Tools.viewFactories.get(toolName);
+  }
+
   /**
    * Wrap a tool definition so pi's validator errors get rewritten before they
    * reach the model. Pi runs `prepareArguments` before validation, so we call
@@ -80,6 +104,9 @@ export class Tools {
     const schema = def.parameters as unknown as JsonSchema;
     // Pi rejects unknown definition fields, so strip pim-only ones here.
     const { toViewModel, previewLines: _previewLines, ...piDef } = def;
+    if (toViewModel !== undefined) {
+      Tools.viewFactories.set(def.name, toViewModel as ToolViewFactory);
+    }
     return {
       ...piDef,
       ...(toViewModel === undefined

@@ -31,6 +31,7 @@ export function subagentView({
 }: SubagentViewInput): ToolView {
   return {
     label: "Subagent",
+    icon: "robot",
     labelTone: labelTone(result, isPartial),
     title: [{ kind: "markdown", text: formatCallTitle(args?.prompt) }],
     summary: summaryBlocks(result?.details, isPartial),

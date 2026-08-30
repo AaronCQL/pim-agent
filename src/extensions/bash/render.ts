@@ -13,10 +13,16 @@ type BashViewInput = ToolViewInput<typeof bashSchema, BashDetails>;
 export function bashView({ args, result }: BashViewInput): ToolView {
   return {
     label: "Bash",
+    icon: "terminal",
     // A `text` block would be split on newlines and rejoined with a space when
     // the title blocks are flattened; `spans` keeps a heredoc or a multi-line
     // pipeline intact for the title component to wrap and indent itself.
-    title: [{ kind: "spans", spans: [{ text: commandTitle(args?.command) }] }],
+    title: [
+      {
+        kind: "spans",
+        spans: [{ text: commandTitle(args?.command), code: true }],
+      },
+    ],
     body: [{ kind: "text", text: bodyText(result) }],
   };
 }

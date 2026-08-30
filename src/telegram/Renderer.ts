@@ -1,13 +1,12 @@
-import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type {
+  AgentSessionEvent,
+  AgentToolResult,
+} from "@earendil-works/pi-coding-agent";
 import { GrammyError, type Api } from "grammy";
-import { basename } from "node:path";
 
-import type { ApplyEntry } from "../extensions/apply-patch/executor";
-import type { SubagentDetails } from "../extensions/subagent/subagent";
-import type { TodoInput } from "../extensions/todo/schema";
-import type { ToolDiff } from "../shared/DiffLines";
-import { DiffView, type DiffStats } from "../shared/DiffView";
-import { type PatchOp, PatchSummary } from "../shared/PatchSummary";
+import { Tools } from "../shared/Tools";
+import { MarkdownPainter } from "../shared/view/MarkdownPainter";
+import type { ToolView } from "../shared/view/ViewBlock";
 import type { LogsMode } from "./Config";
 import { Markdown } from "./Markdown";
 import type { Session, SessionId } from "./Session";
@@ -18,40 +17,17 @@ type TurnState = TurnEndState | "running";
 
 type TrackerEntry = {
   readonly key: string;
-  readonly kind: "tool" | "todo" | "thinking" | "narration";
-  emoji: string;
+  readonly kind: "tool" | "thinking" | "narration";
+  icon: string;
   label: string;
   state: "running" | "ok" | "error";
-  // Plaintext "+4/-3" appended after the label once the tool finishes.
-  stats?: string;
 };
 
-type ApplyOp = {
-  readonly emoji: string;
-  readonly text: string;
-};
-
-const EDIT_EMOJI = "✏️";
-const DELETE_EMOJI = "🗑️";
-const ARROW = "➝";
-
-// Keys an apply_patch tool call may carry its patch text under (canonical first).
-const PATCH_TEXT_KEYS = ["input", "patch", "patchText", "patch_text"] as const;
-
-const TOOL_EMOJI: Record<string, string> = {
-  read: "📄",
-  edit: EDIT_EMOJI,
-  write: EDIT_EMOJI,
-  apply_patch: EDIT_EMOJI,
-  bash: "⚡️",
-  grep: "🔎",
-  glob: "🔎",
-  todo: "📋",
-  web_search: "🌐",
-  web_fetch: "🌐",
-  send_file: "📤",
-  task: "⏰",
-  subagent: "🤖",
+/** What a later update needs to repaint a row: its tool, and what it was called with. */
+type ToolCall = {
+  readonly index: number;
+  readonly toolName: string;
+  readonly args: unknown;
 };
 
 const MESSAGE_LIMIT = 32000;
@@ -86,8 +62,8 @@ export class Renderer {
   private readonly sessionId: SessionId;
   private readonly logsMode: LogsMode;
   private readonly entries: TrackerEntry[] = [];
-  private readonly toolIndex = new Map<string, number>();
-  private readonly subagentBaseById = new Map<string, string>();
+  private readonly calls = new Map<string, ToolCall>();
+  private readonly cwd: string;
   private readonly typing: TypingIndicator;
   private statusMessageId: number | undefined;
   private editTimer: Timer | undefined;
@@ -102,6 +78,7 @@ export class Renderer {
   public constructor(session: Session, api: Api) {
     this.api = api;
     this.sessionId = session.id;
+    this.cwd = session.cwd;
     this.logsMode = session.settings.logsMode ?? "text";
     this.typing = new TypingIndicator(api, session.id);
   }
@@ -162,24 +139,21 @@ export class Renderer {
       if (this.logsMode === "off") {
         return;
       }
-      this.updateSubagentLabel(
-        event.toolCallId,
-        event.toolName,
-        event.partialResult
-      );
+      this.refreshTool(event.toolCallId, event.partialResult, true);
       return;
     }
     if (event.type === "tool_execution_end") {
       if (this.logsMode === "off") {
         return;
       }
-      this.updateSubagentLabel(event.toolCallId, event.toolName, event.result);
+      // A failed call's result is pi's synthetic error one, whose details are
+      // empty; repainting from it would drop what the call already showed.
       if (!event.isError) {
-        this.applyResultStats(event.toolCallId, event.toolName, event.result);
+        this.refreshTool(event.toolCallId, event.result, false);
       }
-      const idx = this.toolIndex.get(event.toolCallId);
-      if (idx !== undefined) {
-        this.entries[idx]!.state = event.isError ? "error" : "ok";
+      const call = this.calls.get(event.toolCallId);
+      if (call !== undefined) {
+        this.entries[call.index]!.state = event.isError ? "error" : "ok";
         this.scheduleEdit();
       }
       return;
@@ -210,136 +184,75 @@ export class Renderer {
   }
 
   private addTool(toolCallId: string, toolName: string, args: unknown): void {
-    const name = toolName.toLowerCase();
-    if (name === "todo") {
-      const content = Renderer.latestInProgressTodoContent(args);
-      if (!content) {
-        return;
-      }
-      this.entries.push({
-        key: toolCallId,
-        kind: "todo",
-        emoji: TOOL_EMOJI.todo as string,
-        label: content,
-        state: "ok",
-      });
-      this.scheduleEdit();
-      return;
-    }
-    if (name === "apply_patch") {
-      const { emoji, label } = Renderer.buildApplyEntry(
-        Renderer.applyOpsFromArgs(args)
-      );
+    const { icon, label } = this.paintTool(toolName, args, undefined, true);
+    const last = this.entries.at(-1);
+
+    // A repeat of the row already at the bottom reopens it instead of stacking
+    // an identical line, e.g. a retried read of the same file.
+    if (last?.kind === "tool" && last.icon === icon && last.label === label) {
+      last.state = "running";
+    } else {
       this.entries.push({
         key: toolCallId,
         kind: "tool",
-        emoji,
+        icon,
         label,
         state: "running",
       });
-      this.toolIndex.set(toolCallId, this.entries.length - 1);
-      this.scheduleEdit();
-      return;
     }
-    const emoji = TOOL_EMOJI[name] ?? "⚙️";
-    const label = Renderer.toolLabel(toolName, args);
-    if (name === "subagent") {
-      this.subagentBaseById.set(toolCallId, label);
-    }
-    const last = this.entries.at(-1);
-    if (last?.kind === "tool" && last.emoji === emoji && last.label === label) {
-      this.toolIndex.set(toolCallId, this.entries.length - 1);
-      last.state = "running";
-      this.scheduleEdit();
-      return;
-    }
-    this.entries.push({
-      key: toolCallId,
-      kind: "tool",
-      emoji,
-      label,
-      state: "running",
+
+    this.calls.set(toolCallId, {
+      index: this.entries.length - 1,
+      toolName,
+      args,
     });
-    this.toolIndex.set(toolCallId, this.entries.length - 1);
     this.scheduleEdit();
   }
 
-  private updateSubagentLabel(
+  /**
+   * Repaints a row from the same view model, now that the tool has a result to
+   * fold in: line counts, a provider name, a subagent's progress.
+   */
+  private refreshTool(
     toolCallId: string,
-    toolName: string,
-    payload: unknown
+    result: unknown,
+    isPartial: boolean
   ): void {
-    if (toolName.toLowerCase() !== "subagent") {
+    const call = this.calls.get(toolCallId);
+    if (call === undefined) {
       return;
     }
-    const idx = this.toolIndex.get(toolCallId);
-    if (idx === undefined) {
+    const { icon, label } = this.paintTool(
+      call.toolName,
+      call.args,
+      result as AgentToolResult<unknown> | undefined,
+      isPartial
+    );
+    const entry = this.entries[call.index]!;
+    if (entry.icon === icon && entry.label === label) {
       return;
     }
-    const base = this.subagentBaseById.get(toolCallId);
-    if (base === undefined) {
-      return;
-    }
-    const details = (
-      payload as { readonly details?: Partial<SubagentDetails> } | null
-    )?.details;
-    if (!details?.toolCalls || !details.activeToolNames) {
-      return;
-    }
-    const count = details.toolCalls.length + details.activeToolNames.length;
-    const suffix =
-      count > 0 ? ` (${count} ${count === 1 ? "tool" : "tools"})` : "";
-    const next = `${base}${suffix}`;
-    if (this.entries[idx]!.label === next) {
-      return;
-    }
-    this.entries[idx]!.label = next;
+    entry.icon = icon;
+    entry.label = label;
     this.scheduleEdit();
   }
 
-  private applyResultStats(
-    toolCallId: string,
+  private paintTool(
     toolName: string,
-    result: unknown
-  ): void {
-    const idx = this.toolIndex.get(toolCallId);
-    if (idx === undefined) {
-      return;
-    }
-    const name = toolName.toLowerCase();
-    const details = (result as { readonly details?: unknown } | null)?.details;
-    if (name === "web_search") {
-      const provider = (details as { readonly provider?: unknown } | undefined)
-        ?.provider;
-      if (typeof provider === "string" && provider.length > 0) {
-        this.entries[idx]!.stats = `· ${Markdown.escape(provider)}`;
-        this.scheduleEdit();
-      }
-      return;
-    }
-    if (name === "edit" || name === "write") {
-      const diff = (details as { readonly diff?: ToolDiff } | undefined)?.diff;
-      const stats = Renderer.formatPlainStats(DiffView.countStats(diff));
-      if (stats) {
-        this.entries[idx]!.stats = stats;
-        this.scheduleEdit();
-      }
-      return;
-    }
-    if (name === "apply_patch") {
-      const entries = (
-        details as { readonly entries?: readonly ApplyEntry[] } | undefined
-      )?.entries;
-      if (!entries) {
-        return;
-      }
-      const built = Renderer.buildApplyEntry(
-        Renderer.applyOpsFromEntries(entries)
-      );
-      this.entries[idx]!.emoji = built.emoji;
-      this.entries[idx]!.label = built.label;
-      this.scheduleEdit();
-    }
+    args: unknown,
+    result: AgentToolResult<unknown> | undefined,
+    isPartial: boolean
+  ): { readonly icon: string; readonly label: string } {
+    const view = Tools.viewFor(toolName)?.({
+      args,
+      ...(result === undefined ? {} : { result }),
+      isPartial,
+      cwd: this.cwd,
+    });
+    const painted = MarkdownPainter.paintTool(
+      view ?? genericView(toolName, args)
+    );
+    return { icon: painted.icon, label: painted.lines.join(BR) };
   }
 
   private flushThinking(): void {
@@ -359,7 +272,7 @@ export class Renderer {
     this.entries.push({
       key: `thinking-${this.entries.length}`,
       kind: "thinking",
-      emoji: "",
+      icon: "",
       label: text,
       state: "ok",
     });
@@ -383,7 +296,7 @@ export class Renderer {
     this.entries.push({
       key: `narration-${this.entries.length}`,
       kind: "narration",
-      emoji: "",
+      icon: "",
       label: text,
       state: "ok",
     });
@@ -464,9 +377,7 @@ export class Renderer {
     }
     for (let i = 0; i < visible.length; i++) {
       const entry = visible[i]!;
-      if (entry.kind === "todo") {
-        pieces.push(`${entry.emoji} <b>${Markdown.escape(entry.label)}</b>`);
-      } else if (entry.kind === "thinking") {
+      if (entry.kind === "thinking") {
         pieces.push(Markdown.toHtml(entry.label, { italics: true }));
       } else if (entry.kind === "narration") {
         pieces.push(Markdown.toHtml(entry.label));
@@ -478,8 +389,7 @@ export class Renderer {
         } else if (state === "running" && isLastEntry) {
           suffix = " 🟡";
         }
-        const stats = entry.stats ? ` ${entry.stats}` : "";
-        pieces.push(`${entry.emoji} ${entry.label}${stats}${suffix}`);
+        pieces.push(`${entry.icon} ${entry.label}${suffix}`);
       }
       const next = visible[i + 1];
       if (
@@ -575,14 +485,14 @@ export class Renderer {
   }
 
   private static isInlineEntry(entry: TrackerEntry): boolean {
-    return entry.kind === "tool" || entry.kind === "todo";
+    return entry.kind === "tool";
   }
 
   private entryVisible(entry: TrackerEntry): boolean {
     if (this.logsMode === "off") {
       return false;
     }
-    if (entry.kind === "tool" || entry.kind === "todo") {
+    if (entry.kind === "tool") {
       return true;
     }
     if (entry.kind === "narration") {
@@ -599,289 +509,8 @@ export class Renderer {
     }
   }
 
-  private static buildApplyEntry(ops: readonly ApplyOp[]): {
-    readonly emoji: string;
-    readonly label: string;
-  } {
-    const [first, ...rest] = ops;
-    if (!first) {
-      return { emoji: EDIT_EMOJI, label: "" };
-    }
-    const label = [
-      first.text,
-      ...rest.map((op) => `${op.emoji} ${op.text}`),
-    ].join("<br>");
-    return { emoji: first.emoji, label };
-  }
-
-  private static applyOpsFromArgs(args: unknown): readonly ApplyOp[] {
-    const text = Renderer.patchTextFromArgs(args);
-    if (!text) {
-      return [];
-    }
-    return PatchSummary.fromText(text).map((op) => Renderer.opFromSummary(op));
-  }
-
-  private static applyOpsFromEntries(
-    entries: readonly ApplyEntry[]
-  ): readonly ApplyOp[] {
-    return entries
-      .filter(
-        (entry) => !(entry.action.kind === "update" && entry.diff === undefined)
-      )
-      .map((entry) => Renderer.opFromEntry(entry));
-  }
-
-  private static opFromSummary(op: PatchOp): ApplyOp {
-    const isMove = op.movePath !== undefined && op.movePath !== op.path;
-    return Renderer.applyOp({
-      kind: isMove ? "move" : op.kind,
-      path: op.path,
-      movePath: op.movePath,
-    });
-  }
-
-  private static opFromEntry(entry: ApplyEntry): ApplyOp {
-    return Renderer.applyOp({
-      kind: entry.action.kind,
-      path: entry.action.path,
-      movePath: entry.action.movePath,
-      stats: Renderer.formatPlainStats(DiffView.countStats(entry.diff)),
-    });
-  }
-
-  private static applyOp(params: {
-    readonly kind: "add" | "delete" | "move" | "update";
-    readonly path: string;
-    readonly movePath?: string;
-    readonly stats?: string;
-  }): ApplyOp {
-    const suffix = params.stats ? ` ${params.stats}` : "";
-    if (params.kind === "delete") {
-      return {
-        emoji: DELETE_EMOJI,
-        text: `${Renderer.codeName(params.path)}${suffix}`,
-      };
-    }
-    if (params.kind === "move") {
-      return {
-        emoji: EDIT_EMOJI,
-        text: `${Renderer.moveText(params.path, params.movePath ?? params.path)}${suffix}`,
-      };
-    }
-    return {
-      emoji: EDIT_EMOJI,
-      text: `${Renderer.codeName(params.path)}${suffix}`,
-    };
-  }
-
-  private static moveText(from: string, to: string): string {
-    return `${Renderer.codeName(from)} ${ARROW} ${Renderer.codeName(to)}`;
-  }
-
-  private static codeName(path: string): string {
-    return `<code>${Markdown.escape(basename(path))}</code>`;
-  }
-
-  private static patchTextFromArgs(args: unknown): string | undefined {
-    if (typeof args === "string") {
-      return args;
-    }
-    if (!args || typeof args !== "object") {
-      return undefined;
-    }
-    const record = args as Record<string, unknown>;
-    for (const key of PATCH_TEXT_KEYS) {
-      const value = record[key];
-      if (typeof value === "string" && value) {
-        return value;
-      }
-    }
-    return undefined;
-  }
-
-  private static formatPlainStats(stats: DiffStats): string {
-    const parts: string[] = [];
-    if (stats.added > 0) {
-      parts.push(`+${stats.added}`);
-    }
-    if (stats.removed > 0) {
-      parts.push(`-${stats.removed}`);
-    }
-    return parts.join("/");
-  }
-
-  private static toolLabel(toolName: string, args: unknown): string {
-    const obj =
-      args && typeof args === "object" ? (args as Record<string, unknown>) : {};
-    const name = toolName.toLowerCase();
-    const code = (s: string): string =>
-      `<code>${Markdown.escape(Renderer.truncate(s, 160))}</code>`;
-
-    if (
-      name === "read" ||
-      name === "edit" ||
-      name === "write" ||
-      name === "send_file"
-    ) {
-      const p = Renderer.stringArg(obj, "path");
-      return p ? code(basename(p)) : "";
-    }
-    if (name === "bash") {
-      const cmd = Renderer.stringArg(obj, "command");
-      return cmd ? code(Renderer.firstLine(cmd)) : "";
-    }
-    if (name === "grep" || name === "glob") {
-      const pattern =
-        Renderer.stringArg(obj, "pattern") ?? Renderer.stringArg(obj, "query");
-      const where =
-        Renderer.stringArg(obj, "path") ?? Renderer.stringArg(obj, "glob");
-      if (pattern && where) {
-        return `${code(pattern)} in ${code(where)}`;
-      }
-      if (pattern) {
-        return code(pattern);
-      }
-      return "";
-    }
-    if (name === "web_search" || name === "web_fetch") {
-      const target =
-        Renderer.stringArg(obj, "url") ?? Renderer.stringArg(obj, "query");
-      return target ? Markdown.escape(Renderer.truncate(target, 180)) : "";
-    }
-    if (name === "task") {
-      return Renderer.taskLabel(obj, code);
-    }
-    if (name === "subagent") {
-      const prompt = Renderer.stringArg(obj, "prompt");
-      return prompt
-        ? Renderer.escapeInline(
-            Renderer.truncate(Renderer.firstLine(prompt), 180)
-          )
-        : "";
-    }
-
-    const candidate =
-      Renderer.stringArg(obj, "path") ??
-      Renderer.stringArg(obj, "command") ??
-      Renderer.stringArg(obj, "query") ??
-      Renderer.stringArg(obj, "pattern") ??
-      Renderer.stringArg(obj, "url");
-    return Markdown.escape(
-      Renderer.truncate(`${toolName}${candidate ? ` ${candidate}` : ""}`)
-    );
-  }
-
-  private static firstLine(text: string): string {
-    const idx = text.indexOf("\n");
-    if (idx < 0) {
-      return text;
-    }
-    return `${text.slice(0, idx).trimEnd()} …`;
-  }
-
-  private static stringArg(
-    obj: Record<string, unknown>,
-    key: string
-  ): string | undefined {
-    const value = obj[key];
-    return typeof value === "string" && value ? value : undefined;
-  }
-
-  private static taskScheduleSummary(
-    obj: Record<string, unknown>
-  ): string | undefined {
-    const sched = obj.schedule;
-    if (!sched || typeof sched !== "object") {
-      return undefined;
-    }
-    const s = sched as Record<string, unknown>;
-    if (s.type === "once" && typeof s.at === "string") {
-      return `once @ ${s.at}`;
-    }
-    if (s.type === "interval" && typeof s.every === "string") {
-      return `every ${s.every}`;
-    }
-    if (s.type === "cron" && typeof s.expr === "string") {
-      return `cron ${s.expr}`;
-    }
-    return undefined;
-  }
-
-  private static taskLabel(
-    obj: Record<string, unknown>,
-    code: (s: string) => string
-  ): string {
-    const action = Renderer.stringArg(obj, "action");
-    if (!action) {
-      return "";
-    }
-    if (action === "list") {
-      return "List tasks";
-    }
-    if (action === "create") {
-      const prompt = Renderer.stringArg(obj, "prompt");
-      const sched = Renderer.taskScheduleSummary(obj);
-      if (prompt && sched) {
-        return `Schedule task: ${code(prompt)} (${Markdown.escape(sched)})`;
-      }
-      if (prompt) {
-        return `Schedule task: ${code(prompt)}`;
-      }
-      return sched
-        ? `Schedule task (${Markdown.escape(sched)})`
-        : "Schedule task";
-    }
-    if (action === "update_prompt") {
-      const prompt = Renderer.stringArg(obj, "prompt");
-      return prompt ? `Update task: ${code(prompt)}` : "Update task";
-    }
-    const verb =
-      action === "delete"
-        ? "Delete"
-        : action === "pause"
-          ? "Pause"
-          : action === "resume"
-            ? "Resume"
-            : action;
-    const id = Renderer.stringArg(obj, "id");
-    return id ? `${verb} task: ${code(id)}` : `${verb} task`;
-  }
-
-  private static latestInProgressTodoContent(
-    args: unknown
-  ): string | undefined {
-    const todos =
-      args && typeof args === "object" && !Array.isArray(args)
-        ? (args as Partial<TodoInput>).todos
-        : undefined;
-    if (!Array.isArray(todos)) {
-      return undefined;
-    }
-
-    for (let i = todos.length - 1; i >= 0; i--) {
-      const item = todos[i] as unknown;
-      if (!item || typeof item !== "object" || Array.isArray(item)) {
-        continue;
-      }
-      const { content, status } = item as Record<string, unknown>;
-      if (status !== "in_progress" || typeof content !== "string") {
-        continue;
-      }
-      const normalized = content.trim().replaceAll(/\s+/g, " ");
-      if (normalized) {
-        return normalized;
-      }
-    }
-    return undefined;
-  }
-
   private static cleanProse(text: string): string {
     return text.replace(/\n{3,}/g, "\n\n").trim();
-  }
-
-  private static truncate(text: string, limit = 180): string {
-    return text.length <= limit ? text : `${text.slice(0, limit - 1)}…`;
   }
 
   private static capStatus(text: string): string {
@@ -1122,10 +751,6 @@ export class Renderer {
     return chunks;
   }
 
-  private static escapeInline(text: string): string {
-    return Markdown.escape(text).replace(/\n/g, BR);
-  }
-
   private static sanitize(text: string): string {
     return text.replace(
       /\b(api[_-]?key|token|secret)\b\s*[:=]\s*\S+/gi,
@@ -1143,3 +768,32 @@ export class Renderer {
       .replace(/&amp;/g, "&");
   }
 }
+
+/**
+ * The view for a tool that ships no `toViewModel` — an MCP tool, or one from
+ * another extension pack. Names the tool and echoes whichever argument reads
+ * most like its subject, which is all a stranger's schema will honestly give.
+ */
+function genericView(toolName: string, args: unknown): ToolView {
+  const record =
+    args && typeof args === "object" ? (args as Record<string, unknown>) : {};
+  const subject = GENERIC_ARG_KEYS.map((key) => record[key]).find(
+    (value): value is string => typeof value === "string" && value !== ""
+  );
+  return {
+    title: [
+      {
+        kind: "spans",
+        spans: [{ text: subject ? `${toolName} ${subject}` : toolName }],
+      },
+    ],
+  };
+}
+
+const GENERIC_ARG_KEYS = [
+  "path",
+  "command",
+  "query",
+  "pattern",
+  "url",
+] as const;

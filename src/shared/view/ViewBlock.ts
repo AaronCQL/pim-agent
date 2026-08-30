@@ -23,12 +23,37 @@ export type Tone =
   | "removed"
   | "title";
 
+/**
+ * Semantic icon names, mapped by each painter to whatever glyph vocabulary the
+ * surface owns: an emoji in Telegram, an icon class on the web, nothing at all
+ * in a terminal that already prefixes every row with a marker.
+ */
+export type ToolIcon =
+  | "file"
+  | "edit"
+  | "trash"
+  | "terminal"
+  | "search"
+  | "checklist"
+  | "globe"
+  | "upload"
+  | "clock"
+  | "robot";
+
 /** A run of text carrying one tone. The only inline primitive. */
 export type Span = {
   readonly text: string;
   readonly tone?: Tone;
   /** Superseded content, e.g. the old half of a rename. */
   readonly strike?: boolean;
+  /** Emphasis, e.g. the one todo a call put in progress. */
+  readonly strong?: boolean;
+  /**
+   * Inline code, e.g. a shell command inside a sentence. The ANSI painter
+   * ignores it: a terminal is already monospace, so a code span there would
+   * only add colour the title never had.
+   */
+  readonly code?: boolean;
 };
 
 export type NoticeSeverity = "info" | "warn" | "error";
@@ -46,11 +71,14 @@ export type ViewBlock =
   /**
    * Introduces a sub-item inside a body, e.g. the second file of a patch.
    * Painters render it as a heading and separate it from what precedes it.
+   * Its content is blocks rather than spans so a sub-item keeps the structure
+   * a title has — a `file` path stays a path, stats stay stats.
    */
   | {
       readonly kind: "section";
       readonly label: string;
-      readonly content: readonly Span[];
+      readonly icon?: ToolIcon;
+      readonly content: readonly ViewBlock[];
     }
   | {
       readonly kind: "code";
@@ -94,6 +122,8 @@ export type ToolView = {
   readonly label?: string;
   /** Tints the label; defaults to the title colour. */
   readonly labelTone?: Tone;
+  /** Glyph for surfaces that lead a tool row with one. */
+  readonly icon?: ToolIcon;
   /**
    * Painted as one line: blocks are joined with a single space. A single
    * `markdown` block is instead handed to the title renderer unpainted, since

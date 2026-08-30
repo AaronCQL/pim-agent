@@ -42,10 +42,37 @@ describe("todo view model", () => {
     );
   });
 
-  test("body stays empty so the widget is the only TUI checklist", () => {
+  test("body carries only the in-progress item, never the checklist", () => {
     expect(
       todoView(viewInput({ todos: items }, makeDetails(items))).body
-    ).toBeUndefined();
+    ).toEqual([
+      {
+        kind: "section",
+        label: "In progress",
+        icon: "checklist",
+        content: [{ kind: "spans", spans: [{ text: "Build", strong: true }] }],
+      },
+    ]);
+  });
+
+  test("body stays empty when nothing is in progress", () => {
+    const done: readonly TodoItem[] = [
+      { content: "Plan", status: "completed" },
+    ];
+    expect(todoView(viewInput({ todos: done })).body).toEqual([]);
+  });
+
+  test("body takes the last in-progress item and squashes its whitespace", () => {
+    const many: readonly TodoItem[] = [
+      { content: "First", status: "in_progress" },
+      { content: "  Second\n  half ", status: "in_progress" },
+    ];
+    expect(
+      AnsiPainter.paint(
+        todoView(viewInput({ todos: many })).body ?? [],
+        stubTheme
+      )
+    ).toEqual(["", expect.stringContaining("**Second half**")]);
   });
 
   test("widget title bolds total and wraps status summary", () => {

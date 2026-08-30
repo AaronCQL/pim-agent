@@ -1,12 +1,11 @@
-import {
-  defineTool,
-  type ToolDefinition,
-} from "@earendil-works/pi-coding-agent";
+import { defineTool } from "@earendil-works/pi-coding-agent";
 import { InputFile, type Api } from "grammy";
 import { basename } from "node:path";
 
 import { FsErrors } from "../shared/FsErrors";
 import { Paths } from "../shared/Paths";
+import type { PimToolDefinition } from "../shared/Tools";
+import type { ToolView } from "../shared/view/ViewBlock";
 import {
   MAX_CAPTION_CHARS,
   MAX_DOCUMENT_BYTES,
@@ -22,31 +21,45 @@ export type SendFileDeps = {
 };
 
 export class SendFileTool {
-  public static build(deps: SendFileDeps): ToolDefinition {
-    return defineTool({
-      name: "send_file",
-      label: "send_file",
-      description: `Send a local file to the current Telegram chat/thread as a document. Max ${MAX_DOCUMENT_BYTES / (1024 * 1024)} MB.`,
-      parameters: sendFileSchema,
-      async execute(_id, params) {
-        const { path: rawPath, caption } = params as SendFileInput;
-        const resolved = await SendFileTool.validate(rawPath, deps.cwd);
-        const trimmedCaption = caption?.slice(0, MAX_CAPTION_CHARS);
-        await SendFileTool.send(
-          deps.api,
-          deps.sessionId,
-          resolved.path,
-          trimmedCaption
-        );
+  public static build(
+    deps: SendFileDeps
+  ): PimToolDefinition<typeof sendFileSchema> {
+    return {
+      ...defineTool({
+        name: "send_file",
+        label: "send_file",
+        description: `Send a local file to the current Telegram chat/thread as a document. Max ${MAX_DOCUMENT_BYTES / (1024 * 1024)} MB.`,
+        parameters: sendFileSchema,
+        async execute(_id, params) {
+          const { path: rawPath, caption } = params as SendFileInput;
+          const resolved = await SendFileTool.validate(rawPath, deps.cwd);
+          const trimmedCaption = caption?.slice(0, MAX_CAPTION_CHARS);
+          await SendFileTool.send(
+            deps.api,
+            deps.sessionId,
+            resolved.path,
+            trimmedCaption
+          );
+          return {
+            content: [
+              { type: "text", text: `Sent ${basename(resolved.path)}` },
+            ],
+            details: {
+              path: resolved.path,
+              bytes: resolved.size,
+            },
+          };
+        },
+      }),
+      toViewModel: ({ args }): ToolView => {
+        const path = (args as Partial<SendFileInput> | undefined)?.path;
         return {
-          content: [{ type: "text", text: `Sent ${basename(resolved.path)}` }],
-          details: {
-            path: resolved.path,
-            bytes: resolved.size,
-          },
+          label: "Send File",
+          icon: "upload",
+          title: [{ kind: "file", path: path ?? "..." }],
         };
       },
-    });
+    };
   }
 
   private static async validate(

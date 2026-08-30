@@ -3,9 +3,14 @@ import { Paths } from "../../shared/Paths";
 import { PatchSummary } from "../../shared/PatchSummary";
 import type { ToolViewInput } from "../../shared/Tools";
 import { DiffBlocks } from "../../shared/view/DiffBlocks";
-import type { Span, ToolView, ViewBlock } from "../../shared/view/ViewBlock";
+import type {
+  Span,
+  ToolIcon,
+  ToolView,
+  ViewBlock,
+} from "../../shared/view/ViewBlock";
 import type { ApplyEntry } from "./executor";
-import type { applyPatchSchema } from "./schema";
+import { type applyPatchSchema, prepareApplyPatchArguments } from "./schema";
 
 // Rename separator. ➝ (U+279D) reads more vertically centered than → in most
 // terminal fonts; swap here if a font renders it double-width.
@@ -22,6 +27,7 @@ export type ApplyPatchViewInput = ToolViewInput<
 
 type EntryView = {
   readonly label: string;
+  readonly icon: ToolIcon;
   readonly title: readonly Span[];
   /** A composed rename title is not a plain path, so it is not a `file` block. */
   readonly path: string | undefined;
@@ -48,12 +54,14 @@ export function applyPatchView({
   if (first === undefined) {
     return {
       label: "Edit",
+      icon: "edit",
       title: [{ kind: "file", path: callPath(args, cwd) }],
     };
   }
 
   return {
     label: first.label,
+    icon: first.icon,
     title: [titleBlock(first), ...statsBlocks(first)],
     body: [
       ...DiffBlocks.body(first.body),
@@ -76,11 +84,18 @@ function visibleEntries(
   );
 }
 
+/**
+ * Normalizes first: a call streaming in can still be a bare patch string or
+ * carry the text under an alias key, exactly as `prepareArguments` sees it.
+ */
 function callPath(
   args: ApplyPatchViewInput["args"] | undefined,
   cwd: string
 ): string {
-  const input = typeof args?.input === "string" ? args.input : undefined;
+  const prepared =
+    args === undefined ? undefined : prepareApplyPatchArguments(args);
+  const input =
+    typeof prepared?.input === "string" ? prepared.input : undefined;
   const firstPath = input ? PatchSummary.firstPath(input) : undefined;
   return Paths.titleOr(
     firstPath ? Paths.resolve(firstPath, cwd) : undefined,
@@ -102,6 +117,7 @@ function describeEntry(entry: ApplyEntry, cwd: string): EntryView {
       // A new file: reuse the write-tool look (green content body).
       return {
         label: "Write",
+        icon: "edit",
         ...plain(entry.action.path),
         stats,
         body: entry.diff,
@@ -110,6 +126,7 @@ function describeEntry(entry: ApplyEntry, cwd: string): EntryView {
       // Title only with a -N stat; don't dump the removed file as a red diff.
       return {
         label: "Delete",
+        icon: "trash",
         ...plain(entry.action.path),
         stats,
         body: undefined,
@@ -118,6 +135,7 @@ function describeEntry(entry: ApplyEntry, cwd: string): EntryView {
       // A pure move has no body; a move with content changes renders as an edit.
       return {
         label: entry.diff ? "Edit" : "Move",
+        icon: "edit",
         title: moveTitle(
           rel(entry.action.path),
           rel(entry.action.movePath ?? entry.action.path)
@@ -129,6 +147,7 @@ function describeEntry(entry: ApplyEntry, cwd: string): EntryView {
     default:
       return {
         label: "Edit",
+        icon: "edit",
         ...plain(entry.action.path),
         stats,
         body: entry.diff,
@@ -152,10 +171,8 @@ function sectionBlock(entry: EntryView): ViewBlock {
   return {
     kind: "section",
     label: entry.label,
-    content:
-      entry.stats.length === 0
-        ? entry.title
-        : [...entry.title, { text: " " }, ...entry.stats],
+    icon: entry.icon,
+    content: [titleBlock(entry), ...statsBlocks(entry)],
   };
 }
 

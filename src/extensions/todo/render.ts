@@ -1,6 +1,6 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { ToolViewInput } from "../../shared/Tools";
-import type { ToolView } from "../../shared/view/ViewBlock";
+import type { ToolView, ViewBlock } from "../../shared/view/ViewBlock";
 import type { TodoInput, TodoItem, todoSchema } from "./schema";
 import type { TodoDetails } from "./todo";
 
@@ -15,15 +15,48 @@ const WIDGET_ANCHOR_SLOT = Math.floor(MAX_WIDGET_LINES / 2) - 1;
 export type TodoViewInput = ToolViewInput<typeof todoSchema, TodoDetails>;
 
 /**
- * Body-less on purpose: the checklist lives in the persistent widget, so a
- * per-call copy in the transcript would duplicate it on every update.
+ * The checklist itself stays out of the view: it lives in the persistent
+ * widget, so a per-call copy in the transcript would duplicate it on every
+ * update. What the widget cannot show is *which* item a given call started
+ * working on, so that one item is carried as a body section — expand-only in
+ * the TUI, and the line a status tracker leads with.
  */
 export function todoView({ args }: TodoViewInput): ToolView {
-  const input = (args ?? {}) as Partial<TodoInput>;
+  const todos = ((args ?? {}) as Partial<TodoInput>).todos;
+  // Args stream in partially and a weak model may send junk, so the view only
+  // trusts the shape once it is actually there.
+  const items = Array.isArray(todos) ? todos : [];
   return {
     label: "Todo",
-    title: [{ kind: "text", text: formatStatusSummary(input.todos ?? []) }],
+    icon: "checklist",
+    title: [{ kind: "text", text: formatStatusSummary(items) }],
+    body: inProgressSection(items),
   };
+}
+
+/**
+ * The last in-progress item, since a model that marks several picks up the
+ * bottom one; nothing when the call only completes or reorders.
+ */
+function inProgressSection(items: readonly TodoItem[]): readonly ViewBlock[] {
+  const current = items.findLast(
+    (item) => (item as Partial<TodoItem> | null)?.status === "in_progress"
+  );
+  const content =
+    typeof current?.content === "string"
+      ? current.content.trim().replaceAll(/\s+/gu, " ")
+      : "";
+  if (content === "") {
+    return [];
+  }
+  return [
+    {
+      kind: "section",
+      label: "In progress",
+      icon: "checklist",
+      content: [{ kind: "spans", spans: [{ text: content, strong: true }] }],
+    },
+  ];
 }
 
 export function formatWidgetTitle(

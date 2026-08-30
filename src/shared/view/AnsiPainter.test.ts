@@ -95,7 +95,12 @@ describe("AnsiPainter section", () => {
       paint({
         kind: "section",
         label: "Write",
-        content: [{ text: "b.txt " }, { text: "+2", tone: "added" }],
+        content: [
+          {
+            kind: "spans",
+            spans: [{ text: "b.txt " }, { text: "+2", tone: "added" }],
+          },
+        ],
       })
     ).toEqual([
       "",
@@ -143,7 +148,11 @@ describe("AnsiPainter.paintBody", () => {
     const groups = AnsiPainter.paintBody(
       [
         { kind: "text", text: "one" },
-        { kind: "section", label: "Edit", content: [{ text: "b.ts" }] },
+        {
+          kind: "section",
+          label: "Edit",
+          content: [{ kind: "spans", spans: [{ text: "b.ts" }] }],
+        },
         { kind: "text", text: "two" },
       ],
       theme

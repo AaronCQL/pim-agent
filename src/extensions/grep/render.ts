@@ -126,6 +126,7 @@ export function buildView({
 }: GrepViewInput): ToolView {
   return {
     label: "Grep",
+    icon: "search",
     title: [
       {
         kind: "text",

@@ -21,6 +21,7 @@ export function readView({ args, result, cwd }: ReadViewInput): ToolView {
   const input = args ?? {};
   return {
     label: "Read",
+    icon: "file",
     title: [titleBlock(input, result?.details, cwd)],
     body: [{ kind: "text", text: bodyText(result) }],
   };

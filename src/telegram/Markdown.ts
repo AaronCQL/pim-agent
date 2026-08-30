@@ -1,3 +1,5 @@
+import { MarkdownPainter } from "../shared/view/MarkdownPainter";
+
 type Align = "left" | "center" | "right";
 
 type TableRow = ReadonlyArray<string>;
@@ -34,12 +36,9 @@ export class Markdown {
     return out.trim();
   }
 
+  // One escaper for the whole Telegram HTML dialect, painter included.
   public static escape(s: string): string {
-    return s
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
+    return MarkdownPainter.escape(s);
   }
 
   private static readonly RENDERERS = {

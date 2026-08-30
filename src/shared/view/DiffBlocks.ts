@@ -44,6 +44,7 @@ export class DiffBlocks {
   }): ToolView {
     return {
       label: args.label,
+      icon: "edit",
       title: [
         { kind: "file", path: Paths.titleOr(args.path, args.cwd) },
         ...DiffBlocks.stats(args.diff),
