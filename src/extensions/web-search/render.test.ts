@@ -31,6 +31,7 @@ function title(
     args: args as WebSearchInput,
     ...(settled === undefined ? {} : { result: settled }),
     cwd: "/repo",
+    isPartial: false,
   });
   return AnsiPainter.paint(view.title, stubTheme).join(" ");
 }
@@ -38,7 +39,11 @@ function title(
 describe("webSearchView title", () => {
   test("supplies the title-cased display label", () => {
     expect(
-      webSearchView({ args: {} as WebSearchInput, cwd: "/repo" }).label
+      webSearchView({
+        args: {} as WebSearchInput,
+        cwd: "/repo",
+        isPartial: false,
+      }).label
     ).toBe("Web Search");
   });
 
@@ -94,6 +99,7 @@ describe("webSearchView body", () => {
       args: { query: "pi agent" } as WebSearchInput,
       result: settled,
       cwd: "/repo",
+      isPartial: false,
     });
     return AnsiPainter.paint(view.body ?? [], stubTheme);
   }

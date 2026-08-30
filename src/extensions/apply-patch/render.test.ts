@@ -59,6 +59,7 @@ function view(
             details: { entries },
           },
     cwd,
+    isPartial: false,
   });
 }
 

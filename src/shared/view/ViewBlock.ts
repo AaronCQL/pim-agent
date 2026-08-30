@@ -17,6 +17,8 @@ export type Tone =
   | "muted"
   | "dim"
   | "error"
+  | "warning"
+  | "accent"
   | "added"
   | "removed"
   | "title";
@@ -33,6 +35,12 @@ export type NoticeSeverity = "info" | "warn" | "error";
 
 export type ViewBlock =
   | { readonly kind: "text"; readonly text: string; readonly tone?: Tone }
+  /**
+   * Markdown source, painted by whichever markdown renderer the surface owns.
+   * It wraps at the render-time width and emits its own SGR, so it is framed
+   * as an embed and never re-coloured or re-wrapped by the gutter.
+   */
+  | { readonly kind: "markdown"; readonly text: string }
   /** One line of mixed-tone text, e.g. a `+5`/`-2` diff stat or a rename. */
   | { readonly kind: "spans"; readonly spans: readonly Span[] }
   /**
@@ -84,9 +92,28 @@ export type ToolView = {
    * definition's `label`, which stays lowercase pi-facing metadata.
    */
   readonly label?: string;
-  /** Painted as one line: blocks are joined with a single space. */
+  /** Tints the label; defaults to the title colour. */
+  readonly labelTone?: Tone;
+  /**
+   * Painted as one line: blocks are joined with a single space. A single
+   * `markdown` block is instead handed to the title renderer unpainted, since
+   * markdown can only wrap once the width is known.
+   */
   readonly title: readonly ViewBlock[];
+  /**
+   * Status content that renders in every state: while the call is still
+   * streaming, while collapsed, and while expanded. A streaming tool needs a
+   * persistent status line next to a payload worth hiding, and that split is
+   * also what a collapsed tool card wants in a non-terminal client, so it
+   * belongs to the view rather than to a terminal-only affordance.
+   */
+  readonly summary?: readonly ViewBlock[];
+  /** Rendered only once the row is expanded, and never while streaming. */
   readonly body?: readonly ViewBlock[];
-  /** `false` forces the body open even when the row is not expanded. */
+  /**
+   * `false` forces the body open even when the row is not expanded. It says
+   * nothing about `summary`, which always renders, and never opens a body
+   * mid-stream: a partial result has no final payload to show.
+   */
   readonly collapsed?: boolean;
 };

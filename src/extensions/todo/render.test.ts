@@ -150,6 +150,7 @@ function viewInput(
       ? {}
       : { result: { content: [{ type: "text", text: "" }], details } }),
     cwd: "/repo",
+    isPartial: false,
   };
 }
 

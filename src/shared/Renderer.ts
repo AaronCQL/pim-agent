@@ -4,9 +4,11 @@ import type {
   ThemeColor,
   ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
+import type { MarkdownTheme } from "@earendil-works/pi-tui";
 import {
   type Component,
   Container,
+  Markdown,
   visibleWidth,
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
@@ -51,16 +53,16 @@ class ToolTitle implements Component {
     const lines = wrapTextWithAnsi(normalized, Math.max(1, width));
 
     if (lines.length <= 1 || theme === undefined) {
-      return lines.map((line) => ToolTitle.padLine(line, width));
+      return lines.map((line) => padLine(line, width));
     }
 
     const inner = Math.max(1, width - Renderer.GAPPED_PREFIX.width);
-    const out = [ToolTitle.padLine(lines[0] ?? "", width)];
+    const out = [padLine(lines[0] ?? "", width)];
 
     for (const logical of lines.slice(1)) {
       for (const wrapped of wrapTextWithAnsi(logical, inner)) {
         out.push(
-          ToolTitle.padLine(
+          padLine(
             theme.fg("toolOutput", Renderer.GAPPED_PREFIX.prefix) + wrapped,
             width
           )
@@ -72,10 +74,93 @@ class ToolTitle implements Component {
   }
 
   public invalidate(): void {}
+}
 
-  private static padLine(line: string, width: number): string {
-    return line + " ".repeat(Math.max(0, width - visibleWidth(line)));
+/**
+ * A title whose text is markdown. It cannot reuse `ToolTitle`: markdown wraps
+ * itself, so the wrap width is the room left after the marker and label rather
+ * than the full width, and the rendered text carries its own colours.
+ */
+class MarkdownTitle implements Component {
+  private prefix = "";
+  private title = "";
+  private theme: Theme | undefined;
+
+  public set(args: {
+    readonly prefix: string;
+    readonly title: string;
+    readonly theme: Theme;
+  }): void {
+    this.prefix = args.prefix;
+    this.title = args.title;
+    this.theme = args.theme;
   }
+
+  public render(width: number): string[] {
+    const theme = this.theme;
+    if (!theme) {
+      return [];
+    }
+
+    const inner = Math.max(1, width - visibleWidth(this.prefix));
+    const titleLines = Renderer.markdownLines({
+      text: this.title,
+      theme,
+      width: inner,
+    });
+    const lines = titleLines.length > 0 ? titleLines : [""];
+    const out = [padLine(this.prefix + (lines[0] ?? ""), width)];
+
+    for (const line of lines.slice(1)) {
+      out.push(
+        padLine(
+          theme.fg("toolOutput", Renderer.GAPPED_PREFIX.prefix) + line,
+          width
+        )
+      );
+    }
+
+    return out;
+  }
+
+  public invalidate(): void {}
+}
+
+function padLine(line: string, width: number): string {
+  return line + " ".repeat(Math.max(0, width - visibleWidth(line)));
+}
+
+function makeMarkdown(
+  text: string,
+  theme: Theme,
+  lineColor: ThemeColor | undefined
+): Markdown {
+  return new Markdown(
+    text,
+    0,
+    0,
+    markdownTheme(theme),
+    lineColor ? { color: (t: string) => theme.fg(lineColor, t) } : undefined
+  );
+}
+
+function markdownTheme(theme: Theme): MarkdownTheme {
+  return {
+    heading: (text: string) => theme.fg("mdHeading", text),
+    link: (text: string) => theme.fg("mdLink", text),
+    linkUrl: (text: string) => theme.fg("mdLinkUrl", text),
+    code: (text: string) => theme.fg("mdCode", text),
+    codeBlock: (text: string) => theme.fg("mdCodeBlock", text),
+    codeBlockBorder: (text: string) => theme.fg("mdCodeBlockBorder", text),
+    quote: (text: string) => theme.fg("mdQuote", text),
+    quoteBorder: (text: string) => theme.fg("mdQuoteBorder", text),
+    hr: (text: string) => theme.fg("mdHr", text),
+    listBullet: (text: string) => theme.fg("mdListBullet", text),
+    bold: (text: string) => theme.bold(text),
+    italic: (text: string) => theme.italic(text),
+    underline: (text: string) => theme.underline(text),
+    strikethrough: (text: string) => theme.strikethrough(text),
+  };
 }
 
 export class Renderer {
@@ -141,12 +226,22 @@ export class Renderer {
     readonly markerColor: MarkerStatus;
     readonly labelColor?: ThemeColor;
   }): string {
-    const { label, title, theme, markerColor, labelColor } = args;
+    return (
+      Renderer.titleHead(args) + args.theme.fg("toolTitle", ": " + args.title)
+    );
+  }
+
+  private static titleHead(args: {
+    readonly label: string;
+    readonly theme: Theme;
+    readonly markerColor: MarkerStatus;
+    readonly labelColor?: ThemeColor;
+  }): string {
+    const { label, theme, markerColor, labelColor } = args;
     return (
       theme.fg(markerColor, " ▪") +
       " " +
-      theme.fg(labelColor ?? "toolTitle", theme.bold(label)) +
-      theme.fg("toolTitle", ": " + title)
+      theme.fg(labelColor ?? "toolTitle", theme.bold(label))
     );
   }
 
@@ -170,16 +265,32 @@ export class Renderer {
     readonly theme: Theme;
     readonly context: RenderContext;
     readonly labelColor?: ThemeColor;
+    /** Renders `title` as markdown instead of as pre-painted text. */
+    readonly markdown?: boolean;
   }): Component {
     const { theme, context } = args;
+    const markerColor = Renderer.markerColorFor(
+      Boolean(context.isPartial),
+      Boolean(context.isError)
+    );
+
+    if (args.markdown === true) {
+      const component =
+        context.lastComponent instanceof MarkdownTitle
+          ? context.lastComponent
+          : new MarkdownTitle();
+      component.set({
+        prefix:
+          Renderer.titleHead({ ...args, markerColor }) +
+          theme.fg("toolTitle", ": "),
+        title: args.title,
+        theme,
+      });
+      return component;
+    }
+
     return Renderer.makeTitleBlock({
-      text: Renderer.toolTitleText({
-        ...args,
-        markerColor: Renderer.markerColorFor(
-          Boolean(context.isPartial),
-          Boolean(context.isError)
-        ),
-      }),
+      text: Renderer.toolTitleText({ ...args, markerColor }),
       theme,
       lastComponent: context.lastComponent,
     });
@@ -224,6 +335,43 @@ export class Renderer {
         return out;
       },
       invalidate() {},
+    };
+  }
+
+  /** Markdown lines at a fixed width, trimmed the way the tool rows expect. */
+  public static markdownLines(args: {
+    readonly text: string;
+    readonly theme: Theme;
+    readonly width: number;
+    readonly lineColor?: ThemeColor;
+  }): string[] {
+    return makeMarkdown(args.text, args.theme, args.lineColor)
+      .render(args.width)
+      .map((line) => line.trimEnd());
+  }
+
+  /** A gutter block whose text is markdown, wrapped at the render-time width. */
+  public static makeMarkdownBlock(args: {
+    readonly text: string;
+    readonly theme: Theme;
+    readonly prefix: PrefixSpec;
+    readonly lineColor?: ThemeColor;
+  }): Component {
+    const { text, theme, prefix, lineColor } = args;
+    const markdown = makeMarkdown(text, theme, lineColor);
+
+    return {
+      render(width: number): string[] {
+        const inner = Math.max(1, width - prefix.width);
+        return markdown
+          .render(inner)
+          .map(
+            (line) => theme.fg("toolOutput", prefix.prefix) + line.trimEnd()
+          );
+      },
+      invalidate(): void {
+        markdown.invalidate();
+      },
     };
   }
 

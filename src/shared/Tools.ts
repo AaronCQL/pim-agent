@@ -16,8 +16,16 @@ const DEFAULT_PREVIEW_LINES = 10;
 export type ToolViewInput<TParams extends TSchema, TDetails> = {
   /** Partially streamed while the call is in flight; treat fields as optional. */
   readonly args: Static<TParams>;
-  /** Undefined while the call is in flight. */
+  /**
+   * The result so far. Undefined until the call reports one, and a streaming
+   * snapshot rather than the final result while `isPartial` is true.
+   */
   readonly result?: AgentToolResult<TDetails>;
+  /**
+   * True while the call is still running. A `summary` renders in that state,
+   * so a view that styles "in flight" differently needs to see it.
+   */
+  readonly isPartial: boolean;
   readonly cwd: string;
 };
 
@@ -174,11 +182,15 @@ function synthesizeRenderers<TParams extends TSchema, TDetails, TState>(
         const view = toViewModel({
           args,
           result: state.viewResult,
+          isPartial: Boolean(context.isPartial),
           cwd: context.cwd,
         });
+        const title = AnsiPainter.paintTitle(view.title, theme);
         return Renderer.renderToolCallTitle({
           label: view.label ?? def.label,
-          title: AnsiPainter.paint(view.title, theme).join(" "),
+          title: title.text,
+          markdown: title.markdown,
+          labelColor: AnsiPainter.themeColorFor(view.labelTone),
           theme,
           context,
         });
@@ -207,11 +219,13 @@ function synthesizeRenderers<TParams extends TSchema, TDetails, TState>(
         const view = toViewModel({
           args: context.args,
           result,
+          isPartial: options.isPartial,
           cwd: context.cwd,
         });
 
         return BodyRenderer.render({
-          blocks: view.body ?? [],
+          summary: view.summary,
+          body: view.body,
           options: {
             ...options,
             expanded: options.expanded || view.collapsed === false,

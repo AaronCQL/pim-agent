@@ -34,7 +34,7 @@ function paintTitle(
   result?: ReturnType<typeof settled>
 ): string {
   return AnsiPainter.paint(
-    writeView({ args: args as never, result, cwd }).title,
+    writeView({ args: args as never, result, cwd, isPartial: false }).title,
     theme
   ).join(" ");
 }
@@ -44,22 +44,25 @@ function paintBody(
   result?: ReturnType<typeof settled>
 ): string[] {
   return AnsiPainter.paint(
-    writeView({ args: args as never, result, cwd }).body ?? [],
+    writeView({ args: args as never, result, cwd, isPartial: false }).body ??
+      [],
     theme
   );
 }
 
 describe("writeView", () => {
   test("supplies the title-cased display label", () => {
-    expect(writeView({ args: { path: "a.ts" } as never, cwd }).label).toBe(
-      "Write"
-    );
+    expect(
+      writeView({ args: { path: "a.ts" } as never, cwd, isPartial: false })
+        .label
+    ).toBe("Write");
   });
 
   test("forces the diff body open regardless of expansion", () => {
-    expect(writeView({ args: { path: "a.ts" } as never, cwd }).collapsed).toBe(
-      false
-    );
+    expect(
+      writeView({ args: { path: "a.ts" } as never, cwd, isPartial: false })
+        .collapsed
+    ).toBe(false);
   });
 });
 

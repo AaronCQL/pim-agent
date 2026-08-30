@@ -41,7 +41,7 @@ function paintTitle(
   result?: ReturnType<typeof settled>
 ): string {
   return AnsiPainter.paint(
-    editView({ args: args as never, result, cwd }).title,
+    editView({ args: args as never, result, cwd, isPartial: false }).title,
     theme
   ).join(" ");
 }
@@ -51,22 +51,23 @@ function paintBody(
   result?: ReturnType<typeof settled>
 ): string[] {
   return AnsiPainter.paint(
-    editView({ args: args as never, result, cwd }).body ?? [],
+    editView({ args: args as never, result, cwd, isPartial: false }).body ?? [],
     theme
   );
 }
 
 describe("editView", () => {
   test("supplies the title-cased display label", () => {
-    expect(editView({ args: { path: "a.ts" } as never, cwd }).label).toBe(
-      "Edit"
-    );
+    expect(
+      editView({ args: { path: "a.ts" } as never, cwd, isPartial: false }).label
+    ).toBe("Edit");
   });
 
   test("forces the diff body open regardless of expansion", () => {
-    expect(editView({ args: { path: "a.ts" } as never, cwd }).collapsed).toBe(
-      false
-    );
+    expect(
+      editView({ args: { path: "a.ts" } as never, cwd, isPartial: false })
+        .collapsed
+    ).toBe(false);
   });
 });
 

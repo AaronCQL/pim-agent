@@ -495,11 +495,12 @@ describe("Tools.wrap view model synthesis", () => {
     const def = readLikeDef();
     const wrapped = Tools.wrap({
       ...def,
-      toViewModel: ({ args, result, cwd }) => {
+      toViewModel: ({ args, result, cwd, isPartial }) => {
         const { label: _drop, ...view } = def.toViewModel!({
           args,
           result,
           cwd,
+          isPartial,
         });
         return view;
       },
@@ -566,6 +567,81 @@ describe("Tools.wrap view model synthesis", () => {
       context()
     );
     expect(component.render(80)).toEqual([" │ 1:alpha", " │ 2:beta"]);
+  });
+
+  test("a summary renders while streaming, collapsed, and expanded", () => {
+    const def = readLikeDef();
+    const wrapped = Tools.wrap({
+      ...def,
+      toViewModel: (input) => ({
+        ...def.toViewModel!(input),
+        summary: [{ kind: "text", text: "2 lines" }],
+      }),
+    });
+    const render = (options: { expanded: boolean; isPartial: boolean }) =>
+      wrapped.renderResult!(
+        persistedResult(),
+        options,
+        theme,
+        context()
+      ).render(80);
+
+    expect(render({ expanded: false, isPartial: true })).toEqual([
+      " │ 2 lines",
+    ]);
+    expect(render({ expanded: false, isPartial: false })).toEqual([
+      " │ 2 lines",
+    ]);
+    expect(render({ expanded: true, isPartial: false })).toEqual([
+      " │ 2 lines",
+      " │ 1:alpha",
+      " │ 2:beta",
+    ]);
+  });
+
+  test("a label tone colours the label", () => {
+    const def = readLikeDef();
+    const colors: string[] = [];
+    const wrapped = Tools.wrap({
+      ...def,
+      toViewModel: (input) => ({
+        ...def.toViewModel!(input),
+        labelTone: "accent",
+      }),
+    });
+    wrapped.renderCall!(
+      { path: "src/foo.ts" },
+      {
+        ...theme,
+        fg: (color: string, text: string) => {
+          colors.push(color);
+          return text;
+        },
+      } as unknown as Theme,
+      context()
+    ).render(80);
+
+    expect(colors).toContain("accent");
+  });
+
+  test("a markdown title wraps after the label instead of at the full width", () => {
+    const def = readLikeDef();
+    const wrapped = Tools.wrap({
+      ...def,
+      toViewModel: () => ({
+        label: "Read",
+        title: [{ kind: "markdown", text: "alpha *beta* gamma delta" }],
+      }),
+    });
+    const lines = wrapped.renderCall!(
+      { path: "src/foo.ts" },
+      { ...theme, italic: (text: string) => text } as unknown as Theme,
+      context()
+    )
+      .render(24)
+      .map((line) => line.trimEnd());
+
+    expect(lines).toEqual([" ▪ Read: alpha beta", " │ gamma delta"]);
   });
 
   test("errors bypass the view body and show the raw error text", () => {

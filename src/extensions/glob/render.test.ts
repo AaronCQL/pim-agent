@@ -12,11 +12,13 @@ const fixture: readonly GlobMatch[] = [
 
 const relativeOptions = {
   cwd: "/repo",
+  isPartial: false,
   pathFormat: "relative",
 } as const;
 
 const absoluteOptions = {
   cwd: "/repo",
+  isPartial: false,
   pathFormat: "absolute",
 } as const;
 
@@ -55,6 +57,7 @@ function title(
     args: args as GlobInput,
     result: settled,
     cwd: "/repo",
+    isPartial: false,
   });
   return AnsiPainter.paint(view.title, stubTheme).join(" ");
 }
@@ -64,6 +67,7 @@ function body(settled: AgentToolResult<GlobDetails>): string[] {
     args: { pattern: "**/*.ts" },
     result: settled,
     cwd: "/repo",
+    isPartial: false,
   });
   return AnsiPainter.paint(view.body ?? [], stubTheme);
 }
@@ -71,8 +75,11 @@ function body(settled: AgentToolResult<GlobDetails>): string[] {
 describe("globView", () => {
   test("supplies the title-cased display label", () => {
     expect(
-      globView({ args: { pattern: "**/*.ts" } as GlobInput, cwd: "/repo" })
-        .label
+      globView({
+        args: { pattern: "**/*.ts" } as GlobInput,
+        cwd: "/repo",
+        isPartial: false,
+      }).label
     ).toBe("Glob");
   });
 });

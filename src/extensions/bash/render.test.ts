@@ -44,6 +44,7 @@ function input(args: unknown, text?: string): Input {
             },
           } as Input["result"]),
     cwd,
+    isPartial: false,
   };
 }
 
@@ -122,6 +123,7 @@ describe("bashView body", () => {
           args: { command: "true" } as Input["args"],
           result: { content: [] } as unknown as Input["result"],
           cwd,
+          isPartial: false,
         }).body ?? [],
         tracingTheme().theme
       ).join("\n")

@@ -21,12 +21,15 @@ type PainterMap = { readonly [TKind in ViewBlock["kind"]]: Painter<TKind> };
  * preformatted and already coloured, so the container must leave it alone;
  * `heading` steps outside the container entirely.
  */
-export type BlockFrame = "flow" | "embed" | "heading";
+export type BlockFrame = "flow" | "embed" | "tight" | "heading";
 
-export type PaintedGroup = {
-  readonly frame: BlockFrame;
-  readonly lines: readonly string[];
-};
+/**
+ * Markdown wraps at the render-time width, so a body hands the source on to
+ * the caller instead of pre-painted lines.
+ */
+export type PaintedGroup =
+  | { readonly frame: BlockFrame; readonly lines: readonly string[] }
+  | { readonly frame: "embed"; readonly markdown: string };
 
 /**
  * Paints a `ViewBlock` tree to ANSI lines. Returns plain strings rather than
@@ -39,6 +42,31 @@ export class AnsiPainter {
   }
 
   /**
+   * Flattens title blocks to the one line a title renderer draws. Markdown is
+   * handed over unpainted, since it needs the width the title renderer knows.
+   */
+  public static paintTitle(
+    blocks: readonly ViewBlock[],
+    theme: Theme
+  ): { readonly text: string; readonly markdown: boolean } {
+    const only = blocks.length === 1 ? blocks[0] : undefined;
+    if (only?.kind === "markdown") {
+      return { text: only.text, markdown: true };
+    }
+    return {
+      text: AnsiPainter.paint(blocks, theme).join(" "),
+      markdown: false,
+    };
+  }
+
+  /** The theme colour a tone maps to, or undefined for the default colour. */
+  public static themeColorFor(tone: Tone | undefined): ThemeColor | undefined {
+    return tone === undefined || tone === "default"
+      ? undefined
+      : TONE_COLORS[tone];
+  }
+
+  /**
    * Paints a body, keeping adjacent blocks that share a frame together so the
    * caller draws one container per run instead of one per block.
    */
@@ -46,17 +74,24 @@ export class AnsiPainter {
     blocks: readonly ViewBlock[],
     theme: Theme
   ): PaintedGroup[] {
-    const groups: { frame: BlockFrame; lines: string[] }[] = [];
+    const groups: PaintedGroup[] = [];
+    let open: { frame: BlockFrame; lines: string[] } | undefined;
 
     for (const block of blocks) {
+      if (block.kind === "markdown") {
+        open = undefined;
+        groups.push({ frame: "embed", markdown: block.text });
+        continue;
+      }
+
       const frame = FRAMES[block.kind];
       const lines = paintBlock(block, theme);
-      const open = groups.at(-1);
 
       if (open?.frame === frame) {
         open.lines.push(...lines);
       } else {
-        groups.push({ frame, lines: [...lines] });
+        open = { frame, lines: [...lines] };
+        groups.push(open);
       }
     }
 
@@ -68,6 +103,8 @@ const TONE_COLORS = {
   muted: "muted",
   dim: "dim",
   error: "error",
+  warning: "warning",
+  accent: "accent",
   added: "toolDiffAdded",
   removed: "toolDiffRemoved",
   title: "toolTitle",
@@ -204,6 +241,15 @@ function paintLink(block: BlockOf<"link">, theme: Theme): readonly string[] {
   ];
 }
 
+/**
+ * The width-free fallback: a body defers markdown to the caller (see
+ * `paintBody`), so this only runs where there is no width to wrap at, and the
+ * source text is the closest honest rendering.
+ */
+function paintMarkdown(block: BlockOf<"markdown">): readonly string[] {
+  return block.text.split("\n");
+}
+
 function paintNotice(
   block: BlockOf<"notice">,
   theme: Theme
@@ -214,6 +260,7 @@ function paintNotice(
 
 const PAINTERS: PainterMap = {
   text: paintText,
+  markdown: paintMarkdown,
   spans: paintSpans,
   section: paintSection,
   code: paintCode,
@@ -227,11 +274,14 @@ const PAINTERS: PainterMap = {
 
 const FRAMES = {
   text: "flow",
+  // Markdown carries its own SGR state; re-colouring it corrupts it.
+  markdown: "embed",
   spans: "flow",
   section: "heading",
   code: "flow",
-  // Diff lines carry their own SGR state; re-colouring them corrupts it.
-  diff: "embed",
+  // Diff lines carry their own SGR state too, and paint their own leading
+  // column, so the gutter has to give that column up.
+  diff: "tight",
   file: "flow",
   list: "flow",
   kv: "flow",

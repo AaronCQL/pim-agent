@@ -77,12 +77,14 @@ describe("AnsiPainter spans", () => {
           { text: "e", tone: "added" },
           { text: "f", tone: "removed" },
           { text: "g", tone: "title" },
+          { text: "h", tone: "warning" },
+          { text: "i", tone: "accent" },
         ],
       })
     ).toEqual([
       "a<muted>b</muted><dim>c</dim><error>d</error>" +
         "<toolDiffAdded>e</toolDiffAdded><toolDiffRemoved>f</toolDiffRemoved>" +
-        "<toolTitle>g</toolTitle>",
+        "<toolTitle>g</toolTitle><warning>h</warning><accent>i</accent>",
     ]);
   });
 });
@@ -116,7 +118,24 @@ describe("AnsiPainter.paintBody", () => {
 
     expect(groups).toEqual([
       { frame: "flow", lines: ["a.ts", "note"] },
-      { frame: "embed", lines: [] },
+      { frame: "tight", lines: [] },
+    ]);
+  });
+
+  test("defers markdown unpainted and breaks the run around it", () => {
+    const groups = AnsiPainter.paintBody(
+      [
+        { kind: "text", text: "one" },
+        { kind: "markdown", text: "**bold**" },
+        { kind: "text", text: "two" },
+      ],
+      theme
+    );
+
+    expect(groups).toEqual([
+      { frame: "flow", lines: ["one"] },
+      { frame: "embed", markdown: "**bold**" },
+      { frame: "flow", lines: ["two"] },
     ]);
   });
 
@@ -135,11 +154,43 @@ describe("AnsiPainter.paintBody", () => {
       "heading",
       "flow",
     ]);
-    expect(groups[1]?.lines[0]).toBe("");
+    const heading = groups[1];
+    expect(heading && "lines" in heading ? heading.lines[0] : undefined).toBe(
+      ""
+    );
   });
 
   test("no blocks produce no groups", () => {
     expect(AnsiPainter.paintBody([], theme)).toEqual([]);
+  });
+});
+
+describe("AnsiPainter.paintTitle", () => {
+  test("joins painted blocks with a space", () => {
+    expect(
+      AnsiPainter.paintTitle(
+        [
+          { kind: "text", text: "a.ts" },
+          { kind: "text", text: "(2 lines)", tone: "muted" },
+        ],
+        theme
+      )
+    ).toEqual({ text: "a.ts <muted>(2 lines)</muted>", markdown: false });
+  });
+
+  test("hands a lone markdown block over unpainted", () => {
+    expect(
+      AnsiPainter.paintTitle([{ kind: "markdown", text: "a **b**" }], theme)
+    ).toEqual({ text: "a **b**", markdown: true });
+  });
+});
+
+describe("AnsiPainter.themeColorFor", () => {
+  test("maps tones and leaves the default colour alone", () => {
+    expect(AnsiPainter.themeColorFor("accent")).toBe("accent");
+    expect(AnsiPainter.themeColorFor("title")).toBe("toolTitle");
+    expect(AnsiPainter.themeColorFor("default")).toBeUndefined();
+    expect(AnsiPainter.themeColorFor(undefined)).toBeUndefined();
   });
 });
 

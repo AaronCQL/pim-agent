@@ -27,6 +27,7 @@ function title(
     args: args as WebFetchInput,
     ...(settled === undefined ? {} : { result: settled }),
     cwd: "/repo",
+    isPartial: false,
   });
   return AnsiPainter.paint(view.title, stubTheme).join(" ");
 }
@@ -36,6 +37,7 @@ function body(settled: AgentToolResult<WebFetchDetails>): string[] {
     args: { url: "https://example.com" } as WebFetchInput,
     result: settled,
     cwd: "/repo",
+    isPartial: false,
   });
   return AnsiPainter.paint(view.body ?? [], stubTheme);
 }
@@ -43,7 +45,11 @@ function body(settled: AgentToolResult<WebFetchDetails>): string[] {
 describe("webFetchView title", () => {
   test("supplies the title-cased display label", () => {
     expect(
-      webFetchView({ args: {} as WebFetchInput, cwd: "/repo" }).label
+      webFetchView({
+        args: {} as WebFetchInput,
+        cwd: "/repo",
+        isPartial: false,
+      }).label
     ).toBe("Web Fetch");
   });
 
