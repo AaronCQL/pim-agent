@@ -19,29 +19,35 @@
   "bin": {
     "pim": "bin/pim.ts"
   },
+  "workspaces": [
+    "packages/*"
+  ],
   "files": [
     "bin/",
-    "src/",
-    "!src/**/*.test.ts"
+    "packages/core/src/",
+    "packages/tui/src/",
+    "packages/telegram/src/",
+    "!packages/**/*.test.ts"
   ],
   "engines": {
     "bun": ">=1.2.7"
   },
   "pi": {
     "extensions": [
-      "./src/extensions"
+      "./packages/core/src/extensions",
+      "./packages/tui/src/extensions"
     ],
     "themes": [
-      "./src/themes"
+      "./packages/tui/src/themes"
     ],
     "image": "https://raw.githubusercontent.com/AaronCQL/pim-agent/refs/heads/main/assets/demo.webp"
   },
   "scripts": {
     "dev": "bun link && pim",
     "typecheck": "tsgo --noEmit",
-    "test": "bun test src --only-failures",
+    "test": "bun test ./packages --only-failures",
     "lint": "oxlint . --fix",
-    "format": "prettier --write --list-different package.json tsconfig.json .oxlintrc.json .prettierrc.json \"src/**/*.ts\" \"bin/**/*.ts\"",
+    "format": "prettier --write --list-different package.json tsconfig.json .oxlintrc.json .prettierrc.json \"packages/*/package.json\" \"packages/**/*.ts\" \"bin/**/*.ts\"",
     "check": "bun run typecheck && bun run test && bun run lint && bun run format"
   },
   "peerDependencies": {

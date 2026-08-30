@@ -1,0 +1,6 @@
+{
+  "name": "@pim/telegram",
+  "private": true,
+  "type": "module",
+  "description": "Telegram frontend: grammy bot, Markdown-painted ViewBlocks, session registry, daemon supervisor."
+}

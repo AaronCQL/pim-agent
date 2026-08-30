@@ -1,0 +1,6 @@
+{
+  "name": "@pim/core",
+  "private": true,
+  "type": "module",
+  "description": "Frontend-agnostic tools, schemas, shared utilities, and the ViewBlock render contract."
+}

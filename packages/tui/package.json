@@ -1,0 +1,6 @@
+{
+  "name": "@pim/tui",
+  "private": true,
+  "type": "module",
+  "description": "Terminal frontend: splash, file/command pickers, powerline footer, tps, working indicator, themes."
+}
