@@ -1,0 +1,627 @@
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type {
+  Api as ModelApi,
+  AssistantMessageEvent,
+  Model,
+} from "@earendil-works/pi-ai";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import {
+  AgentSession,
+  createAgentSession,
+  DefaultResourceLoader,
+  ModelRegistry,
+  ModelRuntime,
+  SessionManager,
+  SettingsManager,
+  type AgentSessionEvent,
+  type CompactionResult,
+  type ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
+import { stat, unlink } from "node:fs/promises";
+
+import { FuzzyMatcher, type FuzzyCandidate } from "../shared/FuzzyMatcher";
+import { EventLog } from "./EventLog";
+
+/** What the agent is doing right now (Resolved Decision 5). */
+export type SessionStatus = "idle" | "thinking" | "streaming" | "tool";
+
+/**
+ * Everything the host persists about a session. Frontend-specific settings
+ * (Telegram's log verbosity, say) stay with the adapter.
+ */
+export type HostSettings = {
+  readonly cwd?: string;
+  readonly model?: string;
+  readonly thinkingLevel?: ThinkingLevel;
+  readonly sessionPath?: string;
+  readonly cumulativeCost?: number;
+};
+
+export type SetCwdResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly error: string };
+
+export type SetModelResult =
+  | { readonly ok: true; readonly id: string }
+  | {
+      readonly ok: false;
+      readonly kind: "none" | "ambiguous";
+      readonly candidates: readonly string[];
+    };
+
+export type SessionCompactResult = {
+  readonly compaction: CompactionResult;
+  readonly activeMessages: number;
+};
+
+export type SessionHostDeps = {
+  /** Prefix for this host's log lines; also the registry key in practice. */
+  readonly label: string;
+  readonly settings: HostSettings;
+  readonly defaults: { readonly cwd: string; readonly model?: string };
+  readonly agentDir: string;
+  readonly modelRuntime: ModelRuntime;
+  readonly modelRegistry: ModelRegistry;
+  readonly settingsManagerFor: (cwd: string) => SettingsManager;
+  readonly persistSettings: (patch: Partial<HostSettings>) => Promise<void>;
+  /** Omit to let pi place the file in its own cwd-grouped sessions directory. */
+  readonly mainSessionPath?: () => string;
+  readonly isolatedSessionPath?: () => string;
+  readonly systemInstruction?: () => Promise<string | undefined>;
+  readonly customTools?: (cwd: string) => readonly ToolDefinition[];
+  /** Runs after the agent is disposed, before the session file is forgotten. */
+  readonly onRetire?: (sessionPath: string) => Promise<void>;
+};
+
+type ModelResolveResult =
+  | { readonly kind: "ok"; readonly model: Model<ModelApi> }
+  | { readonly kind: "ambiguous"; readonly candidates: readonly string[] }
+  | { readonly kind: "none"; readonly candidates: readonly string[] };
+
+function isOutput(event: AssistantMessageEvent): boolean {
+  switch (event.type) {
+    case "text_delta":
+    case "toolcall_delta":
+      return event.delta.length > 0;
+    case "text_end":
+      return event.content.length > 0;
+    default:
+      return false;
+  }
+}
+
+/**
+ * Owns one in-process `createAgentSession()` and everything around it: cwd,
+ * model resolution, thinking level, compaction, cumulative cost, abort, and a
+ * serialized turn queue. Frontend-agnostic — Telegram, the web server, and any
+ * future adapter drive the same object.
+ */
+export class SessionHost {
+  public readonly label: string;
+  public lastUsed = Date.now();
+  private readonly deps: SessionHostDeps;
+  private currentSettings: HostSettings;
+  private cached: AgentSession | undefined;
+  private cachedUnsubscribe: (() => void) | undefined;
+  private cachedSystemInstruction: string | undefined;
+  private cachedLog: EventLog | undefined;
+  private queue: Promise<void> = Promise.resolve();
+  private runningTools = 0;
+  private streaming = false;
+  private producing = false;
+  private outputStartedAt: number | undefined;
+  private lastTps: number | undefined;
+
+  public constructor(deps: SessionHostDeps) {
+    this.deps = deps;
+    this.label = deps.label;
+    this.currentSettings = deps.settings;
+  }
+
+  public get settings(): HostSettings {
+    return this.currentSettings;
+  }
+
+  /** Where this session's tools resolve relative paths, session override first. */
+  public get cwd(): string {
+    return this.currentSettings.cwd ?? this.deps.defaults.cwd;
+  }
+
+  public get agentSession(): AgentSession | undefined {
+    return this.cached;
+  }
+
+  /** Pi's own session UUID — the only identity a session has (Decision 4). */
+  public get sessionId(): string | undefined {
+    return this.cached?.sessionId;
+  }
+
+  /** Reader over this session's JSONL, live only once the agent is built. */
+  public get eventLog(): EventLog | undefined {
+    return this.cachedLog;
+  }
+
+  public get isStreaming(): boolean {
+    return this.cached?.isStreaming ?? false;
+  }
+
+  public get status(): SessionStatus {
+    if (this.runningTools > 0) {
+      return "tool";
+    }
+    if (this.producing) {
+      return "streaming";
+    }
+    if (this.streaming) {
+      return "thinking";
+    }
+    return "idle";
+  }
+
+  /** Decode tokens per second for the last completed assistant message. */
+  public get tps(): number | undefined {
+    return this.lastTps;
+  }
+
+  public get currentModelId(): string | undefined {
+    const model = this.cached?.model ?? this.resolveDefaultModel();
+    return model ? SessionHost.modelId(model) : undefined;
+  }
+
+  public get supportedThinkingLevels(): readonly ThinkingLevel[] {
+    const model = this.cached?.model ?? this.resolveDefaultModel();
+    return model ? getSupportedThinkingLevels(model) : [];
+  }
+
+  public get currentThinkingLevel(): ThinkingLevel {
+    if (this.currentSettings.thinkingLevel) {
+      return this.currentSettings.thinkingLevel;
+    }
+    if (this.cached) {
+      return this.cached.thinkingLevel;
+    }
+    const sm = this.deps.settingsManagerFor(this.cwd);
+    return (sm.getDefaultThinkingLevel() as ThinkingLevel) ?? "medium";
+  }
+
+  /**
+   * Run `work` as a turn against this session's agent. Serialized: turns
+   * execute one at a time in submission order, so callers can fire-and-forget
+   * without races.
+   *
+   * Default (`isolated: false`): work runs against the cached `AgentSession`,
+   * built on first call and reused across turns (history persists, the system
+   * instruction is re-read between turns).
+   *
+   * `isolated: true`: work runs against a fresh `AgentSession` on a throwaway
+   * file, disposed and unlinked when the work resolves. No history, no shared
+   * state with the cached agent.
+   */
+  public run(
+    work: (agent: AgentSession) => Promise<void>,
+    opts?: { readonly isolated?: boolean }
+  ): Promise<void> {
+    return this.enqueue(async () => {
+      if (opts?.isolated) {
+        const { agent, sessionPath } = await this.buildIsolatedAgent();
+        try {
+          await work(agent);
+        } finally {
+          await SessionHost.disposeAgent(agent);
+          await unlink(sessionPath).catch((err: unknown) => {
+            if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+              console.warn(`[${this.label}] unlink ${sessionPath}:`, err);
+            }
+          });
+        }
+        return;
+      }
+      const agent = await this.ensureCached();
+      await work(agent);
+    });
+  }
+
+  /** Run `work` in this session's turn queue without touching the agent. */
+  public serialize<T>(work: () => Promise<T>): Promise<T> {
+    return this.enqueueResult(work);
+  }
+
+  public async cancel(): Promise<boolean> {
+    if (!this.cached || !this.cached.isStreaming) {
+      return false;
+    }
+    await this.cached.abort();
+    return true;
+  }
+
+  public clear(): Promise<void> {
+    return this.enqueue(async () => {
+      await this.tearDownCached();
+      await this.patchSettings({ sessionPath: undefined });
+    });
+  }
+
+  public setCwd(newCwd: string): Promise<SetCwdResult> {
+    return this.enqueueResult(async (): Promise<SetCwdResult> => {
+      try {
+        const st = await stat(newCwd);
+        if (!st.isDirectory()) {
+          return { ok: false, error: `not a directory: ${newCwd}` };
+        }
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "ENOENT") {
+          return { ok: false, error: `path does not exist: ${newCwd}` };
+        }
+        return { ok: false, error: `stat failed: ${(err as Error).message}` };
+      }
+      await this.tearDownCached();
+      await this.patchSettings({ cwd: newCwd, sessionPath: undefined });
+      return { ok: true };
+    });
+  }
+
+  public setModel(pattern: string): Promise<SetModelResult> {
+    return this.enqueueResult(async (): Promise<SetModelResult> => {
+      const result = this.resolveModel(pattern);
+      if (result.kind === "none" || result.kind === "ambiguous") {
+        return { ok: false, kind: result.kind, candidates: result.candidates };
+      }
+      const id = SessionHost.modelId(result.model);
+      if (this.currentSettings.model === id) {
+        return { ok: true, id };
+      }
+      await this.patchSettings({ model: id });
+      if (this.cached) {
+        await this.cached.setModel(result.model);
+      }
+      return { ok: true, id };
+    });
+  }
+
+  public setThinkingLevel(level: ThinkingLevel): Promise<void> {
+    return this.enqueue(async () => {
+      if (this.currentSettings.thinkingLevel === level) {
+        return;
+      }
+      await this.patchSettings({ thinkingLevel: level });
+      this.cached?.setThinkingLevel(level);
+    });
+  }
+
+  public compact(customInstructions?: string): Promise<SessionCompactResult> {
+    return this.enqueueResult(async (): Promise<SessionCompactResult> => {
+      const agent = await this.ensureCached();
+      const compaction = await agent.compact(customInstructions);
+      return { compaction, activeMessages: agent.messages.length };
+    });
+  }
+
+  public async dispose(): Promise<void> {
+    if (this.cached) {
+      const agent = this.cached;
+      this.detachCached();
+      await SessionHost.disposeAgent(agent);
+    }
+  }
+
+  private enqueue(work: () => Promise<void>): Promise<void> {
+    const next = this.queue.then(work);
+    const tail = next.catch((err: unknown) => {
+      console.error(`[${this.label}] work failed:`, err);
+    });
+    this.queue = tail;
+    this.lastUsed = Date.now();
+    return next;
+  }
+
+  private enqueueResult<T>(work: () => Promise<T>): Promise<T> {
+    let resolve!: (value: T) => void;
+    let reject!: (err: unknown) => void;
+    const result = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    void this.enqueue(async () => {
+      try {
+        resolve(await work());
+      } catch (err) {
+        reject(err);
+      }
+    });
+    return result;
+  }
+
+  private async ensureCached(): Promise<AgentSession> {
+    const systemInstruction = await this.deps.systemInstruction?.();
+    if (this.cached) {
+      if (this.cachedSystemInstruction !== systemInstruction) {
+        this.cachedSystemInstruction = systemInstruction;
+        await this.cached.reload();
+      }
+      return this.cached;
+    }
+    const { agent, cwd } = await this.buildAgent(
+      this.currentSettings.sessionPath ?? this.deps.mainSessionPath?.(),
+      systemInstruction
+    );
+    this.cached = agent;
+    this.cachedSystemInstruction = systemInstruction;
+    this.cachedLog = agent.sessionFile
+      ? new EventLog(agent.sessionFile)
+      : undefined;
+    this.cachedUnsubscribe = this.observe(agent);
+    await this.patchSettings({ cwd, sessionPath: agent.sessionFile });
+    return agent;
+  }
+
+  /**
+   * Drives everything the frontends read as state: `status`, `tps`, the event
+   * log's in-flight buffer, and cumulative cost. Only the cached agent gets
+   * this — an isolated run has its own file and must not move this session's
+   * status.
+   */
+  private observe(agent: AgentSession): () => void {
+    const stopCostTracking = this.observeCost(agent);
+    const stop = agent.subscribe((event: AgentSessionEvent) => {
+      this.cachedLog?.observe(event);
+      switch (event.type) {
+        case "agent_start":
+          this.streaming = true;
+          this.producing = false;
+          this.outputStartedAt = undefined;
+          break;
+        case "message_start":
+          this.producing = false;
+          this.outputStartedAt = undefined;
+          break;
+        case "message_update":
+          if (
+            event.message.role === "assistant" &&
+            isOutput(event.assistantMessageEvent)
+          ) {
+            this.producing = true;
+            this.outputStartedAt ??= Date.now();
+          }
+          break;
+        case "message_end":
+          if (event.message.role === "assistant") {
+            this.recordTps(event.message.usage?.output ?? 0);
+          }
+          this.producing = false;
+          break;
+        case "tool_execution_start":
+          this.runningTools += 1;
+          break;
+        case "tool_execution_end":
+          this.runningTools = Math.max(0, this.runningTools - 1);
+          break;
+        case "agent_settled":
+          this.streaming = false;
+          this.producing = false;
+          this.runningTools = 0;
+          break;
+      }
+    });
+    return () => {
+      stop();
+      stopCostTracking();
+    };
+  }
+
+  /** Cumulative spend follows every agent this host builds, isolated or not. */
+  private observeCost(agent: AgentSession): () => void {
+    let last = agent.getSessionStats().cost ?? 0;
+    return agent.subscribe((event) => {
+      if (event.type !== "turn_end") {
+        return;
+      }
+      const total = agent.getSessionStats().cost ?? 0;
+      const delta = total - last;
+      if (delta <= 0) {
+        return;
+      }
+      last = total;
+      void this.patchSettings({
+        cumulativeCost: (this.currentSettings.cumulativeCost ?? 0) + delta,
+      });
+    });
+  }
+
+  private recordTps(outputTokens: number): void {
+    const startedAt = this.outputStartedAt;
+    this.outputStartedAt = undefined;
+    const elapsed = startedAt === undefined ? 0 : Date.now() - startedAt;
+    if (outputTokens > 0 && elapsed > 0) {
+      this.lastTps = (outputTokens * 1000) / elapsed;
+    }
+  }
+
+  private async buildIsolatedAgent(): Promise<{
+    readonly agent: AgentSession;
+    readonly sessionPath: string;
+  }> {
+    const sessionPath = this.deps.isolatedSessionPath?.();
+    if (!sessionPath) {
+      throw new Error(`[${this.label}] isolated runs need isolatedSessionPath`);
+    }
+    const { agent } = await this.buildAgent(
+      sessionPath,
+      await this.deps.systemInstruction?.()
+    );
+    this.observeCost(agent);
+    return { agent, sessionPath };
+  }
+
+  private async buildAgent(
+    sessionPath: string | undefined,
+    wrapped: string | undefined
+  ): Promise<{ readonly agent: AgentSession; readonly cwd: string }> {
+    const cwd = this.cwd;
+    const sessionManager = sessionPath
+      ? SessionManager.open(sessionPath, undefined, cwd)
+      : SessionManager.create(cwd);
+    const settingsManager = this.deps.settingsManagerFor(cwd);
+    const promptRef = { wrapped };
+    const loader = new DefaultResourceLoader({
+      cwd,
+      agentDir: this.deps.agentDir,
+      settingsManager,
+      appendSystemPromptOverride: (base) => {
+        return promptRef.wrapped ? [...base, promptRef.wrapped] : base;
+      },
+    });
+    await loader.reload();
+
+    const defaultModelId =
+      this.currentSettings.model ?? this.deps.defaults.model;
+    let model: Model<ModelApi> | undefined;
+    if (defaultModelId) {
+      const resolved = this.resolveModel(defaultModelId);
+      if (resolved.kind === "ok") {
+        model = resolved.model;
+      } else {
+        console.warn(
+          `[${this.label}] model "${defaultModelId}" did not resolve cleanly (${resolved.kind})`
+        );
+      }
+    }
+
+    const { session: agent } = await createAgentSession({
+      cwd,
+      agentDir: this.deps.agentDir,
+      modelRuntime: this.deps.modelRuntime,
+      settingsManager,
+      resourceLoader: loader,
+      sessionManager,
+      model,
+      thinkingLevel: this.currentSettings.thinkingLevel,
+      customTools: [...(this.deps.customTools?.(cwd) ?? [])],
+    });
+
+    // Emits session_start, which extensions (e.g. MCP adapters) rely on to
+    // initialize. Without it their tools are registered but never usable.
+    await agent.bindExtensions({
+      mode: "print",
+      onError: (err) => {
+        console.warn(
+          `[${this.label}] extension ${err.extensionPath} (${err.event}):`,
+          err.error
+        );
+      },
+    });
+
+    return { agent, cwd };
+  }
+
+  private static async disposeAgent(agent: AgentSession): Promise<void> {
+    try {
+      await agent.extensionRunner.emit({
+        type: "session_shutdown",
+        reason: "quit",
+      });
+    } catch (err) {
+      console.warn(`[session] extension shutdown failed:`, err);
+    }
+    agent.dispose();
+  }
+
+  private detachCached(): void {
+    this.cachedUnsubscribe?.();
+    this.cached = undefined;
+    this.cachedUnsubscribe = undefined;
+    this.cachedLog = undefined;
+    this.runningTools = 0;
+    this.streaming = false;
+    this.producing = false;
+  }
+
+  private async tearDownCached(): Promise<void> {
+    if (this.cached) {
+      const agent = this.cached;
+      this.detachCached();
+      this.cachedSystemInstruction = undefined;
+      await SessionHost.disposeAgent(agent);
+    }
+    const path =
+      this.currentSettings.sessionPath ?? this.deps.mainSessionPath?.();
+    if (path) {
+      await this.deps.onRetire?.(path);
+    }
+  }
+
+  private async patchSettings(patch: Partial<HostSettings>): Promise<void> {
+    this.currentSettings = { ...this.currentSettings, ...patch };
+    await this.deps.persistSettings(patch);
+  }
+
+  private resolveDefaultModel(): Model<ModelApi> | undefined {
+    this.deps.modelRegistry.refresh();
+    for (const candidate of [
+      this.currentSettings.model,
+      this.deps.defaults.model,
+    ]) {
+      if (candidate) {
+        const r = this.resolveModel(candidate);
+        if (r.kind === "ok") {
+          return r.model;
+        }
+      }
+    }
+    const sm = this.deps.settingsManagerFor(this.cwd);
+    const provider = sm.getDefaultProvider();
+    const modelId = sm.getDefaultModel();
+    if (provider && modelId) {
+      const m = this.deps.modelRegistry.find(provider, modelId);
+      if (m) {
+        return m;
+      }
+    }
+    return this.deps.modelRegistry.getAvailable()[0];
+  }
+
+  private resolveModel(pattern: string): ModelResolveResult {
+    this.deps.modelRegistry.refresh();
+    const available = this.deps.modelRegistry.getAvailable();
+    const candidates: FuzzyCandidate<Model<ModelApi>>[] = available.map(
+      (m) => ({
+        item: m,
+        haystacks: [SessionHost.modelId(m), m.id, m.name],
+      })
+    );
+
+    const exact = available.find(
+      (m) =>
+        SessionHost.modelId(m) === pattern.trim() ||
+        m.id === pattern.trim() ||
+        m.name === pattern.trim()
+    );
+    if (exact) {
+      return { kind: "ok", model: exact };
+    }
+
+    const hits = FuzzyMatcher.rank(pattern, candidates, { limit: 5 });
+    if (hits.length === 0) {
+      return {
+        kind: "none",
+        candidates: available.slice(0, 8).map(SessionHost.modelId),
+      };
+    }
+    if (hits.length === 1) {
+      return { kind: "ok", model: hits[0]!.item };
+    }
+    const top = hits[0]!;
+    const second = hits[1]!;
+    if (top.score > second.score * 1.5) {
+      return { kind: "ok", model: top.item };
+    }
+    return {
+      kind: "ambiguous",
+      candidates: hits.map((h) => SessionHost.modelId(h.item)),
+    };
+  }
+
+  private static modelId(model: Model<ModelApi>): string {
+    return `${model.provider}/${model.id}`;
+  }
+}

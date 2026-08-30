@@ -100,6 +100,14 @@ test("emits session_start and session_shutdown for isolated runs", async () => {
   expect(await readLog(log)).toEqual(["start", "shutdown"]);
 });
 
+test("exposes pi's session uuid once an agent exists", async () => {
+  const session = await buildSession();
+  expect(session.sessionId).toBeUndefined();
+
+  await session.run(async () => {});
+  expect(session.sessionId).toBe(session.agentSession!.sessionId);
+});
+
 test("re-emits session_start when the agent reloads mid-session", async () => {
   const log = join(tmp, "lifecycle.log");
   await writeLifecycleExtension(log);

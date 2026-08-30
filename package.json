@@ -27,6 +27,7 @@
     "packages/core/src/",
     "packages/tui/src/",
     "packages/telegram/src/",
+    "!packages/core/src/session/fixtures/",
     "!packages/**/*.test.ts"
   ],
   "engines": {
