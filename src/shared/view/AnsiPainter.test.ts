@@ -6,8 +6,9 @@ import { AnsiPainter } from "./AnsiPainter";
 import type { ViewBlock } from "./ViewBlock";
 
 const theme = {
-  bold: (text: string) => text,
+  bold: (text: string) => `<b>${text}</b>`,
   fg: (color: ThemeColor, text: string) => `<${color}>${text}</${color}>`,
+  strikethrough: (text: string) => `<s>${text}</s>`,
 } as unknown as Theme;
 
 function paint(...blocks: readonly ViewBlock[]): string[] {
@@ -27,6 +28,118 @@ describe("AnsiPainter text", () => {
       "<error>a</error>",
       "<error>b</error>",
     ]);
+  });
+});
+
+describe("AnsiPainter spans", () => {
+  test("joins runs with no separator and leaves default tone bare", () => {
+    expect(
+      paint({
+        kind: "spans",
+        spans: [
+          { text: "+2", tone: "added" },
+          { text: "/" },
+          { text: "-1", tone: "removed" },
+        ],
+      })
+    ).toEqual([
+      "<toolDiffAdded>+2</toolDiffAdded>/<toolDiffRemoved>-1</toolDiffRemoved>",
+    ]);
+  });
+
+  test("applies the decoration inside the tone wrapper", () => {
+    expect(
+      paint({
+        kind: "spans",
+        spans: [{ text: "old", tone: "dim", strike: true }],
+      })
+    ).toEqual(["<dim><s>old</s></dim>"]);
+  });
+
+  test("an empty span contributes nothing, not an empty wrapper", () => {
+    expect(
+      paint({
+        kind: "spans",
+        spans: [{ text: "", tone: "title" }, { text: "a" }],
+      })
+    ).toEqual(["a"]);
+  });
+
+  test("maps every tone", () => {
+    expect(
+      paint({
+        kind: "spans",
+        spans: [
+          { text: "a", tone: "default" },
+          { text: "b", tone: "muted" },
+          { text: "c", tone: "dim" },
+          { text: "d", tone: "error" },
+          { text: "e", tone: "added" },
+          { text: "f", tone: "removed" },
+          { text: "g", tone: "title" },
+        ],
+      })
+    ).toEqual([
+      "a<muted>b</muted><dim>c</dim><error>d</error>" +
+        "<toolDiffAdded>e</toolDiffAdded><toolDiffRemoved>f</toolDiffRemoved>" +
+        "<toolTitle>g</toolTitle>",
+    ]);
+  });
+});
+
+describe("AnsiPainter section", () => {
+  test("paints a separator plus a marked, bold-labelled heading", () => {
+    expect(
+      paint({
+        kind: "section",
+        label: "Write",
+        content: [{ text: "b.txt " }, { text: "+2", tone: "added" }],
+      })
+    ).toEqual([
+      "",
+      "<success> ▪</success> <toolTitle><b>Write</b></toolTitle>" +
+        "<toolTitle>: b.txt <toolDiffAdded>+2</toolDiffAdded></toolTitle>",
+    ]);
+  });
+});
+
+describe("AnsiPainter.paintBody", () => {
+  test("runs adjacent same-frame blocks together", () => {
+    const groups = AnsiPainter.paintBody(
+      [
+        { kind: "file", path: "a.ts" },
+        { kind: "text", text: "note" },
+        { kind: "diff", path: "a.ts", hunks: [] },
+      ],
+      theme
+    );
+
+    expect(groups).toEqual([
+      { frame: "flow", lines: ["a.ts", "note"] },
+      { frame: "embed", lines: [] },
+    ]);
+  });
+
+  test("breaks a run on a heading and reopens after it", () => {
+    const groups = AnsiPainter.paintBody(
+      [
+        { kind: "text", text: "one" },
+        { kind: "section", label: "Edit", content: [{ text: "b.ts" }] },
+        { kind: "text", text: "two" },
+      ],
+      theme
+    );
+
+    expect(groups.map((group) => group.frame)).toEqual([
+      "flow",
+      "heading",
+      "flow",
+    ]);
+    expect(groups[1]?.lines[0]).toBe("");
+  });
+
+  test("no blocks produce no groups", () => {
+    expect(AnsiPainter.paintBody([], theme)).toEqual([]);
   });
 });
 

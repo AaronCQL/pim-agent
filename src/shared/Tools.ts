@@ -8,6 +8,7 @@ import type { Static, TSchema } from "typebox";
 import { Levenshtein } from "./Levenshtein";
 import { Renderer } from "./Renderer";
 import { AnsiPainter } from "./view/AnsiPainter";
+import { BodyRenderer } from "./view/BodyRenderer";
 import type { ToolView } from "./view/ViewBlock";
 
 const DEFAULT_PREVIEW_LINES = 10;
@@ -31,7 +32,7 @@ export type PimToolDefinition<
   TState = unknown,
 > = ToolDefinition<TParams, TDetails, TState> & {
   readonly toViewModel?: (input: ToolViewInput<TParams, TDetails>) => ToolView;
-  /** Body lines shown before the row is expanded. Defaults to 10. */
+  /** Error-output lines shown before the row is expanded. Defaults to 10. */
   readonly previewLines?: number;
 };
 
@@ -208,19 +209,15 @@ function synthesizeRenderers<TParams extends TSchema, TDetails, TState>(
           result,
           cwd: context.cwd,
         });
-        const body = AnsiPainter.paint(view.body ?? [], theme).join("\n");
 
-        return Renderer.renderBorderedResult({
-          // Painted lines ride in as content so the border, preview cap and
-          // expand behaviour stay the single implementation in Renderer.
-          result: { ...result, content: [{ type: "text", text: body }] },
+        return BodyRenderer.render({
+          blocks: view.body ?? [],
           options: {
             ...options,
             expanded: options.expanded || view.collapsed === false,
           },
           theme,
           context,
-          previewLines,
         });
       }),
   };

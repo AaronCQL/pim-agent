@@ -7,12 +7,43 @@ import type { ToolDiffHunk } from "../DiffLines";
  */
 export type DiffHunk = ToolDiffHunk;
 
-export type TextTone = "default" | "muted" | "error";
+/**
+ * Inline styling roles, kept semantic rather than visual: the ANSI painter
+ * maps them to theme colours, a Markdown painter to inline wrappers, an HTML
+ * painter to classes. Every painter must map the whole set.
+ */
+export type Tone =
+  | "default"
+  | "muted"
+  | "dim"
+  | "error"
+  | "added"
+  | "removed"
+  | "title";
+
+/** A run of text carrying one tone. The only inline primitive. */
+export type Span = {
+  readonly text: string;
+  readonly tone?: Tone;
+  /** Superseded content, e.g. the old half of a rename. */
+  readonly strike?: boolean;
+};
 
 export type NoticeSeverity = "info" | "warn" | "error";
 
 export type ViewBlock =
-  | { readonly kind: "text"; readonly text: string; readonly tone?: TextTone }
+  | { readonly kind: "text"; readonly text: string; readonly tone?: Tone }
+  /** One line of mixed-tone text, e.g. a `+5`/`-2` diff stat or a rename. */
+  | { readonly kind: "spans"; readonly spans: readonly Span[] }
+  /**
+   * Introduces a sub-item inside a body, e.g. the second file of a patch.
+   * Painters render it as a heading and separate it from what precedes it.
+   */
+  | {
+      readonly kind: "section";
+      readonly label: string;
+      readonly content: readonly Span[];
+    }
   | {
       readonly kind: "code";
       readonly lang: string;

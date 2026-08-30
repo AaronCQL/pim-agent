@@ -133,6 +133,37 @@ export class Renderer {
     };
   }
 
+  /** The marker + bold label + title text of a tool row, without the shell. */
+  public static toolTitleText(args: {
+    readonly label: string;
+    readonly title: string;
+    readonly theme: Theme;
+    readonly markerColor: MarkerStatus;
+    readonly labelColor?: ThemeColor;
+  }): string {
+    const { label, title, theme, markerColor, labelColor } = args;
+    return (
+      theme.fg(markerColor, " ▪") +
+      " " +
+      theme.fg(labelColor ?? "toolTitle", theme.bold(label)) +
+      theme.fg("toolTitle", ": " + title)
+    );
+  }
+
+  /** Wraps title text in the component that pads and re-indents on overflow. */
+  public static makeTitleBlock(args: {
+    readonly text: string;
+    readonly theme: Theme;
+    readonly lastComponent?: Component;
+  }): Component {
+    const component =
+      args.lastComponent instanceof ToolTitle
+        ? args.lastComponent
+        : new ToolTitle();
+    component.setText(args.text, args.theme);
+    return component;
+  }
+
   public static renderToolCallTitle(args: {
     readonly label: string;
     readonly title: string;
@@ -140,23 +171,18 @@ export class Renderer {
     readonly context: RenderContext;
     readonly labelColor?: ThemeColor;
   }): Component {
-    const { label, title, theme, context, labelColor } = args;
-    const markerColor = Renderer.markerColorFor(
-      Boolean(context.isPartial),
-      Boolean(context.isError)
-    );
-    const component =
-      context.lastComponent instanceof ToolTitle
-        ? context.lastComponent
-        : new ToolTitle();
-    component.setText(
-      theme.fg(markerColor, " ▪") +
-        " " +
-        theme.fg(labelColor ?? "toolTitle", theme.bold(label)) +
-        theme.fg("toolTitle", ": " + title),
-      theme
-    );
-    return component;
+    const { theme, context } = args;
+    return Renderer.makeTitleBlock({
+      text: Renderer.toolTitleText({
+        ...args,
+        markerColor: Renderer.markerColorFor(
+          Boolean(context.isPartial),
+          Boolean(context.isError)
+        ),
+      }),
+      theme,
+      lastComponent: context.lastComponent,
+    });
   }
 
   public static renderStatefulToolCallTitle(args: {
