@@ -7,23 +7,11 @@ import { Fs } from "./Fs";
 import { Paths } from "./Paths";
 
 const Schema = Type.Object({
-  tps: Type.Object(
-    {
-      enabled: Type.Boolean({ default: false }),
-    },
-    { default: { enabled: false } }
-  ),
-  powerline: Type.Object(
-    {
-      enabled: Type.Boolean({ default: true }),
-    },
-    { default: { enabled: true } }
-  ),
   extensions: Type.Object(
     {
-      disabled: Type.Array(Type.String(), { default: [] }),
+      toggles: Type.Record(Type.String(), Type.Boolean(), { default: {} }),
     },
-    { default: { disabled: [] } }
+    { default: { toggles: {} } }
   ),
   exa: Type.Object(
     {

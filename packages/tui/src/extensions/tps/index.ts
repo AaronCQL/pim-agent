@@ -1,6 +1,5 @@
 import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { PimSettings } from "../../../../core/src/shared/PimSettings";
 
 type RequestTiming = {
   readonly sentMs: number;
@@ -24,19 +23,6 @@ function isOutputEvent(event: AssistantMessageEvent): boolean {
 }
 
 export default function (pi: ExtensionAPI): void {
-  pi.registerCommand("tps", {
-    description: "Toggle per-cycle decode/prefill tps reporting",
-    handler: async (_args, ctx) => {
-      const current = await PimSettings.get("tps");
-      const next = { ...current, enabled: !current.enabled };
-      await PimSettings.set("tps", next);
-      ctx.ui.notify(
-        `TPS reporting ${next.enabled ? "enabled" : "disabled"}`,
-        "info"
-      );
-    },
-  });
-
   let requestTiming: RequestTiming | null = null;
 
   let promptTokens = 0;
@@ -106,15 +92,11 @@ export default function (pi: ExtensionAPI): void {
     cacheReadTokens += usage.cacheRead ?? 0;
   });
 
-  pi.on("agent_end", async (_event, ctx) => {
+  pi.on("agent_end", (_event, ctx) => {
     if (!ctx.hasUI) {
       return;
     }
     if (decodeMs <= 0 && prefillMs <= 0) {
-      return;
-    }
-    const { enabled } = await PimSettings.get("tps");
-    if (!enabled) {
       return;
     }
 

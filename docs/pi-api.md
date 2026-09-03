@@ -34,7 +34,7 @@ When the docs are ambiguous, read the code: `dist/` is unminified per-file ESM w
 
 **Autocomplete providers**: Register via `ctx.ui.addAutocompleteProvider(factory)` in `session_start`. The factory receives the current provider and returns a decorator wrapping `getSuggestions`, `applyCompletion`, and `shouldTriggerFileCompletion`. See `file-picker` (`@`-triggered path completion) and `command-picker` (`/`-triggered command completion) in `packages/tui/src/extensions/`.
 
-**Commands**: `pi.registerCommand(name, { description, handler })`. Handler receives `(args, ctx: CommandExtensionContext)`. See `/powerline` (footer), `/tps` (tps), `/clear` (\_init).
+**Commands**: `pi.registerCommand(name, { description, handler })`. Handler receives `(args, ctx: CommandExtensionContext)`. See `/pim` (pim), `/clear` (\_init).
 
 **Shared utilities** (all in `packages/core/src/shared/`):
 
@@ -45,7 +45,7 @@ When the docs are ambiguous, read the code: `dist/` is unminified per-file ESM w
 - `FsErrors` — `statOrThrow(path)` with "did you mean" sibling suggestions for ENOENT.
 - `Fs` — `readJsonOrEmpty`, `writeAtomic` (atomic rename with mode preservation).
 - `Paths` — `resolve`, `displayRelative`, `expandHome`, `titleOr`.
-- `PimSettings` — `get`/`set` for persistent user toggles (`tps`, `powerline`).
+- `PimSettings` — `get`/`set` for persistent user settings (`extensions`, API keys).
 - `OutputBudget` — 32KB byte cap, 2000-char line truncation, `applyByteCap` for item lists.
 - `FileScanner` — Recursive file scanning with gitignore + exclusion support.
 - `GitignoreFilter` — Reads `.gitignore` chains from root to nearest `.git` directory.

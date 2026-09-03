@@ -31,35 +31,57 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await PimSettings.set("extensions", { disabled: [] });
+  await PimSettings.set("extensions", { toggles: {} });
 });
 
-describe("ExtensionToggles.filter", () => {
-  const factories = [
-    { name: "_init" },
-    { name: "bash" },
-    { name: "web-search" },
-  ] as const;
+describe("ExtensionToggles.gate", () => {
+  test("skips a disabled extension and runs an enabled one", async () => {
+    const calls: string[] = [];
+    const factory = (name: string) => () => {
+      calls.push(name);
+    };
+    await ExtensionToggles.setDisabled("web-search", true);
 
-  test("drops disabled extensions", () => {
-    expect(ExtensionToggles.filter(factories, ["web-search"])).toEqual([
-      { name: "_init" },
-      { name: "bash" },
-    ]);
+    await ExtensionToggles.gate(
+      "web-search",
+      factory("web-search")
+    )({} as never);
+    await ExtensionToggles.gate("bash", factory("bash"))({} as never);
+
+    expect(calls).toEqual(["bash"]);
   });
 
-  test("keeps everything when nothing is disabled", () => {
-    expect(ExtensionToggles.filter(factories, [])).toEqual([...factories]);
+  test("never skips a required extension", async () => {
+    let ran = false;
+    await PimSettings.set("extensions", { toggles: { _init: false } });
+
+    await ExtensionToggles.gate("_init", () => {
+      ran = true;
+    })({} as never);
+
+    expect(ran).toBe(true);
+  });
+});
+
+describe("ExtensionToggles defaults", () => {
+  test("tps ships disabled and can be turned on", async () => {
+    await expect(ExtensionToggles.disabled()).resolves.toEqual(["tps"]);
+
+    await ExtensionToggles.setDisabled("tps", false);
+
+    await expect(ExtensionToggles.disabled()).resolves.toEqual([]);
+    expect(await Bun.file(PimSettings.path()).json()).toMatchObject({
+      extensions: { toggles: { tps: true } },
+    });
   });
 
-  test("never drops required extensions", () => {
-    expect(
-      ExtensionToggles.filter(factories, [
-        "_init",
-        "extension-toggle",
-        "bash",
-      ]).map((e) => e.name)
-    ).toEqual(["_init", "web-search"]);
+  test("a toggle back to the default drops the entry", async () => {
+    await ExtensionToggles.setDisabled("bash", true);
+    await ExtensionToggles.setDisabled("bash", false);
+
+    expect(await Bun.file(PimSettings.path()).json()).toMatchObject({
+      extensions: { toggles: {} },
+    });
   });
 });
 
@@ -68,9 +90,12 @@ describe("ExtensionToggles settings", () => {
     await ExtensionToggles.setDisabled("web-search", true);
 
     expect(await Bun.file(PimSettings.path()).json()).toMatchObject({
-      extensions: { disabled: ["web-search"] },
+      extensions: { toggles: { "web-search": false } },
     });
-    await expect(ExtensionToggles.disabled()).resolves.toEqual(["web-search"]);
+    await expect(ExtensionToggles.disabled()).resolves.toEqual([
+      "tps",
+      "web-search",
+    ]);
     await expect(ExtensionToggles.isDisabled("web-search")).resolves.toBe(true);
     await expect(ExtensionToggles.isDisabled("bash")).resolves.toBe(false);
   });
@@ -80,14 +105,10 @@ describe("ExtensionToggles settings", () => {
     await ExtensionToggles.setDisabled("web-search", true);
     await ExtensionToggles.setDisabled("bash", false);
 
-    await expect(ExtensionToggles.disabled()).resolves.toEqual(["web-search"]);
-  });
-
-  test("disabling twice does not duplicate", async () => {
-    await ExtensionToggles.setDisabled("bash", true);
-    await ExtensionToggles.setDisabled("bash", true);
-
-    await expect(ExtensionToggles.disabled()).resolves.toEqual(["bash"]);
+    await expect(ExtensionToggles.disabled()).resolves.toEqual([
+      "tps",
+      "web-search",
+    ]);
   });
 
   test("toggle flips and reports the new state", async () => {
@@ -101,11 +122,24 @@ describe("ExtensionToggles settings", () => {
     });
   });
 
+  test("serializes concurrent writes instead of losing them", async () => {
+    await Promise.all([
+      ExtensionToggles.setDisabled("bash", true),
+      ExtensionToggles.setDisabled("grep", true),
+      ExtensionToggles.setDisabled("tps", false),
+    ]);
+
+    await expect(ExtensionToggles.disabled()).resolves.toEqual([
+      "bash",
+      "grep",
+    ]);
+  });
+
   test("refuses to disable required extensions", async () => {
     await expect(ExtensionToggles.setDisabled("_init", true)).rejects.toThrow(
       '"_init" is required by pim and cannot be disabled'
     );
-    await expect(ExtensionToggles.toggle("extension-toggle")).rejects.toThrow(
+    await expect(ExtensionToggles.toggle("pim")).rejects.toThrow(
       "cannot be disabled"
     );
   });
@@ -118,10 +152,10 @@ describe("ExtensionToggles settings", () => {
 
   test("ignores stale names left in the settings file", async () => {
     await PimSettings.set("extensions", {
-      disabled: ["removed-extension", "_init", "todo"],
+      toggles: { "removed-extension": false, _init: false, todo: false },
     });
 
-    await expect(ExtensionToggles.disabled()).resolves.toEqual(["todo"]);
+    await expect(ExtensionToggles.disabled()).resolves.toEqual(["todo", "tps"]);
   });
 });
 

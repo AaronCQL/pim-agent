@@ -11,7 +11,7 @@ const shortcuts = [
   ["/<command>", "Slash commands", "<command>"],
   ["/hotkeys", "Show all keyboard shortcuts"],
   ["/settings", "Open settings menu"],
-  ["/powerline", "Toggle Pim powerline footer"],
+  ["/pim", "Enable or disable pim extensions"],
   ["@<path>", "Attach files", "<path>"],
   ["!<command>", "Run bash command", "<command>"],
   ["!!<command>", "Run bash command (excluded from context)", "<command>"],

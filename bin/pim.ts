@@ -2,7 +2,7 @@
 import { Readable } from "node:stream";
 
 import { main } from "@earendil-works/pi-coding-agent";
-import type { InlineExtension } from "@earendil-works/pi-coding-agent";
+import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 import applyPatch from "../packages/core/src/extensions/apply-patch/index.ts";
 import bash from "../packages/core/src/extensions/bash/index.ts";
@@ -22,14 +22,17 @@ import {
 } from "../packages/core/src/shared/ExtensionToggles.ts";
 import init from "../packages/tui/src/extensions/_init/index.ts";
 import commandPicker from "../packages/tui/src/extensions/command-picker/index.ts";
-import extensionToggle from "../packages/tui/src/extensions/extension-toggle/index.ts";
 import filePicker from "../packages/tui/src/extensions/file-picker/index.ts";
 import footer from "../packages/tui/src/extensions/footer/index.ts";
+import pim from "../packages/tui/src/extensions/pim/index.ts";
 import tps from "../packages/tui/src/extensions/tps/index.ts";
 import workingIndicator from "../packages/tui/src/extensions/working-indicator/index.ts";
 import { themeCliArgs } from "../packages/tui/src/themes/themeCliArgs.ts";
 
-type PimInlineExtension = InlineExtension & { readonly name: PimExtensionName };
+type PimInlineExtension = {
+  readonly name: PimExtensionName;
+  readonly factory: ExtensionFactory;
+};
 
 // Enumerated rather than globbed: the published tarball must not depend on a
 // directory scan, and pi never sees these as files on disk.
@@ -39,11 +42,11 @@ const extensionFactories: readonly PimInlineExtension[] = [
   { name: "bash", factory: bash },
   { name: "command-picker", factory: commandPicker },
   { name: "edit", factory: edit },
-  { name: "extension-toggle", factory: extensionToggle },
   { name: "file-picker", factory: filePicker },
   { name: "footer", factory: footer },
   { name: "glob", factory: glob },
   { name: "grep", factory: grep },
+  { name: "pim", factory: pim },
   { name: "read", factory: read },
   { name: "subagent", factory: subagent },
   { name: "system-prompt", factory: systemPrompt },
@@ -140,12 +143,12 @@ process.emitWarning = () => {};
 
 // Pi's own `enabled` filter never sees inline factories (resource-loader.js:406
 // filters disk paths, then appends inline entries unconditionally), so pim's
-// toggle has to happen here, before `main` ever sees the list.
-const enabledFactories = ExtensionToggles.filter(
-  extensionFactories,
-  await ExtensionToggles.disabled()
-);
-
+// toggle lives in the factory itself: a disabled extension is still handed to
+// pi, it just registers nothing. Pi re-invokes these on `/pim`'s reload, so a
+// toggle lands in the running session.
 await main([...themeCliArgs(), ...cliArgs], {
-  extensionFactories: [...enabledFactories],
+  extensionFactories: extensionFactories.map(({ name, factory }) => ({
+    name,
+    factory: ExtensionToggles.gate(name, factory),
+  })),
 });

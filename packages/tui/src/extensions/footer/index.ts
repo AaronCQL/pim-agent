@@ -5,7 +5,6 @@ import type {
   ReadonlyFooterDataProvider,
 } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
-import { PimSettings } from "../../../../core/src/shared/PimSettings";
 import { EMPTY_GIT, fetchGitStatus, type GitState, watchGitDir } from "./git";
 import { renderFooterLine } from "./segments";
 
@@ -102,44 +101,14 @@ export function createFooterWidget(
   };
 }
 
-function installFooter(ctx: ExtensionContext): void {
-  if (!ctx.hasUI) {
-    return;
-  }
-  ctx.ui.setFooter((tui, _theme, footerData) => {
-    return createFooterWidget(ctx, tui, footerData);
-  });
-}
-
 export default function (pi: ExtensionAPI): void {
-  const apply = async (ctx: ExtensionContext): Promise<void> => {
+  pi.on("session_start", (_event, ctx) => {
     if (!ctx.hasUI) {
       return;
     }
-    const { enabled } = await PimSettings.get("powerline");
-    if (enabled) {
-      installFooter(ctx);
-    } else {
-      ctx.ui.setFooter(undefined);
-    }
-  };
-
-  pi.registerCommand("powerline", {
-    description: "Toggle Pim powerline footer",
-    handler: async (_args, ctx) => {
-      const current = await PimSettings.get("powerline");
-      const next = { ...current, enabled: !current.enabled };
-      await PimSettings.set("powerline", next);
-      await apply(ctx);
-      ctx.ui.notify(
-        `Pim powerline footer ${next.enabled ? "enabled" : "disabled"}`,
-        "info"
-      );
-    },
-  });
-
-  pi.on("session_start", async (_event, ctx) => {
-    await apply(ctx);
+    ctx.ui.setFooter((tui, _theme, footerData) =>
+      createFooterWidget(ctx, tui, footerData)
+    );
   });
 
   pi.on("tool_execution_end", () => {

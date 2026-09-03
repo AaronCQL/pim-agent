@@ -51,12 +51,8 @@ afterAll(async () => {
 describe("PimSettings", () => {
   test("loads defaults from ~/.pim/settings.json", async () => {
     expect(PimSettings.path()).toBe(join(testPimHomeDir!, "settings.json"));
-    await expect(PimSettings.get("tps")).resolves.toEqual({ enabled: false });
-    await expect(PimSettings.get("powerline")).resolves.toEqual({
-      enabled: true,
-    });
     await expect(PimSettings.get("extensions")).resolves.toEqual({
-      disabled: [],
+      toggles: {},
     });
     await expect(PimSettings.get("exa")).resolves.toEqual({});
     await expect(PimSettings.get("jina")).resolves.toEqual({});
@@ -71,9 +67,7 @@ describe("PimSettings", () => {
     const path = PimSettings.path();
     expect(path).toBe(join(testPimHomeDir!, "settings.json"));
     expect(await Bun.file(path).json()).toEqual({
-      tps: { enabled: false },
-      powerline: { enabled: true },
-      extensions: { disabled: [] },
+      extensions: { toggles: {} },
       exa: { apiKey: "exa-test" },
       jina: { apiKey: "jina-test" },
       firecrawl: { apiKey: "firecrawl-test" },
