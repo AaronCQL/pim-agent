@@ -314,9 +314,13 @@ function synthesizeRenderers<TParams extends TSchema, TDetails, TState>(
         const state = context.state as ViewRenderState<TDetails>;
         // The title may depend on `details`, which only renderResult receives;
         // stash it and redraw so the synthesized renderCall can see it too.
+        // The redraw has to wait for the current pass to finish: pi calls this
+        // from inside its own container rebuild, and invalidating re-entrantly
+        // makes that rebuild append this pass's component on top of the one the
+        // nested pass already added — the body would be painted twice.
         if (!options.isPartial && state.viewResult === undefined) {
           state.viewResult = result;
-          context.invalidate();
+          queueMicrotask(() => context.invalidate());
         }
 
         if (context.isError) {

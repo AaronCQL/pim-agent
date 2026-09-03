@@ -658,6 +658,25 @@ describe("Tools.wrap view model synthesis", () => {
     expect(component.render(80)).toEqual([" │ Path not found: src/foo.ts"]);
   });
 
+  test("the redraw for a details-dependent title is deferred past the render", async () => {
+    // Pi calls renderResult from inside its own container rebuild and appends
+    // whatever it returns. Invalidating synchronously re-enters that rebuild,
+    // so the nested pass's component and this one's would both be appended and
+    // the body would paint twice.
+    const wrapped = Tools.wrap(readLikeDef());
+    let invalidated = 0;
+    wrapped.renderResult!(
+      persistedResult(),
+      { expanded: true, isPartial: false },
+      theme,
+      context({ invalidate: () => (invalidated += 1) })
+    );
+
+    expect(invalidated).toBe(0);
+    await Promise.resolve();
+    expect(invalidated).toBe(1);
+  });
+
   test("explicit renderers always win", () => {
     const marker: Component = { render: () => ["explicit"], invalidate() {} };
     const wrapped = Tools.wrap({

@@ -28,9 +28,10 @@ function registeredTool(): ToolDefinition {
 }
 
 /**
- * Mimics pi's redraw loop: `renderResult` stashes the settled result and calls
- * `invalidate()`, after which pi re-runs `renderCall` with the same state and
- * the previously returned component.
+ * Mimics pi's redraw loop: `renderResult` stashes the settled result and
+ * schedules an `invalidate()`, after which pi re-runs `renderCall` with the
+ * same state and the previously returned component. The redraw is deferred to
+ * a microtask, so a test that wants the updated title has to `await flush()`.
  */
 function harness(args: Record<string, unknown>) {
   const tool = registeredTool();
@@ -66,12 +67,13 @@ function harness(args: Record<string, unknown>) {
         ...context,
         lastComponent: undefined,
       }),
+    flush: () => Promise.resolve(),
   };
 }
 
 describe("grep tool renderer", () => {
-  test("updates the visible call title with the file count when the result renders", () => {
-    const { renderCall, renderResult } = harness({ pattern: "alpha" });
+  test("updates the visible call title with the file count when the result renders", async () => {
+    const { renderCall, renderResult, flush } = harness({ pattern: "alpha" });
     const callComponent = renderCall();
 
     expect(callComponent.render(120).join("\n")).toContain("Grep: /alpha/");
@@ -81,6 +83,7 @@ describe("grep tool renderer", () => {
       content: [{ type: "text", text: "src/a.ts\nsrc/b.ts" }],
       details: { fileCount: 2, outputMode: "files_with_matches" },
     });
+    await flush();
 
     expect(callComponent.render(120).join("\n")).toContain("(2 files)");
   });
