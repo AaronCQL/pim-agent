@@ -1,97 +1,25 @@
 #!/usr/bin/env bun
-import { realpath } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
+import { PiPackageRegistry } from "../packages/core/src/shared/PiPackageRegistry";
+
 const PI_PACKAGE = "@earendil-works/pi-coding-agent";
+const PIM_PACKAGE = "@aaroncql/pim-agent";
 
-async function findPiCli(): Promise<string> {
-  const envCli = await resolveEnvPiCli();
-  if (envCli) {
-    return envCli;
+/**
+ * Resolve the pi we depend on, not whichever pi happens to be on PATH: our
+ * extensions import pi's runtime values (`createAgentSession`, `SessionManager`,
+ * `parseSessionEntries`), so the spawned CLI and those imports must be the same
+ * copy or they become two module instances of one package.
+ */
+function findPiCli(): string {
+  const override = process.env["PIM_PI_CLI"]?.trim();
+  if (override) {
+    return override;
   }
 
-  const pathCli = await resolvePathPiCli();
-  if (pathCli) {
-    return pathCli;
-  }
-
-  const globalCli = resolveGlobalPiCli();
-  if (globalCli) {
-    return globalCli;
-  }
-
-  try {
-    const pkgUrl = import.meta.resolve(`${PI_PACKAGE}/package.json`);
-    return join(dirname(Bun.fileURLToPath(pkgUrl)), "dist/cli.js");
-  } catch {
-    throw new Error(
-      `Pim could not locate ${PI_PACKAGE}.\n` +
-        `Install Pi from https://pi.dev/docs/latest/quickstart, or set PIM_PI_CLI=/path/to/cli.js`
-    );
-  }
-}
-
-async function resolveEnvPiCli(): Promise<string | null> {
-  const candidate = process.env["PIM_PI_CLI"]?.trim();
-  if (!candidate) {
-    return null;
-  }
-  return (await isFile(candidate)) ? candidate : null;
-}
-
-async function resolvePathPiCli(): Promise<string | null> {
-  const piBin = Bun.which("pi");
-  if (!piBin) {
-    return null;
-  }
-
-  const cliPath = await resolveRealPath(piBin);
-  const pkgPath = join(dirname(cliPath), "..", "package.json");
-
-  try {
-    const pkg = (await Bun.file(pkgPath).json()) as { readonly name?: string };
-    return pkg.name === PI_PACKAGE ? cliPath : null;
-  } catch {
-    return null;
-  }
-}
-
-async function resolveRealPath(path: string): Promise<string> {
-  try {
-    return await realpath(path);
-  } catch {
-    return path;
-  }
-}
-
-async function isFile(path: string): Promise<boolean> {
-  try {
-    return (await Bun.file(path).stat()).isFile();
-  } catch {
-    return false;
-  }
-}
-
-function resolveGlobalPiCli(): string | null {
-  const result = Bun.spawnSync({ cmd: ["bun", "pm", "-g", "bin"] });
-  if (result.exitCode !== 0) {
-    return null;
-  }
-  const binDir = result.stdout.toString().trim();
-  if (!binDir) {
-    return null;
-  }
-  const cliPath = join(
-    binDir,
-    "..",
-    "install",
-    "global",
-    "node_modules",
-    PI_PACKAGE,
-    "dist",
-    "cli.js"
-  );
-  return Bun.file(cliPath).size > 0 ? cliPath : null;
+  const pkgUrl = import.meta.resolve(`${PI_PACKAGE}/package.json`);
+  return join(dirname(Bun.fileURLToPath(pkgUrl)), "dist/cli.js");
 }
 
 const cliArgs = process.argv.slice(2);
@@ -132,7 +60,16 @@ if (mode === "telegram") {
   process.exit(0);
 }
 
-const piCli = await findPiCli();
+const piCli = findPiCli();
+
+const agentDir = PiPackageRegistry.resolveAgentDir(process.env);
+await PiPackageRegistry.ensureSelfRegistered({
+  settingsPath: join(agentDir, "settings.json"),
+  agentDir,
+  packageName: PIM_PACKAGE,
+  packageRoot: join(import.meta.dir, ".."),
+});
+
 const proc = Bun.spawn({
   cmd: [process.execPath, piCli, ...cliArgs],
   stdio: [

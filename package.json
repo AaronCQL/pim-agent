@@ -57,13 +57,10 @@
     "format": "prettier --write --list-different package.json tsconfig.json .oxlintrc.json .prettierrc.json \"packages/*/package.json\" \"packages/**/*.{ts,tsx}\" \"bin/**/*.ts\"",
     "check": "bun run typecheck && bun run test && bun run lint && bun run format"
   },
-  "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.84.1"
-  },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.84.1",
     "@happy-dom/global-registrator": "^20.12.0",
     "@iconify-json/lucide": "^1.2.127",
+    "@iconify-json/solar": "^1.2.10",
     "@solidjs/vite-plugin": "3.0.0-next.36",
     "@solidjs/web": "^2.0.0-rc.4",
     "@types/bun": "latest",
@@ -82,6 +79,7 @@
     "vite": "^8.2.2"
   },
   "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.1",
     "diff": "^9.0.0",
     "fzf": "^0.5.2",
     "grammy": "^1.44.0",

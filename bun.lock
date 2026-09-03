@@ -5,6 +5,7 @@
     "": {
       "name": "@aaroncql/pim-agent",
       "dependencies": {
+        "@earendil-works/pi-coding-agent": "^0.84.1",
         "diff": "^9.0.0",
         "fzf": "^0.5.2",
         "grammy": "^1.44.0",
@@ -12,9 +13,9 @@
         "ky": "^2.0.2",
       },
       "devDependencies": {
-        "@earendil-works/pi-coding-agent": "^0.84.1",
         "@happy-dom/global-registrator": "^20.12.0",
         "@iconify-json/lucide": "^1.2.127",
+        "@iconify-json/solar": "^1.2.10",
         "@solidjs/vite-plugin": "3.0.0-next.36",
         "@solidjs/web": "^2.0.0-rc.4",
         "@types/bun": "latest",
@@ -31,9 +32,6 @@
         "streaming-markdown": "^0.2.15",
         "unocss": "^66.8.1",
         "vite": "^8.2.2",
-      },
-      "peerDependencies": {
-        "@earendil-works/pi-coding-agent": ">=0.84.1",
       },
     },
     "packages/core": {
@@ -177,6 +175,8 @@
     "@happy-dom/global-registrator": ["@happy-dom/global-registrator@20.12.0", "", { "dependencies": { "@types/node": ">=20.0.0", "happy-dom": "^20.12.0" } }, "sha512-BUE55Rew3oMwBzwCwmUnV+Oxk51V3xolM39Ts6kGiBXNELjujiESwk9qc99JRr6cVrj3OTd9MJ5zQ2fpn+jy6g=="],
 
     "@iconify-json/lucide": ["@iconify-json/lucide@1.2.127", "", { "dependencies": { "@iconify/types": "*" } }, "sha512-7KuCCpkly00kefna4wEnCr8l2HFRkbn4mD4zRib8wCSbrBmnR/l57ExpU6j5jv/Bo+qHpWuHpDtcqceQ0ptArw=="],
+
+    "@iconify-json/solar": ["@iconify-json/solar@1.2.10", "", { "dependencies": { "@iconify/types": "*" } }, "sha512-ChpZ3kNw8nDhHfUoLq5JJ3AdIzytFm57dFkjAS0fjXnL5a7WwibTINjMKfvqQDhuXBrgqejNLyGp8CCpG8UyCg=="],
 
     "@iconify/types": ["@iconify/types@2.0.0", "", {}, "sha512-+wluvCrRhXrhyOmRDJ3q8mux9JkKy5SJ/v8ol2tu4FVjyYvtEzkc/3pK15ET6RKg4b4w4BmTk1+gsCUhf21Ykg=="],
 
