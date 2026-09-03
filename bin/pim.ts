@@ -2,24 +2,12 @@
 import { Readable } from "node:stream";
 
 import { main } from "@earendil-works/pi-coding-agent";
-import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
-import applyPatch from "../packages/core/src/extensions/apply-patch/index.ts";
-import bash from "../packages/core/src/extensions/bash/index.ts";
-import edit from "../packages/core/src/extensions/edit/index.ts";
-import glob from "../packages/core/src/extensions/glob/index.ts";
-import grep from "../packages/core/src/extensions/grep/index.ts";
-import read from "../packages/core/src/extensions/read/index.ts";
-import subagent from "../packages/core/src/extensions/subagent/index.ts";
-import systemPrompt from "../packages/core/src/extensions/system-prompt/index.ts";
-import todo from "../packages/core/src/extensions/todo/index.ts";
-import webFetch from "../packages/core/src/extensions/web-fetch/index.ts";
-import webSearch from "../packages/core/src/extensions/web-search/index.ts";
-import write from "../packages/core/src/extensions/write/index.ts";
 import {
-  ExtensionToggles,
-  type PimExtensionName,
-} from "../packages/core/src/shared/ExtensionToggles.ts";
+  CoreExtensions,
+  type PimInlineExtension,
+} from "../packages/core/src/extensions/CoreExtensions.ts";
+import { ExtensionToggles } from "../packages/core/src/shared/ExtensionToggles.ts";
 import init from "../packages/tui/src/extensions/_init/index.ts";
 import commandPicker from "../packages/tui/src/extensions/command-picker/index.ts";
 import filePicker from "../packages/tui/src/extensions/file-picker/index.ts";
@@ -29,33 +17,17 @@ import tps from "../packages/tui/src/extensions/tps/index.ts";
 import workingIndicator from "../packages/tui/src/extensions/working-indicator/index.ts";
 import { themeCliArgs } from "../packages/tui/src/themes/themeCliArgs.ts";
 
-type PimInlineExtension = {
-  readonly name: PimExtensionName;
-  readonly factory: ExtensionFactory;
-};
-
-// Enumerated rather than globbed: the published tarball must not depend on a
-// directory scan, and pi never sees these as files on disk.
+// `_init` first for the runtime guard; the shared core roster carries the
+// tools, and the rest is TUI chrome only this entry point wants.
 const extensionFactories: readonly PimInlineExtension[] = [
   { name: "_init", factory: init },
-  { name: "apply-patch", factory: applyPatch },
-  { name: "bash", factory: bash },
+  ...CoreExtensions.list,
   { name: "command-picker", factory: commandPicker },
-  { name: "edit", factory: edit },
   { name: "file-picker", factory: filePicker },
   { name: "footer", factory: footer },
-  { name: "glob", factory: glob },
-  { name: "grep", factory: grep },
   { name: "pim", factory: pim },
-  { name: "read", factory: read },
-  { name: "subagent", factory: subagent },
-  { name: "system-prompt", factory: systemPrompt },
-  { name: "todo", factory: todo },
   { name: "tps", factory: tps },
-  { name: "web-fetch", factory: webFetch },
-  { name: "web-search", factory: webSearch },
   { name: "working-indicator", factory: workingIndicator },
-  { name: "write", factory: write },
 ];
 
 async function readVersion(url: URL): Promise<string> {

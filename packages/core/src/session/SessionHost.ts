@@ -19,6 +19,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { stat, unlink } from "node:fs/promises";
 
+import { CoreExtensions } from "../extensions/CoreExtensions";
 import { FuzzyMatcher, type FuzzyCandidate } from "../shared/FuzzyMatcher";
 import { EventLog } from "./EventLog";
 
@@ -471,6 +472,11 @@ export class SessionHost {
       cwd,
       agentDir: this.deps.agentDir,
       settingsManager,
+      // Core tools load in-process here, not from disk: a disk-loaded copy
+      // (jiti) would register its views into a second `Tools` instance and
+      // every frontend reading the native one would fall back to the generic
+      // view.
+      extensionFactories: CoreExtensions.gated(),
       appendSystemPromptOverride: (base) => {
         return promptRef.wrapped ? [...base, promptRef.wrapped] : base;
       },

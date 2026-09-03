@@ -160,12 +160,15 @@ describe("ExtensionToggles settings", () => {
 });
 
 describe("ExtensionToggles.NAMES", () => {
-  test("matches the roster wired in bin/pim.ts", async () => {
-    const source = await Bun.file(
-      join(import.meta.dir, "../../../../bin/pim.ts")
-    ).text();
-    const wired = [...source.matchAll(/\{ name: "([^"]+)", factory:/g)].map(
-      (m) => m[1]
+  test("matches the rosters wired in bin/pim.ts and CoreExtensions.ts", async () => {
+    const sources = await Promise.all(
+      [
+        join(import.meta.dir, "../../../../bin/pim.ts"),
+        join(import.meta.dir, "../extensions/CoreExtensions.ts"),
+      ].map((path) => Bun.file(path).text())
+    );
+    const wired = sources.flatMap((source) =>
+      [...source.matchAll(/\{ name: "([^"]+)", factory:/g)].map((m) => m[1])
     );
 
     expect(wired.sort()).toEqual([...ExtensionToggles.NAMES].sort());
