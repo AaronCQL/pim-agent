@@ -33,8 +33,7 @@ type Named = {
 
 export class ExtensionToggles {
   /**
-   * `_init` carries the Bun runtime guard and answers `resources_discover`
-   * with pim's theme paths, so disabling it would silently drop pim's themes.
+   * `_init` carries the Bun runtime guard and the splash.
    * `extension-toggle` is the only in-session way back from a disable.
    */
   public static readonly REQUIRED: readonly PimExtensionName[] = [

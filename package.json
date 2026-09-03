@@ -36,13 +36,6 @@
     "bun": ">=1.2.7"
   },
   "pi": {
-    "extensions": [
-      "./packages/core/src/extensions",
-      "./packages/tui/src/extensions"
-    ],
-    "themes": [
-      "./packages/tui/src/themes"
-    ],
     "image": "https://raw.githubusercontent.com/AaronCQL/pim-agent/refs/heads/main/assets/demo.webp"
   },
   "scripts": {

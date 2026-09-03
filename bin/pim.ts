@@ -27,6 +27,7 @@ import filePicker from "../packages/tui/src/extensions/file-picker/index.ts";
 import footer from "../packages/tui/src/extensions/footer/index.ts";
 import tps from "../packages/tui/src/extensions/tps/index.ts";
 import workingIndicator from "../packages/tui/src/extensions/working-indicator/index.ts";
+import { themeCliArgs } from "../packages/tui/src/themes/themeCliArgs.ts";
 
 type PimInlineExtension = InlineExtension & { readonly name: PimExtensionName };
 
@@ -145,4 +146,6 @@ const enabledFactories = ExtensionToggles.filter(
   await ExtensionToggles.disabled()
 );
 
-await main(cliArgs, { extensionFactories: [...enabledFactories] });
+await main([...themeCliArgs(), ...cliArgs], {
+  extensionFactories: [...enabledFactories],
+});

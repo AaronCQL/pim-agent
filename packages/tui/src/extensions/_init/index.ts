@@ -33,12 +33,6 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   let splashShown = false;
 
-  // Pim's themes used to reach pi via package.json's `pi.themes`, which pi only reads
-  // for registered packages. Pim now loads in-process, so `resources_discover` is the
-  // only channel left for them.
-  const themesDir = `${import.meta.dir}/../../themes`;
-  pi.on("resources_discover", () => ({ themePaths: [themesDir] }));
-
   pi.on("session_start", (event, ctx) => {
     if (event.reason !== "startup" && event.reason !== "new") {
       return;
