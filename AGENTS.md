@@ -31,7 +31,7 @@ Cross-package imports are ordinary relative paths (`../../core/src/shared/Tools`
 
 - `bun run check`: typecheck + test + lint + format. **Run after every change.**
 - `bun dev`: `bun link` then launch `pim` from this repo.
-- `bun test ./packages --only-failures`: run the agent packages, hiding passing lines. Single test: `bun test packages/core/src/path/to/file.test.ts`. Keep the `./` — a bare `packages` also matches `vendor/pi/packages/`.
+- `bun test ./packages --only-failures`: run the agent packages, hiding passing lines. Single test: `bun test packages/core/src/path/to/file.test.ts`.
 - `bun run test:web`: the browser package, which needs `--conditions=browser` and so cannot share an invocation with the agent packages (see below). `bun run test` runs both.
 - `bun run dev:web` / `bun run build:web`: Vite dev server, and the static `dist/client` bundle `pim-server` will serve.
 - `bun run typecheck` / `bun run lint` / `bun run format`: individual steps if you want to isolate.

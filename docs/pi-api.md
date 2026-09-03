@@ -2,17 +2,15 @@
 
 Read this when touching the pi API surface — registering tools/commands/providers/renderers, wiring into pi events, or using ExtensionContext.
 
-## Vendor docs
+## Upstream docs
 
-Shallow clone of [pi](https://github.com/earendil-works/pi) at `vendor/pi/` (gitignored).
+The installed npm package is the reference — no clone needed. `node_modules/@earendil-works/pi-coding-agent/` ships `docs/` alongside `dist/`, and it is always the version pim actually runs against.
 
-- Bootstrap: `git clone --depth 1 https://github.com/earendil-works/pi.git vendor/pi`
-- Refresh: `git -C vendor/pi pull`
-- Clone tracks `main`; if behavior diverges from the installed version, check `node_modules/@earendil-works/pi-coding-agent/package.json` and `git -C vendor/pi checkout <tag>`.
+Primary ref: `node_modules/@earendil-works/pi-coding-agent/docs/extensions.md` (~2600 lines).
 
-Primary ref: `vendor/pi/packages/coding-agent/docs/extensions.md` (~2600 lines).
+Sibling docs: `compaction.md`, `custom-provider.md`, `keybindings.md`, `models.md`, `packages.md`, `sdk.md`, `session-format.md`, `settings.md`, `skills.md`, `themes.md`, `tui.md`.
 
-Sibling docs: `compaction.md`, `custom-provider.md`, `keybindings.md`, `models.md`, `packages.md`, `sdk.md`, `session-format.md`, `settings.md`, `skills.md`, `themes.md`, `tui.md`. Source under `vendor/pi/packages/coding-agent/src/` is canonical.
+When the docs are ambiguous, read the code: `dist/` is unminified per-file ESM with `.d.ts` and source maps, so `dist/core/tools/read.js` or `dist/index.d.ts` answers what the prose does not.
 
 ## Cheatsheet
 
@@ -26,7 +24,7 @@ Sibling docs: `compaction.md`, `custom-provider.md`, `keybindings.md`, `models.m
 
 **Events**: `session_start`, `session_before_fork`/`session_before_tree`/`session_tree`, `session_before_compact`/`session_compact`, `session_before_switch`, `session_shutdown`, `before_agent_start`, `agent_start`/`agent_end`, `turn_start`/`turn_end`, `message_start`/`message_update`/`message_end`, `tool_call` (return `{ block: true, reason }` to veto), `tool_result`, `tool_execution_start`/`update`/`end`, `before_provider_request`, `after_provider_response`, `user_bash`, `input`, `model_select`, `thinking_level_select`, `resources_discover`.
 
-**`ctx` (ExtensionContext)**: `ui` (`notify`, `confirm`, `select`, `input`, `setStatus`, `setWidget`, `setFooter`, `setWorkingIndicator`, `setWorkingMessage`, `addAutocompleteProvider`, `theme`, `custom`), `hasUI`, `cwd`, `signal`, `sessionManager` (`getBranch()`, `getEntries()`), `modelRegistry`/`model`, `isIdle()`/`abort()`/`hasPendingMessages()`, `shutdown()`, `getContextUsage()`, `compact()`, `getSystemPrompt()`. Command ctx adds `waitForIdle`, `newSession`, `fork`, `navigateTree`, `switchSession`, `reload` - session replacement has footguns, read the vendor doc first.
+**`ctx` (ExtensionContext)**: `ui` (`notify`, `confirm`, `select`, `input`, `setStatus`, `setWidget`, `setFooter`, `setWorkingIndicator`, `setWorkingMessage`, `addAutocompleteProvider`, `theme`, `custom`), `hasUI`, `cwd`, `signal`, `sessionManager` (`getBranch()`, `getEntries()`), `modelRegistry`/`model`, `isIdle()`/`abort()`/`hasPendingMessages()`, `shutdown()`, `getContextUsage()`, `compact()`, `getSystemPrompt()`. Command ctx adds `waitForIdle`, `newSession`, `fork`, `navigateTree`, `switchSession`, `reload` - session replacement has footguns, read the upstream doc first.
 
 **Tool def**: `{ name, label, description, parameters: TypeBox, renderShell: 'self', executionMode: 'sequential' | 'parallel', async execute(toolCallId, params, signal, onUpdate, ctx) { return { content: [{type:'text', text}], details: {} } } }`. Optional `renderCall`/`renderResult`, `promptSnippet`, `remote` for off-process. `renderShell: 'self'` means the tool controls its own rendering (standard in pim). `executionMode: 'sequential'` serialises this tool (bash, edit, write, todo); `parallel` allows concurrent calls (glob, grep, read, subagent, web-fetch, web-search).
 

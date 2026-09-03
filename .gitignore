@@ -4,7 +4,6 @@ bun.lockb
 .DS_Store
 dist/
 notes/
-vendor/
 __pycache__/
 benchmarks/*/runs/
 benchmarks/*/dashboard.py
