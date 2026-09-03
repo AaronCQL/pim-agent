@@ -58,8 +58,7 @@ export class ProbeClient {
   private socket: WebSocket | undefined;
   private nextId = 0;
   private closeInfo:
-    | { readonly code: number; readonly reason: string }
-    | undefined;
+    { readonly code: number; readonly reason: string } | undefined;
 
   public constructor(options: ProbeOptions) {
     this.options = options;

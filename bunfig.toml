@@ -1,5 +1,5 @@
 # Bun switches to the isolated linker as soon as `workspaces` exists, which
-# stops hoisting transitive deps. Consumers install `@aaroncql/pim-agent`
+# stops hoisting transitive deps. Consumers install `pim-agent`
 # hoisted, so develop against the same layout.
 [install]
 linker = "hoisted"

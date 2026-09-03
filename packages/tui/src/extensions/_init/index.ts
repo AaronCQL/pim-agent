@@ -21,9 +21,8 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   if (typeof Bun === "undefined") {
     throw new Error(
       "Pim requires the Bun runtime.\n" +
-        "Install the Pim launcher: bun install -g @aaroncql/pim-agent\n" +
-        "Then run: pim\n" +
-        "If pim cannot locate Pi, ensure `pi` is on PATH or set PIM_PI_CLI=/path/to/cli.js"
+        "To run Pim: bun install -g pim-agent, then run `pim`.\n" +
+        "To run vanilla Pi without Pim: `pi -ne`."
     );
   }
 
@@ -33,6 +32,12 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   const keyCol = Math.max(...shortcuts.map(([k]) => k.length)) + 2;
 
   let splashShown = false;
+
+  // Pim's themes used to reach pi via package.json's `pi.themes`, which pi only reads
+  // for registered packages. Pim now loads in-process, so `resources_discover` is the
+  // only channel left for them.
+  const themesDir = `${import.meta.dir}/../../themes`;
+  pi.on("resources_discover", () => ({ themePaths: [themesDir] }));
 
   pi.on("session_start", (event, ctx) => {
     if (event.reason !== "startup" && event.reason !== "new") {

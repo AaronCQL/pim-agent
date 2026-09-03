@@ -12,6 +12,7 @@ import { PROTOCOL_VERSION } from "../../protocol/src/Protocol";
 import type { SessionSummaryView } from "../../protocol/src/ServerEvent";
 import { ClientConnection } from "./ClientConnection";
 import { SessionStream } from "./SessionStream";
+import { StaticClient } from "./StaticClient";
 import { UploadEndpoint } from "./UploadEndpoint";
 
 /** Close code for a client speaking a protocol this server does not. */
@@ -29,6 +30,8 @@ export type WsGatewayDeps = {
   readonly port?: number;
   /** Where `POST /upload` materialises bytes; defaults to `~/.pim/attachments`. */
   readonly attachmentsRoot?: string;
+  /** The built web client; defaults to the bundle shipped beside this package. */
+  readonly clientDir?: string;
 };
 
 /** What a command answered with: an error, rows, or neither. */
@@ -61,6 +64,7 @@ export class WsGateway {
   private readonly hostname: string;
   private readonly requestedPort: number;
   private readonly uploads: UploadEndpoint;
+  private readonly client: StaticClient;
   private readonly streams = new Map<string, SessionStream>();
   private readonly opening = new Map<string, Promise<SessionStream>>();
   private readonly connections = new Map<
@@ -76,6 +80,7 @@ export class WsGateway {
     this.uploads = new UploadEndpoint(
       deps.attachmentsRoot === undefined ? {} : { root: deps.attachmentsRoot }
     );
+    this.client = new StaticClient(deps.clientDir);
   }
 
   public get port(): number {
@@ -106,9 +111,9 @@ export class WsGateway {
         if (pathname === "/upload") {
           return this.uploads.handle(req);
         }
-        return server.upgrade(req)
-          ? undefined
-          : new Response("expected a websocket upgrade", { status: 426 });
+        // Upgrade is tried first so the socket keeps answering on every path,
+        // exactly as it did before the client was served alongside it.
+        return server.upgrade(req) ? undefined : this.client.handle(req);
       },
       websocket: {
         backpressureLimit: 8 << 20,

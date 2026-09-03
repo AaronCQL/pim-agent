@@ -1,11 +1,10 @@
 {
-  "name": "@aaroncql/pim-agent",
-  "version": "0.8.0",
-  "description": "A Bun-native extension pack for Pi: web access, subagents, revamped core tools, ANSI-compatible themes, fzf-style completions, Telegram mode, and more.",
+  "name": "pim-agent",
+  "version": "0.9.0",
+  "description": "A Bun-native distribution of Pi: revamped core tools, web access, subagents, themes, fzf-style completions, plus Telegram and web frontends.",
   "license": "MIT",
   "type": "module",
   "keywords": [
-    "pi-package",
     "agent"
   ],
   "homepage": "https://github.com/AaronCQL/pim-agent#readme",
@@ -27,6 +26,9 @@
     "packages/core/src/",
     "packages/tui/src/",
     "packages/telegram/src/",
+    "packages/protocol/src/",
+    "packages/server/src/",
+    "packages/web/dist/client/",
     "!packages/core/src/session/fixtures/",
     "!packages/**/*.test.ts"
   ],
@@ -45,6 +47,7 @@
   },
   "scripts": {
     "dev": "bun link && pim",
+    "prepack": "bun run build:web",
     "serve": "bun packages/server/src/serve.ts",
     "probe": "bun packages/server/src/probe.ts",
     "typecheck": "tsgo --noEmit",
@@ -79,7 +82,7 @@
     "vite": "^8.2.2"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "^0.84.1",
+    "@earendil-works/pi-coding-agent": "0.84.4",
     "diff": "^9.0.0",
     "fzf": "^0.5.2",
     "grammy": "^1.44.0",

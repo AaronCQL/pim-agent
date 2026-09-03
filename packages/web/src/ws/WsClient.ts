@@ -7,10 +7,7 @@ import {
 } from "../../../protocol/src/ServerEvent";
 
 export type ConnectionStatus =
-  | "connecting"
-  | "open"
-  | "reconnecting"
-  | "closed";
+  "connecting" | "open" | "reconnecting" | "closed";
 
 /** Which session the client wants; `sessionId` absent means "make me one". */
 export type AttachTarget = {

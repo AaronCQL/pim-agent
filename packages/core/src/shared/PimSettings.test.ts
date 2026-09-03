@@ -55,6 +55,9 @@ describe("PimSettings", () => {
     await expect(PimSettings.get("powerline")).resolves.toEqual({
       enabled: true,
     });
+    await expect(PimSettings.get("extensions")).resolves.toEqual({
+      disabled: [],
+    });
     await expect(PimSettings.get("exa")).resolves.toEqual({});
     await expect(PimSettings.get("jina")).resolves.toEqual({});
     await expect(PimSettings.get("firecrawl")).resolves.toEqual({});
@@ -70,6 +73,7 @@ describe("PimSettings", () => {
     expect(await Bun.file(path).json()).toEqual({
       tps: { enabled: false },
       powerline: { enabled: true },
+      extensions: { disabled: [] },
       exa: { apiKey: "exa-test" },
       jina: { apiKey: "jina-test" },
       firecrawl: { apiKey: "firecrawl-test" },

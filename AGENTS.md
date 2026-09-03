@@ -1,27 +1,27 @@
 # Developer Guide
 
-Pim is an opinionated yet minimal, Bun-native extension pack for [Pi](https://pi.dev/).
+Pim is an opinionated yet minimal, Bun-native **distribution of** [Pi](https://pi.dev/) — not an extension pack, not a fork, not a reimplementation. Pi is an ordinary pinned `dependency`; pim ships it, and the user never installs pi separately.
 
-`bin/pim.ts` is a Bun launcher that resolves pi's `cli.js` and runs it under Bun, bypassing pi's Node shebang. Other pi extensions still work normally.
+`bin/pim.ts` is a Bun entry point that imports pi's `main()` **in-process** and hands it pim's extensions inline via `MainOptions.extensionFactories`. No subprocess, no `pi install`, and nothing is ever written to the user's pi settings — a vanilla `pi` on the same machine is unaffected, and third-party pi extensions still load alongside pim's.
 
-Dev setup: `bun link` puts `pim` on PATH; `.pi/settings.json` registers Pim Agent as a project-local pi package, so pi auto-loads it inside this repo. Launching plain `pi` (Node) instead of `pim` trips Pim Agent's Bun runtime guard.
+Dev setup: `bun link` puts `pim` on PATH, and `pim` run from anywhere loads this checkout's extensions. There is no project-local pi package registration — the `.pi/settings.json` entry was removed, because an on-disk copy of pim loaded next to the inline one makes every extension collide (`Tool bash conflicts with ...`) and hard-fails startup. Plain `pi` inside this repo is just vanilla pi.
 
 ## Layout
 
-Bun workspaces (`packages/*`), no build step — Bun and pi both resolve the TS directly.
+Bun workspaces (`packages/*`). No build step for the agent packages — Bun resolves the TS directly; the web client is the one exception, and it is built at pack time (see below).
 
 | Package | Contents |
 | --- | --- |
 | `packages/core` | Tools, schemas, `shared/` utilities, `view/` (the `ViewBlock`/`ToolView` contract plus the ANSI and Markdown painters), `session/` (`SessionHost` — one in-process `createAgentSession()`; `EventLog` — a thin reader over pi's session JSONL; `SessionRegistry` — keyed on pi's session UUID), `picker/` (the headless `@`-path and command/skill query: catalog, ranker, worker, `PickerService`), and `attachments/` (`AttachmentStore`). Frontend-agnostic; depends on nothing else in `packages/`. |
 | `packages/tui` | Terminal frontend: splash/`_init`, the autocomplete providers that drive `core/picker`, powerline footer, tps, working indicator, `themes/`. |
 | `packages/telegram` | Telegram frontend: grammy bot, chat-keyed session map, daemon `Supervisor`. |
-| `packages/protocol` | Versioned client/server wire types. Imported by server and web **only** — never by the TUI, and nothing in it may assume a browser. |
-| `packages/server` | Transport plus the remote approval policy: `WsGateway` (Bun WebSocket, resume handshake, fanout), `SessionStream`/`SessionProjection` (pi's JSONL → wire events), `ClientConnection` (backpressure), `ApprovalRouter` (the three-tier tool gate), and the `ProbeClient`/`bun run probe` CLI. Workspace-only; never published. |
-| `packages/web` | Solid 2 browser client: `ws/` (`WsClient` — socket, resume cursor, reconnect), `session/` (`SessionStore` — the reactive state and the only place an intent becomes a command), the HTML `ViewBlock` painter (`view/`), the streaming `Markdown` component, `ui/` (our own wrappers over platform primitives), `transcript/`, `input/`, `approvals/`, `sessions/`, and `replay/` (the committed session fixture and its generator). Workspace-only; never published. |
+| `packages/protocol` | Versioned client/server wire types. Imported by server and web **only** — never by the TUI, and nothing in it may assume a browser. Shipped. |
+| `packages/server` | Transport plus the remote approval policy: `WsGateway` (Bun WebSocket, resume handshake, fanout), `SessionStream`/`SessionProjection` (pi's JSONL → wire events), `ClientConnection` (backpressure), `ApprovalRouter` (the three-tier tool gate), and the `ProbeClient`/`bun run probe` CLI. Shipped as source. |
+| `packages/web` | Solid 2 browser client: `ws/` (`WsClient` — socket, resume cursor, reconnect), `session/` (`SessionStore` — the reactive state and the only place an intent becomes a command), the HTML `ViewBlock` painter (`view/`), the streaming `Markdown` component, `ui/` (our own wrappers over platform primitives), `transcript/`, `input/`, `approvals/`, `sessions/`, and `replay/` (the committed session fixture and its generator). Sources stay out of the tarball; the built `dist/client` ships in their place. |
 
-The root `package.json` is the published `@aaroncql/pim-agent`: a workspace root that ships `bin/` plus `core`, `tui`, and `telegram`. `protocol` and `server` stay out of `files`; `bun pm pack --dry-run` is the check.
+The root `package.json` is the published `pim-agent`: a workspace root that ships `bin/`, the sources of `core`, `tui`, `telegram`, `protocol` and `server`, and the built web client at `packages/web/dist/client/`. That client is generated by `prepack` (`bun run build:web`) and never committed — `.gitignore` keeps `dist/` untracked, while `files` still packs it, so an install needs no Vite. Installing from a git URL therefore has no web UI; npm is the supported path. `packages/core/src/packaging.test.ts` asserts the whole manifest against `bun pm pack --dry-run`.
 
-`bun run serve` starts the gateway on `127.0.0.1:4319`; `bun run probe` is the CLI client that validates it (`bun run probe --help`). Session runtime lives in `core/src/session/` rather than in `server` precisely so the published tarball stays `core` + `tui` + `telegram` while Telegram still gets `SessionHost`; `server` holds transport and nothing else. Dependencies are declared once, at the root, because the root is the published manifest; workspace members carry a name and nothing else.
+`bun run serve` starts the gateway on `127.0.0.1:4319` (`pim --mode serve` is the shipped entry point, same argv: `--port`/`PORT`, `--hostname`, `--cwd`, `--client-dir`); it serves the built client as static files alongside the WebSocket. `bun run probe` is the CLI client that validates it (`bun run probe --help`). Session runtime lives in `core/src/session/` rather than in `server` so that Telegram gets `SessionHost` without depending on transport; `server` holds transport and nothing else. Dependencies are declared once, at the root, because the root is the published manifest; workspace members carry a name and nothing else.
 
 Cross-package imports are ordinary relative paths (`../../core/src/shared/Tools`), never package names — that is what keeps the packed tarball working without workspace resolution.
 
@@ -33,10 +33,14 @@ Cross-package imports are ordinary relative paths (`../../core/src/shared/Tools`
 - `bun dev`: `bun link` then launch `pim` from this repo.
 - `bun test ./packages --only-failures`: run the agent packages, hiding passing lines. Single test: `bun test packages/core/src/path/to/file.test.ts`.
 - `bun run test:web`: the browser package, which needs `--conditions=browser` and so cannot share an invocation with the agent packages (see below). `bun run test` runs both.
-- `bun run dev:web` / `bun run build:web`: Vite dev server, and the static `dist/client` bundle `pim-server` will serve.
+- `bun run dev:web` / `bun run build:web`: Vite dev server, and the static `dist/client` bundle `--mode serve` will serve.
 - `bun run typecheck` / `bun run lint` / `bun run format`: individual steps if you want to isolate.
 
-Inside a running `pim` session, `/reload` re-loads Pim Agent after edits without restarting.
+Pi's `/reload` no longer picks up edits to pim: inline factories are already-imported function references, so pi re-invokes them without re-reading the files. Restart `pim` after changing pim's source.
+
+The roster of inline extensions is written out explicitly in `bin/pim.ts` (never globbed — the tarball must not depend on a directory scan) and mirrored by `ExtensionToggles.NAMES`. Pi's own `enabled` filter is keyed on resolved disk paths and inline factories are appended after it (`resource-loader.js:406`/`:415`), so `pim config` cannot toggle them; pim owns the toggle instead. `packages/core/src/shared/ExtensionToggles.ts` persists the disabled set to `~/.pim/settings.json` under `extensions.disabled`, `bin/pim.ts` filters the array before `main` ever sees it, and the `extension-toggle` extension surfaces it as `/extensions` (or `/extensions <name>`). A toggle therefore needs a **restart**, which the command says. `_init` and `extension-toggle` are `REQUIRED` and cannot be disabled — `_init` carries the Bun runtime guard and the theme paths, and `extension-toggle` is the only way back from a disable.
+
+Pim's themes reach pi through `_init`'s `resources_discover` handler, not `package.json`'s `pi.themes`: that manifest field is only read for *registered* packages, and pim is no longer one. Any future `pi.skills`/`pi.prompts` needs the same treatment or it is silently lost.
 
 Remote tool approvals are async request/response events, not a modal prompt. `ApprovalRouter` auto-approves tools that declare `effect: { kind: "readOnly" }` and writes whose canonical target stays inside the session cwd; everything else — anything `unbounded`, and anything that declares no `effect` at all — blocks that session's turn until a client answers `approve_tool`. The tier comes from the tool's own declaration in `PimToolDefinition`, never from a name list.
 
@@ -44,7 +48,7 @@ Pickers are always a server-side query, because `@` names a file the *agent* mus
 
 An upload is not a picker: client bytes must be *transferred into* the server's world before the agent can see them, and a client-local path must never reach the conversation. `AttachmentStore` is that one flow — Telegram's `getFile` and the gateway's `POST /upload` are two adapters over it. Images are inlined as base64 `PromptOptions.images`; everything else is referenced by **server** path.
 
-The web client is **Solid 2, client-only**. Read [notes/solid2-notes.md](./notes/solid2-notes.md) before writing any Solid: v2 removed `createResource`, `batch`, `startTransition`, `on`, `createComputed`, `produce`, `createMutable`, `<Suspense>`, `<ErrorBoundary>` and `<Index>`, which are exactly what muscle memory reaches for. There is no SSR and no server function anywhere — `vite build` emits a static `dist/client` and `pim-server` stays the only backend. No headless component library either (`@ark-ui/*`, `@kobalte/*`, `corvu`): every platform primitive gets our own wrapper in `packages/web/src/ui/`, and feature code never touches `<details>`, `popover` or `<dialog>` directly. `packages/web/src/acceptance.test.ts` enforces all of that.
+The web client is **Solid 2, client-only**. Read [notes/solid2-notes.md](./notes/solid2-notes.md) before writing any Solid: v2 removed `createResource`, `batch`, `startTransition`, `on`, `createComputed`, `produce`, `createMutable`, `<Suspense>`, `<ErrorBoundary>` and `<Index>`, which are exactly what muscle memory reaches for. There is no SSR and no server function anywhere — `vite build` emits a static `dist/client` and the `--mode serve` gateway stays the only backend. No headless component library either (`@ark-ui/*`, `@kobalte/*`, `corvu`): every platform primitive gets our own wrapper in `packages/web/src/ui/`, and feature code never touches `<details>`, `popover` or `<dialog>` directly. `packages/web/src/acceptance.test.ts` enforces all of that.
 
 Markdown is rendered by `streaming-markdown`, chosen by measuring partial input in `packages/web/src/markdown/renderer-choice.test.ts` — it is the only candidate that never repaints text already on screen, because it writes into the DOM append-only instead of re-parsing the whole prefix. Re-run that file before swapping it.
 
@@ -54,7 +58,7 @@ The web client's resume cursor is the highest durable `seq` it has painted; a dr
 
 Pi's session JSONL is the only event store — no database, no index (`notes/split-architecture-plan.md`, Resolved Decision 2). The wire `seq` is a line's physical ordinal in that file; pi appends and never rewrites, so ordinals are stable and resume is `seq > n`. Read it through `EventLog`, never by hand.
 
-Telegram daemon: `pim --mode telegram --install` writes a user systemd/launchd unit and starts it. From Telegram, `/update` re-runs `bun install` (dev) or bumps the global pi and pim installs to latest (prod), then exits so the supervisor restarts the daemon. `pim --mode telegram --uninstall` tears it down. See `packages/telegram/src/Supervisor.ts`.
+Telegram daemon: `pim --mode telegram --install` writes a user systemd/launchd unit and starts it. From Telegram, `/update` re-runs `bun install` (dev) or bumps the global `pim-agent` install to latest (prod, which brings pi with it), then exits so the supervisor restarts the daemon. `pim --mode telegram --uninstall` tears it down. See `packages/telegram/src/Supervisor.ts`.
 
 ## Code Conventions
 

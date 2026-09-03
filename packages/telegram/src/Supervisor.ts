@@ -6,7 +6,7 @@ import { Fs } from "../../core/src/shared/Fs";
 
 const UNIT_NAME = "pim-telegram";
 const LAUNCHD_LABEL = "com.aaroncql.pim-telegram";
-const NPM_PACKAGE = "@aaroncql/pim-agent";
+const NPM_PACKAGE = "pim-agent";
 const PI_PACKAGE = "@earendil-works/pi-coding-agent";
 const CONFIRM_FILE = "update-confirm.json";
 
@@ -24,8 +24,7 @@ export type Mode = {
 };
 
 export type UpdateResult =
-  | { readonly ok: true }
-  | { readonly ok: false; readonly error: string };
+  { readonly ok: true } | { readonly ok: false; readonly error: string };
 
 export class Supervisor {
   public static async install(): Promise<void> {
@@ -137,17 +136,12 @@ export class Supervisor {
 
   public static async update(): Promise<UpdateResult> {
     const mode = await Supervisor.detectMode();
-    // Pi first: a newer pim may require a newer pi peer.
+    // One install: pim depends on pi and loads its own extensions in-process,
+    // so there is no second copy to bump and nothing to register with pi.
     const cmds =
       mode.kind === "dev"
         ? [["bun", "install"]]
-        : [
-            ["bun", "install", "-g", `${PI_PACKAGE}@latest`],
-            ["bun", "install", "-g", `${NPM_PACKAGE}@latest`],
-            // The bun-global copy is only the launcher; pi loads extensions
-            // from its own package dir, whose semver range pins 0.x minors.
-            ["pi", "install", `npm:${NPM_PACKAGE}@latest`],
-          ];
+        : [["bun", "install", "-g", `${NPM_PACKAGE}@latest`]];
     const cwd = mode.kind === "dev" ? mode.packageRoot : undefined;
     try {
       for (const cmd of cmds) {

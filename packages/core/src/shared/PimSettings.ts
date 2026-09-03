@@ -19,6 +19,12 @@ const Schema = Type.Object({
     },
     { default: { enabled: true } }
   ),
+  extensions: Type.Object(
+    {
+      disabled: Type.Array(Type.String(), { default: [] }),
+    },
+    { default: { disabled: [] } }
+  ),
   exa: Type.Object(
     {
       apiKey: Type.Optional(Type.String()),

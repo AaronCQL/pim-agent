@@ -32,8 +32,7 @@ export type ApprovalClassification = {
 };
 
 export type ApprovalResolveResult =
-  | { readonly ok: true }
-  | { readonly ok: false; readonly error: string };
+  { readonly ok: true } | { readonly ok: false; readonly error: string };
 
 export type ApprovalRouterDeps = {
   /** Read per call: a session's cwd can move between turns. */
