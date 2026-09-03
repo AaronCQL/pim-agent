@@ -1,0 +1,53 @@
+# Style Guide
+
+## Shared functions: namespace objects
+
+Related free functions are exported as **one `const` object literal at the bottom of the file**, named for the module, with the functions declared above it as bare `function` declarations.
+
+```ts
+function scan(...) {}
+function watch(...) {}
+
+export const FileEnumerator = { scan, watch };
+```
+
+- Bare internal calls, no `this`, no `static`.
+- The name is canonical and chosen at the definition site. Consumers write `import { FileEnumerator }` — never `import * as`, never an `as`-rename.
+- The filename matches the exported namespace exactly (`Renderer.ts` exports `const Renderer`).
+
+## State: two representations, by temperature
+
+| State | Shape | Examples |
+| --- | --- | --- |
+| Stateful service — few, lifecycle, invariants | `class` | `SessionHost`, `SessionRegistry`, `PickerService`, `AttachmentStore`, `WsGateway`, `SessionStore` |
+| Content | object literals `satisfies Def` | themes, tool schemas, the replay fixture |
+
+For the `class` tier: instantiate at the composition root (`bin/pim.ts`, an extension factory, a frontend entry) and pass instances down — **no module-level instances**, which are untestable. Initialise every field in the constructor and never `delete`.
+
+## Comments
+
+**Code says what; a comment says why, and only when the why is not visible.** A comment that could be deleted without losing information is a liability with no asset side.
+
+Never write:
+
+- Restatement. If the signature is not the documentation, rename the function.
+- Pointers into `docs/` — no `.md` filename, no `§`. State the rule, not its address: a sentence survives a reorg and is wrong in a way review can catch.
+- Duplicated prose. If it exists in `docs/`, it exists once.
+- Plans. Intent about code that does not exist yet is guaranteed to be wrong later.
+- JSDoc tags restating a signature. TypeScript already states and checks it.
+- `TODO` / `FIXME` / `XXX`. An issue, a failing test, or nothing.
+
+## Imports
+
+**Relative imports only** — no path aliases (`paths` in tsconfig, `imports` in package.json, `@/`/`#`/`~/` prefixes). Every file's dependencies are locally obvious, and nothing assumes a bundler that can resolve aliases: `server` ships as source, `web` ships built.
+
+## Icons
+
+**Chrome is a class, never an inline SVG.** Everything the UI points at itself with is a utility class off the unocss icon preset (`i-lucide-*`, `i-solar-*`), and no SVG is ever inlined into a component. One inline drawing is a component that has quietly become an art asset: it cannot be restyled with the rest, nobody can find it when the set changes, and the second one will not match the first.
+
+## TypeScript
+
+- `type` over `interface`.
+- Mark data-shape fields `readonly` where possible.
+- Default to `Bun.*` APIs over Node built-ins, unless Bun has no equivalent.
+- Run `bun run check` after every change to run tests and lints
