@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Tools } from "../../shared/Tools";
 import { computeActiveTools } from "./coordinator";
 import { applyPatch, formatApplySummary } from "./executor";
-import { isGptModel } from "./model";
+import { prefersApplyPatch } from "./model";
 import { parsePatch } from "./parser";
 import { applyPatchView } from "./render";
 import {
@@ -55,20 +55,20 @@ export default function (pi: ExtensionAPI): void {
     toViewModel: applyPatchView,
   });
 
-  const reconcile = (isGpt: boolean): void => {
+  const reconcile = (preferPatch: boolean): void => {
     const active = pi.getActiveTools();
     const available = pi.getAllTools().map((tool) => tool.name);
-    const next = computeActiveTools(available, active, isGpt);
+    const next = computeActiveTools(available, active, preferPatch);
     if (next !== active) {
       pi.setActiveTools([...next]);
     }
   };
 
   pi.on("session_start", (_event, ctx) => {
-    reconcile(isGptModel(ctx.model));
+    reconcile(prefersApplyPatch(ctx.model));
   });
 
   pi.on("model_select", (event) => {
-    reconcile(isGptModel(event.model));
+    reconcile(prefersApplyPatch(event.model));
   });
 }
