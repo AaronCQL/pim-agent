@@ -14,6 +14,12 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
  * browser's — same-origin policy included, and a `Response` `Bun.serve`
  * refuses — and a test that drives the real gateway is not a browser talking
  * to a foreign origin, it is this process talking to itself.
+ *
+ * `AbortController`/`AbortSignal` belong to that set even though they carry no
+ * bytes: the native `fetch` type-checks `signal` by identity, so a happy-dom
+ * signal reaching it fails the call outright. Pi cancels every provider request
+ * with one, so leaving them registered turns each model call into a retried
+ * "Connection error." instead of a request.
  */
 const NETWORK_GLOBALS = [
   "fetch",
@@ -24,6 +30,8 @@ const NETWORK_GLOBALS = [
   "FormData",
   "Blob",
   "File",
+  "AbortController",
+  "AbortSignal",
 ] as const;
 
 if (!("document" in globalThis)) {
