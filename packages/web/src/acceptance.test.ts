@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 
 /**
- * The Phase 5 acceptance criteria that are checkable without a browser. They
- * live as a test because each one is a rule that is silently easy to break:
+ * The architectural rules of the web client that are checkable without a
+ * browser. They live as a test because each one is silently easy to break:
  * a `"use server"` would grow a second backend, and `@ark-ui/solid` declares
  * `solid-js: >=1.6.0`, so it installs against Solid 2 with no warning at all
  * and only fails at runtime.
@@ -25,7 +25,7 @@ async function sources(): Promise<readonly string[]> {
   return paths;
 }
 
-describe("Phase 5 acceptance", () => {
+describe("web client architecture rules", () => {
   test("zero server functions: the gateway is the only backend", async () => {
     for (const path of [...(await sources()), join(WEB, "vite.config.ts")]) {
       const text = await Bun.file(path).text();
@@ -52,8 +52,7 @@ describe("Phase 5 acceptance", () => {
   test("only ui/ touches a platform overlay primitive", async () => {
     // Authoring one, not naming one: a test may assert on the DOM a wrapper
     // produced, but nothing outside `ui/` may build or drive the primitive
-    // itself — that is what keeps swapping in Ark or Kobalte an internals
-    // change rather than a rewrite.
+    // itself.
     const authored =
       /<details|<dialog|popover=|showModal\(|showPopover\(|hidePopover\(/;
     for (const path of await sources()) {

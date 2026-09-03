@@ -32,7 +32,7 @@ type PainterMap = {
 };
 
 /**
- * The recursive dispatcher (Resolved Decision 6). `list` and `section` hold
+ * The recursive dispatcher. `list` and `section` hold
  * `ViewBlock[]` of their own, so recursion is forced by the type rather than
  * chosen; a `Record<kind, Component>` rather than a `<Switch>` is what makes a
  * kind added to the union without a painter a compile error at `PainterMap`.

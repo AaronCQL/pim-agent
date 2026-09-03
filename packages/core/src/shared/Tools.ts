@@ -106,153 +106,143 @@ type JsonSchema = {
   readonly enum?: readonly unknown[];
 };
 
-export class Tools {
-  private static readonly viewFactories = new Map<string, ToolViewFactory>();
-  private static readonly effects = new Map<string, ErasedToolEffect>();
+const viewFactories = new Map<string, ToolViewFactory>();
+const effects = new Map<string, ErasedToolEffect>();
 
-  /**
-   * What a registered tool declared it can do, or undefined when it declared
-   * nothing. Callers deciding approval must read an absent entry as
-   * `unbounded`; see `ToolEffect`.
-   */
-  static effectOf(toolName: string): ErasedToolEffect | undefined {
-    return Tools.effects.get(toolName);
+/**
+ * What a registered tool declared it can do, or undefined when it declared
+ * nothing. Callers deciding approval must read an absent entry as
+ * `unbounded`; see `ToolEffect`.
+ */
+function effectOf(toolName: string): ErasedToolEffect | undefined {
+  return effects.get(toolName);
+}
+
+/**
+ * The view model a registered tool paints itself with, or undefined for a
+ * tool that has none (an MCP tool, or one not ported yet). Registration is
+ * the only key-by-name map in the system: every frontend reads this instead
+ * of keeping its own table of tool names.
+ */
+function viewFor(toolName: string): ToolViewFactory | undefined {
+  return viewFactories.get(toolName);
+}
+
+/**
+ * The view for one call, with a generic fallback for a tool that registered
+ * none. Every frontend paints tool rows through this, so an unported or MCP
+ * tool still renders instead of disappearing.
+ */
+function viewOf(input: {
+  readonly name: string;
+  readonly args: unknown;
+  readonly result?: AgentToolResult<unknown>;
+  readonly isPartial: boolean;
+  readonly cwd: string;
+}): ToolView {
+  const { name, result, ...rest } = input;
+  return (
+    viewFor(name)?.({
+      ...rest,
+      ...(result === undefined ? {} : { result }),
+    }) ?? genericView(name, input.args)
+  );
+}
+
+/**
+ * Wrap a tool definition so pi's validator errors get rewritten before they
+ * reach the model. Pi runs `prepareArguments` before validation, so we call
+ * pi's validator ourselves inside it, rewrite any throw, and return the
+ * (coerced) args; pi's own second validation pass then sees clean input.
+ * After successful validation we also reject unknown top-level keys, since
+ * TypeBox object schemas accept them by default and typos like
+ * `headlimit` vs `head_limit` would silently no-op.
+ *
+ * Use `Tools.register` for `pi.registerTool` callers; use `Tools.wrap` to
+ * pass into `customTools`.
+ */
+function wrap<TParams extends TSchema, TDetails = unknown, TState = unknown>(
+  def: PimToolDefinition<TParams, TDetails, TState>
+): ToolDefinition<TParams, TDetails, TState> {
+  const schema = def.parameters as unknown as JsonSchema;
+  // Pi rejects unknown definition fields, so strip pim-only ones here.
+  const { toViewModel, previewLines: _previewLines, effect, ...piDef } = def;
+  if (toViewModel !== undefined) {
+    viewFactories.set(def.name, toViewModel as ToolViewFactory);
+  }
+  if (effect !== undefined) {
+    effects.set(def.name, effect as ErasedToolEffect);
+  }
+  return {
+    ...piDef,
+    ...(toViewModel === undefined ? {} : synthesizeRenderers(def, toViewModel)),
+    prepareArguments: (rawArgs: unknown): Static<TParams> => {
+      const prepared = def.prepareArguments
+        ? def.prepareArguments(rawArgs)
+        : (rawArgs as Static<TParams>);
+      const cleaned = coerceQuotedEnums(prepared, schema) as Static<TParams>;
+      const strictIssues = checkStrictTypes(cleaned, schema, "");
+      if (strictIssues.length > 0) {
+        const lines = strictIssues.map((s) => `  - ${s}`).join("\n");
+        throw new Error(`Validation failed for tool "${def.name}":\n${lines}`);
+      }
+      let validated: Static<TParams>;
+      try {
+        validated = validateToolArguments(
+          { name: def.name, parameters: def.parameters } as never,
+          {
+            type: "toolCall",
+            id: "",
+            name: def.name,
+            arguments: cleaned as Record<string, unknown>,
+          }
+        ) as Static<TParams>;
+      } catch (err) {
+        throw new Error(rewriteValidationError(def.name, schema, err, cleaned));
+      }
+      const unknownKeys = findUnknownTopLevelKeys(schema, validated);
+      if (unknownKeys.length > 0) {
+        throw new Error(formatUnknownKeysError(def.name, schema, unknownKeys));
+      }
+      return validated;
+    },
+  };
+}
+
+function register<
+  TParams extends TSchema,
+  TDetails = unknown,
+  TState = unknown,
+>(pi: ExtensionAPI, def: PimToolDefinition<TParams, TDetails, TState>): void {
+  pi.registerTool(wrap(def));
+}
+
+/**
+ * Rewrite a `validateToolArguments` error string into a clearer form.
+ * `schema` is the tool's parameters schema, used to enumerate allowed values
+ * for `anyOf`/`enum` failures. `args` is the validated input, used to pick
+ * the matching branch of a discriminated union. Public for testing.
+ */
+function rewriteValidationError(
+  toolName: string,
+  schema: JsonSchema,
+  err: unknown,
+  args?: unknown
+): string {
+  const message = err instanceof Error ? err.message : String(err);
+  if (!message.startsWith("Validation failed for tool")) {
+    return message;
   }
 
-  /**
-   * The view model a registered tool paints itself with, or undefined for a
-   * tool that has none (an MCP tool, or one not ported yet). Registration is
-   * the only key-by-name map in the system: every frontend reads this instead
-   * of keeping its own table of tool names.
-   */
-  static viewFor(toolName: string): ToolViewFactory | undefined {
-    return Tools.viewFactories.get(toolName);
+  const raw = parseIssues(message);
+  const collapsed = collapseAnyOf(raw, schema, args);
+  const issues = collapsed.map((issue) => formatIssue(issue, schema));
+
+  const header = `Validation failed for tool "${toolName}":`;
+  if (issues.length === 0) {
+    return header;
   }
-
-  /**
-   * The view for one call, with a generic fallback for a tool that registered
-   * none. Every frontend paints tool rows through this, so an unported or MCP
-   * tool still renders instead of disappearing.
-   */
-  static viewOf(input: {
-    readonly name: string;
-    readonly args: unknown;
-    readonly result?: AgentToolResult<unknown>;
-    readonly isPartial: boolean;
-    readonly cwd: string;
-  }): ToolView {
-    const { name, result, ...rest } = input;
-    return (
-      Tools.viewFor(name)?.({
-        ...rest,
-        ...(result === undefined ? {} : { result }),
-      }) ?? genericView(name, input.args)
-    );
-  }
-
-  /**
-   * Wrap a tool definition so pi's validator errors get rewritten before they
-   * reach the model. Pi runs `prepareArguments` before validation, so we call
-   * pi's validator ourselves inside it, rewrite any throw, and return the
-   * (coerced) args; pi's own second validation pass then sees clean input.
-   * After successful validation we also reject unknown top-level keys, since
-   * TypeBox object schemas accept them by default and typos like
-   * `headlimit` vs `head_limit` would silently no-op.
-   *
-   * Use `Tools.register` for `pi.registerTool` callers; use `Tools.wrap` to
-   * pass into `customTools`.
-   */
-  static wrap<TParams extends TSchema, TDetails = unknown, TState = unknown>(
-    def: PimToolDefinition<TParams, TDetails, TState>
-  ): ToolDefinition<TParams, TDetails, TState> {
-    const schema = def.parameters as unknown as JsonSchema;
-    // Pi rejects unknown definition fields, so strip pim-only ones here.
-    const { toViewModel, previewLines: _previewLines, effect, ...piDef } = def;
-    if (toViewModel !== undefined) {
-      Tools.viewFactories.set(def.name, toViewModel as ToolViewFactory);
-    }
-    if (effect !== undefined) {
-      Tools.effects.set(def.name, effect as ErasedToolEffect);
-    }
-    return {
-      ...piDef,
-      ...(toViewModel === undefined
-        ? {}
-        : synthesizeRenderers(def, toViewModel)),
-      prepareArguments: (rawArgs: unknown): Static<TParams> => {
-        const prepared = def.prepareArguments
-          ? def.prepareArguments(rawArgs)
-          : (rawArgs as Static<TParams>);
-        const cleaned = coerceQuotedEnums(prepared, schema) as Static<TParams>;
-        const strictIssues = checkStrictTypes(cleaned, schema, "");
-        if (strictIssues.length > 0) {
-          const lines = strictIssues.map((s) => `  - ${s}`).join("\n");
-          throw new Error(
-            `Validation failed for tool "${def.name}":\n${lines}`
-          );
-        }
-        let validated: Static<TParams>;
-        try {
-          validated = validateToolArguments(
-            { name: def.name, parameters: def.parameters } as never,
-            {
-              type: "toolCall",
-              id: "",
-              name: def.name,
-              arguments: cleaned as Record<string, unknown>,
-            }
-          ) as Static<TParams>;
-        } catch (err) {
-          throw new Error(
-            Tools.rewriteValidationError(def.name, schema, err, cleaned)
-          );
-        }
-        const unknownKeys = findUnknownTopLevelKeys(schema, validated);
-        if (unknownKeys.length > 0) {
-          throw new Error(
-            formatUnknownKeysError(def.name, schema, unknownKeys)
-          );
-        }
-        return validated;
-      },
-    };
-  }
-
-  static register<
-    TParams extends TSchema,
-    TDetails = unknown,
-    TState = unknown,
-  >(pi: ExtensionAPI, def: PimToolDefinition<TParams, TDetails, TState>): void {
-    pi.registerTool(Tools.wrap(def));
-  }
-
-  /**
-   * Rewrite a `validateToolArguments` error string into a clearer form.
-   * `schema` is the tool's parameters schema, used to enumerate allowed values
-   * for `anyOf`/`enum` failures. `args` is the validated input, used to pick
-   * the matching branch of a discriminated union. Public for testing.
-   */
-  static rewriteValidationError(
-    toolName: string,
-    schema: JsonSchema,
-    err: unknown,
-    args?: unknown
-  ): string {
-    const message = err instanceof Error ? err.message : String(err);
-    if (!message.startsWith("Validation failed for tool")) {
-      return message;
-    }
-
-    const raw = parseIssues(message);
-    const collapsed = collapseAnyOf(raw, schema, args);
-    const issues = collapsed.map((issue) => formatIssue(issue, schema));
-
-    const header = `Validation failed for tool "${toolName}":`;
-    if (issues.length === 0) {
-      return header;
-    }
-    return `${header}\n${issues.map((s) => `  - ${s}`).join("\n")}`;
-  }
+  return `${header}\n${issues.map((s) => `  - ${s}`).join("\n")}`;
 }
 
 const GENERIC_ARG_KEYS = [
@@ -881,3 +871,12 @@ function closestKey(
   }
   return best?.key;
 }
+
+export const Tools = {
+  effectOf,
+  viewFor,
+  viewOf,
+  wrap,
+  register,
+  rewriteValidationError,
+};

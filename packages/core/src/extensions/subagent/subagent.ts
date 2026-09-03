@@ -116,7 +116,6 @@ export async function runSubagent(
   createSession: CreateSubagentSession = createSdkSubagentSession,
   activeToolNames?: readonly string[]
 ): Promise<AgentToolResult<SubagentDetails>> {
-  // Hard block against subagent recursion
   if (inSubagent.getStore()) {
     throw new Error("subagents cannot call subagent tool");
   }

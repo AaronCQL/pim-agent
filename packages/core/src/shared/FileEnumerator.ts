@@ -29,22 +29,22 @@ type StackEntry = {
   /**
    * Absolute path of the directory.
    */
-  abs: string;
+  readonly abs: string;
   /**
    * Root-relative POSIX path of the directory ("" for root), no trailing slash.
    */
-  rel: string;
+  readonly rel: string;
   /**
    * Whether this directory lies within a git repository. When false, no
    * `.gitignore` files are honored — matching git/fd, which treat ignore files
    * as inert outside a repository.
    */
-  inRepo: boolean;
+  readonly inRepo: boolean;
   /**
    * Absolute path of the git repository root the ignore rules are anchored to.
    * Paths are tested relative to this. Only meaningful when `inRepo`.
    */
-  repoRootAbs: string;
+  readonly repoRootAbs: string;
   /**
    * Every gitignore pattern that applies to this subtree, ordered shallowest
    * (repo root) to deepest, each already re-anchored to be relative to
@@ -56,11 +56,11 @@ type StackEntry = {
    * exclusion at the repo root and a `!build/` re-inclusion in a nested
    * `.gitignore` are only resolved correctly when evaluated together.
    */
-  ignoreRules: string[];
+  readonly ignoreRules: string[];
   /**
    * Matcher built from `ignoreRules`; tests paths relative to `repoRootAbs`.
    */
-  matcher: Ignore;
+  readonly matcher: Ignore;
 };
 
 /** Reused for directories outside any repo, where no rules apply. */
@@ -393,100 +393,100 @@ function drain(ctx: WalkContext): Promise<void> {
   });
 }
 
-export class FileEnumerator {
-  /**
-   * Enumerate all files under `root` as an array of root-relative POSIX paths.
-   *
-   * Descent is async with a bounded concurrency cap: up to `CONCURRENCY`
-   * `readdir` syscalls are in flight at once, all pulling from a shared stack,
-   * so directory-read latency overlaps instead of running one-at-a-time.
-   *
-   * Gitignore handling is repo-aware, matching git/fd: a `.gitignore` is only
-   * honored within a git repository, each nested `.git` is a boundary that
-   * resets the ignore scope (a child repo does not inherit its parent's rules),
-   * and if `root` itself sits inside a repository the enclosing rules are
-   * seeded. A `.gitignore` with no enclosing repo is inert, matching git/fd.
-   */
-  public static async enumerate(
-    root: string,
-    opts?: EnumerateOptions
-  ): Promise<string[]> {
-    const includeDotfiles = opts?.includeDotfiles ?? false;
-    const includeIgnored = opts?.includeIgnored ?? false;
-    const includeDirectories = opts?.includeDirectories ?? false;
-    const useIgnore = !includeIgnored;
+/**
+ * Enumerate all files under `root` as an array of root-relative POSIX paths.
+ *
+ * Descent is async with a bounded concurrency cap: up to `CONCURRENCY`
+ * `readdir` syscalls are in flight at once, all pulling from a shared stack,
+ * so directory-read latency overlaps instead of running one-at-a-time.
+ *
+ * Gitignore handling is repo-aware, matching git/fd: a `.gitignore` is only
+ * honored within a git repository, each nested `.git` is a boundary that
+ * resets the ignore scope (a child repo does not inherit its parent's rules),
+ * and if `root` itself sits inside a repository the enclosing rules are
+ * seeded. A `.gitignore` with no enclosing repo is inert, matching git/fd.
+ */
+async function enumerate(
+  root: string,
+  opts?: EnumerateOptions
+): Promise<string[]> {
+  const includeDotfiles = opts?.includeDotfiles ?? false;
+  const includeIgnored = opts?.includeIgnored ?? false;
+  const includeDirectories = opts?.includeDirectories ?? false;
+  const useIgnore = !includeIgnored;
 
-    // Global excludes (core.excludesFile / XDG). Read once; applies only within
-    // a repository, anchored as if it were a .gitignore at the repo root.
-    let globalGitIgnore: string | undefined;
-    if (useIgnore) {
-      const pathname = globalGitIgnorePath();
-      globalGitIgnore =
-        pathname === undefined ? undefined : await readIgnoreFile(pathname);
-    }
+  // Global excludes (core.excludesFile / XDG). Read once; applies only within
+  // a repository, anchored as if it were a .gitignore at the repo root.
+  let globalGitIgnore: string | undefined;
+  if (useIgnore) {
+    const pathname = globalGitIgnorePath();
+    globalGitIgnore =
+      pathname === undefined ? undefined : await readIgnoreFile(pathname);
+  }
 
-    // Seed rules from any repository that ENCLOSES `root` (its .git lives at an
-    // ancestor of root). The repo root's base rules plus every intermediate
-    // .gitignore between it and root are applied. Root's own .gitignore, if any,
-    // is added by processDir when root is walked. When root is itself a repo
-    // root (or not in a repo at all), processDir handles it from a clean slate.
-    let initialInRepo = false;
-    let initialRepoRootAbs = root;
-    let initialRules: string[] = [];
-    if (useIgnore) {
-      const repoRoot = await findRepoRoot(root);
-      if (repoRoot !== undefined && repoRoot !== root) {
-        initialInRepo = true;
-        initialRepoRootAbs = repoRoot;
-        initialRules = await repoBaseRules(repoRoot, globalGitIgnore);
+  // Seed rules from any repository that ENCLOSES `root` (its .git lives at an
+  // ancestor of root). The repo root's base rules plus every intermediate
+  // .gitignore between it and root are applied. Root's own .gitignore, if any,
+  // is added by processDir when root is walked. When root is itself a repo
+  // root (or not in a repo at all), processDir handles it from a clean slate.
+  let initialInRepo = false;
+  let initialRepoRootAbs = root;
+  let initialRules: string[] = [];
+  if (useIgnore) {
+    const repoRoot = await findRepoRoot(root);
+    if (repoRoot !== undefined && repoRoot !== root) {
+      initialInRepo = true;
+      initialRepoRootAbs = repoRoot;
+      initialRules = await repoBaseRules(repoRoot, globalGitIgnore);
 
-        // Intermediate dirs strictly between repoRoot and root, shallowest first.
-        const intermediates: string[] = [];
-        let dir = dirname(root);
-        while (dir !== repoRoot && dir.length > repoRoot.length) {
-          intermediates.push(dir);
-          const parent = dirname(dir);
-          if (parent === dir) {
-            break;
-          }
-          dir = parent;
+      // Intermediate dirs strictly between repoRoot and root, shallowest first.
+      const intermediates: string[] = [];
+      let dir = dirname(root);
+      while (dir !== repoRoot && dir.length > repoRoot.length) {
+        intermediates.push(dir);
+        const parent = dirname(dir);
+        if (parent === dir) {
+          break;
         }
-        intermediates.reverse();
+        dir = parent;
+      }
+      intermediates.reverse();
 
-        for (const dirAbs of intermediates) {
-          const content = await readIgnoreFile(join(dirAbs, ".gitignore"));
-          if (content !== undefined) {
-            const dirRel = relFromBase(dirAbs, repoRoot);
-            if (dirRel === undefined || dirRel === "") {
-              pushRules(initialRules, content);
-            } else {
-              reanchorRules(content, `${dirRel}/`, initialRules);
-            }
+      for (const dirAbs of intermediates) {
+        const content = await readIgnoreFile(join(dirAbs, ".gitignore"));
+        if (content !== undefined) {
+          const dirRel = relFromBase(dirAbs, repoRoot);
+          if (dirRel === undefined || dirRel === "") {
+            pushRules(initialRules, content);
+          } else {
+            reanchorRules(content, `${dirRel}/`, initialRules);
           }
         }
       }
     }
-
-    const ctx: WalkContext = {
-      includeDotfiles,
-      includeDirectories,
-      useIgnore,
-      globalGitIgnore,
-      stack: [
-        {
-          abs: root,
-          rel: "",
-          inRepo: initialInRepo,
-          repoRootAbs: initialRepoRootAbs,
-          ignoreRules: initialRules,
-          matcher: initialInRepo ? ignore().add(initialRules) : EMPTY_MATCHER,
-        },
-      ],
-      result: [],
-    };
-
-    await drain(ctx);
-
-    return ctx.result;
   }
+
+  const ctx: WalkContext = {
+    includeDotfiles,
+    includeDirectories,
+    useIgnore,
+    globalGitIgnore,
+    stack: [
+      {
+        abs: root,
+        rel: "",
+        inRepo: initialInRepo,
+        repoRootAbs: initialRepoRootAbs,
+        ignoreRules: initialRules,
+        matcher: initialInRepo ? ignore().add(initialRules) : EMPTY_MATCHER,
+      },
+    ],
+    result: [],
+  };
+
+  await drain(ctx);
+
+  return ctx.result;
 }
+
+export const FileEnumerator = { enumerate };

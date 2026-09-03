@@ -4,7 +4,7 @@ import type { ProtocolVersion } from "./Protocol";
  * A file the client has already transferred into the server's world via
  * `POST /upload`, named by the id that endpoint answered with. Never a
  * client-local path: the agent has exactly one filesystem and it is the
- * server's (Guiding Decision 8), so the client's own path for the bytes is
+ * server's, so the client's own path for the bytes is
  * meaningless here and must never reach the conversation.
  */
 export type AttachmentRef = {

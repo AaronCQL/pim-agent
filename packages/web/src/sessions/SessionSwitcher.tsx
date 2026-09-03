@@ -11,7 +11,7 @@ type Group = {
 
 /**
  * The session list, grouped the way pi already stores it: one directory per
- * cwd, keyed on pi's session UUID (Resolved Decision 4). There is no index and
+ * cwd, keyed on pi's session UUID. There is no index and
  * no metadata store on either side — the server reads its own sessions
  * directory when asked, so a session the TUI started shows up here with no
  * synchronisation at all.

@@ -20,8 +20,8 @@ const CONNECTION_LABELS: Record<ConnectionStatus, string> = {
 
 /**
  * The raw `session_state` fields, painted. The server emits numbers and a
- * status word; how a frontend draws them is entirely its own business
- * (Resolved Decision 5), which is why there is no spinner on the wire.
+ * status word; how a frontend draws them is entirely its own business, which
+ * is why there is no spinner on the wire.
  */
 export function Footer(props: { readonly store: SessionStore }) {
   const state = () => props.store.state;

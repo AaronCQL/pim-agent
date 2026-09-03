@@ -4,8 +4,7 @@ import type { ProtocolVersion } from "./Protocol";
 
 /**
  * What the agent is doing right now. The spinner is presentation and stays a
- * frontend concern; the numbers are state and travel on the wire
- * (Resolved Decision 5).
+ * frontend concern; the numbers are state and travel on the wire.
  */
 export type SessionStatus = "idle" | "thinking" | "streaming" | "tool";
 
@@ -25,8 +24,7 @@ export type ToolCallView = {
 
 /**
  * Events projected from pi's session JSONL. `seq` **is** the physical line
- * ordinal of the entry they came from, unmodified (Resolved Decision 2), so a
- * client resumes by asking for `seq > n`. One line produces at most one durable
+ * ordinal of the entry they came from, unmodified, so a client resumes by asking for `seq > n`. One line produces at most one durable
  * event, which is what makes that cursor exact: a client that has processed
  * seq N has processed every byte of the log up to line N.
  *
@@ -102,8 +100,8 @@ export type EphemeralEvent =
       readonly view: ToolView;
     }
   /**
-   * A tool call the server refuses to run unattended (Resolved Decision 8,
-   * tier 3). The turn is blocked until some client answers with
+   * A tool call the server refuses to run unattended — the top tier of the
+   * approval policy. The turn is blocked until some client answers with
    * `approve_tool`, so this is re-sent in the in-flight snapshot on every
    * attach: a client that connects an hour later still sees the question.
    */
@@ -151,7 +149,7 @@ export type EphemeralEvent =
 
 /**
  * One row of the session catalogue. Pi's own on-disk grouping, keyed on its
- * session UUID (Resolved Decision 4) — the server's path to the JSONL is
+ * session UUID — the server's path to the JSONL is
  * deliberately not here, because a client has no use for it and no filesystem
  * to resolve it against.
  */

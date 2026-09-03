@@ -133,7 +133,7 @@ export class ProbeClient {
       query,
       limit,
     });
-    return ProbeClient.itemsOf(response);
+    return itemsOf(response);
   }
 
   public async pickCommands(
@@ -146,7 +146,7 @@ export class ProbeClient {
       query,
       ...(limit === undefined ? {} : { limit }),
     });
-    return ProbeClient.itemsOf(response);
+    return itemsOf(response);
   }
 
   /** Pi's session catalogue; answers whether or not this probe is attached. */
@@ -256,13 +256,6 @@ export class ProbeClient {
     this.socket = undefined;
   }
 
-  private static itemsOf(response: ResponseEvent): readonly PickerItem[] {
-    if (!response.success) {
-      throw new Error(response.error ?? "picker query failed");
-    }
-    return response.items ?? [];
-  }
-
   private receive(raw: string): void {
     const event = JSON.parse(raw) as ServerEvent;
     this.events.push(event);
@@ -284,4 +277,11 @@ export class ProbeClient {
       }
     }
   }
+}
+
+function itemsOf(response: ResponseEvent): readonly PickerItem[] {
+  if (!response.success) {
+    throw new Error(response.error ?? "picker query failed");
+  }
+  return response.items ?? [];
 }

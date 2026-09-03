@@ -6,8 +6,8 @@ import { createEffect, createSignal, type Element } from "solid-js";
  * The platform primitive is the `popover` attribute: it promotes the element
  * to the top layer, so a picker anchored to an input is never clipped by an
  * ancestor's `overflow`, and it brings light-dismiss and ESC with it. That is
- * the whole reason no headless component library is installed (Guiding
- * Decision 13) — this used to be Floating UI's job.
+ * the whole reason no headless component library is installed — this used to
+ * be Floating UI's job.
  *
  * `manual` rather than `auto` because the picker's lifetime is owned by the
  * composer's token state: a light-dismiss that closed it behind the composer's

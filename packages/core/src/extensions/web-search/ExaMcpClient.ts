@@ -25,14 +25,14 @@ class ExaSearchError extends Error {
   }
 }
 
-export class ExaMcpClient {
-  private static readonly defaultEndpoint = "https://mcp.exa.ai/mcp";
-  private static readonly toolName = "web_search_exa";
-  // The keyless endpoint enforces a sliding window of 2 requests per second;
-  // stay strictly under it so a 429 reliably means the daily cap, not QPS.
-  private static readonly maxRequestsPerWindow = 2;
-  private static readonly windowMs = 1100;
+const defaultEndpoint = "https://mcp.exa.ai/mcp";
+const toolName = "web_search_exa";
+// The keyless endpoint enforces a sliding window of 2 requests per second;
+// stay strictly under it so a 429 reliably means the daily cap, not QPS.
+const maxRequestsPerWindow = 2;
+const windowMs = 1100;
 
+export class ExaMcpClient {
   private readonly client: McpClient;
 
   public constructor(options: ExaMcpClientOptions = {}) {
@@ -46,12 +46,12 @@ export class ExaMcpClient {
         ? undefined
         : (options.rateLimiter ??
           new RateLimiter({
-            maxRequests: ExaMcpClient.maxRequestsPerWindow,
-            windowMs: ExaMcpClient.windowMs,
+            maxRequests: maxRequestsPerWindow,
+            windowMs: windowMs,
           }));
 
     this.client = new McpClient({
-      endpoint: options.endpoint ?? ExaMcpClient.defaultEndpoint,
+      endpoint: options.endpoint ?? defaultEndpoint,
       ...(apiKey === undefined ? {} : { headers: { "x-api-key": apiKey } }),
       ...(rateLimiter === undefined ? {} : { rateLimiter }),
       ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
@@ -60,7 +60,7 @@ export class ExaMcpClient {
 
   public async search(input: ExaSearchInput): Promise<readonly SearchResult[]> {
     const result = await this.client.callTool({
-      name: ExaMcpClient.toolName,
+      name: toolName,
       arguments: {
         query: input.query,
         numResults: input.numResults,

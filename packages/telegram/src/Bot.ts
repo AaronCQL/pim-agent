@@ -161,7 +161,7 @@ export class Bot {
         ...prompt.options,
         source: "rpc",
       });
-      const final = Bot.extractFinalResult(agent);
+      const final = extractFinalResult(agent);
       await renderer.finish(final.text, final.state);
     } catch (err) {
       const msg = (err as Error).message ?? String(err);
@@ -171,31 +171,31 @@ export class Bot {
       unsubscribe();
     }
   }
+}
 
-  private static extractFinalResult(agent: AgentSession): {
-    readonly text: string;
-    readonly state: TurnEndState;
-  } {
-    const messages = agent.messages;
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const msg = messages[i]!;
-      if (msg.role !== "assistant") {
-        continue;
-      }
-      if (msg.stopReason === "error") {
-        return { text: msg.errorMessage ?? "", state: "error" };
-      }
-      if (msg.stopReason === "aborted") {
-        return { text: msg.errorMessage ?? "", state: "cancelled" };
-      }
-      const parts: string[] = [];
-      for (const block of msg.content) {
-        if (block.type === "text") {
-          parts.push(block.text);
-        }
-      }
-      return { text: parts.join("").trim(), state: "ok" };
+function extractFinalResult(agent: AgentSession): {
+  readonly text: string;
+  readonly state: TurnEndState;
+} {
+  const messages = agent.messages;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]!;
+    if (msg.role !== "assistant") {
+      continue;
     }
-    return { text: "", state: "ok" };
+    if (msg.stopReason === "error") {
+      return { text: msg.errorMessage ?? "", state: "error" };
+    }
+    if (msg.stopReason === "aborted") {
+      return { text: msg.errorMessage ?? "", state: "cancelled" };
+    }
+    const parts: string[] = [];
+    for (const block of msg.content) {
+      if (block.type === "text") {
+        parts.push(block.text);
+      }
+    }
+    return { text: parts.join("").trim(), state: "ok" };
   }
+  return { text: "", state: "ok" };
 }

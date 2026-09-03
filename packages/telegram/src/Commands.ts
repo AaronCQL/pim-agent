@@ -15,7 +15,13 @@ import {
   type ThinkingLevelOpt,
 } from "./Config";
 import { Markdown } from "./Markdown";
-import { Session, type SessionCompactResult, type SessionId } from "./Session";
+import {
+  decodeId,
+  encodeId,
+  Session,
+  type SessionCompactResult,
+  type SessionId,
+} from "./Session";
 import { SessionRegistry } from "./SessionRegistry";
 import { Supervisor } from "./Supervisor";
 import { TypingIndicator } from "./TypingIndicator";
@@ -168,29 +174,26 @@ export class Commands {
       const idx2 = data.lastIndexOf("|");
       const modelId = data.slice(idx1 + 1, idx2);
       const keyPart = data.slice(idx2 + 1);
-      const session = this.registry.get(Session.decodeId(keyPart));
+      const session = this.registry.get(decodeId(keyPart));
       await ctx.answerCallbackQuery({ text: `Model: ${modelId}` });
       try {
         const result = await session.setModel(modelId);
         if (result.ok) {
-          await Commands.safeEditMessage(
+          await safeEditMessage(
             ctx,
             `<b>Model</b> → <code>${Markdown.escape(result.id)}</code>`
           );
         } else {
-          await Commands.safeEditMessage(
+          await safeEditMessage(
             ctx,
-            Commands.strikeOriginal(ctx, `⚠️ model set failed: ${modelId}`)
+            strikeOriginal(ctx, `⚠️ model set failed: ${modelId}`)
           );
         }
       } catch (err) {
         console.error(`[bot] model callback failed for ${modelId}:`, err);
-        await Commands.safeEditMessage(
+        await safeEditMessage(
           ctx,
-          Commands.strikeOriginal(
-            ctx,
-            `⚠️ model set failed: ${(err as Error).message}`
-          )
+          strikeOriginal(ctx, `⚠️ model set failed: ${(err as Error).message}`)
         );
       }
       return;
@@ -201,35 +204,29 @@ export class Commands {
     const keyPart = colon >= 0 ? data.slice(colon + 1) : "";
 
     if (action === CB_CLEAR_CONFIRM && keyPart) {
-      const session = this.registry.get(Session.decodeId(keyPart));
+      const session = this.registry.get(decodeId(keyPart));
       const wasBusy = session.isStreaming;
       await ctx.answerCallbackQuery({
         text: wasBusy ? "Queued — clearing after current turn" : "Cleared",
       });
       try {
         await session.clear();
-        await Commands.safeEditMessage(
+        await safeEditMessage(
           ctx,
-          Commands.strikeOriginal(ctx, "Context window cleared.")
+          strikeOriginal(ctx, "Context window cleared.")
         );
       } catch (err) {
         console.error(`[bot] queued clear failed:`, err);
-        await Commands.safeEditMessage(
+        await safeEditMessage(
           ctx,
-          Commands.strikeOriginal(
-            ctx,
-            `⚠️ clear failed: ${(err as Error).message}`
-          )
+          strikeOriginal(ctx, `⚠️ clear failed: ${(err as Error).message}`)
         );
       }
       return;
     }
     if (action === CB_CLEAR_CANCEL) {
       await ctx.answerCallbackQuery({ text: "Cancelled" });
-      await Commands.safeEditMessage(
-        ctx,
-        Commands.strikeOriginal(ctx, "Cancelled.")
-      );
+      await safeEditMessage(ctx, strikeOriginal(ctx, "Cancelled."));
       return;
     }
     if (action === CB_EFFORT && keyPart) {
@@ -238,7 +235,7 @@ export class Commands {
         await ctx.answerCallbackQuery();
         return;
       }
-      const session = this.registry.get(Session.decodeId(parts.key));
+      const session = this.registry.get(decodeId(parts.key));
       await session.setThinkingLevel(parts.value);
       await ctx.answerCallbackQuery({ text: `Effort: ${parts.value}` });
       const { kb, html } = this.buildEffortPicker(
@@ -246,7 +243,7 @@ export class Commands {
         parts.value,
         session.supportedThinkingLevels
       );
-      await Commands.safeEditMessage(ctx, html, kb);
+      await safeEditMessage(ctx, html, kb);
       return;
     }
     if (action === CB_LOGS && keyPart) {
@@ -255,11 +252,11 @@ export class Commands {
         await ctx.answerCallbackQuery();
         return;
       }
-      const session = this.registry.get(Session.decodeId(parts.key));
+      const session = this.registry.get(decodeId(parts.key));
       await session.setLogsMode(parts.value);
       await ctx.answerCallbackQuery({ text: `Logs: ${parts.value}` });
       const { kb, html } = this.buildLogsPicker(session.id, parts.value);
-      await Commands.safeEditMessage(ctx, html, kb);
+      await safeEditMessage(ctx, html, kb);
       return;
     }
     if (action === CB_TEMPORARY && keyPart) {
@@ -269,13 +266,13 @@ export class Commands {
         return;
       }
       const value = parts.value === "1";
-      const session = this.registry.get(Session.decodeId(parts.key));
+      const session = this.registry.get(decodeId(parts.key));
       await session.setTemporary(value);
       await ctx.answerCallbackQuery({
         text: `Temporary: ${value ? "on" : "off"}`,
       });
       const { kb, html } = this.buildTemporaryPicker(session.id, value);
-      await Commands.safeEditMessage(ctx, html, kb);
+      await safeEditMessage(ctx, html, kb);
       return;
     }
     await ctx.answerCallbackQuery();
@@ -288,7 +285,7 @@ export class Commands {
   ): Promise<void> {
     const wasBusy = session.isStreaming;
     if (wasBusy) {
-      await Commands.reactSafe(ctx, "👀");
+      await reactSafe(ctx, "👀");
     }
     try {
       await work();
@@ -300,18 +297,9 @@ export class Commands {
       );
     } finally {
       if (wasBusy) {
-        await Commands.reactSafe(ctx, []);
+        await reactSafe(ctx, []);
       }
     }
-  }
-
-  private static async reactSafe(
-    ctx: Filter<Context, "message">,
-    reaction: "👀" | []
-  ): Promise<void> {
-    await ctx.react(reaction).catch((err: unknown) => {
-      console.warn(`[bot] react failed:`, err);
-    });
   }
 
   private async cmdChatId(session: Session): Promise<void> {
@@ -331,7 +319,7 @@ export class Commands {
   }
 
   private async cmdClear(session: Session): Promise<void> {
-    const key = Session.encodeId(session.id);
+    const key = encodeId(session.id);
     const kb = new InlineKeyboard()
       .text("🚫 Cancel", `${CB_CLEAR_CANCEL}:${key}`)
       .text("👍 Yes", `${CB_CLEAR_CONFIRM}:${key}`);
@@ -361,7 +349,7 @@ export class Commands {
       await this.editStatusMessage(
         session.id,
         sent.message_id,
-        Commands.renderCompactSuccess(result)
+        renderCompactSuccess(result)
       );
     } catch (err) {
       const msg = (err as Error).message ?? String(err);
@@ -411,7 +399,7 @@ export class Commands {
   private async cmdModelWrite(session: Session, args: string): Promise<void> {
     const result = await session.setModel(args);
     if (!result.ok) {
-      const key = Session.encodeId(session.id);
+      const key = encodeId(session.id);
       const kb = new InlineKeyboard();
       for (const c of result.candidates) {
         kb.text(c, `${CB_MODEL}|${c}|${key}`).row();
@@ -448,7 +436,7 @@ export class Commands {
     currentLevel: ThinkingLevelOpt,
     supported: readonly ThinkingLevelOpt[]
   ): { readonly kb: InlineKeyboard; readonly html: string } {
-    const key = Session.encodeId(sessionId);
+    const key = encodeId(sessionId);
     const kb = new InlineKeyboard();
     for (const [i, lvl] of supported.entries()) {
       const label = lvl === currentLevel ? `✅ ${lvl}` : lvl;
@@ -465,7 +453,7 @@ export class Commands {
     sessionId: SessionId,
     currentMode: LogsMode
   ): { readonly kb: InlineKeyboard; readonly html: string } {
-    const key = Session.encodeId(sessionId);
+    const key = encodeId(sessionId);
     const kb = new InlineKeyboard();
     const descriptions: string[] = [];
     for (const [i, mode] of LOGS_MODES.entries()) {
@@ -529,7 +517,7 @@ export class Commands {
     sessionId: SessionId,
     current: boolean
   ): { readonly kb: InlineKeyboard; readonly html: string } {
-    const key = Session.encodeId(sessionId);
+    const key = encodeId(sessionId);
     const kb = new InlineKeyboard()
       .text(current ? "off" : "✅ off", `${CB_TEMPORARY}:0:${key}`)
       .text(current ? "✅ on" : "on", `${CB_TEMPORARY}:1:${key}`);
@@ -623,25 +611,6 @@ export class Commands {
     }
   }
 
-  private static strikeOriginal(
-    ctx: Filter<Context, "callback_query:data">,
-    note: string
-  ): string {
-    const original = ctx.callbackQuery.message?.text ?? "";
-    return `<s>${Markdown.escape(original)}</s>\n\n<i>${note}</i>`;
-  }
-
-  private static renderCompactSuccess(result: SessionCompactResult): string {
-    const before = result.compaction.tokensBefore.toLocaleString("en-US");
-    const messages = result.activeMessages.toLocaleString("en-US");
-    return [
-      "✅ <b>Context compacted.</b>",
-      "",
-      `<b>Before</b>: ${before} tokens`,
-      `<b>Now</b>: ${messages} messages (exact usage will update after next message)`,
-    ].join("\n");
-  }
-
   private async editStatusMessage(
     sessionId: SessionId,
     messageId: number,
@@ -654,21 +623,6 @@ export class Commands {
       });
     } catch (err) {
       console.warn(`[send] status edit failed:`, err);
-    }
-  }
-
-  private static async safeEditMessage(
-    ctx: Filter<Context, "callback_query:data">,
-    html: string,
-    replyMarkup?: InlineKeyboard
-  ): Promise<void> {
-    try {
-      await ctx.editMessageText(html, {
-        parse_mode: "HTML",
-        reply_markup: replyMarkup,
-      });
-    } catch {
-      // Message may have aged out past Telegram's edit window — non-fatal.
     }
   }
 
@@ -717,5 +671,48 @@ export class Commands {
     } catch (err) {
       console.error(`[send] plain failed:`, err);
     }
+  }
+}
+
+async function reactSafe(
+  ctx: Filter<Context, "message">,
+  reaction: "👀" | []
+): Promise<void> {
+  await ctx.react(reaction).catch((err: unknown) => {
+    console.warn(`[bot] react failed:`, err);
+  });
+}
+
+function strikeOriginal(
+  ctx: Filter<Context, "callback_query:data">,
+  note: string
+): string {
+  const original = ctx.callbackQuery.message?.text ?? "";
+  return `<s>${Markdown.escape(original)}</s>\n\n<i>${note}</i>`;
+}
+
+function renderCompactSuccess(result: SessionCompactResult): string {
+  const before = result.compaction.tokensBefore.toLocaleString("en-US");
+  const messages = result.activeMessages.toLocaleString("en-US");
+  return [
+    "✅ <b>Context compacted.</b>",
+    "",
+    `<b>Before</b>: ${before} tokens`,
+    `<b>Now</b>: ${messages} messages (exact usage will update after next message)`,
+  ].join("\n");
+}
+
+async function safeEditMessage(
+  ctx: Filter<Context, "callback_query:data">,
+  html: string,
+  replyMarkup?: InlineKeyboard
+): Promise<void> {
+  try {
+    await ctx.editMessageText(html, {
+      parse_mode: "HTML",
+      reply_markup: replyMarkup,
+    });
+  } catch {
+    // Message may have aged out past Telegram's edit window — non-fatal.
   }
 }

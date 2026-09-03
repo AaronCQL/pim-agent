@@ -69,7 +69,7 @@ export class Session {
       temporary: deps.settings.temporary,
     };
     this.host = new SessionHost({
-      label: `session ${Session.encodeId(deps.id)}`,
+      label: `session ${encodeId(deps.id)}`,
       settings: deps.settings,
       defaults: { cwd: deps.config.cwd, model: deps.config.model },
       agentDir: deps.agentDir,
@@ -93,20 +93,6 @@ export class Session {
       ],
       onRetire: (path) => this.archive(path),
     });
-  }
-
-  public static encodeId(id: SessionId): string {
-    return `${id.chatId}-${id.threadId ?? MAIN}`;
-  }
-
-  public static decodeId(s: string): SessionId {
-    const idx = s.lastIndexOf("-");
-    const chatId = Number(s.slice(0, idx));
-    const tail = s.slice(idx + 1);
-    return {
-      chatId,
-      threadId: tail === MAIN ? undefined : Number(tail),
-    };
   }
 
   public get settings(): SessionSettings {
@@ -137,7 +123,7 @@ export class Session {
   /**
    * Pi's session UUID once an agent exists. The registry's chat-keyed map plus
    * this is the adapter-local `chatId → sessionId` mapping; pi's UUID stays the
-   * only session identity anything else sees (Resolved Decision 4).
+   * only session identity anything else sees.
    */
   public get sessionId(): string | undefined {
     return this.host.sessionId;
@@ -219,7 +205,7 @@ export class Session {
     return join(
       this.deps.config.configDir,
       dir,
-      `${Session.encodeId(this.id)}${suffix}.jsonl`
+      `${encodeId(this.id)}${suffix}.jsonl`
     );
   }
 
@@ -229,10 +215,7 @@ export class Session {
       await rename(path, `${path}.archived-${stamp}`);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-        console.warn(
-          `[session ${Session.encodeId(this.id)}] archive ${path}:`,
-          err
-        );
+        console.warn(`[session ${encodeId(this.id)}] archive ${path}:`, err);
       }
     }
   }
@@ -241,7 +224,7 @@ export class Session {
     const path = join(
       this.deps.config.configDir,
       "instructions",
-      `${Session.encodeId(this.id)}.md`
+      `${encodeId(this.id)}.md`
     );
     let userContent: string | undefined;
     try {
@@ -260,4 +243,18 @@ export class Session {
     const userIx = `<telegram_user_instructions path="${path}">${userContent ? `\n${userContent}\n` : ""}</telegram_user_instructions>`;
     return `<telegram_system_instructions>\n${systemIx}\n${userIx}\n</telegram_system_instructions>`;
   }
+}
+
+export function encodeId(id: SessionId): string {
+  return `${id.chatId}-${id.threadId ?? MAIN}`;
+}
+
+export function decodeId(s: string): SessionId {
+  const idx = s.lastIndexOf("-");
+  const chatId = Number(s.slice(0, idx));
+  const tail = s.slice(idx + 1);
+  return {
+    chatId,
+    threadId: tail === MAIN ? undefined : Number(tail),
+  };
 }

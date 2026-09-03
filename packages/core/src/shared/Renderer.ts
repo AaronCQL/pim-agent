@@ -34,6 +34,15 @@ export type PrefixSpec = {
   readonly width: number;
 };
 
+const GAPPED_PREFIX: PrefixSpec = {
+  prefix: " │ ",
+  width: 3,
+};
+const TIGHT_PREFIX: PrefixSpec = {
+  prefix: " │",
+  width: 2,
+};
+
 class ToolTitle implements Component {
   private text = "";
   private theme: Theme | undefined;
@@ -56,16 +65,13 @@ class ToolTitle implements Component {
       return lines.map((line) => padLine(line, width));
     }
 
-    const inner = Math.max(1, width - Renderer.GAPPED_PREFIX.width);
+    const inner = Math.max(1, width - GAPPED_PREFIX.width);
     const out = [padLine(lines[0] ?? "", width)];
 
     for (const logical of lines.slice(1)) {
       for (const wrapped of wrapTextWithAnsi(logical, inner)) {
         out.push(
-          padLine(
-            theme.fg("toolOutput", Renderer.GAPPED_PREFIX.prefix) + wrapped,
-            width
-          )
+          padLine(theme.fg("toolOutput", GAPPED_PREFIX.prefix) + wrapped, width)
         );
       }
     }
@@ -103,7 +109,7 @@ class MarkdownTitle implements Component {
     }
 
     const inner = Math.max(1, width - visibleWidth(this.prefix));
-    const titleLines = Renderer.markdownLines({
+    const titleLines = markdownLines({
       text: this.title,
       theme,
       width: inner,
@@ -113,10 +119,7 @@ class MarkdownTitle implements Component {
 
     for (const line of lines.slice(1)) {
       out.push(
-        padLine(
-          theme.fg("toolOutput", Renderer.GAPPED_PREFIX.prefix) + line,
-          width
-        )
+        padLine(theme.fg("toolOutput", GAPPED_PREFIX.prefix) + line, width)
       );
     }
 
@@ -163,268 +166,261 @@ function markdownTheme(theme: Theme): MarkdownTheme {
   };
 }
 
-export class Renderer {
-  public static readonly GAPPED_PREFIX: PrefixSpec = {
-    prefix: " │ ",
-    width: 3,
+function markerColorFor(isPartial: boolean, isError: boolean): MarkerStatus {
+  if (isPartial) {
+    return "warning";
+  }
+  if (isError) {
+    return "error";
+  }
+  return "success";
+}
+
+function extractErrorText(
+  result: {
+    readonly content?: ReadonlyArray<{
+      readonly type: string;
+      readonly text?: string;
+    }>;
+  },
+  fallback: string
+): string {
+  const text = (result.content ?? [])
+    .filter((item) => item.type === "text")
+    .map((item) => item.text ?? "")
+    .join("\n")
+    .trim();
+
+  return text || fallback;
+}
+
+function buildPreviewLines(
+  body: string,
+  maxLines: number
+): { preview: string; overflow: number } {
+  const lines = body.split("\n");
+  if (lines.length <= maxLines) {
+    return { preview: body, overflow: 0 };
+  }
+  return {
+    preview: lines.slice(0, maxLines).join("\n"),
+    overflow: lines.length - maxLines,
   };
-  public static readonly TIGHT_PREFIX: PrefixSpec = {
-    prefix: " │",
-    width: 2,
-  };
+}
 
-  public static markerColorFor(
-    isPartial: boolean,
-    isError: boolean
-  ): MarkerStatus {
-    if (isPartial) {
-      return "warning";
-    }
-    if (isError) {
-      return "error";
-    }
-    return "success";
-  }
+/** The marker + bold label + title text of a tool row, without the shell. */
+function toolTitleText(args: {
+  readonly label: string;
+  readonly title: string;
+  readonly theme: Theme;
+  readonly markerColor: MarkerStatus;
+  readonly labelColor?: ThemeColor;
+}): string {
+  return titleHead(args) + args.theme.fg("toolTitle", ": " + args.title);
+}
 
-  public static extractErrorText(
-    result: {
-      readonly content?: ReadonlyArray<{
-        readonly type: string;
-        readonly text?: string;
-      }>;
-    },
-    fallback: string
-  ): string {
-    const text = (result.content ?? [])
-      .filter((item) => item.type === "text")
-      .map((item) => item.text ?? "")
-      .join("\n")
-      .trim();
+function titleHead(args: {
+  readonly label: string;
+  readonly theme: Theme;
+  readonly markerColor: MarkerStatus;
+  readonly labelColor?: ThemeColor;
+}): string {
+  const { label, theme, markerColor, labelColor } = args;
+  return (
+    theme.fg(markerColor, " ▪") +
+    " " +
+    theme.fg(labelColor ?? "toolTitle", theme.bold(label))
+  );
+}
 
-    return text || fallback;
-  }
+/** Wraps title text in the component that pads and re-indents on overflow. */
+function makeTitleBlock(args: {
+  readonly text: string;
+  readonly theme: Theme;
+  readonly lastComponent?: Component;
+}): Component {
+  const component =
+    args.lastComponent instanceof ToolTitle
+      ? args.lastComponent
+      : new ToolTitle();
+  component.setText(args.text, args.theme);
+  return component;
+}
 
-  public static buildPreviewLines(
-    body: string,
-    maxLines: number
-  ): { preview: string; overflow: number } {
-    const lines = body.split("\n");
-    if (lines.length <= maxLines) {
-      return { preview: body, overflow: 0 };
-    }
-    return {
-      preview: lines.slice(0, maxLines).join("\n"),
-      overflow: lines.length - maxLines,
-    };
-  }
+function renderToolCallTitle(args: {
+  readonly label: string;
+  readonly title: string;
+  readonly theme: Theme;
+  readonly context: RenderContext;
+  readonly labelColor?: ThemeColor;
+  /** Renders `title` as markdown instead of as pre-painted text. */
+  readonly markdown?: boolean;
+}): Component {
+  const { theme, context } = args;
+  const markerColor = markerColorFor(
+    Boolean(context.isPartial),
+    Boolean(context.isError)
+  );
 
-  /** The marker + bold label + title text of a tool row, without the shell. */
-  public static toolTitleText(args: {
-    readonly label: string;
-    readonly title: string;
-    readonly theme: Theme;
-    readonly markerColor: MarkerStatus;
-    readonly labelColor?: ThemeColor;
-  }): string {
-    return (
-      Renderer.titleHead(args) + args.theme.fg("toolTitle", ": " + args.title)
-    );
-  }
-
-  private static titleHead(args: {
-    readonly label: string;
-    readonly theme: Theme;
-    readonly markerColor: MarkerStatus;
-    readonly labelColor?: ThemeColor;
-  }): string {
-    const { label, theme, markerColor, labelColor } = args;
-    return (
-      theme.fg(markerColor, " ▪") +
-      " " +
-      theme.fg(labelColor ?? "toolTitle", theme.bold(label))
-    );
-  }
-
-  /** Wraps title text in the component that pads and re-indents on overflow. */
-  public static makeTitleBlock(args: {
-    readonly text: string;
-    readonly theme: Theme;
-    readonly lastComponent?: Component;
-  }): Component {
+  if (args.markdown === true) {
     const component =
-      args.lastComponent instanceof ToolTitle
-        ? args.lastComponent
-        : new ToolTitle();
-    component.setText(args.text, args.theme);
-    return component;
-  }
-
-  public static renderToolCallTitle(args: {
-    readonly label: string;
-    readonly title: string;
-    readonly theme: Theme;
-    readonly context: RenderContext;
-    readonly labelColor?: ThemeColor;
-    /** Renders `title` as markdown instead of as pre-painted text. */
-    readonly markdown?: boolean;
-  }): Component {
-    const { theme, context } = args;
-    const markerColor = Renderer.markerColorFor(
-      Boolean(context.isPartial),
-      Boolean(context.isError)
-    );
-
-    if (args.markdown === true) {
-      const component =
-        context.lastComponent instanceof MarkdownTitle
-          ? context.lastComponent
-          : new MarkdownTitle();
-      component.set({
-        prefix:
-          Renderer.titleHead({ ...args, markerColor }) +
-          theme.fg("toolTitle", ": "),
-        title: args.title,
-        theme,
-      });
-      return component;
-    }
-
-    return Renderer.makeTitleBlock({
-      text: Renderer.toolTitleText({ ...args, markerColor }),
+      context.lastComponent instanceof MarkdownTitle
+        ? context.lastComponent
+        : new MarkdownTitle();
+    component.set({
+      prefix: titleHead({ ...args, markerColor }) + theme.fg("toolTitle", ": "),
+      title: args.title,
       theme,
-      lastComponent: context.lastComponent,
     });
-  }
-
-  public static renderStatefulToolCallTitle(args: {
-    readonly label: string;
-    readonly title: string;
-    readonly theme: Theme;
-    readonly context: StatefulToolCallTitleContext;
-    readonly labelColor?: ThemeColor;
-  }): Component {
-    const state = args.context.state as StatefulToolCallTitleState;
-    const component = Renderer.renderToolCallTitle({
-      ...args,
-      context: {
-        ...args.context,
-        lastComponent: state.titleComponent ?? args.context.lastComponent,
-      },
-    });
-    state.titleComponent = component;
     return component;
   }
 
-  public static makePrefixedBlock(args: {
-    readonly text: string;
-    readonly theme: Theme;
-    readonly prefix: PrefixSpec;
-    readonly lineColor?: ThemeColor;
-  }): Component {
-    const { text, theme, prefix, lineColor } = args;
-    return {
-      render(width: number): string[] {
-        const inner = Math.max(1, width - prefix.width);
-        const out: string[] = [];
-        for (const logical of text.split("\n")) {
-          for (const w of wrapTextWithAnsi(logical, inner)) {
-            const body = lineColor ? theme.fg(lineColor, w) : w;
-            out.push(theme.fg("toolOutput", prefix.prefix) + body);
-          }
+  return makeTitleBlock({
+    text: toolTitleText({ ...args, markerColor }),
+    theme,
+    lastComponent: context.lastComponent,
+  });
+}
+
+function renderStatefulToolCallTitle(args: {
+  readonly label: string;
+  readonly title: string;
+  readonly theme: Theme;
+  readonly context: StatefulToolCallTitleContext;
+  readonly labelColor?: ThemeColor;
+}): Component {
+  const state = args.context.state as StatefulToolCallTitleState;
+  const component = renderToolCallTitle({
+    ...args,
+    context: {
+      ...args.context,
+      lastComponent: state.titleComponent ?? args.context.lastComponent,
+    },
+  });
+  state.titleComponent = component;
+  return component;
+}
+
+function makePrefixedBlock(args: {
+  readonly text: string;
+  readonly theme: Theme;
+  readonly prefix: PrefixSpec;
+  readonly lineColor?: ThemeColor;
+}): Component {
+  const { text, theme, prefix, lineColor } = args;
+  return {
+    render(width: number): string[] {
+      const inner = Math.max(1, width - prefix.width);
+      const out: string[] = [];
+      for (const logical of text.split("\n")) {
+        for (const w of wrapTextWithAnsi(logical, inner)) {
+          const body = lineColor ? theme.fg(lineColor, w) : w;
+          out.push(theme.fg("toolOutput", prefix.prefix) + body);
         }
-        return out;
-      },
-      invalidate() {},
-    };
-  }
-
-  /** Markdown lines at a fixed width, trimmed the way the tool rows expect. */
-  public static markdownLines(args: {
-    readonly text: string;
-    readonly theme: Theme;
-    readonly width: number;
-    readonly lineColor?: ThemeColor;
-  }): string[] {
-    return makeMarkdown(args.text, args.theme, args.lineColor)
-      .render(args.width)
-      .map((line) => line.trimEnd());
-  }
-
-  /** A gutter block whose text is markdown, wrapped at the render-time width. */
-  public static makeMarkdownBlock(args: {
-    readonly text: string;
-    readonly theme: Theme;
-    readonly prefix: PrefixSpec;
-    readonly lineColor?: ThemeColor;
-  }): Component {
-    const { text, theme, prefix, lineColor } = args;
-    const markdown = makeMarkdown(text, theme, lineColor);
-
-    return {
-      render(width: number): string[] {
-        const inner = Math.max(1, width - prefix.width);
-        return markdown
-          .render(inner)
-          .map(
-            (line) => theme.fg("toolOutput", prefix.prefix) + line.trimEnd()
-          );
-      },
-      invalidate(): void {
-        markdown.invalidate();
-      },
-    };
-  }
-
-  public static renderBorderedResult(args: {
-    readonly result: AgentToolResult<unknown>;
-    readonly options: ToolRenderResultOptions;
-    readonly theme: Theme;
-    readonly context: RenderContext;
-    readonly previewLines: number;
-  }): Container {
-    const { result, options, theme, context, previewLines } = args;
-    const container =
-      (context.lastComponent as Container | undefined) ?? new Container();
-    container.clear();
-
-    if (options.isPartial) {
-      return container;
-    }
-    if (!context.isError && !options.expanded) {
-      return container;
-    }
-
-    const first = result.content?.[0];
-    const body = first && "text" in first ? (first.text ?? "") : "";
-    if (!body) {
-      return container;
-    }
-
-    const lineColor = context.isError ? "error" : "toolOutput";
-    const block = (text: string): Component =>
-      Renderer.makePrefixedBlock({
-        text,
-        theme,
-        prefix: Renderer.GAPPED_PREFIX,
-        lineColor,
-      });
-
-    if (options.expanded) {
-      container.addChild(block(body));
-    } else {
-      const { preview, overflow } = Renderer.buildPreviewLines(
-        body,
-        previewLines
-      );
-      if (preview) {
-        container.addChild(block(preview));
       }
-      if (overflow > 0) {
-        container.addChild(block(`… ${overflow} more lines`));
-      }
-    }
+      return out;
+    },
+    invalidate() {},
+  };
+}
 
-    container.invalidate();
+/** Markdown lines at a fixed width, trimmed the way the tool rows expect. */
+function markdownLines(args: {
+  readonly text: string;
+  readonly theme: Theme;
+  readonly width: number;
+  readonly lineColor?: ThemeColor;
+}): string[] {
+  return makeMarkdown(args.text, args.theme, args.lineColor)
+    .render(args.width)
+    .map((line) => line.trimEnd());
+}
+
+/** A gutter block whose text is markdown, wrapped at the render-time width. */
+function makeMarkdownBlock(args: {
+  readonly text: string;
+  readonly theme: Theme;
+  readonly prefix: PrefixSpec;
+  readonly lineColor?: ThemeColor;
+}): Component {
+  const { text, theme, prefix, lineColor } = args;
+  const markdown = makeMarkdown(text, theme, lineColor);
+
+  return {
+    render(width: number): string[] {
+      const inner = Math.max(1, width - prefix.width);
+      return markdown
+        .render(inner)
+        .map((line) => theme.fg("toolOutput", prefix.prefix) + line.trimEnd());
+    },
+    invalidate(): void {
+      markdown.invalidate();
+    },
+  };
+}
+
+function renderBorderedResult(args: {
+  readonly result: AgentToolResult<unknown>;
+  readonly options: ToolRenderResultOptions;
+  readonly theme: Theme;
+  readonly context: RenderContext;
+  readonly previewLines: number;
+}): Container {
+  const { result, options, theme, context, previewLines } = args;
+  const container =
+    (context.lastComponent as Container | undefined) ?? new Container();
+  container.clear();
+
+  if (options.isPartial) {
     return container;
   }
+  if (!context.isError && !options.expanded) {
+    return container;
+  }
+
+  const first = result.content?.[0];
+  const body = first && "text" in first ? (first.text ?? "") : "";
+  if (!body) {
+    return container;
+  }
+
+  const lineColor = context.isError ? "error" : "toolOutput";
+  const block = (text: string): Component =>
+    makePrefixedBlock({
+      text,
+      theme,
+      prefix: GAPPED_PREFIX,
+      lineColor,
+    });
+
+  if (options.expanded) {
+    container.addChild(block(body));
+  } else {
+    const { preview, overflow } = buildPreviewLines(body, previewLines);
+    if (preview) {
+      container.addChild(block(preview));
+    }
+    if (overflow > 0) {
+      container.addChild(block(`… ${overflow} more lines`));
+    }
+  }
+
+  container.invalidate();
+  return container;
 }
+
+export const Renderer = {
+  GAPPED_PREFIX,
+  TIGHT_PREFIX,
+  markerColorFor,
+  extractErrorText,
+  buildPreviewLines,
+  toolTitleText,
+  makeTitleBlock,
+  renderToolCallTitle,
+  renderStatefulToolCallTitle,
+  makePrefixedBlock,
+  markdownLines,
+  makeMarkdownBlock,
+  renderBorderedResult,
+};

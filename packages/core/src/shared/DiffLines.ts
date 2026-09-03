@@ -36,272 +36,269 @@ export type ToolDiffSide = {
   readonly hasTrailingNewline: boolean;
 };
 
-export class DiffLines {
-  public static buildToolDiff(
-    path: string,
-    oldSide: ToolDiffSide,
-    newSide: ToolDiffSide,
-    contextSize: number
-  ): ToolDiff | undefined {
-    if (contextSize < 0 || !Number.isFinite(contextSize)) {
-      throw new Error(
-        `contextSize must be a non-negative finite number, got ${contextSize}.`
-      );
-    }
-
-    const lines = DiffLines.build(oldSide.lines, newSide.lines);
-
-    if (!lines.some((line) => line.kind !== "context")) {
-      return undefined;
-    }
-
-    const emphasized = DiffLines.attachEmphasis(lines);
-
-    return {
-      path,
-      hunks: DiffLines.buildHunks(emphasized, contextSize),
-    };
+function buildToolDiff(
+  path: string,
+  oldSide: ToolDiffSide,
+  newSide: ToolDiffSide,
+  contextSize: number
+): ToolDiff | undefined {
+  if (contextSize < 0 || !Number.isFinite(contextSize)) {
+    throw new Error(
+      `contextSize must be a non-negative finite number, got ${contextSize}.`
+    );
   }
 
-  public static fromText(text: string): ToolDiffSide {
-    if (text.length === 0) {
-      return { lines: [], hasTrailingNewline: false };
-    }
+  const lines = build(oldSide.lines, newSide.lines);
 
-    const hasTrailingNewline = text.endsWith("\n");
-    const parts = text.split("\n");
-
-    if (hasTrailingNewline) {
-      parts.pop();
-    }
-
-    return { lines: parts, hasTrailingNewline };
+  if (!lines.some((line) => line.kind !== "context")) {
+    return undefined;
   }
 
-  private static attachEmphasis(
-    lines: readonly ToolDiffLine[]
-  ): readonly ToolDiffLine[] {
-    const result: ToolDiffLine[] = [...lines];
-    let i = 0;
+  const emphasized = attachEmphasis(lines);
 
-    while (i < result.length) {
-      if (result[i]?.kind !== "removed") {
-        i += 1;
-        continue;
-      }
+  return {
+    path,
+    hunks: buildHunks(emphasized, contextSize),
+  };
+}
 
-      let removedEnd = i;
-      while (
-        removedEnd < result.length &&
-        result[removedEnd]?.kind === "removed"
-      ) {
-        removedEnd += 1;
-      }
+function fromText(text: string): ToolDiffSide {
+  if (text.length === 0) {
+    return { lines: [], hasTrailingNewline: false };
+  }
 
-      let addedEnd = removedEnd;
-      while (addedEnd < result.length && result[addedEnd]?.kind === "added") {
-        addedEnd += 1;
-      }
+  const hasTrailingNewline = text.endsWith("\n");
+  const parts = text.split("\n");
 
-      const removedCount = removedEnd - i;
-      const addedCount = addedEnd - removedEnd;
+  if (hasTrailingNewline) {
+    parts.pop();
+  }
 
-      if (removedCount > 0 && removedCount === addedCount) {
-        for (let k = 0; k < removedCount; k += 1) {
-          const removed = result[i + k];
-          const added = result[removedEnd + k];
+  return { lines: parts, hasTrailingNewline };
+}
 
-          if (removed === undefined || added === undefined) {
-            continue;
-          }
+function attachEmphasis(
+  lines: readonly ToolDiffLine[]
+): readonly ToolDiffLine[] {
+  const result: ToolDiffLine[] = [...lines];
+  let i = 0;
 
-          const ranges = DiffLines.computeIntraLineRanges(
-            removed.text,
-            added.text
-          );
+  while (i < result.length) {
+    if (result[i]?.kind !== "removed") {
+      i += 1;
+      continue;
+    }
 
-          if (ranges === undefined) {
-            continue;
-          }
+    let removedEnd = i;
+    while (
+      removedEnd < result.length &&
+      result[removedEnd]?.kind === "removed"
+    ) {
+      removedEnd += 1;
+    }
 
-          result[i + k] = { ...removed, emphasis: ranges.removed };
-          result[removedEnd + k] = { ...added, emphasis: ranges.added };
+    let addedEnd = removedEnd;
+    while (addedEnd < result.length && result[addedEnd]?.kind === "added") {
+      addedEnd += 1;
+    }
+
+    const removedCount = removedEnd - i;
+    const addedCount = addedEnd - removedEnd;
+
+    if (removedCount > 0 && removedCount === addedCount) {
+      for (let k = 0; k < removedCount; k += 1) {
+        const removed = result[i + k];
+        const added = result[removedEnd + k];
+
+        if (removed === undefined || added === undefined) {
+          continue;
         }
-      }
 
-      i = addedEnd > i ? addedEnd : i + 1;
+        const ranges = computeIntraLineRanges(removed.text, added.text);
+
+        if (ranges === undefined) {
+          continue;
+        }
+
+        result[i + k] = { ...removed, emphasis: ranges.removed };
+        result[removedEnd + k] = { ...added, emphasis: ranges.added };
+      }
     }
 
-    return result;
+    i = addedEnd > i ? addedEnd : i + 1;
   }
 
-  private static computeIntraLineRanges(
-    oldText: string,
-    newText: string
-  ):
-    | {
-        readonly removed: readonly IntraLineRange[];
-        readonly added: readonly IntraLineRange[];
+  return result;
+}
+
+function computeIntraLineRanges(
+  oldText: string,
+  newText: string
+):
+  | {
+      readonly removed: readonly IntraLineRange[];
+      readonly added: readonly IntraLineRange[];
+    }
+  | undefined {
+  const parts = Diff.diffWords(oldText, newText);
+  const removedRanges: IntraLineRange[] = [];
+  const addedRanges: IntraLineRange[] = [];
+  let oldPos = 0;
+  let newPos = 0;
+  let sharedLen = 0;
+  let firstRemoved = true;
+  let firstAdded = true;
+
+  for (const part of parts) {
+    const len = part.value.length;
+
+    if (part.added === true) {
+      const leading = firstAdded ? leadingWsLen(part.value) : 0;
+      firstAdded = false;
+      if (len - leading > 0) {
+        addedRanges.push({ start: newPos + leading, end: newPos + len });
       }
-    | undefined {
-    const parts = Diff.diffWords(oldText, newText);
-    const removedRanges: IntraLineRange[] = [];
-    const addedRanges: IntraLineRange[] = [];
-    let oldPos = 0;
-    let newPos = 0;
-    let sharedLen = 0;
-    let firstRemoved = true;
-    let firstAdded = true;
+      newPos += len;
+      continue;
+    }
 
-    for (const part of parts) {
-      const len = part.value.length;
+    if (part.removed === true) {
+      const leading = firstRemoved ? leadingWsLen(part.value) : 0;
+      firstRemoved = false;
+      if (len - leading > 0) {
+        removedRanges.push({ start: oldPos + leading, end: oldPos + len });
+      }
+      oldPos += len;
+      continue;
+    }
 
+    sharedLen += len;
+    oldPos += len;
+    newPos += len;
+  }
+
+  if (sharedLen === 0) {
+    return undefined;
+  }
+
+  return { removed: removedRanges, added: addedRanges };
+}
+
+function build(
+  oldLines: readonly string[],
+  newLines: readonly string[]
+): readonly ToolDiffLine[] {
+  const parts = Diff.diffLines(
+    joinComparable(oldLines),
+    joinComparable(newLines)
+  );
+  const lines: ToolDiffLine[] = [];
+  let oldLine = 1;
+  let newLine = 1;
+
+  for (const part of parts) {
+    const values = partLines(part.value);
+
+    for (const text of values) {
       if (part.added === true) {
-        const leading = firstAdded ? DiffLines.leadingWsLen(part.value) : 0;
-        firstAdded = false;
-        if (len - leading > 0) {
-          addedRanges.push({ start: newPos + leading, end: newPos + len });
-        }
-        newPos += len;
+        lines.push({ kind: "added", newLine, text });
+        newLine += 1;
         continue;
       }
 
       if (part.removed === true) {
-        const leading = firstRemoved ? DiffLines.leadingWsLen(part.value) : 0;
-        firstRemoved = false;
-        if (len - leading > 0) {
-          removedRanges.push({ start: oldPos + leading, end: oldPos + len });
-        }
-        oldPos += len;
-        continue;
-      }
-
-      sharedLen += len;
-      oldPos += len;
-      newPos += len;
-    }
-
-    if (sharedLen === 0) {
-      return undefined;
-    }
-
-    return { removed: removedRanges, added: addedRanges };
-  }
-
-  private static build(
-    oldLines: readonly string[],
-    newLines: readonly string[]
-  ): readonly ToolDiffLine[] {
-    const parts = Diff.diffLines(
-      DiffLines.joinComparable(oldLines),
-      DiffLines.joinComparable(newLines)
-    );
-    const lines: ToolDiffLine[] = [];
-    let oldLine = 1;
-    let newLine = 1;
-
-    for (const part of parts) {
-      const values = DiffLines.partLines(part.value);
-
-      for (const text of values) {
-        if (part.added === true) {
-          lines.push({ kind: "added", newLine, text });
-          newLine += 1;
-          continue;
-        }
-
-        if (part.removed === true) {
-          lines.push({ kind: "removed", oldLine, text });
-          oldLine += 1;
-          continue;
-        }
-
-        lines.push({ kind: "context", oldLine, newLine, text });
+        lines.push({ kind: "removed", oldLine, text });
         oldLine += 1;
-        newLine += 1;
-      }
-    }
-
-    return lines;
-  }
-
-  private static buildHunks(
-    lines: readonly ToolDiffLine[],
-    contextSize: number
-  ): readonly ToolDiffHunk[] {
-    const changeIndexes = lines
-      .map((line, index) => (line.kind === "context" ? -1 : index))
-      .filter((index) => index >= 0);
-    const hunks: ToolDiffHunk[] = [];
-    let firstChange = changeIndexes[0];
-    let lastChange = changeIndexes[0];
-
-    if (firstChange === undefined || lastChange === undefined) {
-      return hunks;
-    }
-
-    const pushHunk = (startChange: number, endChange: number): void => {
-      const hunkLines = lines.slice(
-        Math.max(0, startChange - contextSize),
-        Math.min(lines.length, endChange + contextSize + 1)
-      );
-      const oldNumbers = hunkLines.flatMap((line) =>
-        line.oldLine === undefined ? [] : [line.oldLine]
-      );
-      const newNumbers = hunkLines.flatMap((line) =>
-        line.newLine === undefined ? [] : [line.newLine]
-      );
-      const oldStart =
-        oldNumbers.length === 0
-          ? Math.max(0, (newNumbers[0] ?? 1) - 1)
-          : Math.min(...oldNumbers);
-      const newStart =
-        newNumbers.length === 0
-          ? Math.max(0, (oldNumbers[0] ?? 1) - 1)
-          : Math.min(...newNumbers);
-
-      hunks.push({
-        oldStart,
-        oldLines:
-          oldNumbers.length === 0 ? 0 : Math.max(...oldNumbers) - oldStart + 1,
-        newStart,
-        newLines:
-          newNumbers.length === 0 ? 0 : Math.max(...newNumbers) - newStart + 1,
-        lines: hunkLines,
-      });
-    };
-
-    for (const changeIndex of changeIndexes.slice(1)) {
-      if (changeIndex - lastChange <= contextSize * 2 + 1) {
-        lastChange = changeIndex;
         continue;
       }
 
-      pushHunk(firstChange, lastChange);
-      firstChange = changeIndex;
-      lastChange = changeIndex;
+      lines.push({ kind: "context", oldLine, newLine, text });
+      oldLine += 1;
+      newLine += 1;
     }
+  }
 
-    pushHunk(firstChange, lastChange);
+  return lines;
+}
 
+function buildHunks(
+  lines: readonly ToolDiffLine[],
+  contextSize: number
+): readonly ToolDiffHunk[] {
+  const changeIndexes = lines
+    .map((line, index) => (line.kind === "context" ? -1 : index))
+    .filter((index) => index >= 0);
+  const hunks: ToolDiffHunk[] = [];
+  let firstChange = changeIndexes[0];
+  let lastChange = changeIndexes[0];
+
+  if (firstChange === undefined || lastChange === undefined) {
     return hunks;
   }
 
-  private static leadingWsLen(value: string): number {
-    return value.match(/^\s*/)?.[0].length ?? 0;
-  }
+  const pushHunk = (startChange: number, endChange: number): void => {
+    const hunkLines = lines.slice(
+      Math.max(0, startChange - contextSize),
+      Math.min(lines.length, endChange + contextSize + 1)
+    );
+    const oldNumbers = hunkLines.flatMap((line) =>
+      line.oldLine === undefined ? [] : [line.oldLine]
+    );
+    const newNumbers = hunkLines.flatMap((line) =>
+      line.newLine === undefined ? [] : [line.newLine]
+    );
+    const oldStart =
+      oldNumbers.length === 0
+        ? Math.max(0, (newNumbers[0] ?? 1) - 1)
+        : Math.min(...oldNumbers);
+    const newStart =
+      newNumbers.length === 0
+        ? Math.max(0, (oldNumbers[0] ?? 1) - 1)
+        : Math.min(...newNumbers);
 
-  private static joinComparable(lines: readonly string[]): string {
-    return lines.length === 0 ? "" : `${lines.join("\n")}\n`;
-  }
+    hunks.push({
+      oldStart,
+      oldLines:
+        oldNumbers.length === 0 ? 0 : Math.max(...oldNumbers) - oldStart + 1,
+      newStart,
+      newLines:
+        newNumbers.length === 0 ? 0 : Math.max(...newNumbers) - newStart + 1,
+      lines: hunkLines,
+    });
+  };
 
-  private static partLines(value: string): readonly string[] {
-    const lines = value.split("\n");
-
-    if (lines.at(-1) === "") {
-      lines.pop();
+  for (const changeIndex of changeIndexes.slice(1)) {
+    if (changeIndex - lastChange <= contextSize * 2 + 1) {
+      lastChange = changeIndex;
+      continue;
     }
 
-    return lines;
+    pushHunk(firstChange, lastChange);
+    firstChange = changeIndex;
+    lastChange = changeIndex;
   }
+
+  pushHunk(firstChange, lastChange);
+
+  return hunks;
 }
+
+function leadingWsLen(value: string): number {
+  return value.match(/^\s*/)?.[0].length ?? 0;
+}
+
+function joinComparable(lines: readonly string[]): string {
+  return lines.length === 0 ? "" : `${lines.join("\n")}\n`;
+}
+
+function partLines(value: string): readonly string[] {
+  const lines = value.split("\n");
+
+  if (lines.at(-1) === "") {
+    lines.pop();
+  }
+
+  return lines;
+}
+
+export const DiffLines = { buildToolDiff, fromText };

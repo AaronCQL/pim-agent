@@ -26,17 +26,16 @@ export type DuckDuckGoProviderOptions = {
 const RESULT_LINE = /^\s*\d+\.\[(.*?)\]\((\S+?)\)\s*$/u;
 const BARE_DOMAIN_LINE = /^[\w-]+(\.[\w-]+)+(\/\S*)?$/u;
 
+const defaultReaderEndpoint = "https://r.jina.ai";
+const defaultSearchEndpoint = "https://lite.duckduckgo.com/lite/";
+const defaultTimeoutMs = 30_000;
+
 /**
  * DuckDuckGo blocks direct API access with a 202 anti-bot challenge, so this
  * reads the Lite SERP through Jina's keyless reader instead. Last-resort tier:
  * no credentials anywhere in the path, but also no stability guarantee.
  */
 export class DuckDuckGoProvider implements SearchProvider {
-  public static readonly defaultReaderEndpoint = "https://r.jina.ai";
-  public static readonly defaultSearchEndpoint =
-    "https://lite.duckduckgo.com/lite/";
-  private static readonly defaultTimeoutMs = 30_000;
-
   public readonly name = "duckduckgo";
 
   private readonly readerEndpoint: string;
@@ -47,11 +46,10 @@ export class DuckDuckGoProvider implements SearchProvider {
 
   public constructor(options: DuckDuckGoProviderOptions = {}) {
     this.readerEndpoint = (
-      options.readerEndpoint ?? DuckDuckGoProvider.defaultReaderEndpoint
+      options.readerEndpoint ?? defaultReaderEndpoint
     ).replace(/\/+$/u, "");
-    this.searchEndpoint =
-      options.searchEndpoint ?? DuckDuckGoProvider.defaultSearchEndpoint;
-    this.timeoutMs = options.timeoutMs ?? DuckDuckGoProvider.defaultTimeoutMs;
+    this.searchEndpoint = options.searchEndpoint ?? defaultSearchEndpoint;
+    this.timeoutMs = options.timeoutMs ?? defaultTimeoutMs;
     this.headers = {
       Accept: "application/json",
       // Reader caches aggressively; a stale SERP snapshot is worse than a slow

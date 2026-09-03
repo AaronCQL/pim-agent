@@ -22,7 +22,7 @@ import { stat, unlink } from "node:fs/promises";
 import { FuzzyMatcher, type FuzzyCandidate } from "../shared/FuzzyMatcher";
 import { EventLog } from "./EventLog";
 
-/** What the agent is doing right now (Resolved Decision 5). */
+/** What the agent is doing right now. */
 export type SessionStatus = "idle" | "thinking" | "streaming" | "tool";
 
 /**
@@ -135,7 +135,7 @@ export class SessionHost {
     return this.cached;
   }
 
-  /** Pi's own session UUID — the only identity a session has (Decision 4). */
+  /** Pi's own session UUID — the only identity a session has. */
   public get sessionId(): string | undefined {
     return this.cached?.sessionId;
   }
@@ -169,7 +169,7 @@ export class SessionHost {
 
   public get currentModelId(): string | undefined {
     const model = this.cached?.model ?? this.resolveDefaultModel();
-    return model ? SessionHost.modelId(model) : undefined;
+    return model ? qualifiedModelId(model) : undefined;
   }
 
   public get supportedThinkingLevels(): readonly ThinkingLevel[] {
@@ -211,7 +211,7 @@ export class SessionHost {
         try {
           await work(agent);
         } finally {
-          await SessionHost.disposeAgent(agent);
+          await disposeAgent(agent);
           await unlink(sessionPath).catch((err: unknown) => {
             if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
               console.warn(`[${this.label}] unlink ${sessionPath}:`, err);
@@ -271,7 +271,7 @@ export class SessionHost {
       if (result.kind === "none" || result.kind === "ambiguous") {
         return { ok: false, kind: result.kind, candidates: result.candidates };
       }
-      const id = SessionHost.modelId(result.model);
+      const id = qualifiedModelId(result.model);
       if (this.currentSettings.model === id) {
         return { ok: true, id };
       }
@@ -305,7 +305,7 @@ export class SessionHost {
     if (this.cached) {
       const agent = this.cached;
       this.detachCached();
-      await SessionHost.disposeAgent(agent);
+      await disposeAgent(agent);
     }
   }
 
@@ -518,18 +518,6 @@ export class SessionHost {
     return { agent, cwd };
   }
 
-  private static async disposeAgent(agent: AgentSession): Promise<void> {
-    try {
-      await agent.extensionRunner.emit({
-        type: "session_shutdown",
-        reason: "quit",
-      });
-    } catch (err) {
-      console.warn(`[session] extension shutdown failed:`, err);
-    }
-    agent.dispose();
-  }
-
   private detachCached(): void {
     this.cachedUnsubscribe?.();
     this.cached = undefined;
@@ -545,7 +533,7 @@ export class SessionHost {
       const agent = this.cached;
       this.detachCached();
       this.cachedSystemInstruction = undefined;
-      await SessionHost.disposeAgent(agent);
+      await disposeAgent(agent);
     }
     const path =
       this.currentSettings.sessionPath ?? this.deps.mainSessionPath?.();
@@ -590,13 +578,13 @@ export class SessionHost {
     const candidates: FuzzyCandidate<Model<ModelApi>>[] = available.map(
       (m) => ({
         item: m,
-        haystacks: [SessionHost.modelId(m), m.id, m.name],
+        haystacks: [qualifiedModelId(m), m.id, m.name],
       })
     );
 
     const exact = available.find(
       (m) =>
-        SessionHost.modelId(m) === pattern.trim() ||
+        qualifiedModelId(m) === pattern.trim() ||
         m.id === pattern.trim() ||
         m.name === pattern.trim()
     );
@@ -608,7 +596,7 @@ export class SessionHost {
     if (hits.length === 0) {
       return {
         kind: "none",
-        candidates: available.slice(0, 8).map(SessionHost.modelId),
+        candidates: available.slice(0, 8).map(qualifiedModelId),
       };
     }
     if (hits.length === 1) {
@@ -621,11 +609,23 @@ export class SessionHost {
     }
     return {
       kind: "ambiguous",
-      candidates: hits.map((h) => SessionHost.modelId(h.item)),
+      candidates: hits.map((h) => qualifiedModelId(h.item)),
     };
   }
+}
 
-  private static modelId(model: Model<ModelApi>): string {
-    return `${model.provider}/${model.id}`;
+function qualifiedModelId(model: Model<ModelApi>): string {
+  return `${model.provider}/${model.id}`;
+}
+
+async function disposeAgent(agent: AgentSession): Promise<void> {
+  try {
+    await agent.extensionRunner.emit({
+      type: "session_shutdown",
+      reason: "quit",
+    });
+  } catch (err) {
+    console.warn(`[session] extension shutdown failed:`, err);
   }
+  agent.dispose();
 }

@@ -259,7 +259,7 @@ export class Renderer {
       this.thinking = "";
       return;
     }
-    const text = Renderer.cleanProse(this.thinking);
+    const text = cleanProse(this.thinking);
     this.thinking = "";
     if (!text) {
       return;
@@ -287,7 +287,7 @@ export class Renderer {
     if (this.logsMode !== "text" && this.logsMode !== "verbose") {
       return;
     }
-    const text = Renderer.cleanProse(raw);
+    const text = cleanProse(raw);
     const last = this.entries.at(-1);
     if (last?.kind === "narration" && last.label === text) {
       return;
@@ -391,11 +391,7 @@ export class Renderer {
         pieces.push(`${entry.icon} ${entry.label}${suffix}`);
       }
       const next = visible[i + 1];
-      if (
-        next &&
-        Renderer.isInlineEntry(entry) &&
-        Renderer.isInlineEntry(next)
-      ) {
+      if (next && isInlineEntry(entry) && isInlineEntry(next)) {
         pieces.push(BR);
       }
     }
@@ -406,12 +402,12 @@ export class Renderer {
     } else if (state === "error") {
       body += "<br><br>❌ Error";
     }
-    return Renderer.capStatus(body);
+    return capStatus(body);
   }
 
   private async sendFinal(markdown: string): Promise<void> {
     const html = Markdown.toHtml(markdown);
-    for (const piece of Renderer.chunk(html)) {
+    for (const piece of chunk(html)) {
       await this.sendMessage(piece, { status: false });
     }
   }
@@ -423,7 +419,7 @@ export class Renderer {
     if (!html) {
       return undefined;
     }
-    const clean = Renderer.sanitize(html);
+    const clean = sanitize(html);
     try {
       const msg = await this.api.sendRichMessage(
         this.sessionId.chatId,
@@ -437,21 +433,17 @@ export class Renderer {
     } catch (err) {
       if (err instanceof GrammyError && err.error_code === 400) {
         console.warn(`[send] rich 400 (${err.description}) — retry plain`);
-        return this.api.sendMessage(
-          this.sessionId.chatId,
-          Renderer.stripHtml(clean),
-          {
-            message_thread_id: this.sessionId.threadId,
-            link_preview_options: { is_disabled: true },
-          }
-        );
+        return this.api.sendMessage(this.sessionId.chatId, stripHtml(clean), {
+          message_thread_id: this.sessionId.threadId,
+          link_preview_options: { is_disabled: true },
+        });
       }
       throw err;
     }
   }
 
   private async editMessage(html: string): Promise<void> {
-    const clean = Renderer.sanitize(html);
+    const clean = sanitize(html);
     try {
       await this.api.editMessageText(
         this.sessionId.chatId,
@@ -470,7 +462,7 @@ export class Renderer {
             .editMessageText(
               this.sessionId.chatId,
               this.statusMessageId!,
-              Renderer.stripHtml(clean),
+              stripHtml(clean),
               {
                 link_preview_options: { is_disabled: true },
               }
@@ -481,10 +473,6 @@ export class Renderer {
       }
       console.warn(`[send] status edit failed:`, err);
     }
-  }
-
-  private static isInlineEntry(entry: TrackerEntry): boolean {
-    return entry.kind === "tool";
   }
 
   private entryVisible(entry: TrackerEntry): boolean {
@@ -507,263 +495,264 @@ export class Renderer {
       this.editTimer = undefined;
     }
   }
+}
 
-  private static cleanProse(text: string): string {
-    return text.replace(/\n{3,}/g, "\n\n").trim();
+function isInlineEntry(entry: TrackerEntry): boolean {
+  return entry.kind === "tool";
+}
+
+function cleanProse(text: string): string {
+  return text.replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function capStatus(text: string): string {
+  if (text.length <= MESSAGE_LIMIT) {
+    return text;
   }
-
-  private static capStatus(text: string): string {
-    if (text.length <= MESSAGE_LIMIT) {
-      return text;
-    }
-    const blocks = Renderer.splitStatusBlocks(text);
-    let dropped = 0;
-    while (blocks.length > 1) {
-      blocks.shift();
-      dropped += 1;
-      const rest = Renderer.trimLeadingBreaks(blocks.join("").trimStart());
-      const candidate = `<p>… ${dropped} earlier entries</p>${rest}`;
-      if (candidate.length <= MESSAGE_LIMIT) {
-        return candidate;
-      }
-    }
-    return Renderer.capPlainStatus(blocks);
-  }
-
-  private static splitStatusBlocks(html: string): string[] {
-    const blocks: string[] = [];
-    let cursor = 0;
-    while (cursor < html.length) {
-      const tag = Renderer.nextStatusBlockTag(html, cursor);
-      if (!tag) {
-        Renderer.pushStatusBlock(blocks, html.slice(cursor));
-        break;
-      }
-      if (VOID_BLOCK_TAGS.has(tag.name)) {
-        Renderer.pushStatusBlock(blocks, html.slice(cursor, tag.end));
-        cursor = tag.end;
-        continue;
-      }
-      Renderer.pushStatusBlock(blocks, html.slice(cursor, tag.start));
-      const end = Renderer.statusBlockEnd(html, tag);
-      Renderer.pushStatusBlock(blocks, html.slice(tag.start, end));
-      cursor = end;
-    }
-    return blocks;
-  }
-
-  private static nextStatusBlockTag(
-    html: string,
-    start: number
-  ): HtmlTag | undefined {
-    const tags = Renderer.htmlTags(html, start);
-    for (const tag of tags) {
-      if (tag.closing) {
-        continue;
-      }
-      if (BLOCK_TAGS.has(tag.name) || VOID_BLOCK_TAGS.has(tag.name)) {
-        return tag;
-      }
-    }
-    return undefined;
-  }
-
-  private static statusBlockEnd(html: string, opener: HtmlTag): number {
-    if (opener.selfClosing) {
-      return opener.end;
-    }
-    const stack = [opener.name];
-    const tags = Renderer.htmlTags(html, opener.end);
-    for (const tag of tags) {
-      if (VOID_BLOCK_TAGS.has(tag.name)) {
-        continue;
-      }
-      if (!BLOCK_TAGS.has(tag.name)) {
-        continue;
-      }
-      if (tag.closing) {
-        if (stack.at(-1) === tag.name) {
-          stack.pop();
-        }
-      } else if (!tag.selfClosing) {
-        stack.push(tag.name);
-      }
-      if (stack.length === 0) {
-        return tag.end;
-      }
-    }
-    return html.length;
-  }
-
-  private static *htmlTags(html: string, start: number): Generator<HtmlTag> {
-    const re = /<\s*(\/)?\s*([a-z][\w:-]*)(?:\s[^>]*)?\/?\s*>/gi;
-    re.lastIndex = start;
-    for (let match = re.exec(html); match; match = re.exec(html)) {
-      const raw = match[0]!;
-      yield {
-        start: match.index,
-        end: re.lastIndex,
-        name: match[2]!.toLowerCase(),
-        closing: match[1] !== undefined,
-        selfClosing: /\/\s*>$/.test(raw),
-      };
+  const blocks = splitStatusBlocks(text);
+  let dropped = 0;
+  while (blocks.length > 1) {
+    blocks.shift();
+    dropped += 1;
+    const rest = trimLeadingBreaks(blocks.join("").trimStart());
+    const candidate = `<p>… ${dropped} earlier entries</p>${rest}`;
+    if (candidate.length <= MESSAGE_LIMIT) {
+      return candidate;
     }
   }
+  return capPlainStatus(blocks);
+}
 
-  private static pushStatusBlock(blocks: string[], block: string): void {
-    if (block) {
-      blocks.push(block);
-    }
-  }
-
-  private static trimLeadingBreaks(text: string): string {
-    return text.replace(/^(?:<br\s*\/?>)+/i, "").trimStart();
-  }
-
-  private static capPlainStatus(blocks: readonly string[]): string {
-    let head = "";
-    for (let i = 0; i < blocks.length; i++) {
-      const block = blocks[i]!;
-      const candidate = `${head}${block}`;
-      if (candidate.length <= MESSAGE_LIMIT) {
-        head = candidate;
-        continue;
-      }
-      const remaining = MESSAGE_LIMIT - head.length;
-      const truncated = Renderer.truncateHtmlHead(block, remaining);
-      if (truncated) {
-        head = `${head}${truncated}`;
-      }
+function splitStatusBlocks(html: string): string[] {
+  const blocks: string[] = [];
+  let cursor = 0;
+  while (cursor < html.length) {
+    const tag = nextStatusBlockTag(html, cursor);
+    if (!tag) {
+      pushStatusBlock(blocks, html.slice(cursor));
       break;
     }
-    return head.trimEnd();
+    if (VOID_BLOCK_TAGS.has(tag.name)) {
+      pushStatusBlock(blocks, html.slice(cursor, tag.end));
+      cursor = tag.end;
+      continue;
+    }
+    pushStatusBlock(blocks, html.slice(cursor, tag.start));
+    const end = statusBlockEnd(html, tag);
+    pushStatusBlock(blocks, html.slice(tag.start, end));
+    cursor = end;
   }
+  return blocks;
+}
 
-  private static truncateHtmlHead(html: string, limit: number): string {
-    if (html.length <= limit) {
-      return html;
+function nextStatusBlockTag(html: string, start: number): HtmlTag | undefined {
+  const tags = htmlTags(html, start);
+  for (const tag of tags) {
+    if (tag.closing) {
+      continue;
     }
-    if (limit <= 0) {
-      return "";
+    if (BLOCK_TAGS.has(tag.name) || VOID_BLOCK_TAGS.has(tag.name)) {
+      return tag;
     }
-    const wrapper = Renderer.outerHtmlWrapper(html);
-    if (wrapper) {
-      const innerLimit = limit - wrapper.open.length - wrapper.close.length;
-      if (innerLimit > 0) {
-        const inner = Renderer.truncateHtmlHead(wrapper.inner, innerLimit);
-        if (inner) {
-          return `${wrapper.open}${inner}${wrapper.close}`;
-        }
-      }
-    }
-    return Renderer.escapePlainHead(Renderer.stripHtml(html), limit);
   }
+  return undefined;
+}
 
-  private static outerHtmlWrapper(html: string):
-    | {
-        readonly open: string;
-        readonly inner: string;
-        readonly close: string;
+function statusBlockEnd(html: string, opener: HtmlTag): number {
+  if (opener.selfClosing) {
+    return opener.end;
+  }
+  const stack = [opener.name];
+  const tags = htmlTags(html, opener.end);
+  for (const tag of tags) {
+    if (VOID_BLOCK_TAGS.has(tag.name)) {
+      continue;
+    }
+    if (!BLOCK_TAGS.has(tag.name)) {
+      continue;
+    }
+    if (tag.closing) {
+      if (stack.at(-1) === tag.name) {
+        stack.pop();
       }
-    | undefined {
-    const opener = /^<\s*([a-z][\w:-]*)(?:\s[^>]*)?\/?\s*>/i.exec(html);
-    if (!opener) {
-      return undefined;
+    } else if (!tag.selfClosing) {
+      stack.push(tag.name);
     }
-    const open = opener[0]!;
-    if (/\/\s*>$/.test(open)) {
-      return undefined;
+    if (stack.length === 0) {
+      return tag.end;
     }
-    const name = opener[1]!.toLowerCase();
-    const close = Renderer.matchingHtmlCloseTag(html, name, open.length);
-    if (!close || close.end !== html.length) {
-      return undefined;
-    }
-    return {
-      open,
-      inner: html.slice(open.length, close.start),
-      close: html.slice(close.start, close.end),
+  }
+  return html.length;
+}
+
+function* htmlTags(html: string, start: number): Generator<HtmlTag> {
+  const re = /<\s*(\/)?\s*([a-z][\w:-]*)(?:\s[^>]*)?\/?\s*>/gi;
+  re.lastIndex = start;
+  for (let match = re.exec(html); match; match = re.exec(html)) {
+    const raw = match[0]!;
+    yield {
+      start: match.index,
+      end: re.lastIndex,
+      name: match[2]!.toLowerCase(),
+      closing: match[1] !== undefined,
+      selfClosing: /\/\s*>$/.test(raw),
     };
   }
+}
 
-  private static matchingHtmlCloseTag(
-    html: string,
-    name: string,
-    start: number
-  ): HtmlTag | undefined {
-    let depth = 1;
-    const tags = Renderer.htmlTags(html, start);
-    for (const tag of tags) {
-      if (tag.name !== name) {
-        continue;
-      }
-      if (tag.closing) {
-        depth -= 1;
-        if (depth === 0) {
-          return tag;
-        }
-      } else if (!tag.selfClosing && !VOID_BLOCK_TAGS.has(tag.name)) {
-        depth += 1;
+function pushStatusBlock(blocks: string[], block: string): void {
+  if (block) {
+    blocks.push(block);
+  }
+}
+
+function trimLeadingBreaks(text: string): string {
+  return text.replace(/^(?:<br\s*\/?>)+/i, "").trimStart();
+}
+
+function capPlainStatus(blocks: readonly string[]): string {
+  let head = "";
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i]!;
+    const candidate = `${head}${block}`;
+    if (candidate.length <= MESSAGE_LIMIT) {
+      head = candidate;
+      continue;
+    }
+    const remaining = MESSAGE_LIMIT - head.length;
+    const truncated = truncateHtmlHead(block, remaining);
+    if (truncated) {
+      head = `${head}${truncated}`;
+    }
+    break;
+  }
+  return head.trimEnd();
+}
+
+function truncateHtmlHead(html: string, limit: number): string {
+  if (html.length <= limit) {
+    return html;
+  }
+  if (limit <= 0) {
+    return "";
+  }
+  const wrapper = outerHtmlWrapper(html);
+  if (wrapper) {
+    const innerLimit = limit - wrapper.open.length - wrapper.close.length;
+    if (innerLimit > 0) {
+      const inner = truncateHtmlHead(wrapper.inner, innerLimit);
+      if (inner) {
+        return `${wrapper.open}${inner}${wrapper.close}`;
       }
     }
+  }
+  return escapePlainHead(stripHtml(html), limit);
+}
+
+function outerHtmlWrapper(html: string):
+  | {
+      readonly open: string;
+      readonly inner: string;
+      readonly close: string;
+    }
+  | undefined {
+  const opener = /^<\s*([a-z][\w:-]*)(?:\s[^>]*)?\/?\s*>/i.exec(html);
+  if (!opener) {
     return undefined;
   }
+  const open = opener[0]!;
+  if (/\/\s*>$/.test(open)) {
+    return undefined;
+  }
+  const name = opener[1]!.toLowerCase();
+  const close = matchingHtmlCloseTag(html, name, open.length);
+  if (!close || close.end !== html.length) {
+    return undefined;
+  }
+  return {
+    open,
+    inner: html.slice(open.length, close.start),
+    close: html.slice(close.start, close.end),
+  };
+}
 
-  private static escapePlainHead(text: string, limit: number): string {
-    const marker = "…";
-    if (limit < marker.length) {
-      return "";
+function matchingHtmlCloseTag(
+  html: string,
+  name: string,
+  start: number
+): HtmlTag | undefined {
+  let depth = 1;
+  const tags = htmlTags(html, start);
+  for (const tag of tags) {
+    if (tag.name !== name) {
+      continue;
     }
-    const budget = limit - marker.length;
-    const escaped: string[] = [];
-    let length = 0;
-    for (const char of text) {
-      const next = char === "\n" ? BR : Markdown.escape(char);
-      if (length + next.length > budget) {
-        break;
+    if (tag.closing) {
+      depth -= 1;
+      if (depth === 0) {
+        return tag;
       }
-      escaped.push(next);
-      length += next.length;
+    } else if (!tag.selfClosing && !VOID_BLOCK_TAGS.has(tag.name)) {
+      depth += 1;
     }
-    return `${escaped.join("").trimEnd()}${marker}`;
   }
+  return undefined;
+}
 
-  private static chunk(html: string): readonly string[] {
-    if (html.length <= MESSAGE_LIMIT) {
-      return [html];
-    }
-    const chunks: string[] = [];
-    let rest = html;
-    while (rest.length > MESSAGE_LIMIT) {
-      const idx = rest.lastIndexOf(BR, MESSAGE_LIMIT);
-      if (idx > 0) {
-        chunks.push(rest.slice(0, idx).trim());
-        rest = rest.slice(idx + BR.length).trim();
-      } else {
-        chunks.push(rest.slice(0, MESSAGE_LIMIT).trim());
-        rest = rest.slice(MESSAGE_LIMIT).trim();
-      }
-    }
-    if (rest) {
-      chunks.push(rest);
-    }
-    return chunks;
+function escapePlainHead(text: string, limit: number): string {
+  const marker = "…";
+  if (limit < marker.length) {
+    return "";
   }
+  const budget = limit - marker.length;
+  const escaped: string[] = [];
+  let length = 0;
+  for (const char of text) {
+    const next = char === "\n" ? BR : Markdown.escape(char);
+    if (length + next.length > budget) {
+      break;
+    }
+    escaped.push(next);
+    length += next.length;
+  }
+  return `${escaped.join("").trimEnd()}${marker}`;
+}
 
-  private static sanitize(text: string): string {
-    return text.replace(
-      /\b(api[_-]?key|token|secret)\b\s*[:=]\s*\S+/gi,
-      "$1=[redacted]"
-    );
+function chunk(html: string): readonly string[] {
+  if (html.length <= MESSAGE_LIMIT) {
+    return [html];
   }
+  const chunks: string[] = [];
+  let rest = html;
+  while (rest.length > MESSAGE_LIMIT) {
+    const idx = rest.lastIndexOf(BR, MESSAGE_LIMIT);
+    if (idx > 0) {
+      chunks.push(rest.slice(0, idx).trim());
+      rest = rest.slice(idx + BR.length).trim();
+    } else {
+      chunks.push(rest.slice(0, MESSAGE_LIMIT).trim());
+      rest = rest.slice(MESSAGE_LIMIT).trim();
+    }
+  }
+  if (rest) {
+    chunks.push(rest);
+  }
+  return chunks;
+}
 
-  private static stripHtml(html: string): string {
-    return html
-      .replace(/<br\s*\/?>/gi, "\n")
-      .replace(/<[^>]+>/g, "")
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
-      .replace(/&quot;/g, '"')
-      .replace(/&amp;/g, "&");
-  }
+function sanitize(text: string): string {
+  return text.replace(
+    /\b(api[_-]?key|token|secret)\b\s*[:=]\s*\S+/gi,
+    "$1=[redacted]"
+  );
+}
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, "&");
 }

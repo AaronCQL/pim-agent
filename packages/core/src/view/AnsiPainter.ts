@@ -31,72 +31,62 @@ export type PaintedGroup =
   | { readonly frame: BlockFrame; readonly lines: readonly string[] }
   | { readonly frame: "embed"; readonly markdown: string };
 
+function paint(blocks: readonly ViewBlock[], theme: Theme): string[] {
+  return blocks.flatMap((block) => paintBlock(block, theme));
+}
+
 /**
- * Paints a `ViewBlock` tree to ANSI lines. Returns plain strings rather than
- * pi-tui components so the same output can be asserted in unit tests and
- * wrapped by whichever container the caller already uses.
+ * Flattens title blocks to the one line a title renderer draws. Markdown is
+ * handed over unpainted, since it needs the width the title renderer knows.
  */
-export class AnsiPainter {
-  public static paint(blocks: readonly ViewBlock[], theme: Theme): string[] {
-    return blocks.flatMap((block) => paintBlock(block, theme));
+function paintTitle(
+  blocks: readonly ViewBlock[],
+  theme: Theme
+): { readonly text: string; readonly markdown: boolean } {
+  const only = blocks.length === 1 ? blocks[0] : undefined;
+  if (only?.kind === "markdown") {
+    return { text: only.text, markdown: true };
   }
+  return {
+    text: paint(blocks, theme).join(" "),
+    markdown: false,
+  };
+}
 
-  /**
-   * Flattens title blocks to the one line a title renderer draws. Markdown is
-   * handed over unpainted, since it needs the width the title renderer knows.
-   */
-  public static paintTitle(
-    blocks: readonly ViewBlock[],
-    theme: Theme
-  ): { readonly text: string; readonly markdown: boolean } {
-    const only = blocks.length === 1 ? blocks[0] : undefined;
-    if (only?.kind === "markdown") {
-      return { text: only.text, markdown: true };
-    }
-    return {
-      text: AnsiPainter.paint(blocks, theme).join(" "),
-      markdown: false,
-    };
-  }
+/** The theme colour a tone maps to, or undefined for the default colour. */
+function themeColorFor(tone: Tone | undefined): ThemeColor | undefined {
+  return tone === undefined || tone === "default"
+    ? undefined
+    : TONE_COLORS[tone];
+}
 
-  /** The theme colour a tone maps to, or undefined for the default colour. */
-  public static themeColorFor(tone: Tone | undefined): ThemeColor | undefined {
-    return tone === undefined || tone === "default"
-      ? undefined
-      : TONE_COLORS[tone];
-  }
+/**
+ * Paints a body, keeping adjacent blocks that share a frame together so the
+ * caller draws one container per run instead of one per block.
+ */
+function paintBody(blocks: readonly ViewBlock[], theme: Theme): PaintedGroup[] {
+  const groups: PaintedGroup[] = [];
+  let open: { frame: BlockFrame; lines: string[] } | undefined;
 
-  /**
-   * Paints a body, keeping adjacent blocks that share a frame together so the
-   * caller draws one container per run instead of one per block.
-   */
-  public static paintBody(
-    blocks: readonly ViewBlock[],
-    theme: Theme
-  ): PaintedGroup[] {
-    const groups: PaintedGroup[] = [];
-    let open: { frame: BlockFrame; lines: string[] } | undefined;
-
-    for (const block of blocks) {
-      if (block.kind === "markdown") {
-        open = undefined;
-        groups.push({ frame: "embed", markdown: block.text });
-        continue;
-      }
-
-      const frame = FRAMES[block.kind];
-      const lines = paintBlock(block, theme);
-
-      if (open?.frame === frame) {
-        open.lines.push(...lines);
-      } else {
-        open = { frame, lines: [...lines] };
-        groups.push(open);
-      }
+  for (const block of blocks) {
+    if (block.kind === "markdown") {
+      open = undefined;
+      groups.push({ frame: "embed", markdown: block.text });
+      continue;
     }
 
-    return groups;
+    const frame = FRAMES[block.kind];
+    const lines = paintBlock(block, theme);
+
+    if (open?.frame === frame) {
+      open.lines.push(...lines);
+    } else {
+      open = { frame, lines: [...lines] };
+      groups.push(open);
+    }
   }
+
+  return groups;
 }
 
 const TONE_COLORS = {
@@ -166,7 +156,7 @@ function paintSection(
     "",
     Renderer.toolTitleText({
       label: block.label,
-      title: AnsiPainter.paint(block.content, theme).join(" "),
+      title: paint(block.content, theme).join(" "),
       theme,
       markerColor: "success",
     }),
@@ -291,3 +281,10 @@ const FRAMES = {
   link: "flow",
   notice: "flow",
 } as const satisfies Record<ViewBlock["kind"], BlockFrame>;
+
+/**
+ * Paints a `ViewBlock` tree to ANSI lines. Returns plain strings rather than
+ * pi-tui components so the same output can be asserted in unit tests and
+ * wrapped by whichever container the caller already uses.
+ */
+export const AnsiPainter = { paint, paintTitle, themeColorFor, paintBody };

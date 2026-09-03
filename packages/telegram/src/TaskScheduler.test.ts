@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import type { SessionId } from "./Session";
-import { TaskScheduler } from "./TaskScheduler";
+import { TaskScheduler, parseDuration } from "./TaskScheduler";
 import type { ScheduledTask } from "./TaskSchema";
 import { TaskStore } from "./TaskStore";
 
@@ -43,23 +43,23 @@ async function listTaskFiles(): Promise<string[]> {
   }
 }
 
-describe("TaskScheduler.parseDuration", () => {
+describe("parseDuration", () => {
   test("parses simple units", () => {
-    expect(TaskScheduler.parseDuration("30s")).toBe(30_000);
-    expect(TaskScheduler.parseDuration("5m")).toBe(300_000);
-    expect(TaskScheduler.parseDuration("2h")).toBe(7_200_000);
-    expect(TaskScheduler.parseDuration("1d")).toBe(86_400_000);
+    expect(parseDuration("30s")).toBe(30_000);
+    expect(parseDuration("5m")).toBe(300_000);
+    expect(parseDuration("2h")).toBe(7_200_000);
+    expect(parseDuration("1d")).toBe(86_400_000);
   });
 
   test("parses compound durations", () => {
-    expect(TaskScheduler.parseDuration("1h30m")).toBe(5_400_000);
-    expect(TaskScheduler.parseDuration("2h15m30s")).toBe(8_130_000);
+    expect(parseDuration("1h30m")).toBe(5_400_000);
+    expect(parseDuration("2h15m30s")).toBe(8_130_000);
   });
 
   test("rejects garbage", () => {
-    expect(() => TaskScheduler.parseDuration("")).toThrow();
-    expect(() => TaskScheduler.parseDuration("forever")).toThrow();
-    expect(() => TaskScheduler.parseDuration("10")).toThrow();
+    expect(() => parseDuration("")).toThrow();
+    expect(() => parseDuration("forever")).toThrow();
+    expect(() => parseDuration("10")).toThrow();
   });
 });
 
@@ -73,11 +73,9 @@ describe("TaskScheduler.tick", () => {
     });
     expect(task.nextRun).toBe(new Date(t0 + 30 * 60_000).toISOString());
 
-    // Not yet due
     await scheduler.tick();
     expect(fired).toHaveLength(0);
 
-    // 30 min later, due
     const t1 = t0 + 30 * 60_000 + 5_000;
     const later = makeScheduler({ now: () => t1 });
     await later.scheduler.tick();
@@ -102,7 +100,6 @@ describe("TaskScheduler.tick", () => {
     await s2.tick();
     expect(fired).toHaveLength(0);
 
-    // File still exists
     expect(await listTaskFiles()).toHaveLength(1);
   });
 
@@ -124,7 +121,6 @@ describe("TaskScheduler.tick", () => {
 
   test("missed >24h is advanced silently without firing", async () => {
     const t0 = Date.parse("2026-05-14T12:00:00Z");
-    // Manually write a task whose nextRun is 26h in the past
     const stale: ScheduledTask = {
       id: "stale-task",
       prompt: "test",
@@ -199,14 +195,12 @@ describe("TaskScheduler.tick", () => {
     });
     expect(task.nextRun).toBe(new Date(t0 + 3600_000).toISOString());
 
-    // Fire it
     const fireTime = t0 + 3600_000 + 30_000;
     const { scheduler: s2, fired } = makeScheduler({ now: () => fireTime });
     await s2.tick();
     expect(fired).toHaveLength(1);
 
     const reloaded = (await TaskStore.loadAll(tmp))[0]!;
-    // Should advance to next top-of-hour after firing
     expect(Date.parse(reloaded.nextRun)).toBeGreaterThan(fireTime);
   });
 });

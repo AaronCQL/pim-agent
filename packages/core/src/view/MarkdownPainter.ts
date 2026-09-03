@@ -48,80 +48,72 @@ export type PaintedTool = {
 
 const INLINE_LIMIT = 180;
 
-/**
- * Paints a `ViewBlock` tree to Telegram-flavoured HTML. Telegram's "markdown"
- * is a small HTML subset (`b`, `i`, `s`, `code`, `pre`, `a`, `blockquote`),
- * which is what this emits; block separation is left to the caller, which
- * joins lines with whatever break its surface uses.
- */
-export class MarkdownPainter {
-  public static escape(text: string): string {
-    return text
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
-  }
+function escape(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
 
-  public static paint(blocks: readonly ViewBlock[]): string[] {
-    return blocks.flatMap((block) => paintBlock(block, "block"));
-  }
+function paint(blocks: readonly ViewBlock[]): string[] {
+  return blocks.flatMap((block) => paintBlock(block, "block"));
+}
 
-  /** Flattens blocks to the single line a title or status row occupies. */
-  public static paintInline(blocks: readonly ViewBlock[]): string {
-    return blocks
-      .flatMap((block) => paintBlock(block, "inline"))
-      .filter((line) => line !== "")
-      .join(" ");
-  }
+/** Flattens blocks to the single line a title or status row occupies. */
+function paintInline(blocks: readonly ViewBlock[]): string {
+  return blocks
+    .flatMap((block) => paintBlock(block, "inline"))
+    .filter((line) => line !== "")
+    .join(" ");
+}
 
-  /** Groups a body by frame so a caller can treat payloads differently. */
-  public static paintBody(blocks: readonly ViewBlock[]): MarkdownGroup[] {
-    const groups: MarkdownGroup[] = [];
-    let open: { frame: MarkdownFrame; lines: string[] } | undefined;
+/** Groups a body by frame so a caller can treat payloads differently. */
+function paintBody(blocks: readonly ViewBlock[]): MarkdownGroup[] {
+  const groups: MarkdownGroup[] = [];
+  let open: { frame: MarkdownFrame; lines: string[] } | undefined;
 
-    for (const block of blocks) {
-      const frame = FRAMES[block.kind];
-      const lines = paintBlock(block, "block");
-      if (open?.frame === frame) {
-        open.lines.push(...lines);
-      } else {
-        open = { frame, lines: [...lines] };
-        groups.push(open);
-      }
+  for (const block of blocks) {
+    const frame = FRAMES[block.kind];
+    const painted = paintBlock(block, "block");
+    if (open?.frame === frame) {
+      open.lines.push(...painted);
+    } else {
+      open = { frame, lines: [...painted] };
+      groups.push(open);
     }
-
-    return groups;
   }
 
-  public static icon(icon: ToolIcon | undefined): string {
-    return icon === undefined ? DEFAULT_ICON : ICONS[icon];
-  }
+  return groups;
+}
 
-  /**
-   * Paints a whole tool row for a surface with no expand affordance.
-   *
-   * `title` and `summary` are the always-on parts everywhere else too, so they
-   * share the first line. `body` is the expand-only payload and is dropped —
-   * it is unbounded (a whole file, a whole diff) and there is nothing to
-   * expand it from. Its `section` headings survive: they are the structural
-   * outline of a multi-part result (one line per file of a patch), bounded by
-   * the number of sub-items rather than by their size.
-   */
-  public static paintTool(view: ToolView): PaintedTool {
-    const head = [view.title, view.summary ?? []]
-      .map((blocks) => MarkdownPainter.paintInline(blocks))
-      .filter((text) => text !== "")
-      .join(" ");
-    const outline = MarkdownPainter.paintBody(view.body ?? [])
-      .filter((group) => group.frame === "heading")
-      .flatMap((group) => group.lines);
+function icon(toolIcon: ToolIcon | undefined): string {
+  return toolIcon === undefined ? DEFAULT_ICON : ICONS[toolIcon];
+}
 
-    return {
-      icon: MarkdownPainter.icon(view.icon),
-      lines: [head, ...outline].filter((line) => line !== ""),
-    };
-  }
+/**
+ * Paints a whole tool row for a surface with no expand affordance.
+ *
+ * `title` and `summary` are the always-on parts everywhere else too, so they
+ * share the first line. `body` is the expand-only payload and is dropped —
+ * it is unbounded (a whole file, a whole diff) and there is nothing to
+ * expand it from. Its `section` headings survive: they are the structural
+ * outline of a multi-part result (one line per file of a patch), bounded by
+ * the number of sub-items rather than by their size.
+ */
+function paintTool(view: ToolView): PaintedTool {
+  const head = [view.title, view.summary ?? []]
+    .map((blocks) => paintInline(blocks))
+    .filter((text) => text !== "")
+    .join(" ");
+  const outline = paintBody(view.body ?? [])
+    .filter((group) => group.frame === "heading")
+    .flatMap((group) => group.lines);
+
+  return {
+    icon: icon(view.icon),
+    lines: [head, ...outline].filter((line) => line !== ""),
+  };
 }
 
 const ICONS = {
@@ -187,13 +179,13 @@ function oneLine(text: string): string {
 }
 
 function escapeIn(text: string, mode: Mode): string {
-  return MarkdownPainter.escape(mode === "inline" ? oneLine(text) : text);
+  return escape(mode === "inline" ? oneLine(text) : text);
 }
 
 function lines(text: string, mode: Mode): readonly string[] {
   return mode === "inline"
     ? [escapeIn(text, mode)]
-    : text.split("\n").map((line) => MarkdownPainter.escape(line));
+    : text.split("\n").map((line) => escape(line));
 }
 
 function paintText(block: BlockOf<"text">, mode: Mode): readonly string[] {
@@ -230,10 +222,8 @@ function spansText(spans: readonly Span[], mode: Mode): string {
  */
 function paintSection(block: BlockOf<"section">): readonly string[] {
   const lead =
-    block.icon === undefined
-      ? bold(MarkdownPainter.escape(block.label))
-      : MarkdownPainter.icon(block.icon);
-  const content = MarkdownPainter.paintInline(block.content);
+    block.icon === undefined ? bold(escape(block.label)) : icon(block.icon);
+  const content = paintInline(block.content);
   return [content === "" ? lead : `${lead} ${content}`];
 }
 
@@ -243,7 +233,7 @@ function paintCode(block: BlockOf<"code">, mode: Mode): readonly string[] {
   }
   const start = block.startLine;
   const body = numbered(block.text.split("\n"), start)
-    .map((line) => MarkdownPainter.escape(line))
+    .map((line) => escape(line))
     .join("\n");
   return [preformatted(body, block.lang)];
 }
@@ -264,7 +254,7 @@ function numbered(
 function preformatted(body: string, lang?: string): string {
   return lang === undefined || lang === ""
     ? `<pre>${body}</pre>`
-    : `<pre><code class="language-${MarkdownPainter.escape(lang)}">${body}</code></pre>`;
+    : `<pre><code class="language-${escape(lang)}">${body}</code></pre>`;
 }
 
 /**
@@ -279,12 +269,7 @@ function paintDiff(block: BlockOf<"diff">, mode: Mode): readonly string[] {
   if (mode === "inline") {
     return [`<code>${escapeIn(body[0] ?? "", mode)}</code>`];
   }
-  return [
-    preformatted(
-      body.map((line) => MarkdownPainter.escape(line)).join("\n"),
-      "diff"
-    ),
-  ];
+  return [preformatted(body.map((line) => escape(line)).join("\n"), "diff")];
 }
 
 function diffLines(hunk: DiffHunk): readonly string[] {
@@ -306,9 +291,7 @@ function paintFile(block: BlockOf<"file">, mode: Mode): readonly string[] {
   const path = mode === "inline" ? basename(block.path) : block.path;
   const range = block.range ? formatRange(block.range) : "";
   const truncated = block.truncated === true ? " (truncated)" : "";
-  return [
-    `<code>${MarkdownPainter.escape(oneLine(path) + range)}</code>${truncated}`,
-  ];
+  return [`<code>${escape(oneLine(path) + range)}</code>${truncated}`];
 }
 
 function formatRange(range: readonly [number, number | undefined]): string {
@@ -341,9 +324,7 @@ function paintKv(block: BlockOf<"kv">, mode: Mode): readonly string[] {
 function paintLink(block: BlockOf<"link">, mode: Mode): readonly string[] {
   const label =
     block.label === "" || block.label === block.href ? block.href : block.label;
-  return [
-    `<a href="${MarkdownPainter.escape(block.href)}">${escapeIn(label, mode)}</a>`,
-  ];
+  return [`<a href="${escape(block.href)}">${escapeIn(label, mode)}</a>`];
 }
 
 /**
@@ -390,3 +371,18 @@ const FRAMES = {
   link: "flow",
   notice: "flow",
 } as const satisfies Record<ViewBlock["kind"], MarkdownFrame>;
+
+/**
+ * Paints a `ViewBlock` tree to Telegram-flavoured HTML. Telegram's "markdown"
+ * is a small HTML subset (`b`, `i`, `s`, `code`, `pre`, `a`, `blockquote`),
+ * which is what this emits; block separation is left to the caller, which
+ * joins lines with whatever break its surface uses.
+ */
+export const MarkdownPainter = {
+  escape,
+  paint,
+  paintInline,
+  paintBody,
+  icon,
+  paintTool,
+};

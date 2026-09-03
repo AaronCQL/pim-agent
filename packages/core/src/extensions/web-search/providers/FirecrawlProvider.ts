@@ -22,6 +22,9 @@ export type FirecrawlProviderOptions = {
   readonly timeoutMs?: number;
 };
 
+const defaultEndpoint = "https://api.firecrawl.dev/v2/search";
+const defaultTimeoutMs = 20_000;
+
 /**
  * Firecrawl's search endpoint works with no credentials at all: the keyless
  * tier is the same URL with the `Authorization` header omitted, metered per IP
@@ -29,10 +32,6 @@ export type FirecrawlProviderOptions = {
  * a 429 on the call that trips it.
  */
 export class FirecrawlProvider implements SearchProvider {
-  public static readonly defaultEndpoint =
-    "https://api.firecrawl.dev/v2/search";
-  private static readonly defaultTimeoutMs = 20_000;
-
   public readonly name = "firecrawl";
 
   private readonly endpoint: string;
@@ -41,8 +40,8 @@ export class FirecrawlProvider implements SearchProvider {
   private readonly ky: KyInstance;
 
   public constructor(options: FirecrawlProviderOptions = {}) {
-    this.endpoint = options.endpoint ?? FirecrawlProvider.defaultEndpoint;
-    this.timeoutMs = options.timeoutMs ?? FirecrawlProvider.defaultTimeoutMs;
+    this.endpoint = options.endpoint ?? defaultEndpoint;
+    this.timeoutMs = options.timeoutMs ?? defaultTimeoutMs;
     this.headers =
       options.apiKey === undefined || options.apiKey.length === 0
         ? {}

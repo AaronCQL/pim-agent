@@ -4,10 +4,9 @@ import type { Element } from "solid-js";
  * The one wrapper feature code may use to hide a payload behind a disclosure.
  * `<details>`/`<summary>` is the platform primitive: keyboard operation, the
  * open/closed state, and find-in-page all come free, and no component library
- * is involved (Guiding Decision 13).
+ * is involved.
  *
- * Nothing outside `ui/` writes `<details>` directly — that is what makes
- * swapping in Ark or Kobalte later an internals change rather than a rewrite.
+ * Nothing outside `ui/` writes `<details>` directly.
  */
 export function Collapsible(props: {
   readonly summary: Element;

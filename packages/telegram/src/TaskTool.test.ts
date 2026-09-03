@@ -40,7 +40,6 @@ function makeTool(opts?: { readonly now?: () => number }): {
       input,
       new AbortController().signal,
       undefined,
-      // ExtensionContext stub — tool doesn't use it
       {} as never
     );
     return {

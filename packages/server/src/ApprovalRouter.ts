@@ -23,7 +23,7 @@ export type ApprovalOutcome = {
 };
 
 /**
- * Which of the three tiers of Resolved Decision 8 a call landed in. Tiers 1
+ * Which of the three tiers of the approval policy a call landed in. Tiers 1
  * and 2 run unattended; tier 3 blocks the turn until someone answers.
  */
 export type ApprovalClassification = {
@@ -74,7 +74,7 @@ const RECENT_CAP = 64;
  * everything else blocks the turn until a client answers. That asymmetry is
  * the point: queueing every call would mean an agent can only work while
  * somebody is watching, which is precisely what this architecture exists to
- * avoid (Resolved Decision 8).
+ * avoid.
  *
  * Blocking is per session. Pi awaits `beforeToolCall` inside one agent's loop,
  * every session owns its own agent and its own turn queue, and the gateway

@@ -34,98 +34,88 @@ const NAMES = Object.keys(EXTENSIONS) as readonly PimExtensionName[];
 /** Ships off: opt-in reporting rather than a capability. */
 const DEFAULT_DISABLED: readonly PimExtensionName[] = ["tps"];
 
-export class ExtensionToggles {
-  private static writeQueue: Promise<unknown> = Promise.resolve();
+let writeQueue: Promise<unknown> = Promise.resolve();
 
-  /**
-   * `_init` carries the Bun runtime guard and the splash.
-   * `pim` is the only in-session way back from a disable.
-   */
-  public static readonly REQUIRED: readonly PimExtensionName[] = [
-    "_init",
-    "pim",
-  ];
+/**
+ * `_init` carries the Bun runtime guard and the splash.
+ * `pim` is the only in-session way back from a disable.
+ */
+const REQUIRED: readonly PimExtensionName[] = ["_init", "pim"];
 
-  public static readonly NAMES: readonly PimExtensionName[] = NAMES;
+function isRequired(name: string): boolean {
+  return (REQUIRED as readonly string[]).includes(name);
+}
 
-  public static isRequired(name: string): boolean {
-    return (ExtensionToggles.REQUIRED as readonly string[]).includes(name);
+function isKnown(name: string): name is PimExtensionName {
+  return name in EXTENSIONS;
+}
+
+function describe(name: PimExtensionName): string {
+  return EXTENSIONS[name];
+}
+
+/**
+ * Wraps a factory so a disabled extension registers nothing. Pi re-invokes
+ * every factory on `ctx.reload()`, which is what makes a toggle land without
+ * a restart — filtering the roster before `main` could not.
+ */
+function gate(
+  name: PimExtensionName,
+  factory: ExtensionFactory
+): ExtensionFactory {
+  return async (pi) => {
+    if (await isDisabled(name)) {
+      return;
+    }
+    await factory(pi);
+  };
+}
+
+async function disabled(): Promise<readonly PimExtensionName[]> {
+  const { toggles } = await PimSettings.get("extensions");
+  return NAMES.filter((name) => !enabled(name, toggles));
+}
+
+async function isDisabled(name: string): Promise<boolean> {
+  if (!isKnown(name)) {
+    return false;
   }
+  const { toggles } = await PimSettings.get("extensions");
+  return !enabled(name, toggles);
+}
 
-  public static isKnown(name: string): name is PimExtensionName {
-    return name in EXTENSIONS;
+/** Serialized: the menu fires one of these per keypress, and each is a
+ * read-modify-write of the same record. */
+async function setDisabled(name: string, isOff: boolean): Promise<void> {
+  if (!isKnown(name)) {
+    throw new Error(`Unknown pim extension "${name}"`);
   }
-
-  public static describe(name: PimExtensionName): string {
-    return EXTENSIONS[name];
+  if (isOff && isRequired(name)) {
+    throw new Error(`"${name}" is required by pim and cannot be disabled`);
   }
-
-  /**
-   * Wraps a factory so a disabled extension registers nothing. Pi re-invokes
-   * every factory on `ctx.reload()`, which is what makes a toggle land without
-   * a restart — filtering the roster before `main` could not.
-   */
-  public static gate(
-    name: PimExtensionName,
-    factory: ExtensionFactory
-  ): ExtensionFactory {
-    return async (pi) => {
-      if (await ExtensionToggles.isDisabled(name)) {
-        return;
-      }
-      await factory(pi);
-    };
-  }
-
-  public static async disabled(): Promise<readonly PimExtensionName[]> {
+  const task = async (): Promise<void> => {
     const { toggles } = await PimSettings.get("extensions");
-    return NAMES.filter((name) => !enabled(name, toggles));
-  }
+    const next = { ...toggles };
+    if (!isOff === defaultEnabled(name)) {
+      delete next[name];
+    } else {
+      next[name] = !isOff;
+    }
+    await PimSettings.set("extensions", { toggles: next });
+  };
+  writeQueue = writeQueue.then(task, task);
+  await writeQueue;
+}
 
-  public static async isDisabled(name: string): Promise<boolean> {
-    if (!ExtensionToggles.isKnown(name)) {
-      return false;
-    }
-    const { toggles } = await PimSettings.get("extensions");
-    return !enabled(name, toggles);
+async function toggle(
+  name: string
+): Promise<{ readonly name: PimExtensionName; readonly disabled: boolean }> {
+  if (!isKnown(name)) {
+    throw new Error(`Unknown pim extension "${name}"`);
   }
-
-  /** Serialized: the menu fires one of these per keypress, and each is a
-   * read-modify-write of the same record. */
-  public static async setDisabled(
-    name: string,
-    disabled: boolean
-  ): Promise<void> {
-    if (!ExtensionToggles.isKnown(name)) {
-      throw new Error(`Unknown pim extension "${name}"`);
-    }
-    if (disabled && ExtensionToggles.isRequired(name)) {
-      throw new Error(`"${name}" is required by pim and cannot be disabled`);
-    }
-    const task = async (): Promise<void> => {
-      const { toggles } = await PimSettings.get("extensions");
-      const next = { ...toggles };
-      if (!disabled === defaultEnabled(name)) {
-        delete next[name];
-      } else {
-        next[name] = !disabled;
-      }
-      await PimSettings.set("extensions", { toggles: next });
-    };
-    ExtensionToggles.writeQueue = ExtensionToggles.writeQueue.then(task, task);
-    await ExtensionToggles.writeQueue;
-  }
-
-  public static async toggle(
-    name: string
-  ): Promise<{ readonly name: PimExtensionName; readonly disabled: boolean }> {
-    if (!ExtensionToggles.isKnown(name)) {
-      throw new Error(`Unknown pim extension "${name}"`);
-    }
-    const disabled = !(await ExtensionToggles.isDisabled(name));
-    await ExtensionToggles.setDisabled(name, disabled);
-    return { name, disabled };
-  }
+  const isOff = !(await isDisabled(name));
+  await setDisabled(name, isOff);
+  return { name, disabled: isOff };
 }
 
 function defaultEnabled(name: PimExtensionName): boolean {
@@ -136,8 +126,21 @@ function enabled(
   name: PimExtensionName,
   toggles: Readonly<Record<string, boolean>>
 ): boolean {
-  if (ExtensionToggles.isRequired(name)) {
+  if (isRequired(name)) {
     return true;
   }
   return toggles[name] ?? defaultEnabled(name);
 }
+
+export const ExtensionToggles = {
+  REQUIRED,
+  NAMES,
+  isRequired,
+  isKnown,
+  describe,
+  gate,
+  disabled,
+  isDisabled,
+  setDisabled,
+  toggle,
+};

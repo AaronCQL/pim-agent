@@ -16,36 +16,29 @@ type FrameBuilder = (group: PaintedGroup, theme: Theme) => Component[];
 
 type FrameBuilders = Record<BlockFrame, FrameBuilder>;
 
-/**
- * Turns painted body lines into the pi-tui components that frame them. The
- * frame is the only part of a body the painter cannot decide on its own: the
- * gutter has to wrap at the terminal width, which is known at render time.
- */
-export class BodyRenderer {
-  public static render(args: {
-    readonly summary?: readonly ViewBlock[];
-    readonly body?: readonly ViewBlock[];
-    readonly options: ToolRenderResultOptions;
-    readonly theme: Theme;
-    readonly context: RenderContext;
-  }): Container {
-    const { summary, body, options, theme, context } = args;
-    const container =
-      (context.lastComponent as Container | undefined) ?? new Container();
-    container.clear();
+function render(args: {
+  readonly summary?: readonly ViewBlock[];
+  readonly body?: readonly ViewBlock[];
+  readonly options: ToolRenderResultOptions;
+  readonly theme: Theme;
+  readonly context: RenderContext;
+}): Container {
+  const { summary, body, options, theme, context } = args;
+  const container =
+    (context.lastComponent as Container | undefined) ?? new Container();
+  container.clear();
 
-    // The summary is the row's status line, so it survives streaming and stays
-    // put while the body is collapsed away.
-    let drew = draw(container, summary ?? [], SUMMARY_BUILDERS, theme);
-    if (!options.isPartial && options.expanded) {
-      drew = draw(container, body ?? [], FRAME_BUILDERS, theme) || drew;
-    }
-
-    if (drew) {
-      container.invalidate();
-    }
-    return container;
+  // The summary is the row's status line, so it survives streaming and stays
+  // put while the body is collapsed away.
+  let drew = draw(container, summary ?? [], SUMMARY_BUILDERS, theme);
+  if (!options.isPartial && options.expanded) {
+    drew = draw(container, body ?? [], FRAME_BUILDERS, theme) || drew;
   }
+
+  if (drew) {
+    container.invalidate();
+  }
+  return container;
 }
 
 function draw(
@@ -110,3 +103,10 @@ const SUMMARY_BUILDERS: FrameBuilders = {
   ...FRAME_BUILDERS,
   flow: gutter(Renderer.GAPPED_PREFIX),
 };
+
+/**
+ * Turns painted body lines into the pi-tui components that frame them. The
+ * frame is the only part of a body the painter cannot decide on its own: the
+ * gutter has to wrap at the terminal width, which is known at render time.
+ */
+export const BodyRenderer = { render };

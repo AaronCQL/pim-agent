@@ -32,13 +32,11 @@ beforeAll(() => {
     "excluded-by-info.txt\n"
   );
 
-  // Tracked source files.
   write("a.ts", "a");
   write("src/index.ts", "i");
   write("src/util/helpers.ts", "h");
   write("README.md", "r");
 
-  // Dotfiles / dot-dirs.
   write(".env", "secret");
   write(".github/workflows/ci.yml", "ci");
 

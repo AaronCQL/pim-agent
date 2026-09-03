@@ -53,10 +53,10 @@ export class AttachmentStore {
     const dir = this.scopeDir(scope);
     await mkdir(dir, { recursive: true });
 
-    const id = AttachmentStore.safeName(
-      `${input.stem ?? Bun.randomUUIDv7()}-${Date.now()}${AttachmentStore.extensionOf(input)}`
+    const id = safeName(
+      `${input.stem ?? Bun.randomUUIDv7()}-${Date.now()}${extensionOf(input)}`
     );
-    const path = AttachmentStore.contain(dir, id);
+    const path = contain(dir, id);
     await Bun.write(path, input.bytes);
 
     const isImage = input.mimeType.startsWith("image/");
@@ -71,47 +71,49 @@ export class AttachmentStore {
     };
   }
 
-  /** What the prompt says about a set of stored files, and nothing more. */
-  public static toPrompt(files: readonly StoredAttachment[]): AttachmentPrompt {
-    const lines: string[] = [];
-    const images: NonNullable<PromptOptions["images"]> = [];
-    for (const file of files) {
-      if (file.imageBase64) {
-        images.push({
-          type: "image",
-          data: file.imageBase64,
-          mimeType: file.mimeType,
-        });
-        lines.push(`[Image attachment: ${file.path}]`);
-        continue;
-      }
-      lines.push(`[Attachment: ${file.path}]`);
-    }
-    return { lines, images };
-  }
-
   private scopeDir(scope: string): string {
-    return AttachmentStore.contain(this.root, AttachmentStore.safeName(scope));
+    return contain(this.root, safeName(scope));
   }
+}
 
-  private static extensionOf(input: AttachmentInput): string {
-    const fromName = extname(basename(input.name ?? ""));
-    return fromName || input.ext || "";
-  }
-
-  private static safeName(name: string): string {
-    return basename(name).replace(/[^a-zA-Z0-9._-]/g, "_");
-  }
-
-  /**
-   * `safeName` already strips separators, so this can only fire on a name that
-   * is pure dots. Cheap, and the failure it guards against is arbitrary write.
-   */
-  private static contain(parent: string, child: string): string {
-    const path = resolve(parent, child);
-    if (!path.startsWith(`${resolve(parent)}${sep}`)) {
-      throw new Error(`refusing attachment path outside ${parent}: ${child}`);
+/** What the prompt says about a set of stored files, and nothing more. */
+export function toAttachmentPrompt(
+  files: readonly StoredAttachment[]
+): AttachmentPrompt {
+  const lines: string[] = [];
+  const images: NonNullable<PromptOptions["images"]> = [];
+  for (const file of files) {
+    if (file.imageBase64) {
+      images.push({
+        type: "image",
+        data: file.imageBase64,
+        mimeType: file.mimeType,
+      });
+      lines.push(`[Image attachment: ${file.path}]`);
+      continue;
     }
-    return path;
+    lines.push(`[Attachment: ${file.path}]`);
   }
+  return { lines, images };
+}
+
+function extensionOf(input: AttachmentInput): string {
+  const fromName = extname(basename(input.name ?? ""));
+  return fromName || input.ext || "";
+}
+
+function safeName(name: string): string {
+  return basename(name).replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+/**
+ * `safeName` already strips separators, so this can only fire on a name that
+ * is pure dots. Cheap, and the failure it guards against is arbitrary write.
+ */
+function contain(parent: string, child: string): string {
+  const path = resolve(parent, child);
+  if (!path.startsWith(`${resolve(parent)}${sep}`)) {
+    throw new Error(`refusing attachment path outside ${parent}: ${child}`);
+  }
+  return path;
 }

@@ -2,7 +2,7 @@ import { SessionRegistry } from "../../core/src/session/SessionRegistry";
 import { WsGateway } from "./WsGateway";
 
 const DEFAULT_PORT = "4319";
-/** Loopback until Phase 6 puts a bearer token in front of the tailnet. */
+/** Loopback only: the server has full host access and no authentication. */
 const DEFAULT_HOSTNAME = "127.0.0.1";
 
 type Cli = {

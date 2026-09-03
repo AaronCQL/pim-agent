@@ -115,7 +115,7 @@ export class TaskScheduler {
     if (!t) {
       return false;
     }
-    await TaskStore.delete(this.configDir, id);
+    await TaskStore.remove(this.configDir, id);
     return true;
   }
 
@@ -178,17 +178,17 @@ export class TaskScheduler {
       if (task.expires) {
         const expMs = Date.parse(task.expires);
         if (Number.isFinite(expMs) && now > expMs) {
-          await TaskStore.delete(this.configDir, task.id);
+          await TaskStore.remove(this.configDir, task.id);
           continue;
         }
       }
 
       if (now - nextMs > MISSED_TASK_WINDOW_MS) {
-        const advanced = TaskScheduler.advanceNextRun(task, now);
+        const advanced = advanceNextRun(task, now);
         if (advanced) {
           await TaskStore.save(this.configDir, advanced);
         } else {
-          await TaskStore.delete(this.configDir, task.id);
+          await TaskStore.remove(this.configDir, task.id);
         }
         console.warn(
           `[scheduler] task ${task.id} missed by >24h, advanced silently`
@@ -211,11 +211,11 @@ export class TaskScheduler {
     } catch (err) {
       console.error(`[scheduler] task ${task.id} runTask failed:`, err);
     }
-    const next = TaskScheduler.advanceNextRun(task, firedAt);
+    const next = advanceNextRun(task, firedAt);
     if (next) {
       await TaskStore.save(this.configDir, next);
     } else {
-      await TaskStore.delete(this.configDir, task.id);
+      await TaskStore.remove(this.configDir, task.id);
     }
   }
 
@@ -232,7 +232,7 @@ export class TaskScheduler {
       return new Date(at).toISOString();
     }
     if (schedule.type === "interval") {
-      const ms = TaskScheduler.parseDuration(schedule.every);
+      const ms = parseDuration(schedule.every);
       if (ms < MIN_INTERVAL_MS) {
         throw new Error(`interval must be at least 1 minute`);
       }
@@ -244,45 +244,45 @@ export class TaskScheduler {
     }
     return next.toISOString();
   }
+}
 
-  private static advanceNextRun(
-    task: ScheduledTask,
-    fromMs: number
-  ): ScheduledTask | undefined {
-    const schedule = task.schedule;
-    if (schedule.type === "once") {
-      return undefined;
-    }
-    if (schedule.type === "interval") {
-      const ms = TaskScheduler.parseDuration(schedule.every);
-      return { ...task, nextRun: new Date(fromMs + ms).toISOString() };
-    }
-    const next = Bun.cron.parse(schedule.expr, new Date(fromMs));
-    if (!next) {
-      return undefined;
-    }
-    return { ...task, nextRun: next.toISOString() };
+function advanceNextRun(
+  task: ScheduledTask,
+  fromMs: number
+): ScheduledTask | undefined {
+  const schedule = task.schedule;
+  if (schedule.type === "once") {
+    return undefined;
   }
+  if (schedule.type === "interval") {
+    const ms = parseDuration(schedule.every);
+    return { ...task, nextRun: new Date(fromMs + ms).toISOString() };
+  }
+  const next = Bun.cron.parse(schedule.expr, new Date(fromMs));
+  if (!next) {
+    return undefined;
+  }
+  return { ...task, nextRun: next.toISOString() };
+}
 
-  public static parseDuration(input: string): number {
-    const s = input.trim();
-    if (!s) {
-      throw new Error("empty duration");
-    }
-    let remaining = s;
-    let total = 0;
-    while (remaining.length > 0) {
-      const m = remaining.match(/^(\d+)([smhd])/);
-      if (!m) {
-        throw new Error(`bad duration: ${input}`);
-      }
-      const n = Number(m[1]);
-      const mult = DURATION_UNITS[m[2]!]!;
-      total += n * mult;
-      remaining = remaining.slice(m[0].length);
-    }
-    return total;
+export function parseDuration(input: string): number {
+  const s = input.trim();
+  if (!s) {
+    throw new Error("empty duration");
   }
+  let remaining = s;
+  let total = 0;
+  while (remaining.length > 0) {
+    const m = remaining.match(/^(\d+)([smhd])/);
+    if (!m) {
+      throw new Error(`bad duration: ${input}`);
+    }
+    const n = Number(m[1]);
+    const mult = DURATION_UNITS[m[2]!]!;
+    total += n * mult;
+    remaining = remaining.slice(m[0].length);
+  }
+  return total;
 }
 
 const DURATION_UNITS: Record<string, number> = {

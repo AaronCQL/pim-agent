@@ -6,7 +6,7 @@ import { defineConfig } from "vite";
  * Client mode only. `start` is left off entirely, so there is no server
  * runtime for a server-function directive to attach to: `vite build` emits a
  * static bundle that `pim-server` serves, and `pim-server` stays the only
- * backend (Phase 5 acceptance criterion, enforced by `acceptance.test.ts`).
+ * backend. `acceptance.test.ts` enforces it.
  *
  * The plugin defaults to Solid's Oxc compiler; adding a Babel pass here would
  * forfeit that, so don't.

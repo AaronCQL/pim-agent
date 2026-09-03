@@ -3,7 +3,7 @@ import type { Server, ServerWebSocket } from "bun";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 
-import { AttachmentStore } from "../../core/src/attachments/AttachmentStore";
+import { toAttachmentPrompt } from "../../core/src/attachments/AttachmentStore";
 import type { PickerItem } from "../../core/src/picker/PickerItem";
 import type { SessionRegistry } from "../../core/src/session/SessionRegistry";
 import type { SessionHost } from "../../core/src/session/SessionHost";
@@ -21,9 +21,8 @@ export const CLOSE_PROTOCOL_MISMATCH = 4001;
 export type WsGatewayDeps = {
   readonly registry: SessionRegistry;
   /**
-   * Loopback by default and never `0.0.0.0`. Phase 6 moves this to the tailnet
-   * interface and adds the bearer token; until then the server has full host
-   * access with no auth, so it must not be reachable off-box.
+   * Loopback by default and never `0.0.0.0`: the server has full host access
+   * with no auth, so it must not be reachable off-box.
    */
   readonly hostname?: string;
   /** 0 asks the OS for a free port; read it back from `port`. */
@@ -366,7 +365,7 @@ export class WsGateway {
       stream.sessionId,
       (command.attachments ?? []).map((ref) => ref.id)
     );
-    const { lines, images } = AttachmentStore.toPrompt(taken);
+    const { lines, images } = toAttachmentPrompt(taken);
     const text = [command.text, ...lines].filter(Boolean).join("\n\n").trim();
     this.prompt(stream.host, text, "followUp", images);
   }

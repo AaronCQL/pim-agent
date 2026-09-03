@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { AttachmentStore } from "./AttachmentStore";
+import { AttachmentStore, toAttachmentPrompt } from "./AttachmentStore";
 
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -38,7 +38,7 @@ test("an image is inlined and named by a server path", async () => {
   expect(stored.path).toEndWith(".png");
   expect(await Bun.file(stored.path).exists()).toBe(true);
 
-  const prompt = AttachmentStore.toPrompt([stored]);
+  const prompt = toAttachmentPrompt([stored]);
   expect(prompt.lines).toEqual([`[Image attachment: ${stored.path}]`]);
   expect(prompt.images).toEqual([
     { type: "image", data: stored.imageBase64!, mimeType: "image/png" },
@@ -55,7 +55,7 @@ test("a non-image is referenced by server path and never inlined", async () => {
   expect(stored.imageBase64).toBeUndefined();
   expect(await Bun.file(stored.path).text()).toBe("log line\n");
 
-  const prompt = AttachmentStore.toPrompt([stored]);
+  const prompt = toAttachmentPrompt([stored]);
   expect(prompt.lines).toEqual([`[Attachment: ${stored.path}]`]);
   expect(prompt.images).toEqual([]);
 });

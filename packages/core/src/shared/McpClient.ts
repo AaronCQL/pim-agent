@@ -21,6 +21,8 @@ export type CallToolInput = {
   readonly signal?: AbortSignal;
 };
 
+const protocolVersion = "2025-06-18";
+
 type JsonRpcResponse = {
   readonly id?: unknown;
   readonly result?: unknown;
@@ -38,8 +40,6 @@ export class McpClientError extends Error {
 }
 
 export class McpClient {
-  private static readonly protocolVersion = "2025-06-18";
-
   private readonly endpoint: string;
   private readonly extraHeaders: Readonly<Record<string, string>>;
   private readonly clientName: string;
@@ -105,7 +105,7 @@ export class McpClient {
       id: this.nextRequestId++,
       method: "initialize",
       params: {
-        protocolVersion: McpClient.protocolVersion,
+        protocolVersion,
         clientInfo: {
           name: this.clientName,
           version: this.clientVersion,
@@ -262,7 +262,7 @@ export class McpClient {
   private createHeaders(sessionId: string | undefined): Headers {
     const headers = new Headers({
       accept: "application/json, text/event-stream",
-      "mcp-protocol-version": McpClient.protocolVersion,
+      "mcp-protocol-version": protocolVersion,
     });
 
     if (sessionId !== undefined) {

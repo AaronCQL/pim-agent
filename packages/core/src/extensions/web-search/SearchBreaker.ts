@@ -26,6 +26,8 @@ export type TripInput = {
 
 const DAY_MS = 86_400_000;
 
+const defaultProbeIntervalMs = 1_800_000;
+
 /**
  * Remembers which providers are quota-exhausted so a dead tier is skipped
  * instead of re-probed on every search. State lives on disk because the
@@ -38,8 +40,6 @@ const DAY_MS = 86_400_000;
  * probe interval; a rejected probe costs no quota.
  */
 export class SearchBreaker {
-  private static readonly defaultProbeIntervalMs = 1_800_000;
-
   private readonly filePath: string;
   private readonly now: () => number;
   private readonly probeIntervalMs: number;
@@ -49,8 +49,7 @@ export class SearchBreaker {
     this.filePath =
       options.path ?? join(Paths.pimHomeDir(), "web-search-breaker.json");
     this.now = options.now ?? Date.now;
-    this.probeIntervalMs =
-      options.probeIntervalMs ?? SearchBreaker.defaultProbeIntervalMs;
+    this.probeIntervalMs = options.probeIntervalMs ?? defaultProbeIntervalMs;
   }
 
   public async isOpen(provider: string): Promise<boolean> {

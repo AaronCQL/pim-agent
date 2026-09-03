@@ -5,9 +5,9 @@ import { createMarkdownSnapshotScript } from "./WebViewMarkdownSnapshot";
 export type WebViewLike = {
   readonly url: string;
   readonly title: string;
-  navigate: (url: string) => Promise<void>;
-  evaluate: <T = unknown>(script: string) => Promise<T>;
-  close: () => void;
+  readonly navigate: (url: string) => Promise<void>;
+  readonly evaluate: <T = unknown>(script: string) => Promise<T>;
+  readonly close: () => void;
 };
 
 export type WebViewFactory = () => WebViewLike;
@@ -35,25 +35,19 @@ class WebViewFetchClientError extends Error {
   }
 }
 
-export class WebViewFetchClient {
-  private static readonly defaultTimeoutMs = 20_000;
+const defaultTimeoutMs = 20_000;
 
+export class WebViewFetchClient {
   private readonly factory: WebViewFactory;
   private readonly timeoutMs: number;
 
   public constructor(options: WebViewFetchClientOptions = {}) {
-    this.factory = options.factory ?? WebViewFetchClient.defaultFactory;
-    this.timeoutMs = options.timeoutMs ?? WebViewFetchClient.defaultTimeoutMs;
-  }
-
-  private static defaultFactory(): WebViewLike {
-    return new Bun.WebView(
-      platform() === "darwin" ? undefined : { backend: "chrome" }
-    );
+    this.factory = options.factory ?? defaultFactory;
+    this.timeoutMs = options.timeoutMs ?? defaultTimeoutMs;
   }
 
   public async fetchHtml(input: WebViewFetchInput): Promise<WebFetchPage> {
-    return this.capturePage(input, WebViewFetchClient.htmlSnapshotScript());
+    return this.capturePage(input, htmlSnapshotScript());
   }
 
   public async fetchMarkdown(input: WebViewFetchInput): Promise<WebFetchPage> {
@@ -84,14 +78,14 @@ export class WebViewFetchClient {
     let timedOut = false;
     const onAbort = () => {
       aborted = true;
-      WebViewFetchClient.safeClose(view);
+      safeClose(view);
     };
 
     signal?.addEventListener("abort", onAbort, { once: true });
 
     const timeoutHandle = setTimeout(() => {
       timedOut = true;
-      WebViewFetchClient.safeClose(view);
+      safeClose(view);
     }, this.timeoutMs);
 
     const checkInterrupted = (): void => {
@@ -109,7 +103,7 @@ export class WebViewFetchClient {
       await view.navigate(input.url);
       checkInterrupted();
 
-      const snapshot = WebViewFetchClient.readSnapshot(
+      const snapshot = readSnapshot(
         await view.evaluate<unknown>(snapshotScript)
       );
 
@@ -142,43 +136,49 @@ export class WebViewFetchClient {
     } finally {
       clearTimeout(timeoutHandle);
       signal?.removeEventListener("abort", onAbort);
-      WebViewFetchClient.safeClose(view);
+      safeClose(view);
     }
   }
+}
 
-  private static htmlSnapshotScript(): string {
-    return String.raw`(() => ({
-      title: document.title,
-      url: location.href,
-      content: document.documentElement.outerHTML,
-    }))()`;
+function htmlSnapshotScript(): string {
+  return String.raw`(() => ({
+    title: document.title,
+    url: location.href,
+    content: document.documentElement.outerHTML,
+  }))()`;
+}
+
+function readSnapshot(value: unknown): WebViewSnapshot {
+  if (typeof value !== "object" || value === null) {
+    throw new WebViewFetchClientError("Response contained invalid payload.");
   }
 
-  private static readSnapshot(value: unknown): WebViewSnapshot {
-    if (typeof value !== "object" || value === null) {
-      throw new WebViewFetchClientError("Response contained invalid payload.");
-    }
+  const record = value as Record<string, unknown>;
 
-    const record = value as Record<string, unknown>;
-
-    if (typeof record["content"] !== "string") {
-      throw new WebViewFetchClientError("Response contained invalid payload.");
-    }
-
-    return {
-      content: record["content"],
-      title: typeof record["title"] === "string" ? record["title"] : "",
-      url: typeof record["url"] === "string" ? record["url"] : "",
-    };
+  if (typeof record["content"] !== "string") {
+    throw new WebViewFetchClientError("Response contained invalid payload.");
   }
 
-  private static safeClose(view: WebViewLike): void {
-    try {
-      view.close();
-    } catch {
-      // close() throws if already closed; treat as idempotent.
-    }
+  return {
+    content: record["content"],
+    title: typeof record["title"] === "string" ? record["title"] : "",
+    url: typeof record["url"] === "string" ? record["url"] : "",
+  };
+}
+
+function safeClose(view: WebViewLike): void {
+  try {
+    view.close();
+  } catch {
+    // close() throws if already closed; treat as idempotent.
   }
+}
+
+function defaultFactory(): WebViewLike {
+  return new Bun.WebView(
+    platform() === "darwin" ? undefined : { backend: "chrome" }
+  );
 }
 
 function describeError(error: unknown): string {

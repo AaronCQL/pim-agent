@@ -14,7 +14,7 @@ const COMMAND_LIMIT = 20;
  *
  * Ranking never happens here: `@` names a file on the *agent's* disk and a
  * skill is a capability on the agent's disk, so both are one server query and
- * at most `limit` rows back (Guiding Decision 8). An upload is the opposite
+ * at most `limit` rows back. An upload is the opposite
  * direction and not a picker at all — the bytes are transferred into the
  * server's world first, and only the id the server answered with is ever
  * attached to a message.

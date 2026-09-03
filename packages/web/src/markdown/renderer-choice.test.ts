@@ -9,8 +9,8 @@ import { gfm, gfmHtml } from "micromark-extension-gfm";
 import * as smd from "streaming-markdown";
 
 /**
- * Build-order step 0 of Phase 5: the markdown renderer is chosen by measuring
- * partial input, not by reputation. This file is that experiment, kept
+ * The markdown renderer is chosen by measuring partial input, not by
+ * reputation. This file is that experiment, kept
  * runnable so the decision can be re-checked when a candidate ships a major.
  *
  * Run it alone to print the comparison table:

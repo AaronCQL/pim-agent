@@ -4,7 +4,8 @@ import type { SessionStore } from "../session/SessionStore";
 import { ToolCard } from "../view/ToolCard";
 
 /**
- * Tier 3 of the approval policy, as a UI (Resolved Decision 8).
+ * Tier 3 of the approval policy — the calls the server refuses to run
+ * unattended — as a UI.
  *
  * Not a modal: a parked request can be an hour old by the time anybody looks
  * at it, and answering it needs the transcript above still readable. It is

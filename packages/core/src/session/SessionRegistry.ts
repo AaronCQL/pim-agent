@@ -35,8 +35,7 @@ export type SessionRegistryDeps = {
 };
 
 /**
- * Keys live sessions on pi's own session UUID (Resolved Decision 4) — never a
- * chat id, never a cwd. The catalogue is pi's sessions directory itself, read
+ * Keys live sessions on pi's own session UUID — never a chat id, never a cwd. The catalogue is pi's sessions directory itself, read
  * on demand; there is no metadata store, index, or cache of our own, so a
  * session created by the TUI shows up here with no synchronisation at all.
  */

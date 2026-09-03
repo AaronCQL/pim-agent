@@ -2,7 +2,7 @@
  * The wire contract between `pim-server` and its remote clients.
  *
  * Imported by **server and web only** — the TUI keeps its in-process
- * `createAgentSession()` (Resolved Decision 1), so nothing here may assume a
+ * `createAgentSession()`, so nothing here may assume a
  * browser, a DOM, or a transport. These are types plus one constant; the only
  * value import is the version, so a bundler can tree-shake the rest away.
  */

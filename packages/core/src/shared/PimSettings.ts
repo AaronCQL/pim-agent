@@ -35,97 +35,108 @@ const Schema = Type.Object({
 
 type Settings = Static<typeof Schema>;
 
-export class PimSettings {
-  private static cache: Settings | undefined;
-  private static cachePath: string | undefined;
-  private static loadPromise: Promise<Settings> | undefined;
-  private static loadPromisePath: string | undefined;
-  private static writeQueue: Promise<unknown> = Promise.resolve();
+let cache: Settings | undefined;
+let cachePath: string | undefined;
+let loadPromise: Promise<Settings> | undefined;
+let loadPromisePath: string | undefined;
+let writeQueue: Promise<unknown> = Promise.resolve();
 
-  public static path(): string {
-    return join(Paths.pimHomeDir(), "settings.json");
-  }
-
-  private static async load(): Promise<Settings> {
-    const path = PimSettings.path();
-    if (PimSettings.cache !== undefined && PimSettings.cachePath === path) {
-      return PimSettings.cache;
-    }
-    if (PimSettings.loadPromisePath !== path) {
-      PimSettings.loadPromise = undefined;
-      PimSettings.loadPromisePath = path;
-    }
-    PimSettings.loadPromise ??= (async () => {
-      let raw: unknown;
-      try {
-        raw = await Bun.file(path).json();
-      } catch {
-        raw = {};
-      }
-      const filled = Value.Default(Schema, raw);
-      const settings: Settings = Value.Check(Schema, filled)
-        ? filled
-        : Value.Create(Schema);
-      PimSettings.cache = settings;
-      PimSettings.cachePath = path;
-      return settings;
-    })();
-    return PimSettings.loadPromise;
-  }
-
-  private static async ensureHomeDir(): Promise<void> {
-    const dir = Paths.pimHomeDir();
-    await mkdir(dir, { recursive: true, mode: 0o700 });
-    await chmod(dir, 0o700);
-  }
-
-  public static async getExaApiKey(): Promise<string | undefined> {
-    return (
-      PimSettings.normalize(process.env["EXA_API_KEY"]) ??
-      PimSettings.normalize((await PimSettings.get("exa")).apiKey)
-    );
-  }
-
-  public static async getJinaApiKey(): Promise<string | undefined> {
-    return (
-      PimSettings.normalize(process.env["JINA_API_KEY"]) ??
-      PimSettings.normalize((await PimSettings.get("jina")).apiKey)
-    );
-  }
-
-  public static async getFirecrawlApiKey(): Promise<string | undefined> {
-    return (
-      PimSettings.normalize(process.env["FIRECRAWL_API_KEY"]) ??
-      PimSettings.normalize((await PimSettings.get("firecrawl")).apiKey)
-    );
-  }
-
-  private static normalize(value: string | undefined): string | undefined {
-    const trimmed = value?.trim();
-    return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
-  }
-
-  static async get<K extends keyof Settings>(key: K): Promise<Settings[K]> {
-    return (await PimSettings.load())[key];
-  }
-
-  static async set<K extends keyof Settings>(
-    key: K,
-    value: Settings[K]
-  ): Promise<void> {
-    const task = async (): Promise<void> => {
-      const current = await PimSettings.load();
-      const next: Settings = { ...current, [key]: value };
-      if (!Value.Check(Schema, next)) {
-        throw new Error(`Invalid value for pim setting "${String(key)}"`);
-      }
-      const path = PimSettings.path();
-      PimSettings.cache = next;
-      PimSettings.cachePath = path;
-      await PimSettings.ensureHomeDir();
-      await Fs.writeAtomic(path, `${JSON.stringify(next, null, 2)}\n`, 0o600);
-    };
-    PimSettings.writeQueue = PimSettings.writeQueue.then(task, task);
-    await PimSettings.writeQueue;
-  }
+function path(): string {
+  return join(Paths.pimHomeDir(), "settings.json");
 }
+
+async function load(): Promise<Settings> {
+  const settingsPath = path();
+  if (cache !== undefined && cachePath === settingsPath) {
+    return cache;
+  }
+  if (loadPromisePath !== settingsPath) {
+    loadPromise = undefined;
+    loadPromisePath = settingsPath;
+  }
+  loadPromise ??= (async () => {
+    let raw: unknown;
+    try {
+      raw = await Bun.file(settingsPath).json();
+    } catch {
+      raw = {};
+    }
+    const filled = Value.Default(Schema, raw);
+    const settings: Settings = Value.Check(Schema, filled)
+      ? filled
+      : Value.Create(Schema);
+    cache = settings;
+    cachePath = settingsPath;
+    return settings;
+  })();
+  return loadPromise;
+}
+
+async function ensureHomeDir(): Promise<void> {
+  const dir = Paths.pimHomeDir();
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  await chmod(dir, 0o700);
+}
+
+async function getExaApiKey(): Promise<string | undefined> {
+  return (
+    normalize(process.env["EXA_API_KEY"]) ??
+    normalize((await get("exa")).apiKey)
+  );
+}
+
+async function getJinaApiKey(): Promise<string | undefined> {
+  return (
+    normalize(process.env["JINA_API_KEY"]) ??
+    normalize((await get("jina")).apiKey)
+  );
+}
+
+async function getFirecrawlApiKey(): Promise<string | undefined> {
+  return (
+    normalize(process.env["FIRECRAWL_API_KEY"]) ??
+    normalize((await get("firecrawl")).apiKey)
+  );
+}
+
+function normalize(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
+}
+
+async function get<K extends keyof Settings>(key: K): Promise<Settings[K]> {
+  return (await load())[key];
+}
+
+async function set<K extends keyof Settings>(
+  key: K,
+  value: Settings[K]
+): Promise<void> {
+  const task = async (): Promise<void> => {
+    const current = await load();
+    const next: Settings = { ...current, [key]: value };
+    if (!Value.Check(Schema, next)) {
+      throw new Error(`Invalid value for pim setting "${String(key)}"`);
+    }
+    const settingsPath = path();
+    cache = next;
+    cachePath = settingsPath;
+    await ensureHomeDir();
+    await Fs.writeAtomic(
+      settingsPath,
+      `${JSON.stringify(next, null, 2)}\n`,
+      0o600
+    );
+  };
+  writeQueue = writeQueue.then(task, task);
+  await writeQueue;
+}
+
+export const PimSettings = {
+  path,
+  getExaApiKey,
+  getJinaApiKey,
+  getFirecrawlApiKey,
+  get,
+  set,
+};

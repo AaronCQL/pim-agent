@@ -10,7 +10,12 @@ import { join } from "node:path";
 
 import { Fs } from "../../core/src/shared/Fs";
 import { type TelegramConfig } from "./Config";
-import { Session, type SessionId, type SessionSettings } from "./Session";
+import {
+  encodeId,
+  Session,
+  type SessionId,
+  type SessionSettings,
+} from "./Session";
 import type { TaskScheduler } from "./TaskScheduler";
 
 const LRU_CAP = 16;
@@ -57,7 +62,7 @@ export class SessionRegistry {
 
   public get(sessionId: SessionId): Session {
     this.requireInitialized();
-    const key = Session.encodeId(sessionId);
+    const key = encodeId(sessionId);
     const cached = this.cache.get(key);
     if (cached) {
       cached.lastUsed = Date.now();
