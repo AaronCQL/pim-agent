@@ -72,6 +72,27 @@ async function isBinary(file: Bun.BunFile): Promise<boolean> {
   return bytes.includes(0);
 }
 
+/**
+ * The head of a body plus how much was left off, which is how every collapsed
+ * payload is drawn: `preview` renders, and a non-zero `overflow` becomes the
+ * `… N more lines` row. Frontend-agnostic on purpose — the TUI and the web
+ * both truncate to the same place, so the rule lives here rather than in a
+ * renderer.
+ */
+function buildPreviewLines(
+  body: string,
+  maxLines: number
+): { preview: string; overflow: number } {
+  const lines = body.split("\n");
+  if (lines.length <= maxLines) {
+    return { preview: body, overflow: 0 };
+  }
+  return {
+    preview: lines.slice(0, maxLines).join("\n"),
+    overflow: lines.length - maxLines,
+  };
+}
+
 export const Lines = {
   utf8Bom,
   utf8BomBytes,
@@ -83,4 +104,5 @@ export const Lines = {
   stripUtf8Bom,
   hasUtf8Bom,
   isBinary,
+  buildPreviewLines,
 };

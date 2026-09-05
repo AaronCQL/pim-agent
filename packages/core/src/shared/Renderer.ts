@@ -13,6 +13,8 @@ import {
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 
+import { Lines } from "./Lines";
+
 export type RenderContext = {
   readonly lastComponent: Component | undefined;
   readonly isPartial: boolean;
@@ -212,20 +214,6 @@ function extractErrorText(
   return text || fallback;
 }
 
-function buildPreviewLines(
-  body: string,
-  maxLines: number
-): { preview: string; overflow: number } {
-  const lines = body.split("\n");
-  if (lines.length <= maxLines) {
-    return { preview: body, overflow: 0 };
-  }
-  return {
-    preview: lines.slice(0, maxLines).join("\n"),
-    overflow: lines.length - maxLines,
-  };
-}
-
 /** The marker + bold label + title text of a tool row, without the shell. */
 function toolTitleText(args: {
   readonly label: string;
@@ -413,7 +401,7 @@ function renderBorderedResult(args: {
   if (options.expanded) {
     container.addChild(block(body));
   } else {
-    const { preview, overflow } = buildPreviewLines(body, previewLines);
+    const { preview, overflow } = Lines.buildPreviewLines(body, previewLines);
     if (preview) {
       container.addChild(block(preview));
     }
@@ -432,7 +420,7 @@ export const Renderer = {
   markerColorFor,
   firstText,
   extractErrorText,
-  buildPreviewLines,
+  buildPreviewLines: Lines.buildPreviewLines,
   toolTitleText,
   makeTitleBlock,
   renderToolCallTitle,

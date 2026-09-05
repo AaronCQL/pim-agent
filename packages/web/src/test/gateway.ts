@@ -11,9 +11,7 @@ import { WsGateway } from "#server/WsGateway";
 export const REPLY = "hello from the gateway";
 
 const pingSchema = Type.Object({ text: Type.String() });
-const shellSchema = Type.Object({ command: Type.String() });
 
-/** Tier 1: declared read-only, so the router never asks anybody. */
 function pingTool(): PimToolDefinition<typeof pingSchema, { echoed: string }> {
   return {
     name: "ping",
@@ -38,30 +36,6 @@ function pingTool(): PimToolDefinition<typeof pingSchema, { echoed: string }> {
               },
             ],
           }),
-    }),
-  };
-}
-
-/** Tier 3: unbounded, so the turn parks until a client answers. */
-function shellTool(
-  marker: () => string
-): PimToolDefinition<typeof shellSchema, { ran: string }> {
-  return {
-    name: "shell",
-    label: "shell",
-    description: "run a command",
-    parameters: shellSchema,
-    effect: { kind: "unbounded" },
-    execute: async (_id, params) => {
-      await Bun.write(marker(), params.command);
-      return {
-        content: [{ type: "text" as const, text: `ran ${params.command}` }],
-        details: { ran: params.command },
-      };
-    },
-    toViewModel: ({ args }) => ({
-      label: "Shell",
-      title: [{ kind: "text", text: args.command ?? "" }],
     }),
   };
 }
@@ -106,8 +80,7 @@ function lastUserText(body: ChatBody): string {
  * the provider. The web client is driven against this rather than a mocked
  * socket, so what the tests prove is the wire, not a fixture of it.
  *
- * The stub reads the prompt: "shell" asks for the unbounded tool (tier 3,
- * parks), "tool" asks for the read-only one (tier 1, runs unattended), and
+ * The stub reads the prompt: "tool" asks for the one registered tool, and
  * anything else streams prose a word at a time.
  */
 export class GatewayHarness {
@@ -123,10 +96,6 @@ export class GatewayHarness {
 
   public get url(): string {
     return this.gateway.url;
-  }
-
-  public get marker(): string {
-    return join(this.tmp, "marker.txt");
   }
 
   public async start(): Promise<void> {
@@ -152,10 +121,7 @@ export class GatewayHarness {
     this.registry = new SessionRegistry({
       defaults: { cwd: this.tmp, model: "test/echo" },
       agentDir: this.agentDir,
-      customTools: () => [
-        Tools.wrap(pingTool()) as unknown as ToolDefinition,
-        Tools.wrap(shellTool(() => this.marker)) as unknown as ToolDefinition,
-      ],
+      customTools: () => [Tools.wrap(pingTool()) as unknown as ToolDefinition],
     });
     await this.registry.init();
     this.startGateway();
@@ -208,13 +174,10 @@ export class GatewayHarness {
         const body = (await req.json()) as ChatBody;
         const prompt = lastUserText(body);
         const answered = body.messages.at(-1)?.role === "tool";
-        const tool = answered
-          ? undefined
-          : prompt.includes("shell")
-            ? { name: "shell", args: { command: "echo hi" } }
-            : prompt.includes("tool")
-              ? { name: "ping", args: { text: "hi" } }
-              : undefined;
+        const tool =
+          !answered && prompt.includes("tool")
+            ? { name: "ping", args: { text: "hi" } }
+            : undefined;
         const gate = this.gate;
         const stream = new ReadableStream<Uint8Array>({
           async start(controller) {

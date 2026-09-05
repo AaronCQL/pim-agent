@@ -1,5 +1,5 @@
 import { Dynamic } from "@solidjs/web";
-import { createMemo, For, Show, type Component } from "solid-js";
+import { createMemo, For, Show, type Component, type Element } from "solid-js";
 
 import { Painting } from "#core/view/Painting";
 import type { DiffHunk, Span, ViewBlock } from "#core/view/ViewBlock";
@@ -11,7 +11,6 @@ import {
   FRAME_CLASSES,
   NOTICE_CLASSES,
   groupByFrame,
-  iconClass,
   toneClass,
 } from "./tokens";
 
@@ -74,7 +73,7 @@ function MarkdownBlock(props: { readonly block: BlockOf<"markdown"> }) {
 
 function SpansBlock(props: { readonly block: BlockOf<"spans"> }) {
   return (
-    <p class="flex flex-wrap items-baseline gap-x-1">
+    <p class="flex flex-wrap items-baseline gap-x-1ch">
       <For each={props.block.spans}>{(span) => <SpanText span={span} />}</For>
     </p>
   );
@@ -86,8 +85,11 @@ function SpanText(props: { readonly span: Span }) {
       class={{
         [toneClass(props.span.tone)]: true,
         "line-through": props.span.strike === true,
-        "font-semibold": props.span.strong === true,
-        "font-mono rounded bg-neutral-800 px-1": props.span.code === true,
+        "font-bold": props.span.strong === true,
+        // The mockup's InlineCode: a hue, no chrome. A pill would put the row
+        // off the line grid by its own padding.
+        "text-pink-400":
+          props.span.code === true && props.span.tone === undefined,
       }}
     >
       {props.span.text}
@@ -98,50 +100,58 @@ function SpanText(props: { readonly span: Span }) {
 function SectionBlock(props: { readonly block: BlockOf<"section"> }) {
   return (
     <section>
-      <h4 class="flex items-center gap-1.5 text-neutral-100 font-medium">
-        <Show when={props.block.icon}>
-          <span class={iconClass(props.block.icon)} aria-hidden="true" />
-        </Show>
-        {props.block.label}
-      </h4>
+      <h4 class="font-bold text-neutral-50">{props.block.label}</h4>
       <Body blocks={props.block.content} />
     </section>
   );
 }
 
+/**
+ * A fenced block, fence included: the mockup draws the ` ``` `+lang as dim
+ * text above and below the code rather than implying it with a card, so the
+ * payload reads exactly as it would in the terminal that produced it.
+ */
 function CodeBlock(props: { readonly block: BlockOf<"code"> }) {
   return (
-    <pre class="group/code relative overflow-x-auto p-2 font-mono text-xs leading-snug">
+    <div class="relative">
+      <pre class="overflow-x-auto leading-[--line] text-neutral-200">
+        <span class="block text-neutral-500" aria-hidden="true">
+          {`\`\`\`${props.block.lang}`}
+        </span>
+        <code data-lang={props.block.lang}>
+          <For each={props.block.text.split("\n")}>
+            {(line, index) => (
+              <span class="block">
+                <Show when={props.block.startLine !== undefined}>
+                  <span class="mr-1ch select-none text-neutral-600">
+                    {(props.block.startLine ?? 1) + index()}
+                  </span>
+                </Show>
+                {line}
+              </span>
+            )}
+          </For>
+        </code>
+        <span class="block text-neutral-500" aria-hidden="true">
+          {"```"}
+        </span>
+      </pre>
       <CopyButton
         text={() => props.block.text}
         label="Copy code"
-        class="absolute right-1 top-1 opacity-0 group-hover/code:opacity-100"
+        class="absolute right-0 top-0"
       />
-      <code data-lang={props.block.lang}>
-        <For each={props.block.text.split("\n")}>
-          {(line, index) => (
-            <span class="block">
-              <Show when={props.block.startLine !== undefined}>
-                <span class="mr-2 select-none text-neutral-600">
-                  {(props.block.startLine ?? 1) + index()}
-                </span>
-              </Show>
-              {line}
-            </span>
-          )}
-        </For>
-      </code>
-    </pre>
+    </div>
   );
 }
 
 function DiffBlock(props: { readonly block: BlockOf<"diff"> }) {
   return (
-    <div class="group/diff relative font-mono text-xs leading-snug">
+    <div class="relative leading-[--line]">
       <CopyButton
         text={() => patchText(props.block.hunks)}
         label="Copy patch"
-        class="absolute right-1 top-1 opacity-0 group-hover/diff:opacity-100"
+        class="absolute right-0 top-0"
       />
       <For each={props.block.hunks}>{(hunk) => <Hunk hunk={hunk} />}</For>
     </div>
@@ -162,17 +172,18 @@ function Hunk(props: { readonly hunk: DiffHunk }) {
   return (
     <Collapsible
       open
+      caret="bg-neutral-500"
       summary={
-        <span class="flex items-baseline gap-2 px-1 text-neutral-500">
+        <span class="flex items-baseline gap-1ch text-neutral-500">
           <span>{hunkRange(props.hunk)}</span>
           <span class="text-emerald-400">{`+${stat().added}`}</span>
-          <span class="text-red-400">{`-${stat().removed}`}</span>
+          <span class="text-rose-400">{`-${stat().removed}`}</span>
         </span>
       }
     >
       <For each={props.hunk.lines}>
         {(line) => (
-          <div class={`whitespace-pre px-2 ${DIFF_LINE_CLASSES[line.kind]}`}>
+          <div class={`whitespace-pre ${DIFF_LINE_CLASSES[line.kind]}`}>
             {`${DIFF_MARKERS[line.kind]}${line.text}`}
           </div>
         )}
@@ -204,7 +215,7 @@ const DIFF_MARKERS = {
 
 function FileBlock(props: { readonly block: BlockOf<"file"> }) {
   return (
-    <span class="font-mono text-neutral-300">
+    <span class="text-neutral-300">
       {props.block.path}
       <Show when={props.block.range}>
         {(range) => (
@@ -212,32 +223,50 @@ function FileBlock(props: { readonly block: BlockOf<"file"> }) {
         )}
       </Show>
       <Show when={props.block.truncated === true}>
-        <span class="ml-1 text-neutral-500">(truncated)</span>
+        <span class="ml-1ch text-neutral-500">(truncated)</span>
       </Show>
     </span>
   );
 }
 
+/**
+ * The mockup's hanging indent rather than a browser list: the marker is dim,
+ * sits in the negative text-indent, and wrapped lines align with the text.
+ */
 function ListBlock(props: { readonly block: BlockOf<"list"> }) {
   return (
-    <Dynamic
-      component={props.block.ordered === true ? "ol" : "ul"}
-      class={`ml-4 ${props.block.ordered === true ? "list-decimal" : "list-disc"}`}
-    >
+    <Dynamic component={props.block.ordered === true ? "ol" : "ul"}>
       <For each={props.block.items}>
-        {(item) => (
-          <li>
+        {(item, index) => (
+          <ListRow
+            marker={props.block.ordered === true ? `${index() + 1}.` : "-"}
+          >
             <Block block={item} />
-          </li>
+          </ListRow>
         )}
       </For>
     </Dynamic>
   );
 }
 
+function ListRow(props: {
+  readonly marker: string;
+  readonly children: Element;
+}) {
+  return (
+    <li
+      class="pl-[--marker] [text-indent:calc(var(--marker)*-1)]"
+      style={{ "--marker": `${props.marker.length + 1}ch` }}
+    >
+      <span class="text-neutral-400">{`${props.marker} `}</span>
+      {props.children}
+    </li>
+  );
+}
+
 function KvBlock(props: { readonly block: BlockOf<"kv"> }) {
   return (
-    <dl class="grid grid-cols-[auto_1fr] gap-x-2">
+    <dl class="grid grid-cols-[auto_1fr] gap-x-1ch">
       <For each={props.block.pairs}>
         {(pair) => (
           <>
@@ -253,7 +282,7 @@ function KvBlock(props: { readonly block: BlockOf<"kv"> }) {
 function LinkBlock(props: { readonly block: BlockOf<"link"> }) {
   return (
     <a
-      class="text-sky-400 underline underline-offset-2"
+      class="text-indigo-300 underline underline-offset-2"
       href={props.block.href}
       target="_blank"
       rel="noreferrer"

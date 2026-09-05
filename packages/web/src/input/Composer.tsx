@@ -9,6 +9,9 @@ const ANCHOR = "--pim-composer";
 const FILE_LIMIT = 50;
 const COMMAND_LIMIT = 20;
 
+const CHIP =
+  "flex items-center justify-center gap-1.5 rounded-full bg-neutral-900 px-3 py-1.5 text-neutral-350";
+
 /**
  * The draft, the pickers over it, and the two ways bytes get in.
  *
@@ -18,6 +21,11 @@ const COMMAND_LIMIT = 20;
  * direction and not a picker at all — the bytes are transferred into the
  * server's world first, and only the id the server answered with is ever
  * attached to a message.
+ *
+ * The card also carries what used to be the footer: the cost pill above its
+ * right edge, the model and thinking chips on its control row, and the last
+ * error as a rose line above it. The mockup has no stop state, so the send
+ * button turns rose and becomes Stop while a turn is running.
  */
 export function Composer(props: { readonly store: SessionStore }) {
   const [text, setText] = createSignal("");
@@ -130,114 +138,150 @@ export function Composer(props: { readonly store: SessionStore }) {
 
   return (
     <div
-      class={{
-        "relative flex flex-col gap-2 rounded-lg border bg-neutral-900/60 p-2": true,
-        "border-neutral-800": !dropping(),
-        "border-sky-600 bg-sky-950/30": dropping(),
-      }}
+      class="pointer-events-auto relative w-full max-w-3xl"
       style={{ "anchor-name": ANCHOR }}
-      onDragOver={(event: DragEvent) => {
-        event.preventDefault();
-        setDropping(true);
-      }}
-      onDragLeave={() => {
-        setDropping(false);
-      }}
-      onDrop={(event: DragEvent) => {
-        event.preventDefault();
-        setDropping(false);
-        void absorb([...(event.dataTransfer?.files ?? [])]);
-      }}
     >
-      <Show when={attachments().length > 0}>
-        <ul class="flex flex-wrap gap-1 text-xs">
-          <For each={attachments()}>
-            {(attachment) => (
-              <li class="flex items-center gap-1 rounded bg-neutral-800 px-2 py-0.5">
-                <span
-                  class={
-                    attachment.isImage
-                      ? "i-lucide-image block"
-                      : "i-lucide-paperclip block"
-                  }
-                  aria-hidden="true"
-                />
-                <span class="max-w-40 truncate">{attachment.label}</span>
-                <button
-                  type="button"
-                  aria-label={`Remove ${attachment.label}`}
-                  class="i-lucide-x block text-neutral-500 hover:text-neutral-200"
-                  onClick={() => {
-                    setAttachments((current) =>
-                      current.filter((one) => one.id !== attachment.id)
-                    );
-                  }}
-                />
-              </li>
-            )}
-          </For>
-        </ul>
+      {/* The divided pill. Phase B adds the context half beside the cost. */}
+      <Show when={props.store.state.cost > 0}>
+        <div class="pointer-events-none absolute bottom-full right-0 mb-2 flex items-center rounded-lg bg-neutral-900 text-sm text-neutral-350 tabular-nums ring-1 ring-neutral-750">
+          <div class="px-2.5 py-1">{`$${props.store.state.cost.toFixed(3)}`}</div>
+        </div>
       </Show>
 
-      <textarea
-        ref={(element: HTMLTextAreaElement) => {
-          input = element;
-        }}
-        rows={2}
-        placeholder="Message the agent —  @ for files, / for commands"
-        aria-label="Message"
-        class="min-h-16 w-full resize-y bg-transparent px-1 text-neutral-100 outline-none placeholder:text-neutral-600"
-        onInput={track}
-        onClick={track}
-        onKeyUp={track}
-        onPaste={(event: ClipboardEvent) => {
-          const files = [...(event.clipboardData?.files ?? [])];
-          if (files.length > 0) {
-            event.preventDefault();
-            void absorb(files);
-          }
-        }}
-        onKeyDown={(event: KeyboardEvent) => {
-          if (navigation.onKeyDown(event)) {
-            return;
-          }
-          if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
-            event.preventDefault();
-            void submit();
-          }
-        }}
-      />
-
-      <Show when={failed()}>
-        {(message) => <p class="text-xs text-red-400">{message()}</p>}
+      <Show when={props.store.state.error ?? failed()}>
+        {(message) => (
+          <p class="mb-2 truncate text-sm text-rose-400">{message()}</p>
+        )}
       </Show>
 
-      <div class="flex items-center justify-between text-xs text-neutral-500">
-        <span class="min-w-0 truncate font-mono">{props.store.state.cwd}</span>
-        <Show
-          when={props.store.isBusy()}
-          fallback={
+      <div
+        class={{
+          "relative space-y-3 rounded-lg bg-neutral-850 p-4 ring-1": true,
+          "ring-neutral-700": !dropping(),
+          "ring-indigo-400": dropping(),
+        }}
+        onDragOver={(event: DragEvent) => {
+          event.preventDefault();
+          setDropping(true);
+        }}
+        onDragLeave={() => {
+          setDropping(false);
+        }}
+        onDrop={(event: DragEvent) => {
+          event.preventDefault();
+          setDropping(false);
+          void absorb([...(event.dataTransfer?.files ?? [])]);
+        }}
+      >
+        <Show when={attachments().length > 0}>
+          <ul class="flex flex-wrap gap-1.5 text-sm">
+            <For each={attachments()}>
+              {(attachment) => (
+                <li class="flex items-center gap-1 rounded-full bg-neutral-900 px-2.5 py-1 text-neutral-350">
+                  <span
+                    class={`size-4 shrink-0 ${attachment.isImage ? "i-griddy-icons:image" : "i-griddy-icons:attachment"}`}
+                    aria-hidden="true"
+                  />
+                  <span class="max-w-40 truncate">{attachment.label}</span>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${attachment.label}`}
+                    class="i-griddy-icons:close size-4 hover:text-neutral-50"
+                    onClick={() => {
+                      setAttachments((current) =>
+                        current.filter((one) => one.id !== attachment.id)
+                      );
+                    }}
+                  />
+                </li>
+              )}
+            </For>
+          </ul>
+        </Show>
+
+        <textarea
+          ref={(element: HTMLTextAreaElement) => {
+            input = element;
+          }}
+          rows={1}
+          placeholder="Type your message here"
+          aria-label="Message"
+          class="max-h-50 w-full resize-none bg-transparent outline-none [field-sizing:content] placeholder:text-neutral-500"
+          onInput={track}
+          onClick={track}
+          onKeyUp={track}
+          onPaste={(event: ClipboardEvent) => {
+            const files = [...(event.clipboardData?.files ?? [])];
+            if (files.length > 0) {
+              event.preventDefault();
+              void absorb(files);
+            }
+          }}
+          onKeyDown={(event: KeyboardEvent) => {
+            if (navigation.onKeyDown(event)) {
+              return;
+            }
+            if (
+              event.key === "Enter" &&
+              !event.shiftKey &&
+              !event.isComposing
+            ) {
+              event.preventDefault();
+              void submit();
+            }
+          }}
+        />
+
+        {/* Chips wrap rather than overflow, and their labels truncate: on a
+            phone the model name is the first thing that would push the send
+            button off the card. Phase B3 turns them into menus. */}
+        <div class="flex flex-wrap items-end gap-2">
+          <Show when={props.store.state.model}>
+            <div class={CHIP}>
+              <span class="i-griddy-icons:robot size-4 shrink-0" />
+              <span class="max-w-40 truncate text-sm">
+                {props.store.state.model}
+              </span>
+            </div>
+          </Show>
+          <Show when={props.store.state.thinking}>
+            <div class={CHIP}>
+              <span class="i-griddy-icons:lightbulb-on size-4 shrink-0" />
+              <span class="max-w-24 truncate text-sm">
+                {props.store.state.thinking}
+              </span>
+            </div>
+          </Show>
+
+          <div class="flex-1" />
+
+          <Show
+            when={props.store.isBusy()}
+            fallback={
+              <button
+                type="button"
+                aria-label="Send"
+                class="flex items-center justify-center rounded-full bg-indigo-500 p-2 text-indigo-50 ring-indigo-300 hover:ring-1 active:bg-indigo-500/80"
+                onClick={() => {
+                  void submit();
+                }}
+              >
+                <span class="i-griddy-icons:send-alt-02-filled size-5" />
+              </button>
+            }
+          >
             <button
               type="button"
-              class="rounded bg-neutral-800 px-3 py-1 text-neutral-200 hover:bg-neutral-700"
+              aria-label="Stop"
+              class="flex items-center justify-center rounded-full bg-rose-500 p-2 text-rose-50 ring-rose-300 hover:ring-1 active:bg-rose-500/80"
               onClick={() => {
-                void submit();
+                void props.store.cancel();
               }}
             >
-              Send
+              <span class="i-griddy-icons:stop-filled size-5" />
             </button>
-          }
-        >
-          <button
-            type="button"
-            class="rounded bg-red-900/60 px-3 py-1 text-red-200 hover:bg-red-900"
-            onClick={() => {
-              void props.store.cancel();
-            }}
-          >
-            Stop
-          </button>
-        </Show>
+          </Show>
+        </div>
       </div>
 
       <Combobox

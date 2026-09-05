@@ -10,8 +10,6 @@ import { SessionStore } from "./session/SessionStore";
 import { mountPoint } from "./test/dom";
 import { GatewayHarness, until } from "./test/gateway";
 
-const VIEW = { title: [{ kind: "text" as const, text: "rm -rf /" }] };
-
 function attached(sessionId = "s1"): ServerEvent {
   return {
     type: "attached",
@@ -70,62 +68,7 @@ describe("the shell, painted from events alone", () => {
     expect(host.querySelectorAll(".pim-markdown h2")).toHaveLength(1);
   });
 
-  test("a pending approval is offered, and answering clears it", () => {
-    const store = offline();
-    const host = paint(store);
-
-    store.ingest(attached());
-    store.ingest({
-      type: "approval_request",
-      callId: "c1",
-      name: "shell",
-      view: VIEW,
-      reason: "shell declares an unbounded effect",
-    });
-    flush();
-
-    const panel = host.querySelector('[aria-label="Tool approvals"]')!;
-    expect(panel.textContent).toContain("rm -rf /");
-    expect(panel.textContent).toContain("unbounded effect");
-
-    const deny = [...panel.querySelectorAll("button")].find(
-      (button) => button.textContent === "Deny"
-    )!;
-    deny.click();
-    flush();
-
-    expect(host.querySelector('[aria-label="Tool approvals"]')).toBeNull();
-  });
-
-  test("an approval parked before this client existed still renders", () => {
-    const store = offline();
-    const host = paint(store);
-
-    // Exactly the frame order of a late attach: the snapshot carries the
-    // parked request, and nothing about it says it is old.
-    store.ingest(attached());
-    store.ingest({
-      type: "approval_request",
-      callId: "c9",
-      name: "shell",
-      view: VIEW,
-      reason: "parked an hour ago",
-    });
-    store.ingest({
-      type: "session_state",
-      cwd: "/repo",
-      model: "echo",
-      thinking: "off",
-      cost: 0,
-      status: "tool",
-    });
-    flush();
-
-    expect(host.textContent).toContain("parked an hour ago");
-    expect(host.textContent).toContain("running tool");
-  });
-
-  test("the footer paints connection and session state", () => {
+  test("what the footer used to say is spread across its new homes", () => {
     const store = offline();
     const host = paint(store);
 
@@ -141,11 +84,33 @@ describe("the shell, painted from events alone", () => {
     });
     flush();
 
-    const footer = host.querySelector("footer")!;
-    expect(footer.textContent).toContain("sonnet");
-    expect(footer.textContent).toContain("30 tok/s");
-    expect(footer.textContent).toContain("$1.2500");
-    expect(footer.textContent).toContain("streaming");
+    // Model, thinking and cost are the composer's chips and pill.
+    const composer = host.querySelector("textarea")!.closest("div")!;
+    expect(composer.textContent).toContain("sonnet");
+    expect(composer.textContent).toContain("medium");
+    expect(host.textContent).toContain("$1.250");
+
+    // The connection is the sidebar's server row, tinted rather than spelled.
+    expect(host.textContent).toContain("127.0.0.1:1");
+    expect(host.innerHTML).toContain("text-rose-400");
+
+    // Dropped with the footer: the status word, tok/s and the seq readout.
+    expect(host.textContent).not.toContain("tok/s");
+    expect(host.textContent).not.toContain("streaming");
+
+    // The clank line is the only running indicator.
+    expect(host.textContent).toContain("Clanking…");
+  });
+
+  test("an error is a rose line above the composer", () => {
+    const store = offline();
+    const host = paint(store);
+
+    store.ingest(attached());
+    store.ingest({ type: "error", message: "provider said no" });
+    flush();
+
+    expect(host.textContent).toContain("provider said no");
   });
 });
 
@@ -197,7 +162,7 @@ describe("the composer, against a real gateway", () => {
     expect(options(host)).toHaveLength(0);
   });
 
-  test("the switcher lists the sessions pi has on disk", async () => {
+  test("the sidebar lists the sessions pi has on disk", async () => {
     const host = paint(store);
     await store.prompt("say hello");
     await until(
@@ -205,22 +170,15 @@ describe("the composer, against a real gateway", () => {
       "the durable user message"
     );
 
-    [...host.querySelectorAll("button")]
-      .find((button) => button.textContent?.includes("Sessions"))!
-      .click();
-    flush();
+    const list = () => host.querySelector("ul")!;
     await until(
-      () =>
-        (host.querySelector("dialog")?.textContent ?? "").includes(
-          store.state.sessionId.slice(0, 8)
-        ),
+      () => list().textContent.includes(store.state.sessionId.slice(0, 8)),
       "the catalogue"
     );
 
-    const dialog = host.querySelector("dialog")!;
-    expect(dialog.open).toBe(true);
-    expect(dialog.textContent).toContain(harness.tmp);
-    expect(dialog.textContent).toContain("New in this directory");
+    // Flat, most recent first, cwd on every row — no grouping by directory.
+    expect(list().textContent).toContain(harness.tmp);
+    expect(list().querySelectorAll("li").length).toBeGreaterThan(0);
   });
 });
 

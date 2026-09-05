@@ -6,7 +6,8 @@ import { createRoot, createSignal, flush } from "solid-js";
 
 import { mountPoint } from "../test/dom";
 import { Combobox, createComboboxNavigation } from "./Combobox";
-import { Dialog } from "./Dialog";
+import { Collapsible } from "./Collapsible";
+import { Drawer } from "./Drawer";
 import { Popover } from "./Popover";
 
 type Nav = ReturnType<typeof createComboboxNavigation>;
@@ -184,28 +185,53 @@ describe("platform wrappers", () => {
     expect(panel?.className).not.toContain("hidden");
   });
 
-  test("the dialog opens modally and reports its own close", () => {
+  test("the disclosure caret is the only glyph, and it can carry state", () => {
     const host = mountPoint();
-    const [open, setOpen] = createSignal(false);
-    const closed: number[] = [];
     render(
       () => (
-        <Dialog open={open()} label="Sessions" onClose={() => closed.push(1)}>
+        <Collapsible summary={<span>head</span>} caret="bg-rose-400" open>
           <p>body</p>
-        </Dialog>
+        </Collapsible>
       ),
       host
     );
     flush();
 
-    const dialog = host.querySelector("dialog")!;
-    expect(dialog.open).toBe(false);
+    const caret = host.querySelector("summary > span")!;
+    expect(caret.className).toContain(
+      "i-griddy-icons:chevron-right-small-filled"
+    );
+    expect(caret.className).toContain("bg-rose-400");
+    expect(host.querySelector("details")?.open).toBe(true);
+  });
+
+  test("the drawer opens modally, hosts its content and closes on select", () => {
+    const host = mountPoint();
+    const [open, setOpen] = createSignal(false);
+    const closed: number[] = [];
+    render(
+      () => (
+        <Drawer open={open()} label="Sessions" onClose={() => closed.push(1)}>
+          <button type="button" onClick={() => setOpen(false)}>
+            pick
+          </button>
+        </Drawer>
+      ),
+      host
+    );
+    flush();
+
+    const drawer = host.querySelector("dialog")!;
+    expect(drawer.open).toBe(false);
 
     setOpen(true);
     flush();
-    expect(dialog.open).toBe(true);
+    expect(drawer.open).toBe(true);
+    expect(drawer.textContent).toContain("pick");
 
-    dialog.close();
+    drawer.querySelector("button")!.click();
+    flush();
+    expect(drawer.open).toBe(false);
     expect(closed).toEqual([1]);
   });
 });

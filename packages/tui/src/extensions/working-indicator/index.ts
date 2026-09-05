@@ -3,19 +3,9 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 
-const FINAL_WIDGET_ID = "pim-working-finished";
+import { Format } from "#core/shared/Format";
 
-export function formatElapsed(ms: number): string {
-  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  return hours > 0
-    ? `${hours}h ${minutes}m ${seconds}s`
-    : minutes > 0
-      ? `${minutes}m ${seconds}s`
-      : `${seconds}s`;
-}
+const FINAL_WIDGET_ID = "pim-working-finished";
 
 export default function (pi: ExtensionAPI): void {
   let startedAt = 0;
@@ -30,7 +20,7 @@ export default function (pi: ExtensionAPI): void {
 
   const setWorkingMessage = (ctx: ExtensionContext): void => {
     ctx.ui.setWorkingMessage(
-      `Clanking… ${formatElapsed(Date.now() - startedAt)}`
+      `Clanking… ${Format.formatElapsed(Date.now() - startedAt)}`
     );
   };
 
@@ -63,7 +53,7 @@ export default function (pi: ExtensionAPI): void {
     }
     // Trailing newline to separate from other widgets right below; newline will
     // not show up when this widget is the only one shown
-    const message = `⣿ Clanked for ${formatElapsed(Date.now() - startedAt)}\n`;
+    const message = `⣿ Clanked for ${Format.formatElapsed(Date.now() - startedAt)}\n`;
     ctx.ui.setWidget(FINAL_WIDGET_ID, [ctx.ui.theme.fg("muted", message)]);
   });
 

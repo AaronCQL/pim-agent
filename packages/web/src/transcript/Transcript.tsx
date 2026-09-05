@@ -3,8 +3,6 @@ import { createMemo, For, Show, type Component } from "solid-js";
 
 import type { DurableEvent } from "#protocol/ServerEvent";
 import { Markdown } from "../markdown/Markdown";
-import { Collapsible } from "../ui/Collapsible";
-import { CopyButton } from "../ui/CopyButton";
 import { ToolCard } from "../view/ToolCard";
 import { NOTICE_CLASSES } from "../view/tokens";
 import {
@@ -47,44 +45,85 @@ export function Transcript(props: {
   const rows = createMemo(() =>
     extendRows(durable(), props.trailing ?? [], props.streamingId)
   );
+  const groups = createMemo(() => groupRuns(rows()));
+
   return (
-    <div class="flex flex-col gap-3">
-      <For each={rows()} keyed={(row: Row) => row.id}>
-        {(row) => (
-          <Dynamic
-            component={ROWS[row().kind] as Component<{ row: Row }>}
-            row={row()}
-          />
+    <div class="space-y-[--line]">
+      <For each={groups()} keyed={(group: Group) => group.id}>
+        {(group) => (
+          <div class="min-w-0">
+            <For each={group().rows} keyed={(row: Row) => row.id}>
+              {(row) => (
+                <Dynamic
+                  component={ROWS[row().kind] as Component<{ row: Row }>}
+                  row={row()}
+                />
+              )}
+            </For>
+          </div>
         )}
       </For>
     </div>
   );
 }
 
+type Group = { readonly id: string; readonly rows: readonly Row[] };
+
+/**
+ * A run of consecutive tool rows is one group and gets no gaps inside it, the
+ * way the mockup stacks four calls as four adjacent lines. Everything else is
+ * its own group, so the only vertical space in a transcript is a whole blank
+ * row between things that are not a list of calls.
+ */
+function groupRuns(rows: readonly Row[]): readonly Group[] {
+  const groups: Group[] = [];
+  let run: Row[] | undefined;
+  for (const row of rows) {
+    if (row.kind === "tool" && run) {
+      run.push(row);
+      continue;
+    }
+    run = row.kind === "tool" ? [row] : undefined;
+    groups.push({ id: row.id, rows: run ?? [row] });
+  }
+  return groups;
+}
+
+/**
+ * A user turn is the mockup's right-aligned card; an assistant turn is not a
+ * bubble at all — it is prose on the line grid, and copying it is the job of
+ * the buttons on the payloads inside it.
+ *
+ * (Phase B adds the `17:24` line under the user card, once messages carry a
+ * timestamp.)
+ */
 function MessageBubble(props: { readonly row: MessageRow }) {
   return (
-    <article
-      class={{
-        "group/message relative min-w-0 rounded-lg px-3 py-2": true,
-        "self-end max-w-[80%] bg-sky-950/50 text-neutral-100":
-          props.row.role === "user",
-        "bg-neutral-900/40 text-neutral-200": props.row.role === "assistant",
-      }}
+    <Show
+      when={props.row.role === "user"}
+      fallback={
+        <article class="min-w-0 space-y-[--line]">
+          <Show when={props.row.thinking}>
+            {(thinking) => (
+              <p class="whitespace-pre-wrap italic opacity-60">
+                <span class="font-bold">Thinking: </span>
+                {thinking()}
+              </p>
+            )}
+          </Show>
+          <Markdown
+            text={props.row.text}
+            complete={props.row.streaming !== true}
+          />
+        </article>
+      }
     >
-      <Show when={props.row.thinking}>
-        {(thinking) => (
-          <Collapsible summary={<span class="text-neutral-500">Thinking</span>}>
-            <p class="whitespace-pre-wrap text-neutral-500">{thinking()}</p>
-          </Collapsible>
-        )}
-      </Show>
-      <Markdown text={props.row.text} complete={props.row.streaming !== true} />
-      <CopyButton
-        text={() => props.row.text}
-        label="Copy message"
-        class="absolute right-1 top-1 opacity-0 group-hover/message:opacity-100"
-      />
-    </article>
+      <article class="flex flex-col items-end">
+        <div class="max-w-[85%] min-w-0 whitespace-pre-wrap break-words rounded-lg bg-neutral-850 px-4 py-3">
+          {props.row.text}
+        </div>
+      </article>
+    </Show>
   );
 }
 
@@ -92,6 +131,7 @@ function ToolRowView(props: { readonly row: ToolRow }) {
   return (
     <ToolCard
       view={props.row.view}
+      name={props.row.name}
       isError={props.row.isError}
       isPartial={props.row.isPartial}
     />
@@ -100,7 +140,7 @@ function ToolRowView(props: { readonly row: ToolRow }) {
 
 function NoticeRowView(props: { readonly row: NoticeRow }) {
   return (
-    <p class={`text-center text-xs ${NOTICE_CLASSES[props.row.severity]}`}>
+    <p class={`text-center text-sm ${NOTICE_CLASSES[props.row.severity]}`}>
       {props.row.text}
     </p>
   );

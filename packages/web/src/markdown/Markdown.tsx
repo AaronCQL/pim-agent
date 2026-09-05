@@ -45,7 +45,7 @@ export function Markdown(props: {
       ref={(element) => {
         host = element;
       }}
-      class="pim-markdown min-w-0 break-words leading-relaxed"
+      class="pim-markdown min-w-0 break-words"
     />
   );
 }

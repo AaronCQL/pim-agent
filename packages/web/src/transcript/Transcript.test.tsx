@@ -58,6 +58,25 @@ describe("rows", () => {
   });
 });
 
+describe("row grouping", () => {
+  test("a run of tool calls is one group, so the calls stack with no gap", () => {
+    const call = (callId: string): DurableEvent => ({
+      seq: 1,
+      type: "tool_result",
+      callId,
+      name: "read",
+      view: { title: [{ kind: "text", text: callId }] },
+      isError: false,
+    });
+    const host = replay([call("a"), call("b"), call("c")]);
+
+    // One wrapper, three rows: only the wrappers are spaced by a blank line.
+    const groups = [...host.querySelectorAll(":scope > div > div")];
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.querySelectorAll("article")).toHaveLength(3);
+  });
+});
+
 describe("static replay of a real session", () => {
   test("renders every durable event without a live connection", () => {
     const host = replay();
@@ -79,13 +98,23 @@ describe("static replay of a real session", () => {
     expect(read?.open).toBe(false);
   });
 
-  test("the failed bash call is painted as an error card", () => {
-    const errored = [...replay().querySelectorAll("article")].filter((node) =>
-      node.className.includes("border-red-900/60")
+  test("the failed bash call is painted with a rose rule, not a card", () => {
+    const host = replay();
+    const errored = [...host.querySelectorAll("article")].filter((node) =>
+      node.innerHTML.includes("border-rose-400")
     );
 
     expect(errored).toHaveLength(1);
     expect(errored[0]?.textContent).toContain("tsc --noEmit greeter.ts");
+    // No fill and no border box: the rule and the caret carry the failure.
+    expect(errored[0]?.className).not.toContain("bg-");
+  });
+
+  test("a user turn is a card and an assistant turn is bare prose", () => {
+    const [first] = [...replay().querySelectorAll("article")];
+
+    expect(first?.textContent).toContain("Modernise the string building");
+    expect(first?.querySelector("div")?.className).toContain("bg-neutral-850");
   });
 
   test("the final assistant turn renders markdown, not source", () => {

@@ -162,46 +162,7 @@ describe("the optimistic echo", () => {
   });
 });
 
-describe("approvals", () => {
-  test("dedupe on callId and clear when resolved", () => {
-    const target = store();
-    const request = {
-      type: "approval_request" as const,
-      callId: "c1",
-      name: "shell",
-      view: VIEW,
-      reason: "unbounded",
-    };
-    feed(target, attached("s1"), request, request);
-
-    expect(target.state.approvals).toHaveLength(1);
-
-    feed(target, {
-      type: "approval_resolved",
-      callId: "c1",
-      approved: true,
-      reason: "ok",
-    });
-
-    expect(target.state.approvals).toEqual([]);
-  });
-
-  test("a re-attach replaces them rather than doubling them", () => {
-    const target = store();
-    const request = {
-      type: "approval_request" as const,
-      callId: "c1",
-      name: "shell",
-      view: VIEW,
-      reason: "unbounded",
-    };
-    feed(target, attached("s1"), request, attached("s1"), request);
-
-    expect(target.state.approvals).toHaveLength(1);
-  });
-});
-
-test("session_state lands on the fields the footer paints", () => {
+test("session_state lands on the fields the sidebar and composer paint", () => {
   const target = store();
   feed(target, attached("s1"), {
     type: "session_state",

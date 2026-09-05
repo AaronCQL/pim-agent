@@ -131,7 +131,7 @@ export function Combobox(props: {
     <Popover
       open={props.open}
       {...(props.anchor === undefined ? {} : { anchor: props.anchor })}
-      class="z-50 max-h-64 overflow-y-auto rounded-md border border-neutral-700 bg-neutral-900 p-1 text-sm shadow-xl"
+      class="z-50 max-h-64 overflow-y-auto rounded-lg bg-neutral-850 p-1 text-sm ring-1 ring-neutral-700"
     >
       <ul
         ref={(element: HTMLUListElement) => {
@@ -151,8 +151,8 @@ export function Combobox(props: {
               role="option"
               aria-selected={index() === props.activeIndex ? "true" : "false"}
               class={{
-                "flex cursor-pointer items-baseline gap-2 rounded px-2 py-1": true,
-                "bg-sky-900/60 text-neutral-100": index() === props.activeIndex,
+                "flex cursor-pointer items-baseline gap-1ch rounded-lg px-2 py-1": true,
+                "bg-neutral-800 text-neutral-50": index() === props.activeIndex,
               }}
               onMouseEnter={() => {
                 props.onActivate(index());
@@ -164,7 +164,7 @@ export function Combobox(props: {
                 props.onSelect(index());
               }}
             >
-              <span class="shrink-0 font-mono">{item.label}</span>
+              <span class="shrink-0">{item.label}</span>
               <Show when={item.description}>
                 {(description) => (
                   <span class="min-w-0 truncate text-neutral-500">

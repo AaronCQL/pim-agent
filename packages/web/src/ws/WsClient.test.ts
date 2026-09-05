@@ -187,48 +187,6 @@ test("re-attaching does not replay the in-flight text twice", async () => {
   await idle(store);
 });
 
-test("a parked approval is answered, and the tool then runs", async () => {
-  const store = await connect();
-  await store.prompt("run a shell command");
-  await until(() => store.state.approvals.length === 1, "an approval request");
-
-  const request = store.state.approvals[0]!;
-  expect(request.name).toBe("shell");
-  expect(request.reason).toBeString();
-
-  await store.approve(request.callId, true);
-  await until(() => store.state.approvals.length === 0, "the request to clear");
-  await idle(store);
-  expect(await Bun.file(harness.marker).text()).toBe("echo hi");
-});
-
-test("a denied approval clears and the tool never runs", async () => {
-  const store = await connect();
-  await store.prompt("run a shell command");
-  await until(() => store.state.approvals.length === 1, "an approval request");
-
-  await store.approve(store.state.approvals[0]!.callId, false);
-  await idle(store);
-
-  expect(store.state.approvals).toEqual([]);
-  expect(await Bun.file(harness.marker).exists()).toBe(false);
-});
-
-test("an approval parked with no client attached is shown on attach", async () => {
-  const first = await connect();
-  const sessionId = first.state.sessionId;
-  await first.prompt("run a shell command");
-  await until(() => first.state.approvals.length === 1, "the first request");
-  first.dispose();
-
-  const late = await connect({ sessionId });
-  await until(
-    () => late.state.approvals.length === 1,
-    "the parked request on a fresh attach"
-  );
-  expect(late.state.approvals[0]?.name).toBe("shell");
-});
-
 test("the file picker is answered by the server and completes a token", async () => {
   await Bun.write(`${harness.tmp}/greeter.ts`, "export const x = 1;\n");
   const store = await connect();

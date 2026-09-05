@@ -20,13 +20,6 @@ export type LiveTool = {
   readonly view: ToolView;
 };
 
-export type PendingApproval = {
-  readonly callId: string;
-  readonly name: string;
-  readonly view: ToolView;
-  readonly reason: string;
-};
-
 /** What `POST /upload` answered with. Every path here is the server's. */
 export type UploadedAttachment = {
   readonly id: string;
@@ -59,7 +52,6 @@ export type SessionState = {
   liveMessageId: string;
   liveText: string;
   liveTools: LiveTool[];
-  approvals: PendingApproval[];
   optimistic: OptimisticMessage[];
   stats: TurnStats | undefined;
   error: string | undefined;
@@ -108,7 +100,6 @@ export class SessionStore {
       liveMessageId: "",
       liveText: "",
       liveTools: [],
-      approvals: [],
       optimistic: [],
       stats: undefined,
       error: undefined,
@@ -241,24 +232,6 @@ export class SessionStore {
       .catch(() => undefined);
   }
 
-  public async approve(callId: string, approved: boolean): Promise<void> {
-    // Optimistic: the request is gone from this client's view immediately, and
-    // `approval_resolved` clears it on every other client.
-    this.setState((draft) => {
-      draft.approvals = draft.approvals.filter(
-        (request) => request.callId !== callId
-      );
-    });
-    await this.client
-      .send({
-        type: "approve_tool",
-        sessionId: this.state.sessionId,
-        callId,
-        approved,
-      })
-      .catch(() => undefined);
-  }
-
   public async pickFiles(
     query: string,
     limit = FILE_PICKER_LIMIT
@@ -350,7 +323,6 @@ export class SessionStore {
           draft.liveText = "";
           draft.liveMessageId = "";
           draft.liveTools = [];
-          draft.approvals = [];
           draft.error = undefined;
         });
         return;
@@ -388,27 +360,6 @@ export class SessionStore {
             name: existing?.name ?? "",
             view: event.view,
           });
-        });
-        return;
-      case "approval_request":
-        this.setState((draft) => {
-          if (
-            !draft.approvals.some((request) => request.callId === event.callId)
-          ) {
-            draft.approvals.push({
-              callId: event.callId,
-              name: event.name,
-              view: event.view,
-              reason: event.reason,
-            });
-          }
-        });
-        return;
-      case "approval_resolved":
-        this.setState((draft) => {
-          draft.approvals = draft.approvals.filter(
-            (request) => request.callId !== event.callId
-          );
         });
         return;
       case "picker_invalidate":

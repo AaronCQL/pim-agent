@@ -14,8 +14,9 @@
         "ky": "^2.0.2",
       },
       "devDependencies": {
+        "@fontsource/commit-mono": "^5.3.0",
         "@happy-dom/global-registrator": "^20.12.0",
-        "@iconify-json/lucide": "^1.2.127",
+        "@iconify-json/griddy-icons": "^1.2.0",
         "@iconify-json/solar": "^1.2.10",
         "@solidjs/vite-plugin": "3.0.0-next.36",
         "@solidjs/web": "^2.0.0-rc.4",
@@ -205,13 +206,15 @@
 
     "@esbuild/win32-x64": ["@esbuild/win32-x64@0.28.1", "", { "os": "win32", "cpu": "x64" }, "sha512-bm4Mowrv+GXMlpWX++EcXw/iLyd1o3+bJkC2DkWXYVvgZCqD/bSj9ctZeAMC3cIxgjRVR2Dufaiu4YPxr5gW1A=="],
 
+    "@fontsource/commit-mono": ["@fontsource/commit-mono@5.3.0", "", {}, "sha512-Bs+zlEWHDgk/cCVWEMJJaA7LbBU3Ixi5Zums+SSwMKdm2N7RJ4P7jCJTwsMHRt5WFiXYB0tu0q9HMfkn0YsLsQ=="],
+
     "@google/genai": ["@google/genai@1.52.0", "", { "dependencies": { "google-auth-library": "^10.3.0", "p-retry": "^4.6.2", "protobufjs": "^7.5.4", "ws": "^8.18.0" }, "peerDependencies": { "@modelcontextprotocol/sdk": "^1.25.2" }, "optionalPeers": ["@modelcontextprotocol/sdk"] }, "sha512-gwSvbpiN/17O9TbsqSsE/OzZcpv5Fo4RQjdngGgogtuB9RsyJ8ZHhX5KjHj1bp5N9snN2eK8LDGXSaWW2hof8Q=="],
 
     "@grammyjs/types": ["@grammyjs/types@5.0.0", "", {}, "sha512-iq1Qrq1iPKkB8yAa0qSuIURMZOCuqTY5pWy5gHpCeL1oQ+GPadGhw/cDTVE8waJwuCzacUzuIjRv1sESvk7u7A=="],
 
     "@happy-dom/global-registrator": ["@happy-dom/global-registrator@20.13.2", "", { "dependencies": { "@types/node": ">=20.0.0", "happy-dom": "^20.13.2" } }, "sha512-pGO7WhgHVLi7mi7zCLyJ+FkTad2aPTcjUXhRbgA4T5n1vLRJ/9uw3EsLieScNSX6HOfPF947bOP7N42l+KrWjg=="],
 
-    "@iconify-json/lucide": ["@iconify-json/lucide@1.2.129", "", { "dependencies": { "@iconify/types": "*" } }, "sha512-pa0ufllJOXTDIH2BxE/BtWQEf/x46/lINDWcmncICV1/52veZ7KSBzQaVh9xDpmjDs8QN4j2Ex/LWlSSveL3yw=="],
+    "@iconify-json/griddy-icons": ["@iconify-json/griddy-icons@1.2.0", "", { "dependencies": { "@iconify/types": "*" } }, "sha512-C3AdVCAC9WrUNFSmyljsiH59CuyOqUfALsanzD4dO0VOHt4Fz0sttDSeayiSap8u8uACeq8WMZ1KZAmMusuf9w=="],
 
     "@iconify-json/solar": ["@iconify-json/solar@1.2.10", "", { "dependencies": { "@iconify/types": "*" } }, "sha512-ChpZ3kNw8nDhHfUoLq5JJ3AdIzytFm57dFkjAS0fjXnL5a7WwibTINjMKfvqQDhuXBrgqejNLyGp8CCpG8UyCg=="],
 

@@ -59,8 +59,9 @@
     "check": "bun run typecheck && bun run test && bun run lint && bun run format"
   },
   "devDependencies": {
+    "@fontsource/commit-mono": "^5.3.0",
     "@happy-dom/global-registrator": "^20.12.0",
-    "@iconify-json/lucide": "^1.2.127",
+    "@iconify-json/griddy-icons": "^1.2.0",
     "@iconify-json/solar": "^1.2.10",
     "@solidjs/vite-plugin": "3.0.0-next.36",
     "@solidjs/web": "^2.0.0-rc.4",

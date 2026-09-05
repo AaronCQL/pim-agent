@@ -14,4 +14,20 @@ function formatTokens(tokens: number): string {
   return `${Math.round(tokens / 1_000_000)}M`;
 }
 
-export const Format = { formatTokens };
+/**
+ * A duration as the running indicator says it: `32s`, `1m 32s`, `1h 1m 32s`.
+ * Shared because the TUI's `Clanking…` line and the web's are the same line.
+ */
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return hours > 0
+    ? `${hours}h ${minutes}m ${seconds}s`
+    : minutes > 0
+      ? `${minutes}m ${seconds}s`
+      : `${seconds}s`;
+}
+
+export const Format = { formatTokens, formatElapsed };

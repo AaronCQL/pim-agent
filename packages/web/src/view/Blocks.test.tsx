@@ -17,9 +17,16 @@ function paint(blocks: readonly ViewBlock[]): string {
   return host.innerHTML;
 }
 
-function paintTool(view: ToolView, isPartial = false): HTMLElement {
+function paintTool(
+  view: ToolView,
+  isPartial = false,
+  name?: string
+): HTMLElement {
   const host = mountPoint();
-  render(() => <ToolCard view={view} isPartial={isPartial} />, host);
+  render(
+    () => <ToolCard view={view} isPartial={isPartial} name={name} />,
+    host
+  );
   flush();
   return host;
 }
@@ -108,9 +115,10 @@ describe("ViewBlock HTML painter", () => {
     expect(html).toContain("nested");
   });
 
-  test("a section paints its icon and recurses into its content", () => {
+  test("a section paints its label and recurses into its content", () => {
     const html = paint([SAMPLES.section]);
-    expect(html).toContain("i-lucide-pencil");
+    // No glyph anywhere on the web: `icon` is declared and deliberately unpainted.
+    expect(html).not.toContain("i-griddy");
     expect(html).toContain("greeter.ts");
     expect(html).toContain("inner");
   });
@@ -142,7 +150,7 @@ describe("ViewBlock HTML painter", () => {
   test("a notice carries its severity as a role and a tone", () => {
     const html = paint([SAMPLES.notice]);
     expect(html).toContain('role="alert"');
-    expect(html).toContain("text-red-400");
+    expect(html).toContain("text-rose-400");
   });
 });
 
@@ -158,11 +166,12 @@ describe("body frames", () => {
     expect(groups.map((group) => group.frame)).toEqual(["heading", "heading"]);
   });
 
-  test("each frame paints its own wrapper class", () => {
+  test("each frame paints its own wrapper class, and an embed is not a card", () => {
     const host = mountPoint();
     render(() => <Body blocks={[SAMPLES.text, SAMPLES.code]} />, host);
     flush();
     expect(host.innerHTML).toContain("overflow-x-auto");
+    expect(host.innerHTML).not.toContain("rounded bg-neutral-900/60");
   });
 
   test("markdown and payloads are embeds, prose is flow", () => {
@@ -207,15 +216,51 @@ describe("ToolCard", () => {
     expect(host.textContent).toContain("+2");
   });
 
-  test("labelTone tints the label and icon maps to a glyph class", () => {
+  test("labelTone tints the label, and no glyph is painted", () => {
     const html = paintTool(view).innerHTML;
-    expect(html).toContain("text-sky-400");
-    expect(html).toContain("i-lucide-pencil");
+    expect(html).toContain("text-indigo-300");
+    // The caret is the only icon a row draws, and it carries state, not identity.
+    expect(html.match(/i-griddy-icons:[\w-]+/g)).toEqual([
+      "i-griddy-icons:chevron-right-small-filled",
+      "i-griddy-icons:copy",
+      "i-griddy-icons:chevron-right-small-filled",
+    ]);
+  });
+
+  test("the label falls back to the tool name the wire carried", () => {
+    const host = paintTool({ title: [SAMPLES.text] }, false, "bash");
+    expect(host.textContent).toStartWith("bash:");
   });
 
   test("a view with no body renders a head with no disclosure", () => {
     const host = paintTool({ title: [SAMPLES.text] });
     expect(host.querySelector("details")).toBeNull();
-    expect(host.querySelector(".i-lucide-wrench")).not.toBeNull();
+  });
+
+  test("an error opens by default and previews ten lines of the failure", () => {
+    const host = mountPoint();
+    const text = Array.from({ length: 14 }, (_, line) => `line ${line}`);
+    render(
+      () => (
+        <ToolCard
+          view={{ title: [], body: [{ kind: "text", text: text.join("\n") }] }}
+          isError
+        />
+      ),
+      host
+    );
+    flush();
+
+    expect(host.querySelector("details")?.open).toBe(true);
+    expect(host.innerHTML).toContain("border-rose-400");
+    expect(host.textContent).toContain("line 9");
+    expect(host.textContent).not.toContain("line 10");
+    expect(host.textContent).toContain("… 4 more lines");
+
+    host
+      .querySelector("details button")!
+      .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    flush();
+    expect(host.textContent).toContain("line 13");
   });
 });
