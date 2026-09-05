@@ -1,5 +1,6 @@
 import type { ToolView } from "#core/view/ViewBlock";
 import type { DurableEvent } from "#protocol/ServerEvent";
+import type { LiveMessage } from "../session/SessionStore";
 
 export type MessageRow = {
   readonly kind: "message";
@@ -10,8 +11,9 @@ export type MessageRow = {
   readonly timestamp: number;
   readonly thinking?: string;
   /**
-   * The turn still in flight. The markdown renderer must not be flushed while
-   * this is set, or every delta would repaint the whole message.
+   * Still streaming, which is true of live rows and of nothing else. The
+   * markdown renderer must not be flushed while it is set, or every delta
+   * would repaint the whole message.
    */
   readonly streaming?: boolean;
 };
@@ -46,68 +48,51 @@ export type RowBuild = {
  * least twice on the wire — as the requesting message's `toolCalls`, as its
  * own `tool_result`, and again in the in-flight bucket while it runs — and the
  * protocol says to dedupe on `callId`, so each later sighting upgrades the row
- * in place rather than appending a second one. That is also what lets the live
- * turn be appended as an ordinary assistant `message` with no special case:
- * its tool rows merge with the durable ones for free. A call whose result
- * never landed stays a partial row.
+ * in place rather than appending a second one. A call whose result never
+ * landed stays a partial row.
  */
 function append(
   rows: Row[],
   toolIndex: Map<string, number>,
-  event: DurableEvent,
-  streamingId?: string
+  event: DurableEvent
 ): void {
   switch (event.type) {
     case "message": {
-      if (event.text !== "" || event.thinking !== undefined) {
+      // Trimmed because the block is drawn `whitespace-pre-wrap`: models end
+      // reasoning with a newline or two, and untrimmed those are blank lines
+      // between the thinking and the prose it introduces.
+      const thinking = event.thinking?.trim() ?? "";
+      if (event.text !== "" || thinking !== "") {
         rows.push({
           kind: "message",
           id: event.messageId,
           role: event.role,
           text: event.text,
           timestamp: event.timestamp,
-          ...(event.thinking === undefined ? {} : { thinking: event.thinking }),
-          ...(event.messageId === streamingId ? { streaming: true } : {}),
+          ...(thinking === "" ? {} : { thinking }),
         });
       }
       for (const call of event.toolCalls ?? []) {
-        const row: ToolRow = {
+        upsertTool(rows, toolIndex, {
           kind: "tool",
           id: call.callId,
           name: call.name,
           view: call.view,
           isError: false,
           isPartial: true,
-        };
-        const at = toolIndex.get(call.callId);
-        if (at === undefined) {
-          toolIndex.set(call.callId, rows.length);
-          rows.push(row);
-        } else if ((rows[at] as ToolRow).isPartial) {
-          // The live turn re-states the calls its durable message already
-          // listed; the later view is the fresher one, and a landed result
-          // outranks both.
-          rows[at] = row;
-        }
+        });
       }
       break;
     }
     case "tool_result": {
-      const row: ToolRow = {
+      upsertTool(rows, toolIndex, {
         kind: "tool",
         id: event.callId,
         name: event.name,
         view: event.view,
         isError: event.isError,
         isPartial: false,
-      };
-      const at = toolIndex.get(event.callId);
-      if (at === undefined) {
-        toolIndex.set(event.callId, rows.length);
-        rows.push(row);
-      } else {
-        rows[at] = row;
-      }
+      });
       break;
     }
     case "notice":
@@ -121,43 +106,102 @@ function append(
   }
 }
 
-export function buildRows(
-  events: readonly DurableEvent[],
-  streamingId?: string
-): RowBuild {
+/**
+ * A later sighting of a call upgrades its row in place; a settled one is
+ * never downgraded back to partial by a re-stated call.
+ */
+function upsertTool(
+  rows: Row[],
+  toolIndex: Map<string, number>,
+  row: ToolRow
+): void {
+  const at = toolIndex.get(row.id);
+  if (at === undefined) {
+    toolIndex.set(row.id, rows.length);
+    rows.push(row);
+    return;
+  }
+  if ((rows[at] as ToolRow).isPartial || !row.isPartial) {
+    rows[at] = row;
+  }
+}
+
+/**
+ * Folds the in-flight turn in after the durable rows: one row per live
+ * assistant message, each followed by the calls it made, in the order they
+ * were streamed. These rows carry `streaming`, and nothing else does.
+ */
+function appendLive(
+  rows: Row[],
+  toolIndex: Map<string, number>,
+  live: readonly LiveMessage[]
+): void {
+  for (const message of live) {
+    // Trimmed as the durable path trims it, and for the same reason; a delta
+    // that is only the closing newline must not push the prose down a line.
+    const thinking = message.thinking.trim();
+    if (message.text !== "" || thinking !== "") {
+      rows.push({
+        kind: "message",
+        id: message.messageId,
+        role: "assistant",
+        text: message.text,
+        // Never written, so never stamped; assistant rows do not draw one.
+        timestamp: 0,
+        ...(thinking === "" ? {} : { thinking }),
+        streaming: true,
+      });
+    }
+    for (const tool of message.tools) {
+      upsertTool(rows, toolIndex, {
+        kind: "tool",
+        id: tool.callId,
+        name: tool.name,
+        view: tool.view,
+        isError: tool.isError,
+        isPartial: tool.isPartial,
+      });
+    }
+  }
+}
+
+export function buildRows(events: readonly DurableEvent[]): RowBuild {
   const rows: Row[] = [];
   const toolIndex = new Map<string, number>();
   for (const event of events) {
-    append(rows, toolIndex, event, streamingId);
+    append(rows, toolIndex, event);
   }
   return { rows, toolIndex };
 }
 
 /**
- * Continues a build with the trailing in-flight events, copying it first so
- * the base — a memo of the whole durable log — is never mutated. The copy is
- * shallow, which is the point: on a text delta the durable row objects keep
- * their identity, and only the handful of trailing rows are rebuilt.
+ * Continues a build with this client's unacknowledged messages and the live
+ * turn, copying it first so the base — a memo of the whole durable log — is
+ * never mutated. The copy is shallow, which is the point: on a text delta the
+ * durable row objects keep their identity, and only the trailing rows are
+ * rebuilt.
  */
 export function extendRows(
   base: RowBuild,
-  events: readonly DurableEvent[],
-  streamingId?: string
+  trailing: readonly DurableEvent[],
+  live: readonly LiveMessage[] = []
 ): readonly Row[] {
-  if (events.length === 0) {
+  if (trailing.length === 0 && live.length === 0) {
     return base.rows;
   }
   const rows = [...base.rows];
   const toolIndex = new Map(base.toolIndex);
-  for (const event of events) {
-    append(rows, toolIndex, event, streamingId);
+  for (const event of trailing) {
+    append(rows, toolIndex, event);
   }
+  appendLive(rows, toolIndex, live);
   return rows;
 }
 
 export function toRows(
   events: readonly DurableEvent[],
-  streamingId?: string
+  trailing: readonly DurableEvent[] = [],
+  live: readonly LiveMessage[] = []
 ): readonly Row[] {
-  return buildRows(events, streamingId).rows;
+  return extendRows(buildRows(events), trailing, live);
 }

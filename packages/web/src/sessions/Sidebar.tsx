@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 
 import type { SessionSummaryView } from "#protocol/ServerEvent";
 // The one place the distribution's own version reaches the browser. Vite and
@@ -25,9 +25,10 @@ const CONNECTION_CLASSES: Record<ConnectionStatus, string> = {
  * connection to it.
  *
  * One component, two hosts — the layout renders it in place at `md:` and the
- * drawer renders it below that — so `onNavigate` is how the drawer learns to
- * close itself. A drawer left open over the session you just picked is the
- * classic bug.
+ * drawer renders it below that — so `onNavigate` is how the shell hears that a
+ * row was picked: both hosts scroll the transcript to the end, and the drawer
+ * also closes itself. A drawer left open over the session you just picked is
+ * the classic bug.
  *
  * Flat and most-recent-first, per the mockup: the cwd is on every row, which
  * is what the old grouping by directory was for.
@@ -39,6 +40,15 @@ export function Sidebar(props: {
   const [sessions, setSessions] = createSignal<readonly SessionSummaryView[]>(
     []
   );
+  // "23m" is a statement about now, not about the row, so it has to be re-read
+  // on a clock rather than on whatever next re-renders the list.
+  const [now, setNow] = createSignal(Date.now());
+  const clock = setInterval(() => {
+    setNow(Date.now());
+  }, 1000);
+  onCleanup(() => {
+    clearInterval(clock);
+  });
 
   // Re-read on attach, on a switch, and when a turn *finishes*: a session only
   // appears on disk once it has content, and its modified time — the sort key
@@ -117,7 +127,7 @@ export function Sidebar(props: {
                   <div class="flex justify-between gap-6 text-neutral-400">
                     <div class="truncate">{abbreviateHome(session.cwd)}</div>
                     <div class="shrink-0">
-                      {relativeTime(session.modifiedAt)}
+                      {relativeTime(session.modifiedAt, now())}
                     </div>
                   </div>
                 </button>

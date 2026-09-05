@@ -19,6 +19,23 @@ export type LiveTool = {
   readonly callId: string;
   readonly name: string;
   readonly view: ToolView;
+  readonly isError: boolean;
+  /** The call is on the wire but nothing has settled its result yet. */
+  readonly isPartial: boolean;
+};
+
+/**
+ * One assistant message of the turn in flight. There is a list of them, not
+ * one: a turn is a model call per step, and pi appends the entry for a step
+ * long after it streamed — usually only when the whole turn settles — so a
+ * bucket that held a single message would drop the prose of every step but
+ * the last on the floor.
+ */
+export type LiveMessage = {
+  readonly messageId: string;
+  text: string;
+  thinking: string;
+  tools: LiveTool[];
 };
 
 /** What the composer's two chips choose from; one query answers both. */
@@ -60,9 +77,7 @@ export type SessionState = {
   branch: string | undefined;
   dirty: boolean;
   durable: DurableEvent[];
-  liveMessageId: string;
-  liveText: string;
-  liveTools: LiveTool[];
+  live: LiveMessage[];
   optimistic: OptimisticMessage[];
   stats: TurnStats | undefined;
   error: string | undefined;
@@ -123,9 +138,7 @@ export class SessionStore {
       branch: undefined,
       dirty: false,
       durable: [],
-      liveMessageId: "",
-      liveText: "",
-      liveTools: [],
+      live: [],
       optimistic: [],
       stats: undefined,
       error: undefined,
@@ -169,55 +182,35 @@ export class SessionStore {
   }
 
   /**
-   * What the transcript paints: the durable log, then `trailing()`. The two
-   * halves are also exposed separately so the transcript can memoise the
-   * durable flattening instead of redoing it on every delta.
-   */
-  public timeline(): readonly DurableEvent[] {
-    return [...this.state.durable, ...this.trailing()];
-  }
-
-  /**
-   * This client's own unacknowledged additions. The live turn is shaped as an
-   * ordinary assistant `message` so the row builder dedupes its tool calls
-   * against the durable ones on `callId` with no special case anywhere.
+   * This client's own unacknowledged messages: what was typed and not yet
+   * echoed back. The live turn is separate — `state.live` — because a
+   * streaming message is not a durable one with a flag on it.
    */
   public trailing(): readonly DurableEvent[] {
-    const trailing: DurableEvent[] = [];
     // Nothing has been written yet, so the only honest stamp is "now"; the
     // durable event that supersedes this one carries pi's own.
     const timestamp = Date.now();
-    for (const pending of this.state.optimistic) {
-      trailing.push({
-        seq: 0,
-        type: "message",
-        messageId: pending.id,
-        role: "user",
-        text: pending.text,
-        timestamp,
-      });
-    }
-    if (this.state.liveText !== "" || this.state.liveTools.length > 0) {
-      trailing.push({
-        seq: 0,
-        type: "message",
-        messageId: this.streamingId(),
-        role: "assistant",
-        text: this.state.liveText,
-        timestamp,
-        toolCalls: this.state.liveTools.map((tool) => ({
-          callId: tool.callId,
-          name: tool.name,
-          view: tool.view,
-        })),
-      });
-    }
-    return trailing;
+    return this.state.optimistic.map((pending) => ({
+      seq: 0,
+      type: "message",
+      messageId: pending.id,
+      role: "user",
+      text: pending.text,
+      timestamp,
+    }));
   }
 
-  /** The message id whose markdown must stay un-finalised, if any. */
-  public streamingId(): string {
-    return this.state.liveMessageId === "" ? "live" : this.state.liveMessageId;
+  /**
+   * How much live content there is, as one number: a cheap dependency for an
+   * effect that only needs to know that the turn grew.
+   */
+  public liveSize(): number {
+    let size = 0;
+    for (const message of this.state.live) {
+      size += message.text.length + message.thinking.length;
+      size += message.tools.length;
+    }
+    return size;
   }
 
   public isBusy(): boolean {
@@ -369,6 +362,13 @@ export class SessionStore {
   }
 
   public async switchTo(sessionId: string): Promise<void> {
+    // Re-attaching replays the log from `seq: 0`, and this client keeps what
+    // it already painted for the session it is already on — so asking for the
+    // session you are reading would print it twice. Picking it again is a
+    // navigation, and the caller answers it by scrolling.
+    if (sessionId === this.state.sessionId) {
+      return;
+    }
     await this.client.attachTo({ sessionId });
   }
 
@@ -417,9 +417,7 @@ export class SessionStore {
           draft.cwd = event.cwd;
           // The server re-sends the whole in-flight turn on every attach, so
           // keeping any of it here would double the text.
-          draft.liveText = "";
-          draft.liveMessageId = "";
-          draft.liveTools = [];
+          draft.live = [];
           draft.error = undefined;
         });
         // Attaching is reading: the replay that follows this frame paints
@@ -428,38 +426,45 @@ export class SessionStore {
         return;
       case "message_start":
         this.setState((draft) => {
-          draft.liveMessageId = event.messageId;
-          draft.liveText = "";
+          liveMessage(draft.live, event.messageId);
         });
         return;
       case "text_delta":
         this.setState((draft) => {
-          if (draft.liveMessageId !== event.messageId) {
-            draft.liveMessageId = event.messageId;
-            draft.liveText = "";
-          }
-          draft.liveText += event.delta;
+          const message = liveMessage(draft.live, event.messageId);
+          message.text += event.delta;
+        });
+        return;
+      case "thinking_delta":
+        this.setState((draft) => {
+          const message = liveMessage(draft.live, event.messageId);
+          message.thinking += event.delta;
         });
         return;
       case "tool_call":
         this.setState((draft) => {
-          upsertTool(draft.liveTools, {
-            callId: event.callId,
-            name: event.name,
-            view: event.view,
-          });
+          // Onto the message being streamed: pi calls tools from the step it
+          // just wrote, and that is the order the transcript draws them in.
+          const message = liveMessage(draft.live, event.messageId);
+          if (message.tools.every((tool) => tool.callId !== event.callId)) {
+            message.tools.push({
+              callId: event.callId,
+              name: event.name,
+              view: event.view,
+              isError: false,
+              isPartial: true,
+            });
+          }
         });
         return;
       case "tool_update":
-        this.setState((draft) => {
-          const existing = draft.liveTools.find(
-            (tool) => tool.callId === event.callId
-          );
-          upsertTool(draft.liveTools, {
-            callId: event.callId,
-            name: existing?.name ?? "",
-            view: event.view,
-          });
+        this.patchTool(event.callId, { view: event.view });
+        return;
+      case "tool_end":
+        this.patchTool(event.callId, {
+          view: event.view,
+          isError: event.isError,
+          isPartial: false,
         });
         return;
       case "picker_invalidate":
@@ -477,6 +482,12 @@ export class SessionStore {
           draft.contextWindow = event.contextWindow;
           draft.branch = event.branch;
           draft.dirty = event.dirty ?? false;
+          // The server only says `idle` after it has flushed every entry the
+          // turn wrote, so anything still live here has been superseded and
+          // would otherwise sit under the durable copy of itself forever.
+          if (event.status === "idle") {
+            draft.live = [];
+          }
         });
         return;
       case "turn_end":
@@ -498,22 +509,48 @@ export class SessionStore {
     this.setState((draft) => {
       draft.durable.push(event);
       if (event.type === "message" && event.role === "assistant") {
-        draft.liveText = "";
-        draft.liveMessageId = "";
+        // One durable message retires one live one, oldest first: they are
+        // written in the order they streamed, and the rest of the turn is
+        // still only live.
+        draft.live = draft.live.slice(1);
       }
       if (event.type === "message" && event.role === "user") {
+        // Splicing a store draft in place is not safe across a batch of
+        // events — the write is a patch, and it can be applied against a
+        // later array than the one the index was read from.
         const at = draft.optimistic.findIndex((pending) =>
           event.text.startsWith(pending.text)
         );
-        draft.optimistic.splice(at === -1 ? 0 : at, 1);
+        draft.optimistic = draft.optimistic.filter(
+          (_, index) => index !== (at === -1 ? 0 : at)
+        );
       }
       if (event.type === "tool_result") {
-        draft.liveTools = draft.liveTools.filter(
-          (tool) => tool.callId !== event.callId
-        );
+        for (const message of draft.live) {
+          message.tools = message.tools.filter(
+            (tool) => tool.callId !== event.callId
+          );
+        }
       }
     });
     this.markSeen(this.state.sessionId, event.seq);
+  }
+
+  /** Rewrites one live call wherever in the turn it was made. */
+  private patchTool(
+    callId: string,
+    patch: Partial<Omit<LiveTool, "callId" | "name">>
+  ): void {
+    this.setState((draft) => {
+      for (const message of draft.live) {
+        const at = message.tools.findIndex((tool) => tool.callId === callId);
+        const existing = message.tools[at];
+        if (existing) {
+          message.tools[at] = { ...existing, ...patch };
+          return;
+        }
+      }
+    });
   }
 
   private dropOptimistic(id: string): void {
@@ -525,13 +562,24 @@ export class SessionStore {
   }
 }
 
-function upsertTool(tools: LiveTool[], tool: LiveTool): void {
-  const at = tools.findIndex((existing) => existing.callId === tool.callId);
-  if (at === -1) {
-    tools.push(tool);
-  } else {
-    tools[at] = { ...tools[at], ...tool };
+/**
+ * The live message with this id, appended if this is the first sight of it.
+ * Any of the turn's events may be the first to name a message — a replay
+ * arrives mid-turn, and a step that only calls a tool never streams a word.
+ */
+function liveMessage(live: LiveMessage[], messageId: string): LiveMessage {
+  const existing = live.find((message) => message.messageId === messageId);
+  if (existing) {
+    return existing;
   }
+  const message: LiveMessage = {
+    messageId,
+    text: "",
+    thinking: "",
+    tools: [],
+  };
+  live.push(message);
+  return message;
 }
 
 function readSeen(): Record<string, number> {

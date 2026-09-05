@@ -16,6 +16,9 @@ import { ProbeClient } from "./ProbeClient";
 import { WsGateway } from "./WsGateway";
 
 const REPLY = "hello from the gateway";
+/** The first step's reasoning and prose, which stream before any tool runs. */
+const REASONING = "the user wants a ping, so call the tool";
+const PROSE = "Pinging the tool now.";
 const TOOL_ARGS = { text: "hi" };
 const TOOL_OUTPUT = `pong: ${TOOL_ARGS.text}`;
 
@@ -83,9 +86,9 @@ function holdTurn(): () => void {
 }
 
 /**
- * Streams a tool call on the first request of a turn and prose on the second,
- * so one prompt exercises the whole projection: assistant message, tool call,
- * tool result, final text.
+ * Streams reasoning, prose and a tool call on the first request of a turn and
+ * prose on the second, so one prompt exercises the whole projection and the
+ * whole live turn: two assistant messages, a call, a result, a final text.
  */
 function startModelServer(): void {
   let requests = 0;
@@ -102,6 +105,12 @@ function startModelServer(): void {
           const encode = (s: string) => controller.enqueue(Buffer.from(s));
           encode(chunk({ role: "assistant", content: "" }));
           if (isToolTurn) {
+            for (const word of REASONING.split(" ")) {
+              encode(chunk({ reasoning_content: `${word} ` }));
+            }
+            for (const word of PROSE.split(" ")) {
+              encode(chunk({ content: `${word} ` }));
+            }
             encode(
               chunk({
                 tool_calls: [
@@ -291,7 +300,46 @@ test("loses nothing when a probe dies mid-turn and resumes by seq", async () => 
   expect(durable(complete)).toEqual(seen);
 });
 
-test("hands a reconnecting client the in-flight turn as one block", async () => {
+/**
+ * A turn is a model call per step, and pi writes the entry for a step long
+ * after it streamed — here, not until the turn settles. So every step has to
+ * be live in its own right: one `message_start` each, its own reasoning and
+ * prose, and the calls it made hung off it.
+ */
+test("streams a step at a time, reasoning included", async () => {
+  const probe = await connect();
+  const mark = probe.events.length;
+  await probe.prompt("say hello with a tool");
+  await idle(probe, mark);
+
+  const live = probe.events.slice(mark);
+  const steps = live.filter((e) => e.type === "message_start");
+  expect(steps).toHaveLength(2);
+
+  const streamed = (type: "text_delta" | "thinking_delta", id: string) =>
+    live
+      .filter((e) => e.type === type && e.messageId === id)
+      .map((e) => (e.type === type ? e.delta : ""))
+      .join("")
+      .trim();
+  const [first, second] = steps.map((e) =>
+    e.type === "message_start" ? e.messageId : ""
+  );
+  expect(streamed("thinking_delta", first!)).toBe(REASONING);
+  // The prose of the step that called the tool: the thing a single-slot
+  // bucket used to drop the moment the next step started.
+  expect(streamed("text_delta", first!)).toBe(PROSE);
+  expect(streamed("text_delta", second!)).toBe(REPLY);
+
+  const call = live.find((e) => e.type === "tool_call");
+  expect(call?.type === "tool_call" && call.messageId).toBe(first!);
+  // Settled live, not left spinning until pi appends the result.
+  const end = live.find((e) => e.type === "tool_end");
+  expect(end?.type === "tool_end" && end.isError).toBe(false);
+  expect(live.indexOf(end!)).toBeLessThan(live.indexOf(steps[1]!));
+});
+
+test("hands a reconnecting client every step of the in-flight turn", async () => {
   const release = holdTurn();
   const first = await connect();
   const sessionId = first.sessionId!;
@@ -301,12 +349,19 @@ test("hands a reconnecting client the in-flight turn as one block", async () => 
   first.kill();
 
   const second = await connect({ sessionId, fromSeq: first.seq });
+  // One `message_start` per step the turn has taken, each carrying at most
+  // one coalesced delta: the deltas themselves were never persisted, so this
+  // is the only shape they can come back in.
+  const starts = second.events.filter((e) => e.type === "message_start");
   const deltas = second.events.filter((e) => e.type === "text_delta");
-  expect(deltas).toHaveLength(1);
-  expect(REPLY).toStartWith(deltas[0]!.delta.trim());
-  expect(second.events.filter((e) => e.type === "message_start")).toHaveLength(
-    1
-  );
+  expect(new Set(starts.map((e) => e.messageId)).size).toBe(starts.length);
+  expect(deltas.length).toBeLessThanOrEqual(starts.length);
+  expect(REPLY).toStartWith(deltas.at(-1)!.delta.trim());
+  // A call that finished while nobody was attached comes back finished, not
+  // as a row that spins until pi gets round to writing the result down.
+  const call = second.events.find((e) => e.type === "tool_call");
+  expect(starts.map((e) => e.messageId)).toContain(call!.messageId);
+  expect(second.events.some((e) => e.type === "tool_end")).toBe(true);
 
   release();
   await idle(second, second.events.length);

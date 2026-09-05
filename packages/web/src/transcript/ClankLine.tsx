@@ -26,16 +26,11 @@ export function ClankLine(props: { readonly store: SessionStore }) {
   const [elapsed, setElapsed] = createSignal<number | undefined>(undefined);
   const replayed = createMemo(() => lastTurnMs(props.store.state.durable));
   const shown = createMemo(() => elapsed() ?? replayed());
-  let startedAt = 0;
   let timer: ReturnType<typeof setInterval> | undefined;
-
-  const stopTicking = (): void => {
-    if (timer !== undefined) {
-      clearInterval(timer);
-      timer = undefined;
-    }
-  };
-  onCleanup(stopTicking);
+  let startedAt = 0;
+  onCleanup(() => {
+    clearInterval(timer);
+  });
 
   createEffect(
     () => props.store.isBusy(),
@@ -43,16 +38,25 @@ export function ClankLine(props: { readonly store: SessionStore }) {
       const measure = (): void => {
         setElapsed(Date.now() - startedAt);
       };
+      // Both arms turn on the edge, not on the run: the agent status moves
+      // between `thinking`, `streaming` and `tool` for the whole turn, and
+      // an effect re-runs on each of those — the boolean it computes being
+      // unchanged does not stop it. Reading the clock on every run would
+      // restart it at each tool call and each block of prose, and re-reading
+      // it while idle would keep growing a turn that has already ended.
+      const ticking = timer !== undefined;
+      if (busy === ticking) {
+        return;
+      }
       if (busy) {
         startedAt = Date.now();
         measure();
-        timer ??= setInterval(measure, 1000);
+        timer = setInterval(measure, 1000);
         return;
       }
-      stopTicking();
-      if (startedAt > 0) {
-        measure();
-      }
+      clearInterval(timer);
+      timer = undefined;
+      measure();
     }
   );
 

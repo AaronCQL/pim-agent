@@ -8,14 +8,33 @@ import { MessageText } from "#core/session/MessageText";
 import type { SessionHost } from "#core/session/SessionHost";
 import { Git, type GitState } from "#core/shared/Git";
 import { Tools } from "#core/shared/Tools";
+import type { ToolView } from "#core/view/ViewBlock";
 import type { EphemeralEvent, ServerEvent } from "#protocol/ServerEvent";
 import { SessionProjection } from "./SessionProjection";
 
 export type StreamListener = (event: ServerEvent) => void;
 
 type LiveTool = {
+  readonly callId: string;
   readonly name: string;
+  /** Kept because `tool_execution_end` carries a result but not the call. */
   readonly args: unknown;
+  view: ToolView;
+  isError: boolean;
+  done: boolean;
+};
+
+/**
+ * One assistant message of the turn in flight. A turn is a list of these
+ * because pi calls the model once per step and only appends the entry for a
+ * step later — often not until the whole turn settles — so between the two
+ * this is the only record that the step's prose, reasoning and calls exist.
+ */
+type LiveMessage = {
+  readonly messageId: string;
+  text: string;
+  thinking: string;
+  readonly tools: LiveTool[];
 };
 
 /**
@@ -42,10 +61,9 @@ export class SessionStream {
   public readonly picker: PickerService;
   private readonly projection: SessionProjection;
   private readonly listeners = new Set<StreamListener>();
-  private readonly liveTools = new Map<string, LiveTool>();
+  private liveTurn: LiveMessage[] = [];
   private unsubscribe: (() => void) | undefined;
   private liveMessageId = 0;
-  private streamedText = "";
   private turnStartedAt = 0;
   private git: GitState = Git.EMPTY;
   private gitCwd = "";
@@ -101,26 +119,36 @@ export class SessionStream {
   /** The live turn as a self-contained block, safe to send at any moment. */
   private inFlight(): readonly ServerEvent[] {
     const events: ServerEvent[] = [];
-    const messageId = this.currentMessageId();
-    const text = this.host.eventLog?.inFlight?.text ?? "";
-    if (text) {
-      events.push(
-        { type: "message_start", role: "assistant", messageId },
-        { type: "text_delta", messageId, delta: text }
-      );
-    }
-    for (const [callId, tool] of this.liveTools) {
-      events.push({
-        type: "tool_call",
-        callId,
-        name: tool.name,
-        view: Tools.viewOf({
+    for (const message of this.liveTurn) {
+      const { messageId } = message;
+      events.push({ type: "message_start", role: "assistant", messageId });
+      if (message.thinking) {
+        events.push({
+          type: "thinking_delta",
+          messageId,
+          delta: message.thinking,
+        });
+      }
+      if (message.text) {
+        events.push({ type: "text_delta", messageId, delta: message.text });
+      }
+      for (const tool of message.tools) {
+        events.push({
+          type: "tool_call",
+          callId: tool.callId,
           name: tool.name,
-          args: tool.args,
-          isPartial: true,
-          cwd: this.host.cwd,
-        }),
-      });
+          messageId,
+          view: tool.view,
+        });
+        if (tool.done) {
+          events.push({
+            type: "tool_end",
+            callId: tool.callId,
+            view: tool.view,
+            isError: tool.isError,
+          });
+        }
+      }
     }
     events.push(this.sessionState());
     return events;
@@ -204,74 +232,117 @@ export class SessionStream {
     switch (event.type) {
       case "agent_start":
         this.turnStartedAt = Date.now();
-        this.liveMessageId += 1;
-        this.streamedText = "";
+        this.liveTurn = [];
         this.emit(this.sessionState());
         return;
       case "message_start":
         if (event.message.role === "assistant") {
-          this.streamedText = "";
-          this.emit({
-            type: "message_start",
-            role: "assistant",
-            messageId: this.currentMessageId(),
-          });
+          this.startMessage();
+          this.emit(this.sessionState());
         }
         return;
       case "message_update": {
         if (event.message.role !== "assistant") {
           return;
         }
-        const full = MessageText.textOf(event.message.content);
-        if (full.startsWith(this.streamedText) && full !== this.streamedText) {
+        const message = this.currentMessage();
+        const text = MessageText.textOf(event.message.content);
+        const thinking = MessageText.textOf(event.message.content, "thinking");
+        // Only ever a suffix: pi re-states the whole message on each update,
+        // so anything that is not an extension of what was sent is a rewrite
+        // the deltas cannot express, and the durable entry settles it.
+        if (
+          thinking.startsWith(message.thinking) &&
+          thinking !== message.thinking
+        ) {
+          this.emit({
+            type: "thinking_delta",
+            messageId: message.messageId,
+            delta: thinking.slice(message.thinking.length),
+          });
+          message.thinking = thinking;
+        }
+        if (text.startsWith(message.text) && text !== message.text) {
           this.emit({
             type: "text_delta",
-            messageId: this.currentMessageId(),
-            delta: full.slice(this.streamedText.length),
+            messageId: message.messageId,
+            delta: text.slice(message.text.length),
           });
-          this.streamedText = full;
+          message.text = text;
         }
         return;
       }
-      case "tool_execution_start":
-        this.liveTools.set(event.toolCallId, {
+      case "tool_execution_start": {
+        const view = Tools.viewOf({
           name: event.toolName,
           args: event.args,
+          isPartial: true,
+          cwd: this.host.cwd,
+        });
+        const message = this.currentMessage();
+        message.tools.push({
+          callId: event.toolCallId,
+          name: event.toolName,
+          args: event.args,
+          view,
+          isError: false,
+          done: false,
         });
         this.emit({
           type: "tool_call",
           callId: event.toolCallId,
           name: event.toolName,
-          view: Tools.viewOf({
-            name: event.toolName,
-            args: event.args,
-            isPartial: true,
-            cwd: this.host.cwd,
-          }),
+          messageId: message.messageId,
+          view,
         });
         this.emit(this.sessionState());
         return;
-      case "tool_execution_update":
-        this.emit({
-          type: "tool_update",
-          callId: event.toolCallId,
-          view: Tools.viewOf({
-            name: event.toolName,
-            args: event.args,
-            result: event.partialResult,
-            isPartial: true,
-            cwd: this.host.cwd,
-          }),
+      }
+      case "tool_execution_update": {
+        const view = Tools.viewOf({
+          name: event.toolName,
+          args: event.args,
+          result: event.partialResult,
+          isPartial: true,
+          cwd: this.host.cwd,
         });
+        const tool = this.findTool(event.toolCallId);
+        if (tool) {
+          tool.view = view;
+        }
+        this.emit({ type: "tool_update", callId: event.toolCallId, view });
         return;
-      case "tool_execution_end":
-        this.liveTools.delete(event.toolCallId);
+      }
+      case "tool_execution_end": {
+        // The result is durable, but pi may not append it for another step or
+        // two; until it does, this is the only settled view of the call there
+        // is, and without it the row would spin for the rest of the turn.
+        const tool = this.findTool(event.toolCallId);
+        const view = Tools.viewOf({
+          name: event.toolName,
+          args: tool?.args,
+          result: event.result,
+          isPartial: false,
+          cwd: this.host.cwd,
+        });
+        if (tool) {
+          tool.view = view;
+          tool.isError = event.isError;
+          tool.done = true;
+        }
+        this.emit({
+          type: "tool_end",
+          callId: event.toolCallId,
+          view,
+          isError: event.isError,
+        });
         // The watcher tick, without a watcher: a tool that is not declared
         // read-only may have just changed what the file picker would answer.
         if (Tools.effectOf(event.toolName)?.kind !== "readOnly") {
           this.invalidatePickers("files");
         }
         return;
+      }
       case "entry_appended":
         void this.flushDurable();
         return;
@@ -290,9 +361,10 @@ export class SessionStream {
         return;
       }
       case "agent_settled":
-        this.liveTools.clear();
-        this.streamedText = "";
         void this.flushDurable().then(() => {
+          // Cleared only once what supersedes it is on the wire: a client that
+          // reconnects in between must still be handed the finished turn.
+          this.liveTurn = [];
           this.emit(this.sessionState());
         });
         return;
@@ -301,14 +373,50 @@ export class SessionStream {
     }
   }
 
+  /**
+   * The message being streamed. Synthesised when an update or a call arrives
+   * before any `message_start` — a step that only calls tools still needs
+   * somewhere to hang them, and the client orders the bucket by message.
+   */
+  private currentMessage(): LiveMessage {
+    return this.liveTurn.at(-1) ?? this.startMessage();
+  }
+
+  /** Opens the next live message of the turn and announces it. */
+  private startMessage(): LiveMessage {
+    this.liveMessageId += 1;
+    const message: LiveMessage = {
+      messageId: `${this.sessionId}:live:${this.liveMessageId}`,
+      text: "",
+      thinking: "",
+      tools: [],
+    };
+    this.liveTurn.push(message);
+    this.emit({
+      type: "message_start",
+      role: "assistant",
+      messageId: message.messageId,
+    });
+    return message;
+  }
+
+  /** The live call with this id, wherever in the turn it was made. */
+  private findTool(callId: string): LiveTool | undefined {
+    for (const message of this.liveTurn) {
+      const tool = message.tools.find(
+        (candidate) => candidate.callId === callId
+      );
+      if (tool) {
+        return tool;
+      }
+    }
+    return undefined;
+  }
+
   private async flushDurable(): Promise<void> {
     for (const event of await this.projection.drain()) {
       this.emit(event);
     }
-  }
-
-  private currentMessageId(): string {
-    return `${this.sessionId}:live:${this.liveMessageId}`;
   }
 
   private emit(event: ServerEvent): void {

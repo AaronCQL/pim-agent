@@ -3,7 +3,14 @@ import { flush } from "solid-js";
 
 import type { DurableEvent } from "#protocol/ServerEvent";
 import { SessionStore } from "../session/SessionStore";
-import { GatewayHarness, REPLY, until } from "../test/gateway";
+import { toRows } from "../transcript/rows";
+import {
+  GatewayHarness,
+  REASONING,
+  REPLY,
+  TOOL_PROSE,
+  until,
+} from "../test/gateway";
 
 let harness: GatewayHarness;
 let stores: SessionStore[] = [];
@@ -56,12 +63,21 @@ afterEach(async () => {
   await harness.stop();
 });
 
+/** Everything the live bucket has streamed, in order, as one string. */
+function liveText(store: SessionStore): string {
+  return store.state.live.map((message) => message.text).join("");
+}
+
+function liveTools(store: SessionStore) {
+  return store.state.live.flatMap((message) => message.tools);
+}
+
 test("streams a whole turn into the timeline", async () => {
   const store = await connect();
   expect(store.state.sessionId).toBeString();
 
   await store.prompt("say hello with a tool");
-  await until(() => store.state.liveText !== "" || store.isBusy(), "streaming");
+  await until(() => liveText(store) !== "" || store.isBusy(), "streaming");
   await idle(store);
 
   const messages = store.state.durable.filter(
@@ -81,8 +97,7 @@ test("streams a whole turn into the timeline", async () => {
     store.state.durable.some((event) => event.type === "tool_result")
   ).toBe(true);
   // The in-flight bucket is emptied by the durable message that supersedes it.
-  expect(store.state.liveText).toBe("");
-  expect(store.state.liveTools).toEqual([]);
+  expect(store.state.live).toEqual([]);
 });
 
 test("the optimistic echo is replaced by the durable user message", async () => {
@@ -94,7 +109,7 @@ test("the optimistic echo is replaced by the durable user message", async () => 
   flush();
   expect(store.state.optimistic.map((one) => one.text)).toEqual(["say hello"]);
   expect(
-    store.timeline().filter((event) => event.type === "message")
+    store.trailing().filter((event) => event.type === "message")
   ).toHaveLength(1);
   await sent;
 
@@ -102,9 +117,9 @@ test("the optimistic echo is replaced by the durable user message", async () => 
     () => store.state.optimistic.length === 0,
     "the durable user message"
   );
-  const users = store
-    .timeline()
-    .filter((event) => event.type === "message" && event.role === "user");
+  const users = store.state.durable.filter(
+    (event) => event.type === "message" && event.role === "user"
+  );
   expect(users).toHaveLength(1);
   expect(users[0]?.type === "message" && users[0].text).toBe("say hello");
 });
@@ -112,16 +127,35 @@ test("the optimistic echo is replaced by the durable user message", async () => 
 test("in-flight tool rows merge with the durable ones on callId", async () => {
   const store = await connect();
   await store.prompt("use a tool please");
-  await until(() => store.state.liveTools.length > 0, "a live tool call");
+  await until(() => liveTools(store).length > 0, "a live tool call");
 
-  const live = store.timeline();
-  const calls = live.flatMap((event) =>
-    event.type === "message" ? (event.toolCalls ?? []) : []
-  );
-  expect(new Set(calls.map((call) => call.callId)).size).toBe(calls.length);
+  const calls = toRows(store.state.durable, store.trailing(), store.state.live)
+    .filter((row) => row.kind === "tool")
+    .map((row) => row.id);
+  expect(new Set(calls).size).toBe(calls.length);
 
   await idle(store);
-  expect(store.state.liveTools).toEqual([]);
+  expect(store.state.live).toEqual([]);
+});
+
+test("holds every step of a live turn, with its reasoning and its calls", async () => {
+  const store = await connect();
+  const release = harness.holdTurn();
+  await store.prompt("use a tool please");
+  await until(() => store.state.live.length === 2, "the second step");
+
+  const [first, second] = store.state.live;
+  expect(first?.thinking.trim()).toBe(REASONING);
+  expect(first?.text.trim()).toBe(TOOL_PROSE);
+  // The call hangs off the step that made it, and it is settled: the client
+  // does not wait for pi to append the result before the row stops spinning.
+  expect(first?.tools.map((tool) => tool.isPartial)).toEqual([false]);
+  expect(second?.text.length).toBeGreaterThan(0);
+
+  release();
+  await idle(store);
+  // Every step is durable now, so nothing is left live to draw twice.
+  expect(store.state.live).toEqual([]);
 });
 
 test("loses and duplicates nothing across a gateway restart", async () => {
@@ -136,7 +170,7 @@ test("loses and duplicates nothing across a gateway restart", async () => {
 
   const release = harness.holdTurn();
   await store.prompt("say hello again");
-  await until(() => store.state.liveText !== "", "the first delta");
+  await until(() => liveText(store) !== "", "the first delta");
   const before = [...store.state.durable];
 
   await harness.dropGateway();
@@ -172,17 +206,17 @@ test("re-attaching does not replay the in-flight text twice", async () => {
   const release = harness.holdTurn();
   const store = await connect();
   await store.prompt("say hello");
-  await until(() => store.state.liveText.length > 5, "some streamed text");
-  const partial = store.state.liveText;
+  await until(() => liveText(store).length > 5, "some streamed text");
+  const partial = liveText(store);
 
   await harness.dropGateway();
   await until(() => store.state.connection === "reconnecting", "the drop");
   harness.startGateway();
   await until(() => store.state.connection === "open", "the reconnect");
-  await until(() => store.state.liveText !== "", "the coalesced snapshot");
+  await until(() => liveText(store) !== "", "the coalesced snapshot");
 
-  expect(store.state.liveText.startsWith(partial)).toBe(true);
-  expect(REPLY).toStartWith(store.state.liveText.trim());
+  expect(liveText(store).startsWith(partial)).toBe(true);
+  expect(REPLY).toStartWith(liveText(store).trim());
   release();
   await idle(store);
 });

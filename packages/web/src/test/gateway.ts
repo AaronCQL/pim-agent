@@ -9,6 +9,9 @@ import { Tools, type PimToolDefinition } from "#core/shared/Tools";
 import { WsGateway } from "#server/WsGateway";
 
 export const REPLY = "hello from the gateway";
+/** What the step that calls the tool reasons and says before calling it. */
+export const REASONING = "a ping is what was asked for";
+export const TOOL_PROSE = "Pinging now.";
 
 const pingSchema = Type.Object({ text: Type.String() });
 
@@ -185,6 +188,12 @@ export class GatewayHarness {
               controller.enqueue(Buffer.from(text));
             encode(chunk({ role: "assistant", content: "" }));
             if (tool) {
+              for (const word of REASONING.split(" ")) {
+                encode(chunk({ reasoning_content: `${word} ` }));
+              }
+              for (const word of TOOL_PROSE.split(" ")) {
+                encode(chunk({ content: `${word} ` }));
+              }
               encode(
                 chunk({
                   tool_calls: [

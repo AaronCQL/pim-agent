@@ -4,6 +4,7 @@ import { createMemo, For, Show, type Component } from "solid-js";
 import type { DurableEvent } from "#protocol/ServerEvent";
 import { clockTime } from "../format";
 import { Markdown } from "../markdown/Markdown";
+import type { LiveMessage } from "../session/SessionStore";
 import { ToolCard } from "../view/ToolCard";
 import { NOTICE_CLASSES } from "../view/tokens";
 import {
@@ -26,10 +27,11 @@ type RowMap = {
 /**
  * The whole conversation, painted from durable events alone.
  *
- * `streamingId` names the one message whose markdown must stay open; the live
- * turn reaches here as `trailing` — ordinary assistant `message`s — which is
- * what lets the in-flight bucket merge with the durable log through
- * `extendRows` and nothing else.
+ * `trailing` is what this client has said and not yet had echoed back; `live`
+ * is the turn in flight, a message per step with the calls that step made.
+ * Both merge into the durable rows through `extendRows`, which dedupes calls
+ * on `callId`, so a call keeps one row from the moment it starts to the
+ * moment its result lands.
  *
  * Two memos so a text delta, which ticks many times a second, only rebuilds
  * the few trailing rows: the durable log is flattened once per durable event,
@@ -40,11 +42,11 @@ type RowMap = {
 export function Transcript(props: {
   readonly events: readonly DurableEvent[];
   readonly trailing?: readonly DurableEvent[];
-  readonly streamingId?: string;
+  readonly live?: readonly LiveMessage[];
 }) {
-  const durable = createMemo(() => buildRows(props.events, props.streamingId));
+  const durable = createMemo(() => buildRows(props.events));
   const rows = createMemo(() =>
-    extendRows(durable(), props.trailing ?? [], props.streamingId)
+    extendRows(durable(), props.trailing ?? [], props.live ?? [])
   );
   const groups = createMemo(() => groupRuns(rows()));
 

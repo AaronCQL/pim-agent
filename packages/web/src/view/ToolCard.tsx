@@ -23,9 +23,11 @@ const ERROR_PREVIEW_LINES = 10;
  *   it does in `Renderer.renderToolCallTitle`.
  * - `summary` renders in every state — streaming, collapsed, expanded — so it
  *   sits outside the disclosure.
- * - `body` is expand-only, and `collapsed: false` forces it open. It is also
- *   dropped entirely while the call is still partial: a half-finished call has
- *   no payload worth an affordance.
+ * - `body` is expand-only, and `collapsed: false` forces it open. A call that
+ *   is still running gets the same affordance as a settled one as soon as it
+ *   has anything in it: output that only becomes readable once the tool
+ *   returns is output you cannot watch. Blank blocks do not count — an
+ *   argument-only view would otherwise open onto nothing.
  * - An error bypasses the view the way the TUI does: the row opens by default
  *   and shows the same 10-line preview, with the same `… N more lines` line as
  *   the way through to the rest.
@@ -39,22 +41,15 @@ export function ToolCard(props: {
 }) {
   // Memoised: a partial call re-renders on every delta, and this is read by
   // the class object, the disclosure and `failure()` on each of them.
-  const body = createMemo(() =>
-    props.isPartial === true ? [] : (props.view.body ?? [])
-  );
+  const body = createMemo(() => (props.view.body ?? []).filter(isDrawn));
   const error = () => props.isError === true;
   const failure = createMemo(() => (error() ? errorText(body()) : undefined));
 
   return (
-    <article
-      class={{
-        "min-w-0": true,
-        // A collapsed row recedes until hovered; an open one is the thing you
-        // asked to look at, so it stays at full strength.
-        "opacity-80 hover:opacity-100 focus-within:opacity-100":
-          body().length === 0,
-      }}
-    >
+    // A row recedes until hovered; an open one is the thing you asked to look
+    // at, so it stays at full strength — that is the disclosure's own state,
+    // not whether the row has a payload to disclose.
+    <article class="min-w-0 opacity-80 hover:opacity-100 focus-within:opacity-100 has-[details[open]]:opacity-100">
       <Show
         when={body().length > 0}
         fallback={<Head view={props.view} name={props.name} />}
@@ -87,6 +82,13 @@ function caretClass(isPartial: boolean, isError: boolean): string {
     return "bg-neutral-500";
   }
   return isError ? "bg-rose-400" : "bg-neutral-300";
+}
+
+/** A block that would paint nothing: an empty body is not a disclosure. */
+function isDrawn(block: ViewBlock): boolean {
+  return block.kind === "text" || block.kind === "notice"
+    ? block.text.trim() !== ""
+    : true;
 }
 
 function Head(props: { readonly view: ToolView; readonly name?: string }) {

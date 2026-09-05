@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { flush } from "solid-js";
 
 import { PROTOCOL_VERSION } from "#protocol/Protocol";
-import type { ServerEvent } from "#protocol/ServerEvent";
+import type { ServerEvent, SessionStatus } from "#protocol/ServerEvent";
 import { Shell } from "./App";
 import { SessionStore } from "./session/SessionStore";
 import { mountPoint } from "./test/dom";
@@ -151,6 +151,49 @@ describe("the shell, painted from events alone", () => {
     flush();
 
     expect(host.innerHTML).not.toContain("code-branch");
+  });
+
+  test("the clank line times the whole turn, not the last thing in it", () => {
+    const store = offline();
+    const host = paint(store);
+    const state = (status: SessionStatus): ServerEvent => ({
+      type: "session_state",
+      cwd: "/repo",
+      model: "sonnet",
+      thinking: "medium",
+      cost: 0,
+      status,
+    });
+    const real = Date.now;
+    let now = real();
+    Date.now = () => now;
+
+    try {
+      store.ingest(attached());
+      store.ingest(state("thinking"));
+      flush();
+
+      // A turn is a run of statuses, and each one of them wakes the clock's
+      // effect; none of them is a new turn.
+      now += 8_000;
+      store.ingest({ type: "text_delta", messageId: "live-1", delta: "hi" });
+      store.ingest(state("tool"));
+      store.ingest(state("streaming"));
+      flush();
+      expect(host.textContent).toContain("Clanking…");
+
+      // Idle settles the reading, and idle again — a branch poll, say — must
+      // not carry on adding to it.
+      now += 1_000;
+      store.ingest(state("idle"));
+      flush();
+      now += 60_000;
+      store.ingest(state("idle"));
+      flush();
+      expect(host.textContent).toContain("Clanked for 9s");
+    } finally {
+      Date.now = real;
+    }
   });
 
   test("an error is a rose line above the composer", () => {

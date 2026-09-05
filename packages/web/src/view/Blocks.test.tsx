@@ -210,10 +210,18 @@ describe("ToolCard", () => {
     ).toBe(true);
   });
 
-  test("a partial call drops the body and the affordance with it", () => {
+  test("a partial call keeps the body, so output can be watched", () => {
     const host = paintTool(view, true);
-    expect(host.querySelector("details")).toBeNull();
+    expect(host.querySelector("details")).not.toBeNull();
     expect(host.textContent).toContain("+2");
+  });
+
+  test("a body of blank blocks is no body: an unstarted call has no caret", () => {
+    const host = paintTool(
+      { title: [SAMPLES.file], body: [{ kind: "text", text: "" }] },
+      true
+    );
+    expect(host.querySelector("details")).toBeNull();
   });
 
   test("labelTone tints the label, and no glyph is painted", () => {

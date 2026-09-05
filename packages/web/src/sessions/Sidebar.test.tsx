@@ -1,7 +1,7 @@
 import "../test/dom";
 
 import { render } from "@solidjs/web";
-import { expect, test } from "bun:test";
+import { expect, setSystemTime, test } from "bun:test";
 import { flush } from "solid-js";
 
 import type { SessionSummaryView } from "#protocol/ServerEvent";
@@ -96,6 +96,26 @@ test("picking a row attaches to it and tells the host to get out of the way", as
 
   expect(switched).toEqual(["bbbbbbbb-2222"]);
   expect(navigated).toEqual([1]);
+});
+
+test("a row's age follows the clock, not the next render", async () => {
+  // The fixture's sessions were last written at the epoch, so the mocked
+  // wall clock *is* the age.
+  setSystemTime(new Date(30_000));
+  const { host } = paint();
+  await Bun.sleep(0);
+  flush();
+  const age = (): string | undefined =>
+    host.querySelector("li button > div:last-child > div:last-child")
+      ?.textContent ?? undefined;
+  expect(age()).toBe("30s");
+
+  setSystemTime(new Date(90_000));
+  // Nothing here re-renders the list; only the component's own tick does.
+  await Bun.sleep(1100);
+  flush();
+  expect(age()).toBe("1m");
+  setSystemTime();
 });
 
 test("the server row names the host and tints itself with the connection", () => {

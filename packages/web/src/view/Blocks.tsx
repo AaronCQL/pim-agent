@@ -10,6 +10,7 @@ import {
   DIFF_LINE_CLASSES,
   FRAME_CLASSES,
   NOTICE_CLASSES,
+  TONE_CLASSES,
   groupByFrame,
   toneClass,
 } from "./tokens";
@@ -86,9 +87,11 @@ function SpanText(props: { readonly span: Span }) {
         [toneClass(props.span.tone)]: true,
         "line-through": props.span.strike === true,
         "font-bold": props.span.strong === true,
-        // The mockup's InlineCode: a hue, no chrome. A pill would put the row
-        // off the line grid by its own padding.
-        "text-pink-400":
+        // The whole UI is monospace, so code needs no face of its own; it is
+        // set back from prose instead, the way a shell command in a tool title
+        // is the argument and not the sentence. A pill would put the row off
+        // the line grid by its own padding.
+        [TONE_CLASSES.muted]:
           props.span.code === true && props.span.tone === undefined,
       }}
     >

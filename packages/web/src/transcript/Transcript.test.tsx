@@ -58,6 +58,25 @@ describe("rows", () => {
 
     expect(rows.map((row) => row.kind)).toEqual(["tool"]);
   });
+
+  test("reasoning is trimmed, and whitespace alone is no reasoning at all", () => {
+    const message = (thinking: string): DurableEvent => ({
+      seq: 1,
+      type: "message",
+      messageId: "m",
+      role: "assistant",
+      text: "Done.",
+      timestamp: 0,
+      thinking,
+    });
+
+    const [row] = toRows([message("\nLet me look.\n\n")]);
+    expect(row).toMatchObject({ kind: "message", thinking: "Let me look." });
+
+    const [blank] = toRows([message("\n\n")]);
+    expect(blank).toMatchObject({ kind: "message", text: "Done." });
+    expect(blank).not.toHaveProperty("thinking");
+  });
 });
 
 describe("row grouping", () => {

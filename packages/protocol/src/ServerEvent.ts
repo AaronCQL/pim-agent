@@ -61,14 +61,18 @@ export type DurableEvent =
 /**
  * The live preview of the turn in flight, and the session state around it.
  * Deliberately **unsequenced**: none of it is persisted line by line, so none
- * of it can be replayed by ordinal. A reconnecting client is instead handed the
- * coalesced in-flight buffer — one `message_start` plus one `text_delta`
- * carrying everything streamed so far — and then the durable event supersedes
- * it once pi appends the finished message.
+ * of it can be replayed by ordinal. A reconnecting client is instead handed
+ * the whole in-flight turn coalesced — one `message_start` per assistant
+ * message, each followed by a single `thinking_delta`/`text_delta` carrying
+ * everything streamed into it so far and the calls it made — and then the
+ * durable events supersede it once pi appends the finished messages.
  *
- * A client renders these into a trailing "in flight" bucket and clears that
- * bucket whenever a durable `message` with `role: "assistant"` arrives. Live
- * `tool_call` events therefore re-appear inside that message's `toolCalls`;
+ * A turn is **many** assistant messages, not one: pi writes an entry per model
+ * call, and it writes them long after they streamed. So the bucket is a list
+ * in arrival order, keyed by `messageId`, and a durable `message` with
+ * `role: "assistant"` retires its oldest entry rather than the whole bucket —
+ * dropping it wholesale is what loses the prose of every step but the last.
+ * Live `tool_call` events re-appear inside a durable message's `toolCalls`;
  * dedupe on `callId`.
  */
 export type EphemeralEvent =
@@ -90,16 +94,35 @@ export type EphemeralEvent =
       readonly messageId: string;
       readonly delta: string;
     }
+  /** Reasoning as it streams; the durable message carries the whole of it. */
+  | {
+      readonly type: "thinking_delta";
+      readonly messageId: string;
+      readonly delta: string;
+    }
   | {
       readonly type: "tool_call";
       readonly callId: string;
       readonly name: string;
+      /** The live message that asked for it, which is what orders the row. */
+      readonly messageId: string;
       readonly view: ToolView;
     }
   | {
       readonly type: "tool_update";
       readonly callId: string;
       readonly view: ToolView;
+    }
+  /**
+   * The call finished. Its result is durable, but only once pi appends it —
+   * which can be a whole turn later — so this carries the settled view in the
+   * meantime and the `tool_result` for the same `callId` supersedes it.
+   */
+  | {
+      readonly type: "tool_end";
+      readonly callId: string;
+      readonly view: ToolView;
+      readonly isError: boolean;
     }
   /**
    * Every picker answer this session's clients hold is stale: the cwd moved,

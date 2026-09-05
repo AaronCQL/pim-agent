@@ -1,4 +1,10 @@
-import { createEffect, createSignal, onCleanup, Show } from "solid-js";
+import {
+  createEffect,
+  createSignal,
+  onCleanup,
+  onSettled,
+  Show,
+} from "solid-js";
 
 import { Composer } from "./input/Composer";
 import { SessionStore } from "./session/SessionStore";
@@ -26,9 +32,19 @@ function gatewayUrl(): string {
 
 export function App() {
   const store = new SessionStore({ url: gatewayUrl() });
-  void store.connect().catch(() => undefined);
-  onCleanup(() => {
-    store.dispose();
+  // Attaching is imperative IO whose first act is a status write, and a
+  // component body may not write reactive state — dev Solid throws
+  // REACTIVE_WRITE_IN_OWNED_SCOPE, which `connect()` then reports as a
+  // rejection, so the socket is never opened and the app paints empty
+  // against a healthy server. `onSettled` is the effect phase, where the
+  // write is legal, and its returned cleanup is this component's teardown.
+  onSettled(() => {
+    // A refused or unreachable gateway is not exceptional — `WsClient`
+    // reconnects on its own and `state.connection` is what the UI paints.
+    void store.connect().catch(() => undefined);
+    return () => {
+      store.dispose();
+    };
   });
 
   return <Shell store={store} />;
@@ -70,12 +86,19 @@ export function Shell(props: { readonly store: SessionStore }) {
     }
   };
 
+  // Picking a session is a request to read it, and a conversation is read at
+  // its end — including the session already on screen, which the store
+  // deliberately does not re-attach to.
+  const jump = (): void => {
+    pinned = true;
+    scroller.scrollTop = scroller.scrollHeight;
+  };
+
   createEffect(
     () =>
       props.store.state.durable.length +
       props.store.state.optimistic.length +
-      props.store.state.liveTools.length +
-      props.store.state.liveText.length,
+      props.store.liveSize(),
     stick
   );
 
@@ -89,7 +112,7 @@ export function Shell(props: { readonly store: SessionStore }) {
     <main class="flex h-[100dvh] overflow-hidden bg-neutral-925 text-neutral-100">
       <Show when={desktop() && sidebar()}>
         <div class="w-xs shrink-0 border-r border-neutral-700">
-          <Sidebar store={props.store} />
+          <Sidebar store={props.store} onNavigate={jump} />
         </div>
       </Show>
 
@@ -107,6 +130,7 @@ export function Shell(props: { readonly store: SessionStore }) {
             store={props.store}
             onNavigate={() => {
               setSidebar(false);
+              jump();
             }}
           />
         </Show>
@@ -162,7 +186,7 @@ export function Shell(props: { readonly store: SessionStore }) {
               <Transcript
                 events={props.store.state.durable}
                 trailing={props.store.trailing()}
-                streamingId={props.store.streamingId()}
+                live={props.store.state.live}
               />
               <ClankLine store={props.store} />
             </div>

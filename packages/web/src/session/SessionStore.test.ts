@@ -21,6 +21,11 @@ function feed(target: SessionStore, ...events: readonly ServerEvent[]): void {
   flush();
 }
 
+/** Rows exactly as the transcript builds them: durable, echo, then live. */
+function rows(target: SessionStore) {
+  return toRows(target.state.durable, target.trailing(), target.state.live);
+}
+
 function attached(sessionId: string, head = 0): ServerEvent {
   return {
     type: "attached",
@@ -42,16 +47,15 @@ describe("the in-flight bucket", () => {
       { type: "text_delta", messageId: "live-1", delta: "lo" }
     );
 
-    expect(target.state.liveText).toBe("Hello");
-    expect(toRows(target.timeline(), target.streamingId())).toEqual([
+    expect(rows(target)).toEqual([
       {
         kind: "message",
         id: "live-1",
         role: "assistant",
         text: "Hello",
-        // The live turn has not been written yet, so its stamp is this
-        // client's clock until the durable message supersedes it.
-        timestamp: expect.any(Number),
+        // Never written, so never stamped; the durable message that
+        // supersedes this one carries pi's own.
+        timestamp: 0,
         streaming: true,
       },
     ]);
@@ -65,8 +69,89 @@ describe("the in-flight bucket", () => {
       timestamp: 0,
     });
 
-    expect(target.state.liveText).toBe("");
-    expect(toRows(target.timeline()).map((row) => row.id)).toEqual(["m1"]);
+    expect(target.state.live).toEqual([]);
+    expect(rows(target).map((row) => row.id)).toEqual(["m1"]);
+  });
+
+  /**
+   * The bug this shape exists for: pi calls the model once per step and
+   * appends the entries for every step at the end of the turn, so between the
+   * first tool call and `idle` the only record of step one's prose is live.
+   */
+  test("keeps the prose of every step of a multi-step turn", () => {
+    const target = store();
+    feed(
+      target,
+      attached("s1"),
+      { type: "message_start", role: "assistant", messageId: "live-1" },
+      { type: "thinking_delta", messageId: "live-1", delta: "I should look." },
+      { type: "text_delta", messageId: "live-1", delta: "Reading the file." },
+      {
+        type: "tool_call",
+        callId: "c1",
+        name: "read",
+        messageId: "live-1",
+        view: VIEW,
+      },
+      { type: "tool_end", callId: "c1", view: VIEW, isError: false },
+      { type: "message_start", role: "assistant", messageId: "live-2" },
+      { type: "text_delta", messageId: "live-2", delta: "It reads fine." }
+    );
+
+    expect(rows(target)).toMatchObject([
+      {
+        kind: "message",
+        id: "live-1",
+        text: "Reading the file.",
+        thinking: "I should look.",
+        streaming: true,
+      },
+      // Settled by `tool_end` long before pi writes the result down.
+      { kind: "tool", id: "c1", isPartial: false },
+      {
+        kind: "message",
+        id: "live-2",
+        text: "It reads fine.",
+        streaming: true,
+      },
+    ]);
+  });
+
+  test("the durable log retires the live turn a message at a time", () => {
+    const target = store();
+    feed(
+      target,
+      attached("s1"),
+      { type: "message_start", role: "assistant", messageId: "live-1" },
+      { type: "text_delta", messageId: "live-1", delta: "one" },
+      { type: "message_start", role: "assistant", messageId: "live-2" },
+      { type: "text_delta", messageId: "live-2", delta: "two" },
+      {
+        seq: 5,
+        type: "message",
+        messageId: "m1",
+        role: "assistant",
+        text: "one",
+        timestamp: 0,
+      }
+    );
+
+    // The step pi has written is durable; the one it has not is still live,
+    // and neither is drawn twice.
+    expect(rows(target).map((row) => row.id)).toEqual(["m1", "live-2"]);
+
+    // Idle is only ever announced after the flush, so whatever is left has
+    // been superseded.
+    feed(target, {
+      type: "session_state",
+      cwd: "/repo",
+      model: "sonnet",
+      thinking: "off",
+      cost: 0,
+      status: "idle",
+    });
+
+    expect(target.state.live).toEqual([]);
   });
 
   test("a live tool merges onto the durable call and the result wins", () => {
@@ -83,7 +168,13 @@ describe("the in-flight bucket", () => {
         timestamp: 0,
         toolCalls: [{ callId: "c1", name: "shell", view: VIEW }],
       },
-      { type: "tool_call", callId: "c1", name: "shell", view: VIEW },
+      {
+        type: "tool_call",
+        callId: "c1",
+        name: "shell",
+        messageId: "live-1",
+        view: VIEW,
+      },
       {
         type: "tool_update",
         callId: "c1",
@@ -91,7 +182,7 @@ describe("the in-flight bucket", () => {
       }
     );
 
-    const streaming = toRows(target.timeline());
+    const streaming = rows(target);
     expect(streaming).toHaveLength(1);
     expect(streaming[0]?.kind === "tool" && streaming[0].isPartial).toBe(true);
     expect(streaming[0]?.kind === "tool" && streaming[0].view.summary).toEqual([
@@ -107,8 +198,8 @@ describe("the in-flight bucket", () => {
       isError: false,
     });
 
-    expect(target.state.liveTools).toEqual([]);
-    const settled = toRows(target.timeline());
+    expect(target.state.live.flatMap((message) => message.tools)).toEqual([]);
+    const settled = rows(target);
     expect(settled).toHaveLength(1);
     expect(settled[0]?.kind === "tool" && settled[0].isPartial).toBe(false);
   });
@@ -125,7 +216,7 @@ describe("the in-flight bucket", () => {
     feed(target, attached("s1", 3));
 
     expect(target.state.durable).toHaveLength(1);
-    expect(target.state.liveText).toBe("");
+    expect(target.state.live).toEqual([]);
   });
 
   test("attaching to another session drops the log with it", () => {
@@ -152,7 +243,7 @@ describe("the optimistic echo", () => {
     flush();
 
     expect(target.state.optimistic).toHaveLength(1);
-    const echoed = toRows(target.timeline());
+    const echoed = rows(target);
     expect(echoed[0]?.kind === "message" && echoed[0].text).toBe(
       "look at @src/x.ts"
     );
@@ -167,7 +258,7 @@ describe("the optimistic echo", () => {
     });
 
     expect(target.state.optimistic).toEqual([]);
-    expect(toRows(target.timeline())).toHaveLength(1);
+    expect(rows(target)).toHaveLength(1);
   });
 });
 
@@ -195,6 +286,26 @@ test("session_state lands on the fields the sidebar and composer paint", () => {
   expect(target.state.branch).toBe("trunk");
   expect(target.state.dirty).toBe(true);
   expect(target.isBusy()).toBe(true);
+});
+
+describe("switching", () => {
+  test("the session already on screen is not re-attached", async () => {
+    const target = store();
+    const asked: string[] = [];
+    target.client.attachTo = async ({ sessionId }) => {
+      asked.push(sessionId ?? "");
+      return { type: "response", id: "1", success: true };
+    };
+
+    feed(target, attached("s1"));
+    await target.switchTo("s1");
+    // A second attach replays the log from the start, and this client keeps
+    // what it has already painted: the transcript would read twice.
+    expect(asked).toEqual([]);
+
+    await target.switchTo("s2");
+    expect(asked).toEqual(["s2"]);
+  });
 });
 
 describe("the read cursor", () => {
