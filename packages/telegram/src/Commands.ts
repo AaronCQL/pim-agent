@@ -6,7 +6,7 @@ import {
   type Api,
 } from "grammy";
 
-import { Paths } from "../../core/src/shared/Paths";
+import { Paths } from "#core/shared/Paths";
 import {
   LOGS_MODES,
   THINKING_LEVELS,

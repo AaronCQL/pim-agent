@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Type } from "typebox";
 
-import { Tools, type ErasedToolEffect } from "../../core/src/shared/Tools";
+import { Tools, type ErasedToolEffect } from "#core/shared/Tools";
 import {
   ApprovalRouter,
   type ApprovalOutcome,

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { flush } from "solid-js";
 
-import type { ServerEvent } from "../../../protocol/src/ServerEvent";
+import type { ServerEvent } from "#protocol/ServerEvent";
 import { toRows } from "../transcript/rows";
 import { SessionStore } from "./SessionStore";
 

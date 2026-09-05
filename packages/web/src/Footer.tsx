@@ -1,6 +1,6 @@
 import { Show } from "solid-js";
 
-import type { SessionStatus } from "../../protocol/src/ServerEvent";
+import type { SessionStatus } from "#protocol/ServerEvent";
 import type { ConnectionStatus } from "./ws/WsClient";
 import type { SessionStore } from "./session/SessionStore";
 

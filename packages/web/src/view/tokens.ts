@@ -1,10 +1,10 @@
-import { Painting } from "../../../core/src/view/Painting";
+import { Painting } from "#core/view/Painting";
 import type {
   NoticeSeverity,
   Tone,
   ToolIcon,
   ViewBlock,
-} from "../../../core/src/view/ViewBlock";
+} from "#core/view/ViewBlock";
 
 /**
  * How a block sits in a body, matching `MarkdownPainter`'s frames rather than

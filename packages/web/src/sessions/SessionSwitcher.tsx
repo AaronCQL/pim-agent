@@ -1,6 +1,6 @@
 import { createEffect, createSignal, For, Show } from "solid-js";
 
-import type { SessionSummaryView } from "../../../protocol/src/ServerEvent";
+import type { SessionSummaryView } from "#protocol/ServerEvent";
 import type { SessionStore } from "../session/SessionStore";
 import { Dialog } from "../ui/Dialog";
 

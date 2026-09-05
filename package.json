@@ -18,9 +18,14 @@
   "bin": {
     "pim": "bin/pim.ts"
   },
-  "workspaces": [
-    "packages/*"
-  ],
+  "imports": {
+    "#core/*": "./packages/core/src/*.ts",
+    "#tui/*": "./packages/tui/src/*.ts",
+    "#telegram/*": "./packages/telegram/src/*.ts",
+    "#protocol/*": "./packages/protocol/src/*.ts",
+    "#server/*": "./packages/server/src/*.ts",
+    "#web/*": "./packages/web/src/*.ts"
+  },
   "files": [
     "bin/",
     "packages/core/src/",
@@ -50,7 +55,7 @@
     "build:web": "cd packages/web && vite build",
     "dev:web": "cd packages/web && vite",
     "lint": "oxlint . --fix",
-    "format": "prettier --write --list-different package.json tsconfig.json .oxlintrc.json .prettierrc.json \"packages/*/package.json\" \"packages/**/*.{ts,tsx}\" \"bin/**/*.ts\"",
+    "format": "prettier --write --list-different package.json tsconfig.json .oxlintrc.json .prettierrc.json \"packages/**/*.{ts,tsx}\" \"bin/**/*.ts\"",
     "check": "bun run typecheck && bun run test && bun run lint && bun run format"
   },
   "devDependencies": {

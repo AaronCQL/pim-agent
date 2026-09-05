@@ -1,10 +1,7 @@
 import { parseArgs } from "node:util";
 
-import type { AttachmentRef } from "../../protocol/src/Command";
-import {
-  isDurableEvent,
-  type ServerEvent,
-} from "../../protocol/src/ServerEvent";
+import type { AttachmentRef } from "#protocol/Command";
+import { isDurableEvent, type ServerEvent } from "#protocol/ServerEvent";
 import { ProbeClient } from "./ProbeClient";
 
 const USAGE = `pim probe — CLI client for pim-server, dumps every frame as JSONL

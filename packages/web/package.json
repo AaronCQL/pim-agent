@@ -1,6 +1,0 @@
-{
-  "name": "@pim/web",
-  "private": true,
-  "type": "module",
-  "description": "Web frontend: Solid 2 client that replays and streams a pim-server session. Never published."
-}

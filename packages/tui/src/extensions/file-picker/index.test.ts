@@ -3,10 +3,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AutocompleteProvider } from "@earendil-works/pi-tui";
-import type { FileCandidate } from "../../../../core/src/picker/catalog";
-import { InProcessFilePickerSuggestionEngine } from "../../../../core/src/picker/InProcessFilePickerSuggestionEngine";
+import type { FileCandidate } from "#core/picker/catalog";
+import { InProcessFilePickerSuggestionEngine } from "#core/picker/InProcessFilePickerSuggestionEngine";
 import { createFilePickerProviderFactory } from "./index";
-import { WorkerFilePickerSuggestionEngine } from "../../../../core/src/picker/WorkerFilePickerSuggestionEngine";
+import { WorkerFilePickerSuggestionEngine } from "#core/picker/WorkerFilePickerSuggestionEngine";
 
 const file = (path: string): FileCandidate => ({
   insertPath: path,

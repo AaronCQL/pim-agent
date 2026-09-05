@@ -1,12 +1,8 @@
 import { Dynamic } from "@solidjs/web";
 import { createMemo, For, Show, type Component } from "solid-js";
 
-import { Painting } from "../../../core/src/view/Painting";
-import type {
-  DiffHunk,
-  Span,
-  ViewBlock,
-} from "../../../core/src/view/ViewBlock";
+import { Painting } from "#core/view/Painting";
+import type { DiffHunk, Span, ViewBlock } from "#core/view/ViewBlock";
 import { Markdown } from "../markdown/Markdown";
 import { Collapsible } from "../ui/Collapsible";
 import { CopyButton } from "../ui/CopyButton";

@@ -1,7 +1,7 @@
 import type { ServerWebSocket } from "bun";
 import { expect, test } from "bun:test";
 
-import type { DurableEvent, ServerEvent } from "../../protocol/src/ServerEvent";
+import type { DurableEvent, ServerEvent } from "#protocol/ServerEvent";
 import { ClientConnection, type AttachableStream } from "./ClientConnection";
 
 /** A socket that reports whatever backpressure a test wants it to. */

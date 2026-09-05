@@ -8,7 +8,7 @@ Dev setup: `bun link` puts `pim` on PATH, and `pim` run from anywhere loads this
 
 ## Layout
 
-Workspaces using Bun (`packages/*`).
+Plain layered directories under `packages/*` — no workspaces, no per-directory `package.json`. Cross-package imports use the root `package.json` `imports` aliases (`#core/*` → `packages/core/src/*`, likewise `#tui`, `#telegram`, `#protocol`, `#server`, `#web`); intra-package imports stay relative. `packages/boundaries.test.ts` enforces which layer may import which.
 
 | Package | Contents |
 | --- | --- |

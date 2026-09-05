@@ -6,16 +6,16 @@ import { main } from "@earendil-works/pi-coding-agent";
 import {
   CoreExtensions,
   type PimInlineExtension,
-} from "../packages/core/src/extensions/CoreExtensions.ts";
-import { ExtensionToggles } from "../packages/core/src/shared/ExtensionToggles.ts";
-import init from "../packages/tui/src/extensions/_init/index.ts";
-import commandPicker from "../packages/tui/src/extensions/command-picker/index.ts";
-import filePicker from "../packages/tui/src/extensions/file-picker/index.ts";
-import footer from "../packages/tui/src/extensions/footer/index.ts";
-import pim from "../packages/tui/src/extensions/pim/index.ts";
-import tps from "../packages/tui/src/extensions/tps/index.ts";
-import workingIndicator from "../packages/tui/src/extensions/working-indicator/index.ts";
-import { themeCliArgs } from "../packages/tui/src/themes/themeCliArgs.ts";
+} from "#core/extensions/CoreExtensions";
+import { ExtensionToggles } from "#core/shared/ExtensionToggles";
+import init from "#tui/extensions/_init/index";
+import commandPicker from "#tui/extensions/command-picker/index";
+import filePicker from "#tui/extensions/file-picker/index";
+import footer from "#tui/extensions/footer/index";
+import pim from "#tui/extensions/pim/index";
+import tps from "#tui/extensions/tps/index";
+import workingIndicator from "#tui/extensions/working-indicator/index";
+import { themeCliArgs } from "#tui/themes/themeCliArgs";
 
 // `_init` first for the runtime guard; the shared core roster carries the
 // tools, and the rest is TUI chrome only this entry point wants.
@@ -72,23 +72,21 @@ const mode =
     : undefined;
 if (mode === "telegram") {
   if (cliArgs.includes("--install")) {
-    const { Supervisor } =
-      await import("../packages/telegram/src/Supervisor.ts");
+    const { Supervisor } = await import("#telegram/Supervisor");
     await Supervisor.install();
     process.exit(0);
   }
   if (cliArgs.includes("--uninstall")) {
-    const { Supervisor } =
-      await import("../packages/telegram/src/Supervisor.ts");
+    const { Supervisor } = await import("#telegram/Supervisor");
     await Supervisor.uninstall();
     process.exit(0);
   }
-  const { start } = await import("../packages/telegram/src/index.ts");
+  const { start } = await import("#telegram/index");
   await start(cliArgs);
   process.exit(0);
 }
 if (mode === "serve") {
-  const { start } = await import("../packages/server/src/serve.ts");
+  const { start } = await import("#server/serve");
   await start(cliArgs);
   process.exit(0);
 }

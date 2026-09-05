@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { PimSettings } from "../../../../core/src/shared/PimSettings";
+import { PimSettings } from "#core/shared/PimSettings";
 import registerTps from "./index";
 
 type Handler = (event: unknown, ctx: unknown) => unknown;

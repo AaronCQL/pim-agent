@@ -5,8 +5,8 @@ import type {
 import { realpath } from "node:fs/promises";
 import { dirname, isAbsolute, join, parse, sep } from "node:path";
 
-import { Paths } from "../../core/src/shared/Paths";
-import { Tools } from "../../core/src/shared/Tools";
+import { Paths } from "#core/shared/Paths";
+import { Tools } from "#core/shared/Tools";
 
 /** A tool call waiting for a human, keyed on pi's tool call id. */
 export type ApprovalRequest = {

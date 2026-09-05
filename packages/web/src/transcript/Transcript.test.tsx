@@ -4,7 +4,7 @@ import { render } from "@solidjs/web";
 import { describe, expect, test } from "bun:test";
 import { flush } from "solid-js";
 
-import type { DurableEvent } from "../../../protocol/src/ServerEvent";
+import type { DurableEvent } from "#protocol/ServerEvent";
 import { FIXTURE_EVENTS } from "../replay/fixture";
 import { mountPoint } from "../test/dom";
 import { Transcript } from "./Transcript";

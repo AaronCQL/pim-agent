@@ -4,7 +4,7 @@ import { render } from "@solidjs/web";
 import { describe, expect, test } from "bun:test";
 import { flush } from "solid-js";
 
-import type { ToolView, ViewBlock } from "../../../core/src/view/ViewBlock";
+import type { ToolView, ViewBlock } from "#core/view/ViewBlock";
 import { mountPoint } from "../test/dom";
 import { Blocks, Body } from "./Blocks";
 import { ToolCard } from "./ToolCard";

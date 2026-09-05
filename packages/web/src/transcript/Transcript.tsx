@@ -1,7 +1,7 @@
 import { Dynamic } from "@solidjs/web";
 import { createMemo, For, Show, type Component } from "solid-js";
 
-import type { DurableEvent } from "../../../protocol/src/ServerEvent";
+import type { DurableEvent } from "#protocol/ServerEvent";
 import { Markdown } from "../markdown/Markdown";
 import { Collapsible } from "../ui/Collapsible";
 import { CopyButton } from "../ui/CopyButton";

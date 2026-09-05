@@ -12,7 +12,7 @@ import {
 import {
   ExtensionToggles,
   type PimExtensionName,
-} from "../../../../core/src/shared/ExtensionToggles";
+} from "#core/shared/ExtensionToggles";
 
 const ENABLED = "enabled";
 const DISABLED = "disabled";

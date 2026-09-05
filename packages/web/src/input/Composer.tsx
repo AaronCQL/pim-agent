@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 
-import type { PickerItem } from "../../../core/src/picker/PickerItem";
+import type { PickerItem } from "#core/picker/PickerItem";
 import type { SessionStore, UploadedAttachment } from "../session/SessionStore";
 import { Combobox, createComboboxNavigation } from "../ui/Combobox";
 import { activeToken, applyCompletion, tokenKey } from "./token";

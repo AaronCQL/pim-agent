@@ -2,7 +2,7 @@ import { mkdir, realpath, rm, stat, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { Fs } from "../../core/src/shared/Fs";
+import { Fs } from "#core/shared/Fs";
 
 const UNIT_NAME = "pim-telegram";
 const LAUNCHD_LABEL = "com.aaroncql.pim-telegram";

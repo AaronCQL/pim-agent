@@ -1,6 +1,6 @@
 import { Show } from "solid-js";
 
-import type { ToolView } from "../../../core/src/view/ViewBlock";
+import type { ToolView } from "#core/view/ViewBlock";
 import { Collapsible } from "../ui/Collapsible";
 import { Blocks, Body } from "./Blocks";
 import { iconClass, toneClass } from "./tokens";

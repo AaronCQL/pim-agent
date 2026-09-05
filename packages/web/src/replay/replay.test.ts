@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
-import { EventLog } from "../../../core/src/session/EventLog";
-import { SessionProjection } from "../../../server/src/SessionProjection";
-import type { DurableEvent } from "../../../protocol/src/ServerEvent";
+import { EventLog } from "#core/session/EventLog";
+import { SessionProjection } from "#server/SessionProjection";
+import type { DurableEvent } from "#protocol/ServerEvent";
 import { FIXTURE_CWD, FIXTURE_EVENTS, FIXTURE_JSONL } from "./fixture";
 import { pimTools } from "./tools";
 

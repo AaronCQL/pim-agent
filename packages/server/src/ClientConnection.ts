@@ -1,9 +1,6 @@
 import type { ServerWebSocket } from "bun";
 
-import {
-  isDurableEvent,
-  type ServerEvent,
-} from "../../protocol/src/ServerEvent";
+import { isDurableEvent, type ServerEvent } from "#protocol/ServerEvent";
 
 /**
  * The half of `SessionStream` a connection needs: subscribe to what happens

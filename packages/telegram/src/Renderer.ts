@@ -4,8 +4,8 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { GrammyError, type Api } from "grammy";
 
-import { Tools } from "../../core/src/shared/Tools";
-import { MarkdownPainter } from "../../core/src/view/MarkdownPainter";
+import { Tools } from "#core/shared/Tools";
+import { MarkdownPainter } from "#core/view/MarkdownPainter";
 import type { LogsMode } from "./Config";
 import { Markdown } from "./Markdown";
 import type { Session, SessionId } from "./Session";

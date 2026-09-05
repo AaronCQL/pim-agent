@@ -1,17 +1,17 @@
 import { createStore, type Store, type StoreSetter } from "solid-js";
 
-import type { PickerItem } from "../../../core/src/picker/PickerItem";
-import { RemoteFilePickerSuggestionEngine } from "../../../core/src/picker/RemoteFilePickerSuggestionEngine";
-import type { ToolView } from "../../../core/src/view/ViewBlock";
-import type { AttachmentRef } from "../../../protocol/src/Command";
+import type { PickerItem } from "#core/picker/PickerItem";
+import { RemoteFilePickerSuggestionEngine } from "#core/picker/RemoteFilePickerSuggestionEngine";
+import type { ToolView } from "#core/view/ViewBlock";
+import type { AttachmentRef } from "#protocol/Command";
 import type {
   DurableEvent,
   ServerEvent,
   SessionStatus,
   SessionSummaryView,
   TurnStats,
-} from "../../../protocol/src/ServerEvent";
-import { isDurableEvent } from "../../../protocol/src/ServerEvent";
+} from "#protocol/ServerEvent";
+import { isDurableEvent } from "#protocol/ServerEvent";
 import { WsClient, type ConnectionStatus } from "../ws/WsClient";
 
 export type LiveTool = {

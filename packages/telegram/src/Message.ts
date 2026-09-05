@@ -6,7 +6,7 @@ import {
   AttachmentStore,
   type StoredAttachment,
   toAttachmentPrompt,
-} from "../../core/src/attachments/AttachmentStore";
+} from "#core/attachments/AttachmentStore";
 import type { SessionId } from "./Session";
 
 type FileRef = {

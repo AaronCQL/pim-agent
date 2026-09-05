@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { Fs } from "../../core/src/shared/Fs";
+import { Fs } from "#core/shared/Fs";
 import { Config, type TelegramConfig } from "./Config";
 
 const ENV_KEYS = [

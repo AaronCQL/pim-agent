@@ -1,5 +1,5 @@
-import type { PickerItem } from "../../core/src/picker/PickerItem";
-import type { NoticeSeverity, ToolView } from "../../core/src/view/ViewBlock";
+import type { PickerItem } from "#core/picker/PickerItem";
+import type { NoticeSeverity, ToolView } from "#core/view/ViewBlock";
 import type { ProtocolVersion } from "./Protocol";
 
 /**

@@ -8,7 +8,7 @@ import type { Api } from "grammy";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import { Fs } from "../../core/src/shared/Fs";
+import { Fs } from "#core/shared/Fs";
 import { type TelegramConfig } from "./Config";
 import {
   encodeId,

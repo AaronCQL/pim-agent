@@ -1,4 +1,4 @@
-import { MarkdownPainter } from "../../core/src/view/MarkdownPainter";
+import { MarkdownPainter } from "#core/view/MarkdownPainter";
 
 type Align = "left" | "center" | "right";
 

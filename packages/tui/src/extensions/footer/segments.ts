@@ -3,8 +3,8 @@ import type {
   ThinkingLevelChangeEntry,
 } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { Format } from "../../../../core/src/shared/Format";
-import { Paths } from "../../../../core/src/shared/Paths";
+import { Format } from "#core/shared/Format";
+import { Paths } from "#core/shared/Paths";
 import type { GitState } from "./git";
 import {
   BG_BRIGHT_GREEN,

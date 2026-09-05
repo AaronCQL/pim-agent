@@ -1,5 +1,5 @@
-import type { ToolView } from "../../../core/src/view/ViewBlock";
-import type { DurableEvent } from "../../../protocol/src/ServerEvent";
+import type { ToolView } from "#core/view/ViewBlock";
+import type { DurableEvent } from "#protocol/ServerEvent";
 
 export type MessageRow = {
   readonly kind: "message";

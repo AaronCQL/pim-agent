@@ -9,14 +9,14 @@ import type { Api } from "grammy";
 import { rename } from "node:fs/promises";
 import { join } from "node:path";
 
-import { Tools } from "../../core/src/shared/Tools";
+import { Tools } from "#core/shared/Tools";
 import {
   SessionHost,
   type HostSettings,
   type SessionCompactResult,
   type SetCwdResult,
   type SetModelResult,
-} from "../../core/src/session/SessionHost";
+} from "#core/session/SessionHost";
 import type { LogsMode, TelegramConfig, ThinkingLevelOpt } from "./Config";
 import { SendFileTool } from "./SendFileTool";
 import type { TaskScheduler } from "./TaskScheduler";

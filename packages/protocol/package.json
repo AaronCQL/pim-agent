@@ -1,6 +1,0 @@
-{
-  "name": "@pim/protocol",
-  "private": true,
-  "type": "module",
-  "description": "Versioned client/server wire types. Imported by server and web only; never assumes a browser."
-}

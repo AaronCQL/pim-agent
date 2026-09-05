@@ -3,8 +3,8 @@ import {
   type AgentToolResult,
 } from "@earendil-works/pi-coding-agent";
 
-import type { PimToolDefinition } from "../../core/src/shared/Tools";
-import type { Span, ToolView } from "../../core/src/view/ViewBlock";
+import type { PimToolDefinition } from "#core/shared/Tools";
+import type { Span, ToolView } from "#core/view/ViewBlock";
 import type { SessionId } from "./Session";
 import type { TaskScheduler } from "./TaskScheduler";
 import { taskToolSchema, type TaskToolInput } from "./TaskSchema";

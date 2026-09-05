@@ -1,8 +1,8 @@
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import { SessionRegistry } from "../../../core/src/session/SessionRegistry";
-import { SessionProjection } from "../../../server/src/SessionProjection";
+import { SessionRegistry } from "#core/session/SessionRegistry";
+import { SessionProjection } from "#server/SessionProjection";
 import { FIXTURE_CWD, FIXTURE_EVENTS, FIXTURE_JSONL } from "./fixture";
 import { pimTools } from "./tools";
 

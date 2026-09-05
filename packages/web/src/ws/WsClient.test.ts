@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { flush } from "solid-js";
 
-import type { DurableEvent } from "../../../protocol/src/ServerEvent";
+import type { DurableEvent } from "#protocol/ServerEvent";
 import { SessionStore } from "../session/SessionStore";
 import { GatewayHarness, REPLY, until } from "../test/gateway";
 

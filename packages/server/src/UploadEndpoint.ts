@@ -3,8 +3,8 @@ import { join } from "node:path";
 import {
   AttachmentStore,
   type StoredAttachment,
-} from "../../core/src/attachments/AttachmentStore";
-import { Paths } from "../../core/src/shared/Paths";
+} from "#core/attachments/AttachmentStore";
+import { Paths } from "#core/shared/Paths";
 
 export type UploadEndpointDeps = {
   /** Defaults to `~/.pim/attachments`. */

@@ -2,10 +2,10 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { InputFile, type Api } from "grammy";
 import { basename } from "node:path";
 
-import { FsErrors } from "../../core/src/shared/FsErrors";
-import { Paths } from "../../core/src/shared/Paths";
-import type { PimToolDefinition } from "../../core/src/shared/Tools";
-import type { ToolView } from "../../core/src/view/ViewBlock";
+import { FsErrors } from "#core/shared/FsErrors";
+import { Paths } from "#core/shared/Paths";
+import type { PimToolDefinition } from "#core/shared/Tools";
+import type { ToolView } from "#core/view/ViewBlock";
 import {
   MAX_CAPTION_CHARS,
   MAX_DOCUMENT_BYTES,

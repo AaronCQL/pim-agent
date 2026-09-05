@@ -1,10 +1,10 @@
-import type { CommandDraft } from "../../../protocol/src/Command";
-import { PROTOCOL_VERSION } from "../../../protocol/src/Protocol";
+import type { CommandDraft } from "#protocol/Command";
+import { PROTOCOL_VERSION } from "#protocol/Protocol";
 import {
   isDurableEvent,
   type ResponseEvent,
   type ServerEvent,
-} from "../../../protocol/src/ServerEvent";
+} from "#protocol/ServerEvent";
 
 export type ConnectionStatus =
   "connecting" | "open" | "reconnecting" | "closed";

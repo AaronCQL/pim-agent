@@ -39,7 +39,7 @@ Never write:
 
 ## Imports
 
-**Relative imports only** — no path aliases (`paths` in tsconfig, `imports` in package.json, `@/`/`#`/`~/` prefixes). Every file's dependencies are locally obvious, and nothing assumes a bundler that can resolve aliases: `server` ships as source, `web` ships built.
+**Cross-package imports use the `#` aliases; everything else is relative.** The root `package.json` `imports` map (`#core/*`, `#protocol/*`, …) is the only alias layer — no tsconfig `paths`, no `@/`/`~/` prefixes. Bun, TypeScript, and Vite all resolve it, in the checkout and inside the installed tarball alike. Intra-package imports stay relative, and `packages/boundaries.test.ts` enforces which layer may reach which.
 
 ## Icons
 

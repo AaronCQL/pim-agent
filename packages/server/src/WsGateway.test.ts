@@ -5,13 +5,13 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Type } from "typebox";
 
-import { SessionRegistry } from "../../core/src/session/SessionRegistry";
-import { Tools, type PimToolDefinition } from "../../core/src/shared/Tools";
+import { SessionRegistry } from "#core/session/SessionRegistry";
+import { Tools, type PimToolDefinition } from "#core/shared/Tools";
 import {
   isDurableEvent,
   type DurableEvent,
   type ServerEvent,
-} from "../../protocol/src/ServerEvent";
+} from "#protocol/ServerEvent";
 import { ProbeClient } from "./ProbeClient";
 import { WsGateway } from "./WsGateway";
 

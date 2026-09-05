@@ -1,9 +1,3 @@
-# Bun switches to the isolated linker as soon as `workspaces` exists, which
-# stops hoisting transitive deps. Consumers install `pim-agent`
-# hoisted, so develop against the same layout.
-[install]
-linker = "hoisted"
-
 # `bun test` runs without Vite, so Solid's JSX compiler has to be installed as
 # a Bun plugin. Scoped to `.tsx`, which only `packages/web` has.
 [test]

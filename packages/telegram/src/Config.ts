@@ -1,7 +1,7 @@
 import { join } from "node:path";
 
-import { Fs } from "../../core/src/shared/Fs";
-import { Paths } from "../../core/src/shared/Paths";
+import { Fs } from "#core/shared/Fs";
+import { Paths } from "#core/shared/Paths";
 
 export type Cli = {
   readonly token?: string;

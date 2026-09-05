@@ -1,4 +1,4 @@
-import { SessionRegistry } from "../../core/src/session/SessionRegistry";
+import { SessionRegistry } from "#core/session/SessionRegistry";
 import { WsGateway } from "./WsGateway";
 
 const DEFAULT_PORT = "4319";

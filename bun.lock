@@ -35,24 +35,6 @@
         "vite": "^8.2.2",
       },
     },
-    "packages/core": {
-      "name": "@pim/core",
-    },
-    "packages/protocol": {
-      "name": "@pim/protocol",
-    },
-    "packages/server": {
-      "name": "@pim/server",
-    },
-    "packages/telegram": {
-      "name": "@pim/telegram",
-    },
-    "packages/tui": {
-      "name": "@pim/tui",
-    },
-    "packages/web": {
-      "name": "@pim/web",
-    },
   },
   "packages": {
     "@ampproject/remapping": ["@ampproject/remapping@2.3.0", "", { "dependencies": { "@jridgewell/gen-mapping": "^0.3.5", "@jridgewell/trace-mapping": "^0.3.24" } }, "sha512-30iZtAPgz+LTIYoeivqYo853f02jBYSd5uGnGpkFV0M3xOt9aN73erkgYAmZU43x4VfqcnLxW9Kpg3R5LC4YYw=="],
@@ -350,18 +332,6 @@
     "@oxlint/binding-win32-ia32-msvc": ["@oxlint/binding-win32-ia32-msvc@1.81.0", "", { "os": "win32", "cpu": "ia32" }, "sha512-ksqPP5jbFXcYreEQ7zdJh06rJQBymCTyGRCdaXjfcf2aG4f8KxUWY5wcgYHmaTK+FJ4bPG5sUAdOX+6trnH1JA=="],
 
     "@oxlint/binding-win32-x64-msvc": ["@oxlint/binding-win32-x64-msvc@1.81.0", "", { "os": "win32", "cpu": "x64" }, "sha512-IZuUCwGw9emG5JtCp+fYGB+Z4OWEoeEcM8R5BA1pYw63/ieYFVdcU2ylxTpHbVHSenZnsYE+ZZ20uHAJszQ4cA=="],
-
-    "@pim/core": ["@pim/core@workspace:packages/core"],
-
-    "@pim/protocol": ["@pim/protocol@workspace:packages/protocol"],
-
-    "@pim/server": ["@pim/server@workspace:packages/server"],
-
-    "@pim/telegram": ["@pim/telegram@workspace:packages/telegram"],
-
-    "@pim/tui": ["@pim/tui@workspace:packages/tui"],
-
-    "@pim/web": ["@pim/web@workspace:packages/web"],
 
     "@polka/url": ["@polka/url@1.0.0-next.29", "", {}, "sha512-wwQAWhWSuHaag8c4q/KN/vCoeOJYshAIvMQwD4GpSb3OiZklFfvAgmj0VCBBImRpuF/aFgIRzllXlVX93Jevww=="],
 

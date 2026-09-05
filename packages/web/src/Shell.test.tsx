@@ -4,7 +4,7 @@ import { render } from "@solidjs/web";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { flush } from "solid-js";
 
-import type { ServerEvent } from "../../protocol/src/ServerEvent";
+import type { ServerEvent } from "#protocol/ServerEvent";
 import { Shell } from "./App";
 import { SessionStore } from "./session/SessionStore";
 import { mountPoint } from "./test/dom";

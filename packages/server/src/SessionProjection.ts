@@ -4,13 +4,10 @@ import type {
 } from "@earendil-works/pi-agent-core";
 import type { FileEntry } from "@earendil-works/pi-coding-agent";
 
-import { EventLog, type LoggedEntry } from "../../core/src/session/EventLog";
-import { MessageText } from "../../core/src/session/MessageText";
-import { Tools } from "../../core/src/shared/Tools";
-import type {
-  DurableEvent,
-  ToolCallView,
-} from "../../protocol/src/ServerEvent";
+import { EventLog, type LoggedEntry } from "#core/session/EventLog";
+import { MessageText } from "#core/session/MessageText";
+import { Tools } from "#core/shared/Tools";
+import type { DurableEvent, ToolCallView } from "#protocol/ServerEvent";
 
 type PendingCall = {
   readonly name: string;

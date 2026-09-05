@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Type } from "typebox";
 
-import { SessionRegistry } from "../../../core/src/session/SessionRegistry";
-import { Tools, type PimToolDefinition } from "../../../core/src/shared/Tools";
-import { WsGateway } from "../../../server/src/WsGateway";
+import { SessionRegistry } from "#core/session/SessionRegistry";
+import { Tools, type PimToolDefinition } from "#core/shared/Tools";
+import { WsGateway } from "#server/WsGateway";
 
 export const REPLY = "hello from the gateway";
 

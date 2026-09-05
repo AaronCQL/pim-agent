@@ -3,9 +3,9 @@ import type {
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 
-import bashExtension from "../../../core/src/extensions/bash/index";
-import editExtension from "../../../core/src/extensions/edit/index";
-import readExtension from "../../../core/src/extensions/read/index";
+import bashExtension from "#core/extensions/bash/index";
+import editExtension from "#core/extensions/edit/index";
+import readExtension from "#core/extensions/read/index";
 
 /**
  * Pim registers its tools through pi's extension API, and `Tools.wrap` files

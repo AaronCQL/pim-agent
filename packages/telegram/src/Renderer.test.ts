@@ -5,12 +5,12 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import type { Api } from "grammy";
 
-import applyPatchExtension from "../../core/src/extensions/apply-patch/index";
-import editExtension from "../../core/src/extensions/edit/index";
-import subagentExtension from "../../core/src/extensions/subagent/index";
-import todoExtension from "../../core/src/extensions/todo/index";
-import writeExtension from "../../core/src/extensions/write/index";
-import { Tools } from "../../core/src/shared/Tools";
+import applyPatchExtension from "#core/extensions/apply-patch/index";
+import editExtension from "#core/extensions/edit/index";
+import subagentExtension from "#core/extensions/subagent/index";
+import todoExtension from "#core/extensions/todo/index";
+import writeExtension from "#core/extensions/write/index";
+import { Tools } from "#core/shared/Tools";
 import { Renderer } from "./Renderer";
 import type { Session } from "./Session";
 import { TaskTool } from "./TaskTool";

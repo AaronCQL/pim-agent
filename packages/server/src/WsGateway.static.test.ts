@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 
-import { SessionRegistry } from "../../core/src/session/SessionRegistry";
+import { SessionRegistry } from "#core/session/SessionRegistry";
 import { DEFAULT_CLIENT_DIR } from "./StaticClient";
 import { WsGateway } from "./WsGateway";
 

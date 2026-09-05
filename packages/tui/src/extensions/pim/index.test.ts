@@ -15,8 +15,8 @@ import {
   type RegisteredCommand,
 } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
-import { ExtensionToggles } from "../../../../core/src/shared/ExtensionToggles";
-import { PimSettings } from "../../../../core/src/shared/PimSettings";
+import { ExtensionToggles } from "#core/shared/ExtensionToggles";
+import { PimSettings } from "#core/shared/PimSettings";
 import registerPim, { menuItems } from "./index";
 
 type Notification = { readonly message: string; readonly level: string };

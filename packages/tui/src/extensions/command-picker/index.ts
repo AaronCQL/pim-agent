@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { rankCommands } from "../../../../core/src/picker/commandRanker";
+import { rankCommands } from "#core/picker/commandRanker";
 
 const MAX_VISIBLE_ROWS = 10;
 const SLASH_PREFIX = /^\/([^\s]*)$/;

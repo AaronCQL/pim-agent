@@ -1,15 +1,15 @@
 import { basename } from "node:path";
 
-import type { PickerItem } from "../../core/src/picker/PickerItem";
-import { RemoteFilePickerSuggestionEngine } from "../../core/src/picker/RemoteFilePickerSuggestionEngine";
-import type { AttachmentRef, CommandDraft } from "../../protocol/src/Command";
-import { PROTOCOL_VERSION } from "../../protocol/src/Protocol";
+import type { PickerItem } from "#core/picker/PickerItem";
+import { RemoteFilePickerSuggestionEngine } from "#core/picker/RemoteFilePickerSuggestionEngine";
+import type { AttachmentRef, CommandDraft } from "#protocol/Command";
+import { PROTOCOL_VERSION } from "#protocol/Protocol";
 import {
   isDurableEvent,
   type ResponseEvent,
   type ServerEvent,
   type SessionSummaryView,
-} from "../../protocol/src/ServerEvent";
+} from "#protocol/ServerEvent";
 
 export type ProbeOptions = {
   readonly url: string;

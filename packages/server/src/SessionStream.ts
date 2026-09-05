@@ -3,14 +3,11 @@ import type {
   AgentSessionEvent,
 } from "@earendil-works/pi-coding-agent";
 
-import { PickerService } from "../../core/src/picker/PickerService";
-import { MessageText } from "../../core/src/session/MessageText";
-import type { SessionHost } from "../../core/src/session/SessionHost";
-import { Tools } from "../../core/src/shared/Tools";
-import type {
-  EphemeralEvent,
-  ServerEvent,
-} from "../../protocol/src/ServerEvent";
+import { PickerService } from "#core/picker/PickerService";
+import { MessageText } from "#core/session/MessageText";
+import type { SessionHost } from "#core/session/SessionHost";
+import { Tools } from "#core/shared/Tools";
+import type { EphemeralEvent, ServerEvent } from "#protocol/ServerEvent";
 import {
   ApprovalRouter,
   type ApprovalRequest,

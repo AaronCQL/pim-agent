@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 
-import { SessionRegistry } from "../../core/src/session/SessionRegistry";
-import { isDurableEvent } from "../../protocol/src/ServerEvent";
+import { SessionRegistry } from "#core/session/SessionRegistry";
+import { isDurableEvent } from "#protocol/ServerEvent";
 import { ProbeClient } from "./ProbeClient";
 import { WsGateway } from "./WsGateway";
 
