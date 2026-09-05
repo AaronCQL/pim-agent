@@ -15,20 +15,28 @@ const SESSIONS: readonly SessionSummaryView[] = [
     cwd: "/home/ada/dev/pim",
     createdAt: 0,
     modifiedAt: 0,
+    title: "Modernise the string building",
+    head: 12,
   },
   {
     sessionId: "bbbbbbbb-2222",
     cwd: "/srv/other",
     createdAt: 0,
     modifiedAt: 0,
+    head: 0,
   },
 ];
 
 /** Offline: `listSessions` is stubbed, which is the only thing this reads. */
-function paint(onNavigate?: () => void): {
+function paint(
+  onNavigate?: () => void,
+  seen?: Record<string, number>
+): {
   readonly host: HTMLElement;
   readonly switched: string[];
 } {
+  // The read cursor is this browser's, so it is seeded where it lives.
+  localStorage.setItem("pim.seen", JSON.stringify(seen ?? {}));
   const store = new SessionStore({ url: "ws://127.0.0.1:1" });
   const switched: string[] = [];
   store.listSessions = async () => SESSIONS;
@@ -51,10 +59,29 @@ test("one flat row per session: name, cwd and how long ago", async () => {
 
   const rows = [...host.querySelectorAll("li")];
   expect(rows).toHaveLength(2);
-  // Until Phase B carries a title, the id is the only name a session has.
-  expect(rows[0]?.textContent).toContain("aaaaaaaa");
+  expect(rows[0]?.textContent).toContain("Modernise the string building");
+  // A session with nothing written to it yet has only its id for a name.
+  expect(rows[1]?.textContent).toContain("bbbbbbbb");
   expect(rows[0]?.textContent).toContain("~/dev/pim");
   expect(rows[1]?.textContent).toContain("/srv/other");
+});
+
+test("the dot marks a session written past what this browser has painted", async () => {
+  const { host } = paint(undefined, { "aaaaaaaa-1111": 12 });
+  await Bun.sleep(0);
+  flush();
+
+  const dots = [...host.querySelectorAll('[aria-label="Unread"]')];
+  // The first session is read up to its head; the second was never opened and
+  // has nothing on disk either, so neither is unread.
+  expect(dots).toHaveLength(0);
+
+  const { host: stale } = paint(undefined, { "aaaaaaaa-1111": 4 });
+  await Bun.sleep(0);
+  flush();
+  expect(
+    stale.querySelectorAll('li:first-child [aria-label="Unread"]')
+  ).toHaveLength(1);
 });
 
 test("picking a row attaches to it and tells the host to get out of the way", async () => {

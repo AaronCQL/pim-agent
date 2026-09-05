@@ -40,3 +40,19 @@ const HOME = /^(?:\/home|\/Users)\/[^/]+(?=\/|$)/;
 export function abbreviateHome(path: string): string {
   return path.replace(HOME, "~");
 }
+
+/**
+ * Wall-clock `17:24` for the line under a user message, in the *reader's*
+ * timezone: the stamp travels as epoch ms precisely so the browser can say
+ * when the message happened where the reader is sitting.
+ */
+export function clockTime(timestamp: number): string {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    return "";
+  }
+  return new Date(timestamp).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}

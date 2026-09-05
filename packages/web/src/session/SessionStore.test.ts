@@ -1,6 +1,9 @@
+import "../test/dom";
+
 import { describe, expect, test } from "bun:test";
 import { flush } from "solid-js";
 
+import { PROTOCOL_VERSION } from "#protocol/Protocol";
 import type { ServerEvent } from "#protocol/ServerEvent";
 import { toRows } from "../transcript/rows";
 import { SessionStore } from "./SessionStore";
@@ -21,7 +24,7 @@ function feed(target: SessionStore, ...events: readonly ServerEvent[]): void {
 function attached(sessionId: string, head = 0): ServerEvent {
   return {
     type: "attached",
-    protocolVersion: 3,
+    protocolVersion: PROTOCOL_VERSION,
     sessionId,
     cwd: "/repo",
     head,
@@ -46,6 +49,9 @@ describe("the in-flight bucket", () => {
         id: "live-1",
         role: "assistant",
         text: "Hello",
+        // The live turn has not been written yet, so its stamp is this
+        // client's clock until the durable message supersedes it.
+        timestamp: expect.any(Number),
         streaming: true,
       },
     ]);
@@ -56,6 +62,7 @@ describe("the in-flight bucket", () => {
       messageId: "m1",
       role: "assistant",
       text: "Hello",
+      timestamp: 0,
     });
 
     expect(target.state.liveText).toBe("");
@@ -73,6 +80,7 @@ describe("the in-flight bucket", () => {
         messageId: "m1",
         role: "assistant",
         text: "",
+        timestamp: 0,
         toolCalls: [{ callId: "c1", name: "shell", view: VIEW }],
       },
       { type: "tool_call", callId: "c1", name: "shell", view: VIEW },
@@ -155,6 +163,7 @@ describe("the optimistic echo", () => {
       messageId: "m1",
       role: "user",
       text: "look at @src/x.ts\n\n/srv/attachments/a.png",
+      timestamp: 0,
     });
 
     expect(target.state.optimistic).toEqual([]);
@@ -172,10 +181,62 @@ test("session_state lands on the fields the sidebar and composer paint", () => {
     cost: 0.5,
     status: "streaming",
     tps: 42,
+    contextPercent: 20.2,
+    contextWindow: 1_000_000,
+    branch: "trunk",
+    dirty: true,
   });
 
   expect(target.state.agent).toBe("streaming");
   expect(target.state.model).toBe("sonnet");
   expect(target.state.tps).toBe(42);
+  expect(target.state.contextPercent).toBe(20.2);
+  expect(target.state.contextWindow).toBe(1_000_000);
+  expect(target.state.branch).toBe("trunk");
+  expect(target.state.dirty).toBe(true);
   expect(target.isBusy()).toBe(true);
+});
+
+describe("the read cursor", () => {
+  test("attaching reads to the head, and every durable event past it", () => {
+    localStorage.clear();
+    const target = store();
+    const summary = (head: number) => ({
+      sessionId: "s1",
+      cwd: "/repo",
+      createdAt: 0,
+      modifiedAt: 0,
+      head,
+    });
+
+    feed(target, attached("s1", 4));
+    expect(target.isUnread(summary(4))).toBe(false);
+    expect(target.isUnread(summary(9))).toBe(true);
+
+    feed(target, { seq: 9, type: "notice", severity: "info", text: "hi" });
+    expect(target.isUnread(summary(9))).toBe(false);
+
+    // It is this browser's cursor, so a reload finds it where it was left.
+    expect(
+      JSON.parse(localStorage.getItem("pim.seen") ?? "{}") as Record<
+        string,
+        number
+      >
+    ).toEqual({ s1: 9 });
+  });
+
+  test("a session this browser never opened is unread as soon as it has a line", () => {
+    localStorage.clear();
+    const target = store();
+
+    expect(
+      target.isUnread({
+        sessionId: "other",
+        cwd: "/repo",
+        createdAt: 0,
+        modifiedAt: 0,
+        head: 1,
+      })
+    ).toBe(true);
+  });
 });

@@ -5,11 +5,13 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 
 import { toAttachmentPrompt } from "#core/attachments/AttachmentStore";
 import type { PickerItem } from "#core/picker/PickerItem";
+import { EventLog } from "#core/session/EventLog";
+import type { SessionDigest } from "#core/session/EventLog";
 import type { SessionRegistry } from "#core/session/SessionRegistry";
 import type { SessionHost } from "#core/session/SessionHost";
 import type { Command } from "#protocol/Command";
 import { PROTOCOL_VERSION } from "#protocol/Protocol";
-import type { SessionSummaryView } from "#protocol/ServerEvent";
+import type { ModelView, SessionSummaryView } from "#protocol/ServerEvent";
 import { ClientConnection } from "./ClientConnection";
 import { SessionStream } from "./SessionStream";
 import { StaticClient } from "./StaticClient";
@@ -38,12 +40,17 @@ type Outcome = {
   readonly error?: string;
   readonly items?: readonly PickerItem[];
   readonly sessions?: readonly SessionSummaryView[];
+  readonly models?: readonly ModelView[];
+  readonly thinkingLevels?: readonly string[];
 };
 
 /** Enough rows to fill a switcher; the catalogue is read newest-first. */
 const DEFAULT_SESSION_LIMIT = 50;
 
 const DEFAULT_PORT = 4319;
+
+/** A digest and the file state it was read from; a rewrite moves both. */
+type CachedDigest = SessionDigest & { readonly modifiedAt: number };
 
 /**
  * How long `stop()` waits for open sockets to drain. Bounded because Bun
@@ -66,6 +73,12 @@ export class WsGateway {
   private readonly client: StaticClient;
   private readonly streams = new Map<string, SessionStream>();
   private readonly opening = new Map<string, Promise<SessionStream>>();
+  /**
+   * Naming a session costs a read of its whole file, and the sidebar re-lists
+   * after every turn — so a file that has not been appended to since the last
+   * listing is not read again.
+   */
+  private readonly digests = new Map<string, CachedDigest>();
   private readonly connections = new Map<
     ServerWebSocket<undefined>,
     ClientConnection
@@ -183,17 +196,13 @@ export class WsGateway {
       return;
     }
     try {
-      const { error, items, sessions } = await this.dispatch(
-        connection,
-        command
-      );
+      const { error, ...answer } = await this.dispatch(connection, command);
       connection.send({
         type: "response",
         id: command.id,
         success: error === undefined,
         ...(error === undefined ? {} : { error }),
-        ...(items === undefined ? {} : { items }),
-        ...(sessions === undefined ? {} : { sessions }),
+        ...answer,
       });
     } catch (err) {
       connection.send({
@@ -216,6 +225,18 @@ export class WsGateway {
     // the one command that answers without one.
     if (command.type === "list_sessions") {
       return { sessions: await this.listSessions(command) };
+    }
+    if (command.type === "list_models") {
+      return {
+        models: this.registry.models(),
+        // The levels belong to the model this connection is on, so a client
+        // with no session yet gets the catalogue and nothing else.
+        thinkingLevels:
+          (connection.sessionId
+            ? this.streams.get(connection.sessionId)?.host
+                .supportedThinkingLevels
+            : undefined) ?? [],
+      };
     }
     const stream = connection.sessionId
       ? this.streams.get(connection.sessionId)
@@ -255,10 +276,6 @@ export class WsGateway {
         await host.setThinkingLevel(command.value as ThinkingLevel);
         stream.push(stream.sessionState());
         return {};
-      case "approve_tool": {
-        const result = stream.resolveApproval(command.callId, command.approved);
-        return result.ok ? {} : { error: result.error };
-      }
       case "pick_files":
         return {
           items: await stream.picker.files(command.query, command.limit),
@@ -290,14 +307,36 @@ export class WsGateway {
     command: Command & { readonly type: "list_sessions" }
   ): Promise<readonly SessionSummaryView[]> {
     const summaries = await this.registry.list(command.cwd);
-    return summaries
-      .slice(0, command.limit ?? DEFAULT_SESSION_LIMIT)
-      .map(({ sessionId, cwd, createdAt, modifiedAt }) => ({
-        sessionId,
-        cwd,
-        createdAt,
-        modifiedAt,
-      }));
+    // Only the page about to be sent is digested, so a thousand-session
+    // directory is not read to answer for fifty rows.
+    return await Promise.all(
+      summaries
+        .slice(0, command.limit ?? DEFAULT_SESSION_LIMIT)
+        .map(async ({ sessionId, cwd, path, createdAt, modifiedAt }) => {
+          const { title, head } = await this.digestOf(path, modifiedAt);
+          return {
+            sessionId,
+            cwd,
+            createdAt,
+            modifiedAt,
+            head,
+            ...(title === undefined ? {} : { title }),
+          };
+        })
+    );
+  }
+
+  private async digestOf(
+    path: string,
+    modifiedAt: number
+  ): Promise<SessionDigest> {
+    const cached = this.digests.get(path);
+    if (cached?.modifiedAt === modifiedAt) {
+      return cached;
+    }
+    const digest = await new EventLog(path).digest();
+    this.digests.set(path, { ...digest, modifiedAt });
+    return digest;
   }
 
   private async ensureStream(

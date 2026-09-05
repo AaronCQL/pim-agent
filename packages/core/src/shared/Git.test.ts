@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "bun:test";
-import { EMPTY_GIT, fetchGitStatus, parseGitStatus } from "./git";
+import { Git } from "./Git";
 
 const tempRoots: string[] = [];
 
@@ -21,7 +21,7 @@ afterAll(async () => {
 describe("parseGitStatus", () => {
   test("parses clean branch status", () => {
     expect(
-      parseGitStatus(
+      Git.parseStatus(
         [
           "# branch.oid 123456",
           "# branch.head main",
@@ -39,7 +39,7 @@ describe("parseGitStatus", () => {
 
   test("parses dirty state and ahead/behind counts", () => {
     expect(
-      parseGitStatus(
+      Git.parseStatus(
         [
           "# branch.oid 123456",
           "# branch.head feature/footer",
@@ -58,7 +58,7 @@ describe("parseGitStatus", () => {
   });
 
   test("labels detached heads explicitly", () => {
-    expect(parseGitStatus("# branch.head (detached)\n")).toEqual({
+    expect(Git.parseStatus("# branch.head (detached)\n")).toEqual({
       branch: "detached",
       dirty: false,
       ahead: 0,
@@ -71,6 +71,6 @@ describe("fetchGitStatus", () => {
   test("returns empty git state outside a git repository", async () => {
     const root = await tempRoot();
 
-    expect(await fetchGitStatus(root)).toEqual(EMPTY_GIT);
+    expect(await Git.fetchStatus(root)).toEqual(Git.EMPTY);
   });
 });

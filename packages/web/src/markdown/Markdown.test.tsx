@@ -49,6 +49,12 @@ describe("Markdown", () => {
     expect(view.html()).toContain('class="ts"');
   });
 
+  /** Withheld, not guessed: the language tag may still be growing, so nothing
+   *  is painted until it is known to be finished. */
+  test("a half-typed language tag paints nothing at all", () => {
+    expect(mount("```typescr", false).html()).toBe("");
+  });
+
   test("text that diverges rebuilds instead of appending", () => {
     const view = mount("first message");
     view.write("second message");

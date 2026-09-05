@@ -12,7 +12,13 @@
  * it in the `attach` handshake; a server that does not recognise it refuses the
  * connection rather than mis-parsing a newer frame. Versioned from day one so
  * the first incompatible change is a rejection, not a silent field mismatch.
+ *
+ * 4 — the approval gate is gone (`approve_tool`, `approval_request`,
+ * `approval_resolved` deleted, every tool call now runs unattended); sessions
+ * carry a `title` and a `head`; `session_state` carries context usage and the
+ * git branch; durable messages carry a `timestamp`; `list_models` answers
+ * with the model catalogue and this model's thinking levels.
  */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 export type ProtocolVersion = typeof PROTOCOL_VERSION;

@@ -40,7 +40,23 @@ type Cursor = {
   readonly seq: number;
 };
 
-const HEADER_PROBE_BYTES = 64 * 1024;
+/**
+ * How much of a session file is worth parsing to describe it: the header is
+ * line 1, and the first user message — the session's name — is in the first
+ * entries or it is not worth finding.
+ */
+const PROBE_BYTES = 64 * 1024;
+
+/** Long enough to tell two sessions apart, short enough for a sidebar row. */
+const TITLE_LIMIT = 120;
+
+/** What the session catalogue shows for one file without opening a session. */
+export type SessionDigest = {
+  /** The first user message, trimmed; absent when the session has none yet. */
+  readonly title?: string;
+  /** Highest durable `seq` — the physical line count. */
+  readonly head: number;
+};
 
 function isHeader(entry: FileEntry): entry is SessionHeader {
   return entry.type === "session";
@@ -113,13 +129,45 @@ export class EventLog {
     if (!(await file.exists())) {
       return undefined;
     }
-    const head = await file.slice(0, HEADER_PROBE_BYTES).text();
+    const head = await file.slice(0, PROBE_BYTES).text();
     const end = head.indexOf("\n");
     if (end === -1) {
       return undefined;
     }
     const entry = parseSessionEntries(head.slice(0, end))[0];
     return entry && isHeader(entry) ? entry : undefined;
+  }
+
+  /**
+   * Title and head for the catalogue, in one pass and without parsing the
+   * body: the head is a line count, so the bytes are only scanned for
+   * newlines, and only the first `PROBE_BYTES` are ever handed to the
+   * parser. Deliberately not `read()` — a listing must not pay to project a
+   * conversation it is only naming.
+   */
+  public async digest(): Promise<SessionDigest> {
+    const file = Bun.file(this.path);
+    if (!(await file.exists())) {
+      return { head: 0 };
+    }
+    let head = 0;
+    let probe = "";
+    const decoder = new TextDecoder();
+    for await (const bytes of file.stream()) {
+      // An indexed loop, not `for…of`: this runs over every byte of every
+      // session in the catalogue, and the iterator protocol is the only part
+      // of it that is not free.
+      for (let at = 0; at < bytes.length; at += 1) {
+        if (bytes[at] === 0x0a) {
+          head += 1;
+        }
+      }
+      if (probe.length < PROBE_BYTES) {
+        probe += decoder.decode(bytes, { stream: true });
+      }
+    }
+    const title = firstUserMessage(probe);
+    return { head, ...(title === undefined ? {} : { title }) };
   }
 
   public get inFlight(): InFlightTurn | undefined {
@@ -193,4 +241,23 @@ export class EventLog {
     };
     return this.inFlightTurn;
   }
+}
+
+function firstUserMessage(probe: string): string | undefined {
+  // The last line of a probe is a fragment as often as not, so it is dropped
+  // rather than fed to the parser.
+  const lines = probe.split("\n").slice(0, -1);
+  for (const line of lines) {
+    const entry = parseSessionEntries(line)[0];
+    if (entry?.type !== "message" || entry.message.role !== "user") {
+      continue;
+    }
+    const text = MessageText.textOf(entry.message.content).trim();
+    if (text !== "") {
+      return text.length > TITLE_LIMIT
+        ? `${text.slice(0, TITLE_LIMIT).trimEnd()}…`
+        : text;
+    }
+  }
+  return undefined;
 }

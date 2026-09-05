@@ -6,13 +6,9 @@ import type {
 import { PickerService } from "#core/picker/PickerService";
 import { MessageText } from "#core/session/MessageText";
 import type { SessionHost } from "#core/session/SessionHost";
+import { Git, type GitState } from "#core/shared/Git";
 import { Tools } from "#core/shared/Tools";
 import type { EphemeralEvent, ServerEvent } from "#protocol/ServerEvent";
-import {
-  ApprovalRouter,
-  type ApprovalRequest,
-  type ApprovalResolveResult,
-} from "./ApprovalRouter";
 import { SessionProjection } from "./SessionProjection";
 
 export type StreamListener = (event: ServerEvent) => void;
@@ -21,6 +17,14 @@ type LiveTool = {
   readonly name: string;
   readonly args: unknown;
 };
+
+/**
+ * How long a branch reading is trusted. Git shells out and `sessionState()`
+ * is synchronous and hot — every tool call emits one — so the answer is
+ * cached and refreshed behind the caller, who gets the previous reading and a
+ * second `session_state` a moment later if it changed.
+ */
+const GIT_TTL_MS = 5_000;
 
 /**
  * One session's view of the world, shared by every client attached to it and
@@ -37,14 +41,16 @@ export class SessionStream {
   public readonly host: SessionHost;
   public readonly picker: PickerService;
   private readonly projection: SessionProjection;
-  private readonly approvals: ApprovalRouter;
   private readonly listeners = new Set<StreamListener>();
   private readonly liveTools = new Map<string, LiveTool>();
   private unsubscribe: (() => void) | undefined;
-  private uninstallApprovals: (() => void) | undefined;
   private liveMessageId = 0;
   private streamedText = "";
   private turnStartedAt = 0;
+  private git: GitState = Git.EMPTY;
+  private gitCwd = "";
+  private gitReadAt = 0;
+  private gitInFlight = false;
 
   public constructor(
     sessionId: string,
@@ -59,35 +65,12 @@ export class SessionStream {
       agentDir: host.agentDir,
       agent: () => host.agentSession,
     });
-    this.approvals = new ApprovalRouter({
-      cwd: () => host.cwd,
-      onRequest: (request) => {
-        this.emit(approvalRequestEvent(request, host.cwd));
-      },
-      onResolved: (request, outcome) => {
-        this.emit({
-          type: "approval_resolved",
-          callId: request.callId,
-          approved: outcome.approved,
-          reason: outcome.reason,
-        });
-      },
-    });
   }
 
   public start(agent: AgentSession): void {
     this.unsubscribe ??= agent.subscribe((event) => {
       this.onAgentEvent(event);
     });
-    this.uninstallApprovals ??= this.approvals.install(agent);
-  }
-
-  /** Answer a tool call this session parked; the first answer is the one used. */
-  public resolveApproval(
-    callId: string,
-    approved: boolean
-  ): ApprovalResolveResult {
-    return this.approvals.resolve(callId, approved);
   }
 
   /** Project whatever pi has appended since the last read; returns the head. */
@@ -139,11 +122,6 @@ export class SessionStream {
         }),
       });
     }
-    // A parked approval is the whole reason a late client attaches at all, so
-    // it is part of the snapshot rather than something only live clients saw.
-    for (const request of this.approvals.pending) {
-      events.push(approvalRequestEvent(request, this.host.cwd));
-    }
     events.push(this.sessionState());
     return events;
   }
@@ -165,6 +143,8 @@ export class SessionStream {
 
   public sessionState(): EphemeralEvent {
     const tps = this.host.tps;
+    const usage = this.host.agentSession?.getContextUsage();
+    const { branch, dirty } = this.gitState();
     return {
       type: "session_state",
       cwd: this.host.cwd,
@@ -173,15 +153,50 @@ export class SessionStream {
       cost: this.host.settings.cumulativeCost ?? 0,
       status: this.host.status,
       ...(tps === undefined ? {} : { tps }),
+      ...(usage?.percent === null || usage === undefined
+        ? {}
+        : {
+            contextPercent: usage.percent,
+            contextWindow: usage.contextWindow,
+          }),
+      ...(branch === null ? {} : { branch, dirty }),
     };
+  }
+
+  /**
+   * The last reading, and a refresh behind it once that reading is stale.
+   * Stale means old *or* about another directory — a `set_cwd` invalidates
+   * the branch outright rather than leaving the old repo's name up for a tick.
+   */
+  private gitState(): GitState {
+    const cwd = this.host.cwd;
+    const moved = cwd !== this.gitCwd;
+    if (moved) {
+      this.gitCwd = cwd;
+      this.git = Git.EMPTY;
+    }
+    if (
+      (moved || Date.now() - this.gitReadAt > GIT_TTL_MS) &&
+      !this.gitInFlight
+    ) {
+      this.gitInFlight = true;
+      void Git.fetchStatus(cwd).then((next) => {
+        this.gitInFlight = false;
+        this.gitReadAt = Date.now();
+        const changed =
+          next.branch !== this.git.branch || next.dirty !== this.git.dirty;
+        this.git = next;
+        if (changed) {
+          this.emit(this.sessionState());
+        }
+      });
+    }
+    return this.git;
   }
 
   public dispose(): void {
     this.unsubscribe?.();
     this.unsubscribe = undefined;
-    this.uninstallApprovals?.();
-    this.uninstallApprovals = undefined;
-    this.approvals.dispose();
     this.listeners.clear();
   }
 
@@ -301,22 +316,4 @@ export class SessionStream {
       listener(event);
     }
   }
-}
-
-function approvalRequestEvent(
-  request: ApprovalRequest,
-  cwd: string
-): EphemeralEvent {
-  return {
-    type: "approval_request",
-    callId: request.callId,
-    name: request.name,
-    view: Tools.viewOf({
-      name: request.name,
-      args: request.args,
-      isPartial: true,
-      cwd,
-    }),
-    reason: request.reason,
-  };
 }

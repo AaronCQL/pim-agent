@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import { flush } from "solid-js";
 
 import type { DurableEvent } from "#protocol/ServerEvent";
+import { clockTime } from "../format";
 import { FIXTURE_EVENTS } from "../replay/fixture";
 import { mountPoint } from "../test/dom";
 import { Transcript } from "./Transcript";
@@ -50,6 +51,7 @@ describe("rows", () => {
         messageId: "m",
         role: "assistant",
         text: "",
+        timestamp: 0,
         toolCalls: [{ callId: "c", name: "read", view: { title: [] } }],
       },
     ]);
@@ -115,6 +117,9 @@ describe("static replay of a real session", () => {
 
     expect(first?.textContent).toContain("Modernise the string building");
     expect(first?.querySelector("div")?.className).toContain("bg-neutral-850");
+    // The wall clock beneath the card, in the reader's own timezone.
+    const stamp = events.find((event) => event.type === "message")?.timestamp;
+    expect(first?.textContent).toContain(clockTime(stamp ?? 0));
   });
 
   test("the final assistant turn renders markdown, not source", () => {

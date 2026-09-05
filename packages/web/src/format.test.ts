@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { abbreviateHome, relativeTime } from "./format";
+import { abbreviateHome, clockTime, relativeTime } from "./format";
 
 const NOW = Date.UTC(2026, 0, 2, 12, 0, 0);
 const ago = (ms: number): string => relativeTime(NOW - ms, NOW);
@@ -35,5 +35,17 @@ describe("abbreviateHome", () => {
     expect(abbreviateHome("/srv/app")).toBe("/srv/app");
     expect(abbreviateHome("/homely/place")).toBe("/homely/place");
     expect(abbreviateHome("C:\\Users\\ada")).toBe("C:\\Users\\ada");
+  });
+});
+
+describe("clockTime", () => {
+  test("prints the reader's own wall clock, 24-hour and zero-padded", () => {
+    const at = new Date(2026, 0, 2, 7, 4, 30).getTime();
+    expect(clockTime(at)).toBe("07:04");
+  });
+
+  test("a message with no usable stamp prints nothing", () => {
+    expect(clockTime(0)).toBe("");
+    expect(clockTime(Number.NaN)).toBe("");
   });
 });

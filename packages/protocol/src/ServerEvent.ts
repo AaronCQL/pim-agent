@@ -38,6 +38,8 @@ export type DurableEvent =
       readonly messageId: string;
       readonly role: "user" | "assistant";
       readonly text: string;
+      /** When pi appended the entry, in epoch ms. */
+      readonly timestamp: number;
       readonly thinking?: string;
       readonly toolCalls?: readonly ToolCallView[];
     }
@@ -100,31 +102,6 @@ export type EphemeralEvent =
       readonly view: ToolView;
     }
   /**
-   * A tool call the server refuses to run unattended — the top tier of the
-   * approval policy. The turn is blocked until some client answers with
-   * `approve_tool`, so this is re-sent in the in-flight snapshot on every
-   * attach: a client that connects an hour later still sees the question.
-   */
-  | {
-      readonly type: "approval_request";
-      readonly callId: string;
-      readonly name: string;
-      readonly view: ToolView;
-      /** Why the policy could not decide on its own, in plain words. */
-      readonly reason: string;
-    }
-  /**
-   * The pending request for `callId` is gone. Broadcast to every attached
-   * client, including the one that answered, so a second client's prompt
-   * clears instead of hanging on a question nobody can answer any more.
-   */
-  | {
-      readonly type: "approval_resolved";
-      readonly callId: string;
-      readonly approved: boolean;
-      readonly reason: string;
-    }
-  /**
    * Every picker answer this session's clients hold is stale: the cwd moved,
    * or a tool wrote to it. Clients drop their result cache and re-query on the
    * next keystroke; the catalog itself never leaves the server.
@@ -143,6 +120,12 @@ export type EphemeralEvent =
       readonly cost: number;
       readonly status: SessionStatus;
       readonly tps?: number;
+      /** Context filled, 0–100. Absent until a turn has reported usage. */
+      readonly contextPercent?: number;
+      readonly contextWindow?: number;
+      /** The cwd's git branch, absent outside a repository. */
+      readonly branch?: string;
+      readonly dirty?: boolean;
     }
   /** A frame the server could not attribute to any command. */
   | { readonly type: "error"; readonly message: string };
@@ -158,6 +141,16 @@ export type SessionSummaryView = {
   readonly cwd: string;
   readonly createdAt: number;
   readonly modifiedAt: number;
+  /** The session's first user message, trimmed; absent when it has none. */
+  readonly title?: string;
+  /** Highest durable `seq` on disk, so a client can tell read from unread. */
+  readonly head: number;
+};
+
+/** One model the server can be switched to, for the composer's model menu. */
+export type ModelView = {
+  readonly id: string;
+  readonly label: string;
 };
 
 /** Answer to one `Command`, correlated by its `id`. Never sequenced. */
@@ -170,6 +163,10 @@ export type ResponseEvent = {
   readonly items?: readonly PickerItem[];
   /** The catalogue, for `list_sessions`. */
   readonly sessions?: readonly SessionSummaryView[];
+  /** The model catalogue, for `list_models`. */
+  readonly models?: readonly ModelView[];
+  /** What the *current* model supports, on the same answer. */
+  readonly thinkingLevels?: readonly string[];
 };
 
 export type ServerEvent = DurableEvent | EphemeralEvent | ResponseEvent;

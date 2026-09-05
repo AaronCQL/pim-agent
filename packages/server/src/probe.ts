@@ -16,12 +16,11 @@ const USAGE = `pim probe — CLI client for pim-server, dumps every frame as JSO
   --pick-files <query>     ask the server to complete an @ path, print the rows
   --pick-commands <query>  ask the server for matching skills and commands
   --list-sessions          print pi's session catalogue and exit
+  --list-models            print the models this server can switch to
   --upload <path>          transfer a local file to the server, attach it to
                            --prompt (repeatable)
   --steer <text>           steer the turn in flight instead of prompting
   --cancel                 cancel the current turn
-  --approve                answer every approval request with yes
-  --deny                   answer every approval request with no
   --wait                   keep streaming after the turn ends (Ctrl-C to stop)
   --quiet                  print only durable events
   --protocol-version <n>   override the handshake version (to test rejection)
@@ -37,11 +36,10 @@ const { values } = parseArgs({
     "pick-files": { type: "string" },
     "pick-commands": { type: "string" },
     "list-sessions": { type: "boolean", default: false },
+    "list-models": { type: "boolean", default: false },
     upload: { type: "string", multiple: true },
     steer: { type: "string" },
     cancel: { type: "boolean", default: false },
-    approve: { type: "boolean", default: false },
-    deny: { type: "boolean", default: false },
     wait: { type: "boolean", default: false },
     quiet: { type: "boolean", default: false },
     "protocol-version": { type: "string" },
@@ -56,9 +54,6 @@ if (values.help) {
 }
 
 function dump(event: ServerEvent): void {
-  if (event.type === "approval_request" && (values.approve || values.deny)) {
-    void probe.approve(event.callId, values.approve);
-  }
   if (values.quiet && !isDurableEvent(event)) {
     return;
   }
@@ -98,6 +93,9 @@ if (values["list-sessions"]) {
   for (const summary of await probe.listSessions(values.cwd)) {
     process.stdout.write(`${JSON.stringify(summary)}\n`);
   }
+}
+if (values["list-models"]) {
+  process.stdout.write(`${JSON.stringify(await probe.listModels())}\n`);
 }
 if (values["pick-commands"] !== undefined) {
   const items = await probe.pickCommands(values["pick-commands"]);

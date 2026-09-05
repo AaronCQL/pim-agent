@@ -56,6 +56,7 @@ class FakeStream implements AttachableStream {
       messageId: `m${seq}`,
       role: "user",
       text: `line ${seq}`,
+      timestamp: seq * 1000,
     };
     this.durable.push(event);
     for (const listener of this.listeners) {

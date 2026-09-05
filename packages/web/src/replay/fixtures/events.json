@@ -2,16 +2,18 @@
   {
     "seq": 4,
     "type": "message",
-    "messageId": "dbfde010",
+    "messageId": "ad9f2503",
     "role": "user",
-    "text": "Modernise the string building in greeter.ts."
+    "text": "Modernise the string building in greeter.ts.",
+    "timestamp": 1788609290032
   },
   {
     "seq": 5,
     "type": "message",
-    "messageId": "7f8508f1",
+    "messageId": "e675d7ff",
     "role": "assistant",
     "text": "Let me read the file first.",
+    "timestamp": 1788609290067,
     "toolCalls": [
       {
         "callId": "call_1",
@@ -65,9 +67,10 @@
   {
     "seq": 7,
     "type": "message",
-    "messageId": "27f455cb",
+    "messageId": "af865435",
     "role": "assistant",
     "text": "Now I'll switch it to a template literal.",
+    "timestamp": 1788609290076,
     "toolCalls": [
       {
         "callId": "call_2",
@@ -250,9 +253,10 @@
   {
     "seq": 9,
     "type": "message",
-    "messageId": "282566fd",
+    "messageId": "e1606e44",
     "role": "assistant",
     "text": "Running the type checker to confirm.",
+    "timestamp": 1788609290087,
     "toolCalls": [
       {
         "callId": "call_3",
@@ -312,8 +316,9 @@
   {
     "seq": 11,
     "type": "message",
-    "messageId": "d15a8f64",
+    "messageId": "6cafa393",
     "role": "assistant",
-    "text": "## Done\n\nBoth concatenations in `greeter.ts` are now template literals:\n\n| function | change |\n| --- | --- |\n| `greet` | `\"Hello, \" + name` → `` `Hello, ${name}!` `` |\n| `farewell` | `\"Bye, \" + name` → `` `Bye, ${name}` `` |\n\n```ts\nexport function greet(name: string): string {\n  return `Hello, ${name}!`;\n}\n```\n\nThe type check **failed** because `tsc` is not installed here — see the\ntool output above. Nothing else was touched."
+    "text": "## Done\n\nBoth concatenations in `greeter.ts` are now template literals:\n\n| function | change |\n| --- | --- |\n| `greet` | `\"Hello, \" + name` → `` `Hello, ${name}!` `` |\n| `farewell` | `\"Bye, \" + name` → `` `Bye, ${name}` `` |\n\n```ts\nexport function greet(name: string): string {\n  return `Hello, ${name}!`;\n}\n```\n\nThe type check **failed** because `tsc` is not installed here — see the\ntool output above. Nothing else was touched.",
+    "timestamp": 1788609290156
   }
 ]

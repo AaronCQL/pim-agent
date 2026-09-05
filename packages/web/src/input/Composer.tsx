@@ -1,16 +1,28 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 
 import type { PickerItem } from "#core/picker/PickerItem";
-import type { SessionStore, UploadedAttachment } from "../session/SessionStore";
+import { Format, type ContextFill } from "#core/shared/Format";
+import type {
+  ModelCatalogue,
+  SessionStore,
+  UploadedAttachment,
+} from "../session/SessionStore";
 import { Combobox, createComboboxNavigation } from "../ui/Combobox";
+import { Menu } from "../ui/Menu";
 import { activeToken, applyCompletion, tokenKey } from "./token";
 
 const ANCHOR = "--pim-composer";
+const MODEL_ANCHOR = "--pim-model";
+const THINKING_ANCHOR = "--pim-thinking";
 const FILE_LIMIT = 50;
 const COMMAND_LIMIT = 20;
 
-const CHIP =
-  "flex items-center justify-center gap-1.5 rounded-full bg-neutral-900 px-3 py-1.5 text-neutral-350";
+/** The ramp's colour for each verdict `Format.contextFill` hands back. */
+const CONTEXT_TONES: Record<ContextFill, string> = {
+  ok: "text-neutral-350",
+  warn: "text-amber-400",
+  full: "text-rose-400",
+};
 
 /**
  * The draft, the pickers over it, and the two ways bytes get in.
@@ -40,12 +52,33 @@ export function Composer(props: { readonly store: SessionStore }) {
     readonly UploadedAttachment[]
   >([]);
   const [dropping, setDropping] = createSignal(false);
+  const [catalogue, setCatalogue] = createSignal<ModelCatalogue>({
+    models: [],
+    thinkingLevels: [],
+  });
   let input!: HTMLTextAreaElement;
   let generation = 0;
 
   const token = createMemo(() => activeToken(text(), caret()));
   const key = createMemo(() => tokenKey(token()));
   const open = createMemo(() => key() !== "" && dismissed() !== key());
+  // One memo, not a percentage read three times: a fill of 0 is a reading,
+  // and an object keeps it from being mistaken for "no reading yet".
+  const fill = createMemo(() => {
+    const percent = props.store.state.contextPercent;
+    return percent === undefined
+      ? undefined
+      : {
+          text: `${percent.toFixed(1)}%`,
+          tone: CONTEXT_TONES[Format.contextFill(percent)],
+        };
+  });
+  const modelOptions = createMemo(() =>
+    catalogue().models.map(({ id, label }) => ({ value: id, label }))
+  );
+  const levelOptions = createMemo(() =>
+    catalogue().thinkingLevels.map((level) => ({ value: level, label: level }))
+  );
 
   createEffect(
     () => key(),
@@ -136,15 +169,41 @@ export function Composer(props: { readonly store: SessionStore }) {
     await props.store.prompt(draft, attached);
   }
 
+  /**
+   * Asked for when a chip is opened rather than on mount: the catalogue is a
+   * property of the server, the store caches it for the connection, and a
+   * session nobody ever switches models on should not pay for it.
+   */
+  function loadCatalogue(): void {
+    void props.store.listModels().then(setCatalogue);
+  }
+
   return (
     <div
       class="pointer-events-auto relative w-full max-w-3xl"
       style={{ "anchor-name": ANCHOR }}
     >
-      {/* The divided pill. Phase B adds the context half beside the cost. */}
-      <Show when={props.store.state.cost > 0}>
-        <div class="pointer-events-none absolute bottom-full right-0 mb-2 flex items-center rounded-lg bg-neutral-900 text-sm text-neutral-350 tabular-nums ring-1 ring-neutral-750">
-          <div class="px-2.5 py-1">{`$${props.store.state.cost.toFixed(3)}`}</div>
+      {/* The divided pill: spend on the left, context fill on the right, each
+          half drawn only once there is something to say. */}
+      <Show when={props.store.state.cost > 0 || fill() !== undefined}>
+        <div class="pointer-events-none absolute bottom-full right-0 mb-2 flex items-center divide-x-1.5 divide-neutral-750 rounded-lg bg-neutral-900 text-sm text-neutral-350 tabular-nums ring-1 ring-neutral-750">
+          <Show when={props.store.state.cost > 0}>
+            <div class="px-2.5 py-1">{`$${props.store.state.cost.toFixed(3)}`}</div>
+          </Show>
+          <Show when={fill()}>
+            {(shown) => (
+              <div class={`px-2.5 py-1 ${shown().tone}`}>
+                {shown().text}
+                <Show when={props.store.state.contextWindow}>
+                  {(window) => (
+                    <span class="hidden text-neutral-500 sm:inline">
+                      {`/${Format.formatTokens(window())}`}
+                    </span>
+                  )}
+                </Show>
+              </div>
+            )}
+          </Show>
         </div>
       </Show>
 
@@ -234,23 +293,39 @@ export function Composer(props: { readonly store: SessionStore }) {
 
         {/* Chips wrap rather than overflow, and their labels truncate: on a
             phone the model name is the first thing that would push the send
-            button off the card. Phase B3 turns them into menus. */}
+            button off the card. */}
         <div class="flex flex-wrap items-end gap-2">
           <Show when={props.store.state.model}>
-            <div class={CHIP}>
-              <span class="i-griddy-icons:robot size-4 shrink-0" />
-              <span class="max-w-40 truncate text-sm">
-                {props.store.state.model}
-              </span>
-            </div>
+            {(model) => (
+              <Menu
+                label={model()}
+                title="Model"
+                icon="i-griddy-icons:robot"
+                anchor={MODEL_ANCHOR}
+                value={model()}
+                options={modelOptions()}
+                onOpen={loadCatalogue}
+                onSelect={(id) => {
+                  void props.store.setModel(id);
+                }}
+              />
+            )}
           </Show>
           <Show when={props.store.state.thinking}>
-            <div class={CHIP}>
-              <span class="i-griddy-icons:lightbulb-on size-4 shrink-0" />
-              <span class="max-w-24 truncate text-sm">
-                {props.store.state.thinking}
-              </span>
-            </div>
+            {(thinking) => (
+              <Menu
+                label={thinking()}
+                title="Thinking"
+                icon="i-griddy-icons:lightbulb-on"
+                anchor={THINKING_ANCHOR}
+                value={thinking()}
+                options={levelOptions()}
+                onOpen={loadCatalogue}
+                onSelect={(level) => {
+                  void props.store.setThinking(level);
+                }}
+              />
+            )}
           </Show>
 
           <div class="flex-1" />

@@ -41,13 +41,6 @@ export type Command =
   | { readonly id: string; readonly type: "cancel"; readonly sessionId: string }
   | {
       readonly id: string;
-      readonly type: "approve_tool";
-      readonly sessionId: string;
-      readonly callId: string;
-      readonly approved: boolean;
-    }
-  | {
-      readonly id: string;
       readonly type: "pick_files";
       readonly sessionId: string;
       readonly query: string;
@@ -77,7 +70,13 @@ export type Command =
       /** Restrict to one working directory; omit for every session on disk. */
       readonly cwd?: string;
       readonly limit?: number;
-    };
+    }
+  /**
+   * The models this server can switch to, plus the thinking levels the model
+   * it is on supports. Like `list_sessions` it answers without a session,
+   * because the catalogue is a property of the machine, not of a conversation.
+   */
+  | { readonly id: string; readonly type: "list_models" };
 
 export type CommandType = Command["type"];
 

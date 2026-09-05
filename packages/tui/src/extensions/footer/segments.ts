@@ -5,7 +5,7 @@ import type {
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { Format } from "#core/shared/Format";
 import { Paths } from "#core/shared/Paths";
-import type { GitState } from "./git";
+import type { GitState } from "#core/shared/Git";
 import {
   BG_BRIGHT_GREEN,
   BG_BRIGHT_MAGENTA,
@@ -59,13 +59,11 @@ function ctxSegment(ctx: ExtensionContext): Segment | null {
     usage.percent === null
       ? `?/${window}`
       : `${usage.percent.toFixed(1)}%/${window}`;
-  const percent = usage.percent ?? 0;
-  const bg =
-    percent >= 70
-      ? BG_BRIGHT_RED
-      : percent > 40
-        ? BG_BRIGHT_YELLOW
-        : BG_BRIGHT_GREEN;
+  const bg = {
+    full: BG_BRIGHT_RED,
+    warn: BG_BRIGHT_YELLOW,
+    ok: BG_BRIGHT_GREEN,
+  }[Format.contextFill(usage.percent ?? 0)];
   return { text, fg: FG_BLACK, bg };
 }
 

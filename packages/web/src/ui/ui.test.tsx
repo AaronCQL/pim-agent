@@ -8,6 +8,7 @@ import { mountPoint } from "../test/dom";
 import { Combobox, createComboboxNavigation } from "./Combobox";
 import { Collapsible } from "./Collapsible";
 import { Drawer } from "./Drawer";
+import { Menu } from "./Menu";
 import { Popover } from "./Popover";
 
 type Nav = ReturnType<typeof createComboboxNavigation>;
@@ -233,5 +234,92 @@ describe("platform wrappers", () => {
     flush();
     expect(drawer.open).toBe(false);
     expect(closed).toEqual([1]);
+  });
+});
+
+describe("chip menu", () => {
+  function paint(): {
+    readonly host: HTMLElement;
+    readonly chosen: string[];
+    readonly opened: number[];
+  } {
+    const host = mountPoint();
+    const chosen: string[] = [];
+    const opened: number[] = [];
+    render(
+      () => (
+        <Menu
+          label="claude/opus-5"
+          icon="i-griddy-icons:robot"
+          anchor="--pim-model"
+          value="claude/opus-5"
+          options={[
+            { value: "claude/opus-5", label: "Opus 5" },
+            { value: "openai/gpt-6", label: "GPT-6" },
+          ]}
+          onOpen={() => opened.push(1)}
+          onSelect={(value) => chosen.push(value)}
+        />
+      ),
+      host
+    );
+    flush();
+    return { host, chosen, opened };
+  }
+
+  /** Rows the reader can reach; a closed popover keeps its list mounted. */
+  function options(host: HTMLElement): readonly Element[] {
+    const panel = host.querySelector("[popover]");
+    if (panel === null || panel.className.includes("hidden")) {
+      return [];
+    }
+    return [...panel.querySelectorAll('[role="option"]')];
+  }
+
+  test("the chip asks for its options each time it is opened", () => {
+    const { host, opened } = paint();
+
+    expect(options(host)).toHaveLength(0);
+    host.querySelector("button")!.click();
+    flush();
+
+    expect(opened).toEqual([1]);
+    expect(options(host).map((row) => row.textContent)).toEqual([
+      "Opus 5",
+      "GPT-6",
+    ]);
+    // The keyboard starts on what the chip already says.
+    expect(options(host)[0]?.getAttribute("aria-selected")).toBe("true");
+  });
+
+  test("choosing closes the menu and reports the value, not the label", () => {
+    const { host, chosen } = paint();
+    host.querySelector("button")!.click();
+    flush();
+
+    options(host)[1]!.dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true })
+    );
+    flush();
+
+    expect(chosen).toEqual(["openai/gpt-6"]);
+    expect(options(host)).toHaveLength(0);
+  });
+
+  test("a pointer anywhere else closes it, a pointer on the chip does not", () => {
+    const { host } = paint();
+    const chip = host.querySelector("button")!;
+    chip.click();
+    flush();
+
+    chip.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    flush();
+    expect(options(host)).toHaveLength(2);
+
+    document.body.dispatchEvent(
+      new PointerEvent("pointerdown", { bubbles: true })
+    );
+    flush();
+    expect(options(host)).toHaveLength(0);
   });
 });

@@ -383,12 +383,18 @@ test("lists pi's sessions, before any attach and after one", async () => {
   const mine = listed.find((row) => row.sessionId === sessionId)!;
   expect(mine.cwd).toBe(tmp);
   expect(mine.modifiedAt).toBeGreaterThan(0);
+  // Named by its opening message, and carrying the head a client compares
+  // against what it has already painted.
+  expect(mine.title).toBe("say hello");
+  expect(mine.head).toBeGreaterThan(0);
   // The catalogue is pi's directory layout, not a store of ours.
   expect(Object.keys(mine).sort()).toEqual([
     "createdAt",
     "cwd",
+    "head",
     "modifiedAt",
     "sessionId",
+    "title",
   ]);
 
   expect(await probe.listSessions("/nowhere")).toEqual([]);
@@ -410,6 +416,41 @@ test("lists pi's sessions, before any attach and after one", async () => {
   expect(response.success).toBe(true);
   expect(response.sessions.map((row) => row.sessionId)).toContain(sessionId);
   socket.close();
+});
+
+test("answers with the model catalogue and this model's thinking levels", async () => {
+  const probe = await connect();
+
+  const { models, thinkingLevels } = await probe.listModels();
+  expect(models).toEqual([{ id: "test/echo", label: "echo" }]);
+  // The levels belong to the model the session is on, so they only exist
+  // once this connection has one.
+  expect(thinkingLevels).toBeArray();
+});
+
+test("session state carries context usage and the cwd's git branch", async () => {
+  Bun.spawnSync(["git", "init", "-q", "-b", "trunk"], { cwd: tmp });
+
+  const probe = await connect();
+  const mark = probe.events.length;
+  await probe.prompt("say hello");
+  await idle(probe, mark);
+
+  // The branch is read behind the caller — `sessionState()` is synchronous
+  // and git is not — so it lands on a later state than the first one.
+  const state = await probe.waitFor(
+    (event) => event.type === "session_state" && event.branch !== undefined,
+    { from: mark }
+  );
+  expect(state.type === "session_state" && state.branch).toBe("trunk");
+  expect(state.type === "session_state" && state.dirty).toBe(true);
+
+  const usage = probe.events.findLast(
+    (event) =>
+      event.type === "session_state" && event.contextWindow !== undefined
+  );
+  expect(usage?.type === "session_state" && usage.contextWindow).toBe(8192);
+  expect(usage?.type === "session_state" && usage.contextPercent).toBeNumber();
 });
 
 test("rejects a client speaking another protocol version", async () => {

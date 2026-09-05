@@ -252,3 +252,16 @@ test("an upload never puts a client-local path in the conversation", async () =>
   expect(dump).toContain(stored.path);
   expect(dump).not.toContain("notes.txt\u0000");
 });
+
+test("the model catalogue is asked for once and switching it lands on state", async () => {
+  const store = await connect();
+
+  const first = await store.listModels();
+  expect(first.models).toEqual([{ id: "test/echo", label: "echo" }]);
+  expect(first.thinkingLevels).toBeArray();
+  // Cached for the connection: the catalogue is a property of the machine.
+  expect(await store.listModels()).toBe(first);
+
+  await store.setModel("test/echo");
+  await until(() => store.state.model === "test/echo", "the model on state");
+});

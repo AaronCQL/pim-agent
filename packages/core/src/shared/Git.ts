@@ -8,14 +8,14 @@ export type GitState = {
   readonly behind: number;
 };
 
-export const EMPTY_GIT: GitState = {
+const EMPTY: GitState = {
   branch: null,
   dirty: false,
   ahead: 0,
   behind: 0,
 };
 
-export function parseGitStatus(text: string): GitState {
+function parseStatus(text: string): GitState {
   let branch: string | null = null;
   let ahead = 0;
   let behind = 0;
@@ -37,7 +37,7 @@ export function parseGitStatus(text: string): GitState {
   return { branch, dirty, ahead, behind };
 }
 
-export function watchGitDir(cwd: string, onChange: () => void): () => void {
+function watchDir(cwd: string, onChange: () => void): () => void {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const fire = (): void => {
     if (timer !== null) {
@@ -68,7 +68,7 @@ export function watchGitDir(cwd: string, onChange: () => void): () => void {
   };
 }
 
-export async function fetchGitStatus(cwd: string): Promise<GitState> {
+async function fetchStatus(cwd: string): Promise<GitState> {
   try {
     const proc = Bun.spawn(["git", "status", "--porcelain=v2", "--branch"], {
       cwd,
@@ -78,10 +78,17 @@ export async function fetchGitStatus(cwd: string): Promise<GitState> {
     const text = await new Response(proc.stdout).text();
     await proc.exited;
     if (proc.exitCode !== 0) {
-      return EMPTY_GIT;
+      return EMPTY;
     }
-    return parseGitStatus(text);
+    return parseStatus(text);
   } catch {
-    return EMPTY_GIT;
+    return EMPTY;
   }
 }
+
+/**
+ * The cwd's git state, for the TUI footer and the web's branch chip. Shells
+ * out rather than reading `.git` itself: worktrees, submodules and detached
+ * heads are git's business, and `git status` already knows all three.
+ */
+export const Git = { EMPTY, parseStatus, watchDir, fetchStatus };

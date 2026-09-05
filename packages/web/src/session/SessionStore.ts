@@ -6,6 +6,7 @@ import type { ToolView } from "#core/view/ViewBlock";
 import type { AttachmentRef } from "#protocol/Command";
 import type {
   DurableEvent,
+  ModelView,
   ServerEvent,
   SessionStatus,
   SessionSummaryView,
@@ -18,6 +19,12 @@ export type LiveTool = {
   readonly callId: string;
   readonly name: string;
   readonly view: ToolView;
+};
+
+/** What the composer's two chips choose from; one query answers both. */
+export type ModelCatalogue = {
+  readonly models: readonly ModelView[];
+  readonly thinkingLevels: readonly string[];
 };
 
 /** What `POST /upload` answered with. Every path here is the server's. */
@@ -48,6 +55,10 @@ export type SessionState = {
   cost: number;
   agent: SessionStatus;
   tps: number | undefined;
+  contextPercent: number | undefined;
+  contextWindow: number | undefined;
+  branch: string | undefined;
+  dirty: boolean;
   durable: DurableEvent[];
   liveMessageId: string;
   liveText: string;
@@ -55,6 +66,8 @@ export type SessionState = {
   optimistic: OptimisticMessage[];
   stats: TurnStats | undefined;
   error: string | undefined;
+  /** Highest durable seq this browser has painted, per session. */
+  seen: Record<string, number>;
 };
 
 export type SessionStoreOptions = {
@@ -68,6 +81,13 @@ export type SessionStoreOptions = {
 
 const FILE_PICKER_LIMIT = 50;
 const COMMAND_PICKER_LIMIT = 20;
+
+/**
+ * Where the read cursor of every session lives. Unread is a property of this
+ * browser, not of the conversation — a second client reading the same session
+ * has its own answer — so it is stored here and never sent.
+ */
+const SEEN_KEY = "pim.seen";
 
 /**
  * Everything the browser knows about one session, and the only place an
@@ -85,6 +105,8 @@ export class SessionStore {
   public readonly state: Store<SessionState>;
   private readonly setState: StoreSetter<SessionState>;
   private optimisticId = 0;
+  /** The catalogue is a property of the server, so one query per connection. */
+  private catalogue: Promise<ModelCatalogue> | undefined;
 
   public constructor(options: SessionStoreOptions) {
     const [state, setState] = createStore<SessionState>({
@@ -96,6 +118,10 @@ export class SessionStore {
       cost: 0,
       agent: "idle",
       tps: undefined,
+      contextPercent: undefined,
+      contextWindow: undefined,
+      branch: undefined,
+      dirty: false,
       durable: [],
       liveMessageId: "",
       liveText: "",
@@ -103,6 +129,7 @@ export class SessionStore {
       optimistic: [],
       stats: undefined,
       error: undefined,
+      seen: readSeen(),
     });
     this.state = state;
     this.setState = setState;
@@ -157,6 +184,9 @@ export class SessionStore {
    */
   public trailing(): readonly DurableEvent[] {
     const trailing: DurableEvent[] = [];
+    // Nothing has been written yet, so the only honest stamp is "now"; the
+    // durable event that supersedes this one carries pi's own.
+    const timestamp = Date.now();
     for (const pending of this.state.optimistic) {
       trailing.push({
         seq: 0,
@@ -164,6 +194,7 @@ export class SessionStore {
         messageId: pending.id,
         role: "user",
         text: pending.text,
+        timestamp,
       });
     }
     if (this.state.liveText !== "" || this.state.liveTools.length > 0) {
@@ -173,6 +204,7 @@ export class SessionStore {
         messageId: this.streamingId(),
         role: "assistant",
         text: this.state.liveText,
+        timestamp,
         toolCalls: this.state.liveTools.map((tool) => ({
           callId: tool.callId,
           name: tool.name,
@@ -271,6 +303,71 @@ export class SessionStore {
     return response?.sessions ?? [];
   }
 
+  /**
+   * The models this server can switch to and the levels the current one
+   * thinks at. Cached for the connection's lifetime: both are properties of
+   * the machine the server runs on, and a menu that re-queried on every open
+   * would ask the same question every time it was looked at.
+   */
+  public listModels(): Promise<ModelCatalogue> {
+    this.catalogue ??= this.client
+      .send({ type: "list_models" })
+      .then((response) => ({
+        models: response.models ?? [],
+        thinkingLevels: response.thinkingLevels ?? [],
+      }))
+      .catch(() => {
+        this.catalogue = undefined;
+        return { models: [], thinkingLevels: [] };
+      });
+    return this.catalogue;
+  }
+
+  public async setModel(id: string): Promise<void> {
+    await this.set("set_model", id);
+  }
+
+  public async setThinking(level: string): Promise<void> {
+    await this.set("set_thinking", level);
+  }
+
+  /** True when the session's `head` is beyond what this browser has painted. */
+  public isUnread(session: SessionSummaryView): boolean {
+    return session.head > (this.state.seen[session.sessionId] ?? 0);
+  }
+
+  /**
+   * The read cursor moves forward only, and is written through to
+   * `localStorage` on the spot: a tab closed mid-turn must not come back
+   * claiming it never read the turn it painted.
+   */
+  private markSeen(sessionId: string, seq: number): void {
+    if (sessionId === "" || (this.state.seen[sessionId] ?? 0) >= seq) {
+      return;
+    }
+    // Written from the value going in, not from `state` after the fact:
+    // store writes land on a microtask, so reading it back here would
+    // persist the cursor one event behind.
+    const seen = { ...this.state.seen, [sessionId]: seq };
+    this.setState((draft) => {
+      draft.seen[sessionId] = seq;
+    });
+    try {
+      localStorage.setItem(SEEN_KEY, JSON.stringify(seen));
+    } catch {
+      // Private mode, a full quota, or no storage at all: unread is a nicety.
+    }
+  }
+
+  private async set(
+    type: "set_model" | "set_thinking",
+    value: string
+  ): Promise<void> {
+    await this.client
+      .send({ type, sessionId: this.state.sessionId, value })
+      .catch(() => undefined);
+  }
+
   public async switchTo(sessionId: string): Promise<void> {
     await this.client.attachTo({ sessionId });
   }
@@ -325,6 +422,9 @@ export class SessionStore {
           draft.liveTools = [];
           draft.error = undefined;
         });
+        // Attaching is reading: the replay that follows this frame paints
+        // everything up to `head`.
+        this.markSeen(event.sessionId, event.head);
         return;
       case "message_start":
         this.setState((draft) => {
@@ -373,6 +473,10 @@ export class SessionStore {
           draft.cost = event.cost;
           draft.agent = event.status;
           draft.tps = event.tps;
+          draft.contextPercent = event.contextPercent;
+          draft.contextWindow = event.contextWindow;
+          draft.branch = event.branch;
+          draft.dirty = event.dirty ?? false;
         });
         return;
       case "turn_end":
@@ -409,6 +513,7 @@ export class SessionStore {
         );
       }
     });
+    this.markSeen(this.state.sessionId, event.seq);
   }
 
   private dropOptimistic(id: string): void {
@@ -426,5 +531,14 @@ function upsertTool(tools: LiveTool[], tool: LiveTool): void {
     tools.push(tool);
   } else {
     tools[at] = { ...tools[at], ...tool };
+  }
+}
+
+function readSeen(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(SEEN_KEY);
+    return raw === null ? {} : (JSON.parse(raw) as Record<string, number>);
+  } catch {
+    return {};
   }
 }

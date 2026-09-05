@@ -30,4 +30,18 @@ function formatElapsed(ms: number): string {
       : `${seconds}s`;
 }
 
-export const Format = { formatTokens, formatElapsed };
+/** How full the context window reads, as a verdict each frontend colours. */
+export type ContextFill = "ok" | "warn" | "full";
+
+/**
+ * Shared so the TUI footer and the web's context pill turn amber at the same
+ * fill; the two palettes differ, the thresholds must not.
+ */
+function contextFill(percent: number): ContextFill {
+  if (percent >= 70) {
+    return "full";
+  }
+  return percent > 40 ? "warn" : "ok";
+}
+
+export const Format = { formatTokens, formatElapsed, contextFill };

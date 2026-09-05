@@ -2,10 +2,11 @@ import { createEffect } from "solid-js";
 import * as smd from "streaming-markdown";
 
 /**
- * Markdown, rendered by `streaming-markdown` — chosen in
- * `renderer-choice.test.ts` by measuring partial input rather than by
- * reputation. It writes into the DOM append-only, so growing `text` never
- * repaints what is already on screen, and raw HTML can never escape into it.
+ * Markdown, rendered by `streaming-markdown`, chosen over the re-parsing
+ * renderers (marked, markdown-it, micromark) by measuring partial input: they
+ * re-parse the whole prefix on every chunk, so a growing message repaints what
+ * is already on screen. This one writes into the DOM append-only, and raw HTML
+ * can never escape into it.
  *
  * Only the appended suffix is handed to the parser. Text that shrinks or
  * diverges from what was already written can only be a different message, so

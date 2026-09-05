@@ -22,7 +22,7 @@
 
 **Hosting a session**: `createAgentSession()` registers tools, but only `session.bindExtensions({ mode, onError })` emits `session_start` — extensions that initialize there (MCP adapters) stay dead without it, and `session.reload()` re-emits it only when a binding is set. Disposal is symmetric: emit `session_shutdown` via `session.extensionRunner.emit(...)` before `session.dispose()`.
 
-**Tool approvals**: pi has no approval API. `Agent.beforeToolCall` (reachable as `agentSession.agent.beforeToolCall`) is a public mutable hook awaited before each call; `{ block: true, reason }` turns the call into an error result, and resolving late defers the decision indefinitely. `AgentSession` installs its own bridge there in its constructor — wrap it, don't replace it. Pim's policy is `packages/server/src/ApprovalRouter.ts`.
+**Tool approvals**: pim has none — every call runs unattended, in the TUI and over the wire alike (see `notes/web-mockup-plan.md` §B0). Pi has no approval API either: `Agent.beforeToolCall` (reachable as `agentSession.agent.beforeToolCall`) is a public mutable hook awaited before each call, where `{ block: true, reason }` turns the call into an error result and resolving late defers the decision indefinitely. `AgentSession` installs its own bridge there in its constructor — wrap it, don't replace it. Anything that gates a call belongs at the server, not in a client dialog.
 
 **Autocomplete providers**: `ctx.ui.addAutocompleteProvider(factory)` in `session_start`. The factory receives the current provider and returns a decorator over `getSuggestions`, `applyCompletion`, `shouldTriggerFileCompletion`. See `file-picker` / `command-picker` in `packages/tui/src/extensions/`.
 

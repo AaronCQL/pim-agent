@@ -80,6 +80,10 @@ export class SessionProjection {
       return undefined;
     }
     const message = entry.message;
+    // Pi stamps every entry as it appends it, so this is when the message was
+    // written, not when it was read: the client's `17:24` line and its
+    // "Clanked for" reading survive a reload because of it.
+    const timestamp = Date.parse(entry.timestamp);
     switch (message.role) {
       case "user":
         return {
@@ -88,6 +92,7 @@ export class SessionProjection {
           messageId: entry.id,
           role: "user",
           text: MessageText.textOf(message.content),
+          timestamp,
         };
       case "assistant": {
         const toolCalls: ToolCallView[] = [];
@@ -114,6 +119,7 @@ export class SessionProjection {
           messageId: entry.id,
           role: "assistant",
           text: MessageText.textOf(message.content),
+          timestamp,
           ...(thinking ? { thinking } : {}),
           ...(toolCalls.length > 0 ? { toolCalls } : {}),
         };
@@ -144,7 +150,11 @@ export class SessionProjection {
   }
 }
 
-type MessageEntry = { readonly id: string; readonly message: AgentMessage };
+type MessageEntry = {
+  readonly id: string;
+  readonly timestamp: string;
+  readonly message: AgentMessage;
+};
 
 function isMessageEntry(entry: FileEntry): entry is FileEntry & MessageEntry {
   return entry.type === "message";

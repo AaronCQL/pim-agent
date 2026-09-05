@@ -6,7 +6,7 @@ import type { SessionSummaryView } from "#protocol/ServerEvent";
 import { version } from "../../../../package.json";
 import type { SessionStore } from "../session/SessionStore";
 import type { ConnectionStatus } from "../ws/WsClient";
-import { abbreviateHome, relativeTime } from "./format";
+import { abbreviateHome, relativeTime } from "../format";
 
 const CONNECTION_CLASSES: Record<ConnectionStatus, string> = {
   connecting: "text-amber-400",
@@ -101,11 +101,18 @@ export function Sidebar(props: {
                     go(() => props.store.switchTo(session.sessionId));
                   }}
                 >
-                  {/* Phase B carries the first user message as a title, and
-                      the unread dot beside it; until then the id is the only
-                      name a session has. */}
-                  <div class="truncate font-semibold">
-                    {session.sessionId.slice(0, 8)}
+                  <div class="flex items-center justify-between gap-2">
+                    {/* A session is named by its opening message; one that
+                        has none on disk yet has only its id. */}
+                    <div class="truncate font-semibold">
+                      {session.title ?? session.sessionId.slice(0, 8)}
+                    </div>
+                    <Show when={props.store.isUnread(session)}>
+                      <div
+                        class="size-1.5 shrink-0 rounded-full bg-indigo-400"
+                        aria-label="Unread"
+                      />
+                    </Show>
                   </div>
                   <div class="flex justify-between gap-6 text-neutral-400">
                     <div class="truncate">{abbreviateHome(session.cwd)}</div>

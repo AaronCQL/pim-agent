@@ -124,8 +124,24 @@ export function Shell(props: { readonly store: SessionStore }) {
           >
             <span class="i-griddy-icons:sidebar size-5" />
           </button>
-          {/* Phase B fills the branch chip on the right; there is nothing to
-              draw until `session_state` carries one. */}
+
+          <div class="flex-1" />
+
+          {/* Nothing to draw outside a git repository, which is also why the
+              chip is not a button: the branch is read here, never set. */}
+          <Show when={props.store.state.branch}>
+            {(branch) => (
+              <div class="flex h-8 items-center gap-1.5 rounded-lg bg-neutral-850 px-2 text-neutral-350">
+                <span class="i-griddy-icons:code-branch size-4 shrink-0" />
+                <span class="max-w-32 truncate text-sm">{branch()}</span>
+                <Show when={props.store.state.dirty}>
+                  <span class="text-amber-400" title="Uncommitted changes">
+                    •
+                  </span>
+                </Show>
+              </div>
+            )}
+          </Show>
         </div>
 
         <div class="relative min-h-0 flex-1">

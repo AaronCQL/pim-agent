@@ -124,6 +124,52 @@ describe("EventLog replay", () => {
   });
 });
 
+describe("EventLog digest", () => {
+  test("names a session by its first user message and counts its lines", async () => {
+    const digest = await new EventLog(FIXTURE).digest();
+
+    expect(digest.title).toBe(
+      "Use the subagent tool with the prompt 'reply with exactly PONG'. Then tell me the subagent's output."
+    );
+    expect(digest.head).toBe(7);
+  });
+
+  test("trims a long opening message rather than widening the sidebar", async () => {
+    const path = join(tmp, "long.jsonl");
+    const line = (entry: unknown) => `${JSON.stringify(entry)}\n`;
+    await Bun.write(
+      path,
+      line({
+        type: "session",
+        id: "s1",
+        timestamp: "2026-08-01T10:00:00.000Z",
+        cwd: "/tmp",
+      }) +
+        line({
+          type: "message",
+          id: "m1",
+          parentId: null,
+          timestamp: "2026-08-01T10:00:01.000Z",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "x".repeat(500) }],
+          },
+        })
+    );
+
+    const digest = await new EventLog(path).digest();
+    expect(digest.title).toBe(`${"x".repeat(120)}…`);
+    expect(digest.head).toBe(2);
+  });
+
+  test("a session with no user message yet has no name and no lines", async () => {
+    const digest = await new EventLog(join(tmp, "absent.jsonl")).digest();
+
+    expect(digest.title).toBeUndefined();
+    expect(digest.head).toBe(0);
+  });
+});
+
 describe("EventLog in-flight turn", () => {
   const assistant = (text: string, thinking = ""): AssistantMessage => ({
     role: "assistant",

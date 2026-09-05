@@ -46,6 +46,13 @@ test("projects a persisted session into durable events, one per line", async () 
   const result = events[2];
   expect(result?.type === "tool_result" && result.isError).toBe(false);
   expect(JSON.stringify(events)).not.toContain('"content"');
+
+  // The stamp is pi's own, read off the entry: it is what the client's clock
+  // line and its "Clanked for" reading are derived from after a reload.
+  const first = events[0];
+  expect(first?.type === "message" && first.timestamp).toBe(
+    Date.parse("2026-08-01T10:17:47.104Z")
+  );
 });
 
 test("replays only what a cursor has not seen, and drains once", async () => {

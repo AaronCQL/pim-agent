@@ -2,6 +2,7 @@ import { Dynamic } from "@solidjs/web";
 import { createMemo, For, Show, type Component } from "solid-js";
 
 import type { DurableEvent } from "#protocol/ServerEvent";
+import { clockTime } from "../format";
 import { Markdown } from "../markdown/Markdown";
 import { ToolCard } from "../view/ToolCard";
 import { NOTICE_CLASSES } from "../view/tokens";
@@ -93,9 +94,6 @@ function groupRuns(rows: readonly Row[]): readonly Group[] {
  * A user turn is the mockup's right-aligned card; an assistant turn is not a
  * bubble at all — it is prose on the line grid, and copying it is the job of
  * the buttons on the payloads inside it.
- *
- * (Phase B adds the `17:24` line under the user card, once messages carry a
- * timestamp.)
  */
 function MessageBubble(props: { readonly row: MessageRow }) {
   return (
@@ -121,6 +119,9 @@ function MessageBubble(props: { readonly row: MessageRow }) {
       <article class="flex flex-col items-end">
         <div class="max-w-[85%] min-w-0 whitespace-pre-wrap break-words rounded-lg bg-neutral-850 px-4 py-3">
           {props.row.text}
+        </div>
+        <div class="text-sm text-neutral-500">
+          {clockTime(props.row.timestamp)}
         </div>
       </article>
     </Show>

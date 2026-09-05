@@ -5,6 +5,7 @@ import {
   SettingsManager,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import type { Api as ModelApi, Model } from "@earendil-works/pi-ai";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -20,6 +21,12 @@ export type SessionSummary = {
   readonly path: string;
   readonly createdAt: number;
   readonly modifiedAt: number;
+};
+
+/** One model a session can be switched to, named the way `setModel` takes it. */
+export type ModelChoice = {
+  readonly id: string;
+  readonly label: string;
 };
 
 export type SessionRegistryDeps = {
@@ -92,6 +99,21 @@ export class SessionRegistry {
   /** The live host for `sessionId`, if one is currently loaded. */
   public peek(sessionId: string): SessionHost | undefined {
     return this.hosts.get(sessionId);
+  }
+
+  /**
+   * Every model this machine has credentials for, qualified the way
+   * `SessionHost.setModel` resolves them.
+   */
+  public models(): readonly ModelChoice[] {
+    const registry = this.modelRegistry;
+    if (!registry) {
+      throw new Error("SessionRegistry.init() must complete before use");
+    }
+    return registry.getAvailable().map((model: Model<ModelApi>) => ({
+      id: `${model.provider}/${model.id}`,
+      label: model.name,
+    }));
   }
 
   /** Resume an existing session by pi's UUID. */

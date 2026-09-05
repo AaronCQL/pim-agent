@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createFooterWidget, getTotalCost } from "./index";
-import type { GitState } from "./git";
+import type { GitState } from "#core/shared/Git";
 
 function deferred<T>(): {
   readonly promise: Promise<T>;

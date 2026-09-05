@@ -4,6 +4,7 @@ import { render } from "@solidjs/web";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { flush } from "solid-js";
 
+import { PROTOCOL_VERSION } from "#protocol/Protocol";
 import type { ServerEvent } from "#protocol/ServerEvent";
 import { Shell } from "./App";
 import { SessionStore } from "./session/SessionStore";
@@ -13,7 +14,7 @@ import { GatewayHarness, until } from "./test/gateway";
 function attached(sessionId = "s1"): ServerEvent {
   return {
     type: "attached",
-    protocolVersion: 3,
+    protocolVersion: PROTOCOL_VERSION,
     sessionId,
     cwd: "/repo",
     head: 0,
@@ -43,6 +44,7 @@ describe("the shell, painted from events alone", () => {
       messageId: "u1",
       role: "user",
       text: "hello",
+      timestamp: 0,
     });
     store.ingest({
       type: "message_start",
@@ -63,6 +65,7 @@ describe("the shell, painted from events alone", () => {
       messageId: "a1",
       role: "assistant",
       text: "## Done\n",
+      timestamp: 0,
     });
     flush();
     expect(host.querySelectorAll(".pim-markdown h2")).toHaveLength(1);
@@ -100,6 +103,54 @@ describe("the shell, painted from events alone", () => {
 
     // The clank line is the only running indicator.
     expect(host.textContent).toContain("Clanking…");
+  });
+
+  test("the branch is a topbar chip and the context fill is half the pill", () => {
+    const store = offline();
+    const host = paint(store);
+
+    store.ingest(attached());
+    store.ingest({
+      type: "session_state",
+      cwd: "/repo",
+      model: "sonnet",
+      thinking: "medium",
+      cost: 0.5,
+      status: "idle",
+      contextPercent: 74.5,
+      contextWindow: 1_000_000,
+      branch: "feat/new-stuff",
+      dirty: true,
+    });
+    flush();
+
+    expect(host.innerHTML).toContain("i-griddy-icons:code-branch");
+    expect(host.textContent).toContain("feat/new-stuff");
+
+    const fill = [...host.querySelectorAll("div")].find((node) =>
+      node.textContent?.startsWith("74.5%")
+    )!;
+    expect(fill.textContent).toBe("74.5%/1.0M");
+    // Past the TUI footer's own 70, so it reads as full rather than as fine.
+    expect(fill.className).toContain("text-rose-400");
+  });
+
+  test("outside a repository there is no branch chip at all", () => {
+    const store = offline();
+    const host = paint(store);
+
+    store.ingest(attached());
+    store.ingest({
+      type: "session_state",
+      cwd: "/repo",
+      model: "sonnet",
+      thinking: "medium",
+      cost: 0,
+      status: "idle",
+    });
+    flush();
+
+    expect(host.innerHTML).not.toContain("code-branch");
   });
 
   test("an error is a rose line above the composer", () => {
@@ -172,7 +223,8 @@ describe("the composer, against a real gateway", () => {
 
     const list = () => host.querySelector("ul")!;
     await until(
-      () => list().textContent.includes(store.state.sessionId.slice(0, 8)),
+      // A session is named by its opening message, not by its id.
+      () => list().textContent.includes("say hello"),
       "the catalogue"
     );
 
@@ -184,8 +236,12 @@ describe("the composer, against a real gateway", () => {
 
 /** Rows the user can actually see; a closed popover keeps its list mounted. */
 function options(host: HTMLElement): readonly Element[] {
-  const panel = host.querySelector("[popover]");
-  if (panel === null || panel.className.includes("hidden")) {
+  // The composer holds three popovers now — the picker and the two chip
+  // menus — and only an open one has any rows the reader can reach.
+  const panel = [...host.querySelectorAll("[popover]")].find(
+    (element) => !element.className.includes("hidden")
+  );
+  if (panel === undefined) {
     return [];
   }
   return [...panel.querySelectorAll('[role="option"]')];

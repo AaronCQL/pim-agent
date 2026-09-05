@@ -6,6 +6,8 @@ export type MessageRow = {
   readonly id: string;
   readonly role: "user" | "assistant";
   readonly text: string;
+  /** When pi wrote the message, in epoch ms. */
+  readonly timestamp: number;
   readonly thinking?: string;
   /**
    * The turn still in flight. The markdown renderer must not be flushed while
@@ -63,6 +65,7 @@ function append(
           id: event.messageId,
           role: event.role,
           text: event.text,
+          timestamp: event.timestamp,
           ...(event.thinking === undefined ? {} : { thinking: event.thinking }),
           ...(event.messageId === streamingId ? { streaming: true } : {}),
         });

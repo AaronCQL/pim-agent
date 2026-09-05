@@ -5,7 +5,7 @@ import type {
   ReadonlyFooterDataProvider,
 } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
-import { EMPTY_GIT, fetchGitStatus, type GitState, watchGitDir } from "./git";
+import { Git, type GitState } from "#core/shared/Git";
 import { renderFooterLine } from "./segments";
 
 let activeGitRefresh: (() => void) | null = null;
@@ -27,8 +27,8 @@ type FooterWidgetDeps = {
 };
 
 const DEFAULT_FOOTER_WIDGET_DEPS: FooterWidgetDeps = {
-  fetchGitStatus,
-  watchGitDir,
+  fetchGitStatus: Git.fetchStatus,
+  watchGitDir: Git.watchDir,
   renderFooterLine,
   getTotalCost,
 };
@@ -49,7 +49,7 @@ export function createFooterWidget(
   footerData: FooterData,
   deps: FooterWidgetDeps = DEFAULT_FOOTER_WIDGET_DEPS
 ): FooterWidget {
-  let gitState: GitState = EMPTY_GIT;
+  let gitState: GitState = Git.EMPTY;
   let inFlight = false;
   let pending = false;
   const refresh = async (): Promise<void> => {

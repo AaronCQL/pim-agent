@@ -6,6 +6,7 @@ import type { AttachmentRef, CommandDraft } from "#protocol/Command";
 import { PROTOCOL_VERSION } from "#protocol/Protocol";
 import {
   isDurableEvent,
+  type ModelView,
   type ResponseEvent,
   type ServerEvent,
   type SessionSummaryView,
@@ -164,6 +165,24 @@ export class ProbeClient {
   }
 
   /**
+   * The model catalogue, plus the thinking levels of the model this probe's
+   * session is on — empty for a probe that has not attached.
+   */
+  public async listModels(): Promise<{
+    readonly models: readonly ModelView[];
+    readonly thinkingLevels: readonly string[];
+  }> {
+    const response = await this.send({ type: "list_models" });
+    if (!response.success) {
+      throw new Error(response.error ?? "list_models failed");
+    }
+    return {
+      models: response.models ?? [],
+      thinkingLevels: response.thinkingLevels ?? [],
+    };
+  }
+
+  /**
    * Transfers a client-local file into the server's world. The path given here
    * is read locally and then forgotten — only the bytes and the bare filename
    * are sent, and only the server's own path comes back.
@@ -199,16 +218,6 @@ export class ProbeClient {
 
   public get httpUrl(): string {
     return this.options.url.replace(/^ws/, "http");
-  }
-
-  /** Answer a parked `approval_request`; only the first answer counts. */
-  public approve(callId: string, approved = true): Promise<ResponseEvent> {
-    return this.send({
-      type: "approve_tool",
-      sessionId: this.sessionId ?? "",
-      callId,
-      approved,
-    });
   }
 
   /** `from` skips frames already received, so a repeated state can be awaited. */

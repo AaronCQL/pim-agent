@@ -30,17 +30,18 @@ export type ToolViewInput<TParams extends TSchema, TDetails> = {
 };
 
 /**
- * What a call to this tool can do to the machine the agent runs on. The
- * remote approval policy is derived from this and nothing else: declaring it
- * next to the tool keeps the risk profile with the code that carries the risk,
- * instead of in a name list the next tool would silently miss.
+ * What a call to this tool can do to the machine the agent runs on. Declaring
+ * it next to the tool keeps the risk profile with the code that carries the
+ * risk, instead of in a name list the next tool would silently miss. The
+ * server reads it to decide whether a finished call may have invalidated the
+ * file picker's answers.
  *
  * A tool that declares nothing is treated as `unbounded` — an unknown tool
- * (MCP, another extension pack) must not be able to opt itself into
- * auto-approval by omission.
+ * (MCP, another extension pack) must not be able to declare itself harmless
+ * by omission.
  */
 export type ToolEffect<TParams extends TSchema = TSchema> =
-  /** Nothing outside the agent's own session changes; auto-approved. */
+  /** Nothing outside the agent's own session changes. */
   | { readonly kind: "readOnly" }
   /** Mutates exactly the paths `paths` reads out of the call's arguments. */
   | {
@@ -52,7 +53,7 @@ export type ToolEffect<TParams extends TSchema = TSchema> =
        */
       readonly paths: (args: Static<TParams>) => readonly string[];
     }
-  /** Effects the arguments do not bound; always needs a human. */
+  /** Effects the arguments do not bound. */
   | { readonly kind: "unbounded" };
 
 /** `ToolEffect` with its parameter type erased, for name-keyed lookup. */
@@ -111,8 +112,7 @@ const effects = new Map<string, ErasedToolEffect>();
 
 /**
  * What a registered tool declared it can do, or undefined when it declared
- * nothing. Callers deciding approval must read an absent entry as
- * `unbounded`; see `ToolEffect`.
+ * nothing. An absent entry reads as `unbounded`; see `ToolEffect`.
  */
 function effectOf(toolName: string): ErasedToolEffect | undefined {
   return effects.get(toolName);
