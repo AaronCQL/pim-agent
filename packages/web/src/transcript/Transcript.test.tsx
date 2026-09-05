@@ -106,7 +106,7 @@ describe("static replay of a real session", () => {
     expect(host.querySelectorAll("article").length).toBeGreaterThan(4);
   });
 
-  test("a body sits behind a disclosure, and `collapsed: false` opens it", () => {
+  test("a body sits behind a disclosure, and nothing opens itself", () => {
     const details = [...replay().querySelectorAll("details")];
     const diff = details.find((node) => node.textContent?.includes("@@ -"));
     const read = details.find((node) =>
@@ -114,15 +114,15 @@ describe("static replay of a real session", () => {
     );
 
     expect(diff?.textContent).toContain("+  return `Hello, ${name}!`;");
-    // `edit` declares `collapsed: false`; nothing else in the session does.
-    expect(diff?.open).toBe(true);
+    // `edit` declares `collapsed: false` for the TUI; the web ignores it.
+    expect(diff?.open).toBe(false);
     expect(read?.open).toBe(false);
   });
 
   test("the failed bash call is painted with a rose rule, not a card", () => {
     const host = replay();
     const errored = [...host.querySelectorAll("article")].filter((node) =>
-      node.innerHTML.includes("border-rose-400")
+      node.innerHTML.includes("bg-rose-400")
     );
 
     expect(errored).toHaveLength(1);

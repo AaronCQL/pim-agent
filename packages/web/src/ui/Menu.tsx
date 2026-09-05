@@ -24,8 +24,6 @@ export type MenuOption = {
 export function Menu(props: {
   readonly label: string;
   readonly icon: string;
-  /** A CSS `anchor-name` unique to this chip, e.g. `--pim-model`. */
-  readonly anchor: string;
   readonly options: readonly MenuOption[];
   readonly value?: string;
   readonly title?: string;
@@ -78,7 +76,7 @@ export function Menu(props: {
   );
 
   return (
-    <div class="relative" style={{ "anchor-name": props.anchor }}>
+    <div class="relative">
       <button
         ref={(element: HTMLButtonElement) => {
           chip = element;
@@ -101,7 +99,7 @@ export function Menu(props: {
 
       <Combobox
         open={open()}
-        anchor={props.anchor}
+        anchor={() => chip}
         items={props.options}
         activeIndex={navigation.activeIndex()}
         onActivate={navigation.setActiveIndex}

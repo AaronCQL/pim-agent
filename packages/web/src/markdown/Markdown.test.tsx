@@ -67,4 +67,24 @@ describe("Markdown", () => {
     expect(view.html()).not.toContain("<img");
     expect(view.html()).toContain("&lt;img");
   });
+
+  test("a finished code block gets a copy button", () => {
+    const view = mount("```ts\nconst a = 1;\n```\n");
+    expect(view.html()).toContain('aria-label="Copy code"');
+  });
+
+  /** A closing fence is only known to be closed once something follows it, so
+   *  mid-stream the button waits rather than offering half a payload. */
+  test("a block still being written gets none", () => {
+    const view = mount("```ts\nconst a = 1;", false);
+    expect(view.html()).not.toContain("Copy code");
+    view.write("```ts\nconst a = 1;\n```\n\nand then prose");
+    expect(view.html()).toContain('aria-label="Copy code"');
+  });
+
+  test("the button is mounted once, however many writes follow", () => {
+    const view = mount("```ts\nconst a = 1;\n```\n\ntext", false);
+    view.write("```ts\nconst a = 1;\n```\n\ntext and more");
+    expect(view.html().match(/aria-label="Copy code"/gu)).toHaveLength(1);
+  });
 });

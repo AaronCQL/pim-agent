@@ -186,6 +186,84 @@ describe("platform wrappers", () => {
     expect(panel?.className).not.toContain("hidden");
   });
 
+  // The regression this guards: with placement left to CSS anchor
+  // positioning, an engine without it dropped every picker into the corner of
+  // the viewport instead of over the element that opened it.
+  test("the popover is measured onto its trigger, above it by default", () => {
+    const host = mountPoint();
+    const trigger = document.createElement("div");
+    trigger.getBoundingClientRect = () =>
+      ({
+        left: 120,
+        top: 400,
+        right: 320,
+        bottom: 440,
+        width: 200,
+        height: 40,
+      }) as DOMRect;
+    host.append(trigger);
+    window.innerWidth = 1000;
+    window.innerHeight = 800;
+
+    const [open, setOpen] = createSignal(false);
+    render(
+      () => (
+        <Popover open={open()} anchor={() => trigger}>
+          rows
+        </Popover>
+      ),
+      host
+    );
+    flush();
+    setOpen(true);
+    flush();
+
+    const style = host.querySelector("[popover]")!.getAttribute("style")!;
+    expect(style).toContain("position: fixed");
+    expect(style).toContain("left: 120px");
+    // Its bottom edge sits on the trigger's top edge, one gap clear of it.
+    expect(style).toContain("bottom: 404px");
+    expect(style).toContain("min-width: 200px");
+    // The UA gives `[popover]` `inset: 0`; a `top` left standing would
+    // stretch the panel from the top of the screen down to that `bottom`,
+    // which is precisely how the picker used to look.
+    expect(style).toContain("top: auto");
+    expect(style).toContain("right: auto");
+  });
+
+  // The composer is pinned to the bottom of the window, so there is never
+  // room below a trigger: the panel grows upward and stops at the viewport.
+  test("the panel grows upward and is capped by the room above the trigger", () => {
+    const host = mountPoint();
+    const trigger = document.createElement("div");
+    trigger.getBoundingClientRect = () =>
+      ({
+        left: 20,
+        top: 300,
+        right: 120,
+        bottom: 340,
+        width: 100,
+        height: 40,
+      }) as DOMRect;
+    host.append(trigger);
+    window.innerWidth = 1000;
+    window.innerHeight = 800;
+
+    render(
+      () => (
+        <Popover open anchor={() => trigger}>
+          rows
+        </Popover>
+      ),
+      host
+    );
+    flush();
+
+    const style = host.querySelector("[popover]")!.getAttribute("style")!;
+    expect(style).toContain("bottom: 504px");
+    expect(style).toContain("max-height: 288px");
+  });
+
   test("the disclosure caret is the only glyph, and it can carry state", () => {
     const host = mountPoint();
     render(
@@ -204,6 +282,27 @@ describe("platform wrappers", () => {
     );
     expect(caret.className).toContain("bg-rose-400");
     expect(host.querySelector("details")?.open).toBe(true);
+  });
+
+  // The spine hangs clear of the caret and only exists while open, so a
+  // wrapped summary is threaded by it and a closed row promises nothing.
+  test("the rule is a spine from below the caret down, drawn only when open", () => {
+    const host = mountPoint();
+    render(
+      () => (
+        <Collapsible summary={<span>head</span>} spine="bg-rose-400" open>
+          <p>body</p>
+        </Collapsible>
+      ),
+      host
+    );
+    flush();
+
+    const spine = host.querySelector("details > span")!;
+    expect(spine.className).toContain("top-[--line]");
+    expect(spine.className).toContain("hidden");
+    expect(spine.className).toContain("group-open:block");
+    expect(spine.className).toContain("bg-rose-400");
   });
 
   test("the drawer opens modally, hosts its content and closes on select", () => {
@@ -251,7 +350,6 @@ describe("chip menu", () => {
         <Menu
           label="claude/opus-5"
           icon="i-griddy-icons:robot"
-          anchor="--pim-model"
           value="claude/opus-5"
           options={[
             { value: "claude/opus-5", label: "Opus 5" },

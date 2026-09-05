@@ -306,10 +306,59 @@ describe("switching", () => {
     await target.switchTo("s2");
     expect(asked).toEqual(["s2"]);
   });
+
+  test("the transcript is hidden from the click until the log has landed", async () => {
+    const target = store();
+    target.client.attachTo = async () => ({
+      type: "response",
+      id: "1",
+      success: true,
+    });
+
+    feed(target, attached("s1"));
+    await target.switchTo("s2");
+    // Set before the server has answered, so the conversation being left is
+    // not what fills the wait.
+    expect(target.state.loading).toBe(true);
+
+    feed(target, attached("s2", 9));
+    expect(target.state.loading).toBe(true);
+
+    feed(
+      target,
+      { seq: 9, type: "notice", severity: "info", text: "hi" },
+      {
+        type: "session_state",
+        cwd: "/repo",
+        model: "sonnet",
+        thinking: "off",
+        cost: 0,
+        status: "idle",
+      }
+    );
+    expect(target.state.loading).toBe(false);
+  });
+
+  test("a reconnect to the session on screen draws no curtain", () => {
+    const target = store();
+    feed(target, attached("s1", 4), {
+      type: "session_state",
+      cwd: "/repo",
+      model: "sonnet",
+      thinking: "off",
+      cost: 0,
+      status: "idle",
+    });
+
+    // The socket dropped and came back: the transcript is still on screen and
+    // only its tail is missing, so there is nothing to hide.
+    feed(target, attached("s1", 6));
+    expect(target.state.loading).toBe(false);
+  });
 });
 
 describe("the read cursor", () => {
-  test("attaching reads to the head, and every durable event past it", () => {
+  test("attaching reads to the head, and every durable event past it", async () => {
     localStorage.clear();
     const target = store();
     const summary = (head: number) => ({
@@ -327,7 +376,9 @@ describe("the read cursor", () => {
     feed(target, { seq: 9, type: "notice", severity: "info", text: "hi" });
     expect(target.isUnread(summary(9))).toBe(false);
 
-    // It is this browser's cursor, so a reload finds it where it was left.
+    // It is this browser's cursor, so a reload finds it where it was left —
+    // written once the batch that moved it has been applied, not per event.
+    await Promise.resolve();
     expect(
       JSON.parse(localStorage.getItem("pim.seen") ?? "{}") as Record<
         string,

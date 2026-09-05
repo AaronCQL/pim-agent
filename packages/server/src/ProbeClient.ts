@@ -266,7 +266,17 @@ export class ProbeClient {
   }
 
   private receive(raw: string): void {
-    const event = JSON.parse(raw) as ServerEvent;
+    const frame = JSON.parse(raw) as ServerEvent;
+    if (frame.type === "replay") {
+      for (const event of frame.events) {
+        this.dispatch(event);
+      }
+      return;
+    }
+    this.dispatch(frame);
+  }
+
+  private dispatch(event: ServerEvent): void {
     this.events.push(event);
     if (isDurableEvent(event)) {
       this.seq = Math.max(this.seq, event.seq);

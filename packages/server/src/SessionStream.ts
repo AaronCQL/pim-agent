@@ -9,7 +9,11 @@ import type { SessionHost } from "#core/session/SessionHost";
 import { Git, type GitState } from "#core/shared/Git";
 import { Tools } from "#core/shared/Tools";
 import type { ToolView } from "#core/view/ViewBlock";
-import type { EphemeralEvent, ServerEvent } from "#protocol/ServerEvent";
+import type {
+  EphemeralEvent,
+  ServerEvent,
+  StreamEvent,
+} from "#protocol/ServerEvent";
 import { SessionProjection } from "./SessionProjection";
 
 export type StreamListener = (event: ServerEvent) => void;
@@ -111,14 +115,14 @@ export class SessionStream {
    * The coalescing is not an optimisation — individual deltas are never
    * persisted, so there is nothing else to replay them from.
    */
-  public async replay(fromSeq: number): Promise<readonly ServerEvent[]> {
+  public async replay(fromSeq: number): Promise<readonly StreamEvent[]> {
     await this.projection.drain();
     return [...this.projection.since(fromSeq), ...this.inFlight()];
   }
 
   /** The live turn as a self-contained block, safe to send at any moment. */
-  private inFlight(): readonly ServerEvent[] {
-    const events: ServerEvent[] = [];
+  private inFlight(): readonly StreamEvent[] {
+    const events: StreamEvent[] = [];
     for (const message of this.liveTurn) {
       const { messageId } = message;
       events.push({ type: "message_start", role: "assistant", messageId });

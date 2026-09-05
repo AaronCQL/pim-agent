@@ -110,7 +110,7 @@ export function Combobox(props: {
   readonly activeIndex: number;
   readonly onSelect: (index: number) => void;
   readonly onActivate: (index: number) => void;
-  readonly anchor?: string;
+  readonly anchor?: () => HTMLElement | undefined;
   readonly emptyLabel?: string;
 }) {
   let list!: HTMLUListElement;
@@ -131,13 +131,17 @@ export function Combobox(props: {
     <Popover
       open={props.open}
       {...(props.anchor === undefined ? {} : { anchor: props.anchor })}
-      class="z-50 max-h-64 overflow-y-auto rounded-lg bg-neutral-850 p-1 text-sm ring-1 ring-neutral-700"
+      class="z-50 flex rounded-lg bg-neutral-850 p-1 text-sm ring-1 ring-neutral-700"
     >
+      {/* The scroller is inside the panel, not the panel itself: the panel's
+          own height is whatever room the viewport left above the trigger, and
+          a flex child with `min-h-0` shrinks to that before this cap. */}
       <ul
         ref={(element: HTMLUListElement) => {
           list = element;
         }}
         role="listbox"
+        class="max-h-64 min-h-0 w-full overflow-y-auto"
       >
         <Show when={props.items.length === 0}>
           <li class="px-2 py-1 text-neutral-500">

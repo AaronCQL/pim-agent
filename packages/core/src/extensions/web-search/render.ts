@@ -22,8 +22,12 @@ export function webSearchView({ args, result }: WebSearchViewInput): ToolView {
     title: [
       {
         kind: "text",
-        text: formatTitle(
-          input.query,
+        text: input.query ?? "...",
+      },
+      {
+        kind: "text",
+        tone: "muted",
+        text: formatDetail(
           details?.count ?? clampNumResults(input.numResults),
           details?.provider
         ),
@@ -40,13 +44,13 @@ function formatBody(
   return text === "" ? [] : [{ kind: "text", text }];
 }
 
-/** `fellBack` stays out of the title: the provider name already tells the story. */
-function formatTitle(
-  query: string | undefined,
-  count: number,
-  provider: string | undefined
-): string {
-  const q = query ?? "...";
-  const suffix = provider === undefined ? "" : ` · ${provider}`;
-  return `${q} (${count}${suffix})`;
+/**
+ * The stats that trail the query. No parentheses: the detail is its own title
+ * block, and every surface that paints one already sets it back from the
+ * subject — brackets would only repeat that in punctuation.
+ *
+ * `fellBack` stays out of the title: the provider name already tells the story.
+ */
+function formatDetail(count: number, provider: string | undefined): string {
+  return provider === undefined ? `${count}` : `${count} · ${provider}`;
 }

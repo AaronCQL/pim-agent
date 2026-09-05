@@ -109,6 +109,15 @@ describe("ViewBlock HTML painter", () => {
     expect(html).toContain("line-through");
   });
 
+  // Spans are a cut-up line, not chips: only the text the producer wrote
+  // separates them, so a stat reads `+2/-1` and not `+2 / -1`.
+  test("adjacent spans carry no spacing of their own", () => {
+    const host = mountPoint();
+    render(() => <Blocks blocks={[SAMPLES.spans]} />, host);
+    flush();
+    expect(host.textContent).toBe("+2/-1");
+  });
+
   test("a list recurses into nested blocks", () => {
     const html = paint([SAMPLES.list]);
     expect(html).toContain("<ol");
@@ -203,11 +212,21 @@ describe("ToolCard", () => {
     );
   });
 
-  test("collapsed: false forces the body open", () => {
+  test("every row starts closed, `collapsed: false` included", () => {
     expect(paintTool(view).querySelector("details")?.open).toBe(false);
     expect(
       paintTool({ ...view, collapsed: false }).querySelector("details")?.open
-    ).toBe(true);
+    ).toBe(false);
+  });
+
+  // A diff body opens every hunk it holds, so a descendant `details[open]`
+  // would hold a closed edit row at full strength.
+  test("a closed row recedes even when its hidden body has open hunks", () => {
+    const host = paintTool(view);
+    expect(host.querySelectorAll("details[open]").length).toBeGreaterThan(0);
+    expect(host.querySelector("article")?.className).toContain(
+      "has-[>details[open]]:opacity-100"
+    );
   });
 
   test("a partial call keeps the body, so output can be watched", () => {
@@ -216,12 +235,24 @@ describe("ToolCard", () => {
     expect(host.textContent).toContain("+2");
   });
 
-  test("a body of blank blocks is no body: an unstarted call has no caret", () => {
+  test("a body of blank blocks is no body: an unstarted call has no disclosure", () => {
     const host = paintTool(
       { title: [SAMPLES.file], body: [{ kind: "text", text: "" }] },
       true
     );
     expect(host.querySelector("details")).toBeNull();
+    // It keeps the caret, in amber, so the row keeps its shape while it waits.
+    expect(host.innerHTML).toContain("bg-amber-400");
+  });
+
+  test("a row with nothing to open does not brighten on hover", () => {
+    const pending = paintTool({ title: [SAMPLES.file] }, true);
+    expect(pending.querySelector("article")?.className).not.toContain(
+      "hover:opacity-100"
+    );
+    expect(paintTool(view).querySelector("article")?.className).toContain(
+      "hover:opacity-100"
+    );
   });
 
   test("labelTone tints the label, and no glyph is painted", () => {
@@ -230,7 +261,6 @@ describe("ToolCard", () => {
     // The caret is the only icon a row draws, and it carries state, not identity.
     expect(html.match(/i-griddy-icons:[\w-]+/g)).toEqual([
       "i-griddy-icons:chevron-right-small-filled",
-      "i-griddy-icons:copy",
       "i-griddy-icons:chevron-right-small-filled",
     ]);
   });
@@ -245,7 +275,31 @@ describe("ToolCard", () => {
     expect(host.querySelector("details")).toBeNull();
   });
 
-  test("an error opens by default and previews ten lines of the failure", () => {
+  // `Grep: /foo/ (2 files)`: the stat is an aside behind the subject, on the
+  // subject's line, and the whole run wraps instead of being cut off.
+  test("title details trail the subject in brackets, on one wrapping run", () => {
+    const host = paintTool({
+      label: "Grep",
+      title: [
+        { kind: "text", text: "/foo/" },
+        { kind: "text", tone: "muted", text: "2 files" },
+      ],
+    });
+    expect(host.textContent).toBe("Grep:/foo/ (2 files)");
+    expect(host.innerHTML).not.toContain("truncate");
+  });
+
+  // `Edit: file.ts +2/-1`: the counters are punctuation and colour already.
+  test("diff counters trail the path bare, with no brackets round them", () => {
+    const host = paintTool({
+      label: "Edit",
+      title: [SAMPLES.file, SAMPLES.spans],
+    });
+    expect(host.textContent).not.toContain("(");
+    expect(host.textContent).toContain("+2");
+  });
+
+  test("an error stays closed and previews ten lines of the failure", () => {
     const host = mountPoint();
     const text = Array.from({ length: 14 }, (_, line) => `line ${line}`);
     render(
@@ -259,8 +313,11 @@ describe("ToolCard", () => {
     );
     flush();
 
-    expect(host.querySelector("details")?.open).toBe(true);
-    expect(host.innerHTML).toContain("border-rose-400");
+    const details = host.querySelector("details")!;
+    expect(details.open).toBe(false);
+    details.open = true;
+    flush();
+    expect(host.innerHTML).toContain("bg-rose-400");
     expect(host.textContent).toContain("line 9");
     expect(host.textContent).not.toContain("line 10");
     expect(host.textContent).toContain("… 4 more lines");

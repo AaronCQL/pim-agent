@@ -238,8 +238,23 @@ describe("buildView", () => {
       details: { outputMode: "files_with_matches", fileCount: 1 },
     });
     expect(AnsiPainter.paint(view.title, markerTheme).join(" ")).toBe(
-      "/alpha/ (1 file)"
+      "/alpha/ <muted>1 file</muted>"
     );
+    expect(view.title.at(-1)).toEqual({
+      kind: "text",
+      tone: "muted",
+      text: "1 file",
+    });
+  });
+
+  test("pluralizes the count and leaves it off until it lands", () => {
+    expect(buildView({ ...base, body: "" }).title).toHaveLength(1);
+    const view = buildView({
+      ...base,
+      body: "a.ts",
+      details: { outputMode: "files_with_matches", fileCount: 3 },
+    });
+    expect(view.title.at(-1)).toMatchObject({ text: "3 files" });
   });
 
   test("files_with_matches paints one bare path per row", () => {
@@ -329,27 +344,5 @@ describe("formatTitle", () => {
       cwd: "/repo",
     });
     expect(title).toBe("/alpha/ in src");
-  });
-
-  test("appends pluralized file count when provided", () => {
-    const title = formatTitle({
-      pattern: "alpha",
-      path: "/repo/src",
-      glob: "**/*.ts",
-      cwd: "/repo",
-      fileCount: 3,
-    });
-    expect(title).toBe("/alpha/ in src/**/*.ts (3 files)");
-  });
-
-  test("uses singular noun for a single file", () => {
-    const title = formatTitle({
-      pattern: "alpha",
-      path: undefined,
-      glob: undefined,
-      cwd: "/repo",
-      fileCount: 1,
-    });
-    expect(title).toBe("/alpha/ (1 file)");
   });
 });

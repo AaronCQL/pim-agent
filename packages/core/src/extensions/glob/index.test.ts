@@ -72,7 +72,7 @@ describe("glob tool renderer", () => {
     );
 
     const lines = tool.renderCall!(args, stubTheme, ctx).render(120);
-    expect(lines[0]?.trimEnd()).toBe(" ▪ Glob: **/*.ts (2 files)");
+    expect(lines[0]?.trimEnd()).toBe(" ▪ Glob: **/*.ts 2 files");
   });
 
   test("renders matched paths in the expanded body", () => {

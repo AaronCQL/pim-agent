@@ -47,22 +47,22 @@ describe("webSearchView title", () => {
     ).toBe("Web Search");
   });
 
-  test("always includes the default count in parentheses", () => {
+  test("always includes the default count", () => {
     expect(title({ query: "bun release notes" })).toBe(
-      `bun release notes (${DEFAULT_NUM_RESULTS})`
+      `bun release notes ${DEFAULT_NUM_RESULTS}`
     );
   });
 
-  test("includes explicit counts in parentheses", () => {
-    expect(title({ query: "pi agent", numResults: 3 })).toBe("pi agent (3)");
+  test("includes explicit counts", () => {
+    expect(title({ query: "pi agent", numResults: 3 })).toBe("pi agent 3");
   });
 
   test("clamps out-of-range counts before the result lands", () => {
-    expect(title({ query: "pi agent", numResults: 99 })).toBe("pi agent (10)");
+    expect(title({ query: "pi agent", numResults: 99 })).toBe("pi agent 10");
   });
 
   test("uses a placeholder while keeping the count visible", () => {
-    expect(title({})).toBe(`... (${DEFAULT_NUM_RESULTS})`);
+    expect(title({})).toBe(`... ${DEFAULT_NUM_RESULTS}`);
   });
 
   test("names the provider once it is known", () => {
@@ -71,7 +71,7 @@ describe("webSearchView title", () => {
         { query: "pi agent", numResults: 3 },
         result("hits", { count: 3, provider: "firecrawl" })
       )
-    ).toBe("pi agent (3 · firecrawl)");
+    ).toBe("pi agent 3 · firecrawl");
   });
 
   test("shows the delivered count, not the requested one", () => {
@@ -80,7 +80,7 @@ describe("webSearchView title", () => {
         { query: "pi agent", numResults: 10 },
         result("hits", { count: 2, provider: "duckduckgo", fellBack: true })
       )
-    ).toBe("pi agent (2 · duckduckgo)");
+    ).toBe("pi agent 2 · duckduckgo");
   });
 
   test("falls back to the requested count when details lack one", () => {
@@ -89,7 +89,7 @@ describe("webSearchView title", () => {
         { query: "pi agent", numResults: 2 },
         result("hits", { provider: "exa" })
       )
-    ).toBe("pi agent (2 · exa)");
+    ).toBe("pi agent 2 · exa");
   });
 });
 

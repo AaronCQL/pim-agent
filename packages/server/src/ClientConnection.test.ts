@@ -1,7 +1,11 @@
 import type { ServerWebSocket } from "bun";
 import { expect, test } from "bun:test";
 
-import type { DurableEvent, ServerEvent } from "#protocol/ServerEvent";
+import type {
+  DurableEvent,
+  ServerEvent,
+  StreamEvent,
+} from "#protocol/ServerEvent";
 import { ClientConnection, type AttachableStream } from "./ClientConnection";
 
 /** A socket that reports whatever backpressure a test wants it to. */
@@ -22,8 +26,14 @@ class FakeSocket {
     return this.buffered;
   }
 
+  /** Frames flattened: a resume is one frame carrying many events. */
   public get events(): readonly ServerEvent[] {
-    return this.frames.map((frame) => JSON.parse(frame) as ServerEvent);
+    const events: ServerEvent[] = [];
+    for (const frame of this.frames) {
+      const event = JSON.parse(frame) as ServerEvent;
+      events.push(...(event.type === "replay" ? event.events : [event]));
+    }
+    return events;
   }
 
   public get seqs(): readonly number[] {
@@ -41,7 +51,7 @@ class FakeStream implements AttachableStream {
     return () => this.listeners.delete(listener);
   };
 
-  public replay = async (fromSeq: number): Promise<readonly ServerEvent[]> => {
+  public replay = async (fromSeq: number): Promise<readonly StreamEvent[]> => {
     await Bun.sleep(0);
     return [
       ...this.durable.filter((event) => event.seq > fromSeq),
@@ -102,6 +112,18 @@ test("replays from the cursor, then goes live", async () => {
 
   expect(socket.seqs).toEqual([3, 4]);
   expect(connection.seq).toBe(4);
+});
+
+test("hands the whole resume over as one frame", async () => {
+  const { socket, stream, connection } = build();
+  for (const seq of [2, 3, 4, 5]) {
+    stream.append(seq);
+  }
+
+  await connection.attach(stream, 0);
+
+  expect(socket.frames).toHaveLength(1);
+  expect(socket.seqs).toEqual([2, 3, 4, 5]);
 });
 
 test("reconciles events that land during the replay read", async () => {

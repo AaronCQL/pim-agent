@@ -10,7 +10,6 @@ import {
   DIFF_LINE_CLASSES,
   FRAME_CLASSES,
   NOTICE_CLASSES,
-  TONE_CLASSES,
   groupByFrame,
   toneClass,
 } from "./tokens";
@@ -72,9 +71,16 @@ function MarkdownBlock(props: { readonly block: BlockOf<"markdown"> }) {
   return <Markdown text={props.block.text} />;
 }
 
+/**
+ * Spans are one line of text cut into tones, not a row of chips: producers
+ * write whatever spacing they mean into the span text (`+1`, `/`, `-1`), the
+ * same way the ANSI painter concatenates them. So they are laid out inline
+ * with no gap, and `pre-wrap` keeps a heredoc's newlines and a separator's
+ * padding spaces from being collapsed away at a span boundary.
+ */
 function SpansBlock(props: { readonly block: BlockOf<"spans"> }) {
   return (
-    <p class="flex flex-wrap items-baseline gap-x-1ch">
+    <p class="whitespace-pre-wrap break-words">
       <For each={props.block.spans}>{(span) => <SpanText span={span} />}</For>
     </p>
   );
@@ -82,17 +88,15 @@ function SpansBlock(props: { readonly block: BlockOf<"spans"> }) {
 
 function SpanText(props: { readonly span: Span }) {
   return (
+    // `code` gets no styling of its own: the whole UI is monospace, so a shell
+    // command in a tool title is already set in the face a pill would be
+    // announcing, and it is the row's subject — which reads at the body
+    // colour, like every other subject.
     <span
       class={{
         [toneClass(props.span.tone)]: true,
         "line-through": props.span.strike === true,
         "font-bold": props.span.strong === true,
-        // The whole UI is monospace, so code needs no face of its own; it is
-        // set back from prose instead, the way a shell command in a tool title
-        // is the argument and not the sentence. A pill would put the row off
-        // the line grid by its own padding.
-        [TONE_CLASSES.muted]:
-          props.span.code === true && props.span.tone === undefined,
       }}
     >
       {props.span.text}
@@ -150,12 +154,7 @@ function CodeBlock(props: { readonly block: BlockOf<"code"> }) {
 
 function DiffBlock(props: { readonly block: BlockOf<"diff"> }) {
   return (
-    <div class="relative leading-[--line]">
-      <CopyButton
-        text={() => patchText(props.block.hunks)}
-        label="Copy patch"
-        class="absolute right-0 top-0"
-      />
+    <div class="leading-[--line]">
       <For each={props.block.hunks}>{(hunk) => <Hunk hunk={hunk} />}</For>
     </div>
   );
@@ -199,17 +198,6 @@ function hunkRange(hunk: DiffHunk): string {
   return `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`;
 }
 
-function patchText(hunks: readonly DiffHunk[]): string {
-  return hunks
-    .map((hunk) =>
-      [
-        hunkRange(hunk),
-        ...hunk.lines.map((line) => `${DIFF_MARKERS[line.kind]}${line.text}`),
-      ].join("\n")
-    )
-    .join("\n");
-}
-
 const DIFF_MARKERS = {
   context: " ",
   added: "+",
@@ -218,15 +206,18 @@ const DIFF_MARKERS = {
 
 function FileBlock(props: { readonly block: BlockOf<"file"> }) {
   return (
-    <span class="text-neutral-300">
+    // The path is the subject wherever it appears — a `Read` title, a line of
+    // `Glob` output — so it takes the colour of what it sits in rather than
+    // one of its own; what trails it is detail, and recedes.
+    <span>
       {props.block.path}
       <Show when={props.block.range}>
         {(range) => (
-          <span class="text-neutral-500">{Painting.formatRange(range())}</span>
+          <span class="text-neutral-400">{Painting.formatRange(range())}</span>
         )}
       </Show>
       <Show when={props.block.truncated === true}>
-        <span class="ml-1ch text-neutral-500">(truncated)</span>
+        <span class="ml-1ch text-neutral-400">truncated</span>
       </Show>
     </span>
   );

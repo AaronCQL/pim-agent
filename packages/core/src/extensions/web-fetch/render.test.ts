@@ -54,18 +54,18 @@ describe("webFetchView title", () => {
   });
 
   test("returns placeholder and default format when url is undefined", () => {
-    expect(title({})).toBe("... (Markdown)");
+    expect(title({})).toBe("... Markdown");
   });
 
   test("renders default markdown pre-result", () => {
     expect(title({ url: "https://example.com" })).toBe(
-      "https://example.com (Markdown)"
+      "https://example.com Markdown"
     );
   });
 
   test("renders requested HTML pre-result", () => {
     expect(title({ url: "https://example.com", format: "html" })).toBe(
-      "https://example.com (HTML)"
+      "https://example.com HTML"
     );
   });
 
@@ -75,7 +75,7 @@ describe("webFetchView title", () => {
         { url: "https://example.com" },
         result("body", { format: "markdown", totalBytes: 23 * 1024 })
       )
-    ).toBe("https://example.com (23KB Markdown)");
+    ).toBe("https://example.com 23KB Markdown");
   });
 
   test("strips trailing zeros and supports two decimals", () => {
@@ -84,7 +84,7 @@ describe("webFetchView title", () => {
         { url: "https://example.com" },
         result("body", { format: "html", totalBytes: 5355 })
       )
-    ).toBe("https://example.com (5.23KB HTML)");
+    ).toBe("https://example.com 5.23KB HTML");
   });
 
   test("renders bytes for tiny payloads", () => {
@@ -93,7 +93,7 @@ describe("webFetchView title", () => {
         { url: "https://example.com" },
         result("body", { format: "markdown", totalBytes: 512 })
       )
-    ).toBe("https://example.com (512B Markdown)");
+    ).toBe("https://example.com 512B Markdown");
   });
 
   test("renders MB for large payloads", () => {
@@ -102,7 +102,7 @@ describe("webFetchView title", () => {
         { url: "https://example.com" },
         result("body", { format: "html", totalBytes: 2.5 * 1024 * 1024 })
       )
-    ).toBe("https://example.com (2.5MB HTML)");
+    ).toBe("https://example.com 2.5MB HTML");
   });
 
   test("keeps the requested format when details are incomplete", () => {
@@ -111,7 +111,7 @@ describe("webFetchView title", () => {
         { url: "https://example.com", format: "html" },
         result("body", { url: "https://example.com" })
       )
-    ).toBe("https://example.com (HTML)");
+    ).toBe("https://example.com HTML");
   });
 
   test("ignores the page title, which never reached the row", () => {
@@ -124,7 +124,7 @@ describe("webFetchView title", () => {
           totalBytes: 512,
         })
       )
-    ).toBe("https://example.com (512B Markdown)");
+    ).toBe("https://example.com 512B Markdown");
   });
 });
 

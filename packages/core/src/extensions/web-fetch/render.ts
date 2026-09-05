@@ -18,15 +18,18 @@ type TitleOutcome = {
 
 export function webFetchView({ args, result }: WebFetchViewInput): ToolView {
   const input = (args ?? {}) as Partial<WebFetchInput>;
+  const outcome = titleOutcome(result);
   return {
     label: "Web Fetch",
     icon: "globe",
     // A `link` block would paint the URL in link colours; the title has always
     // been plain, so it stays a text block.
     title: [
+      { kind: "text", text: input.url ?? "..." },
       {
         kind: "text",
-        text: formatTitle(input.url, input.format, titleOutcome(result)),
+        tone: "muted",
+        text: formatDetail(input.format, outcome),
       },
     ],
     body: formatBody(result),
@@ -49,19 +52,15 @@ function formatBody(result: WebFetchViewInput["result"]): readonly ViewBlock[] {
   return text === "" ? [] : [{ kind: "text", text }];
 }
 
-function formatTitle(
-  url: string | undefined,
+/** Set back from the URL by its own block rather than by parentheses. */
+function formatDetail(
   format: WebFetchFormat | undefined,
   outcome: TitleOutcome | undefined
 ): string {
-  const u = url ?? "...";
   const label = formatLabel(outcome?.format ?? format ?? "markdown");
-
-  if (outcome !== undefined) {
-    return `${u} (${formatSize(outcome.totalBytes)} ${label})`;
-  }
-
-  return `${u} (${label})`;
+  return outcome === undefined
+    ? label
+    : `${formatSize(outcome.totalBytes)} ${label}`;
 }
 
 function formatLabel(format: WebFetchResolvedFormat): string {

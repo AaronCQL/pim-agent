@@ -32,6 +32,40 @@ function offline(): SessionStore {
   return new SessionStore({ url: "ws://127.0.0.1:1", pickerDebounceMs: 0 });
 }
 
+/**
+ * The transcript's scroller, with a layout happy-dom will not compute: a page
+ * of viewport over a body of content whose height the caller can grow, which
+ * is what a row taller than the flush that appended it looks like from here.
+ */
+function scrollerOf(host: HTMLElement): {
+  readonly element: HTMLElement;
+  grow: (height: number) => void;
+} {
+  // The sidebar's list scrolls too; the transcript's scroller is the one
+  // holding it.
+  const element = host.querySelector<HTMLElement>("div.overflow-y-auto")!;
+  let height = 1000;
+  Object.defineProperty(element, "scrollHeight", { get: () => height });
+  Object.defineProperty(element, "clientHeight", { value: 500 });
+  return {
+    element,
+    grow: (by) => {
+      height += by;
+    },
+  };
+}
+
+function message(seq: number, text: string): ServerEvent {
+  return {
+    seq,
+    type: "message",
+    messageId: `u${seq}`,
+    role: "user",
+    text,
+    timestamp: 0,
+  };
+}
+
 describe("the shell, painted from events alone", () => {
   test("paints the streaming turn and then the durable message", () => {
     const store = offline();
@@ -101,7 +135,7 @@ describe("the shell, painted from events alone", () => {
     expect(host.textContent).not.toContain("tok/s");
     expect(host.textContent).not.toContain("streaming");
 
-    // The clank line is the only running indicator.
+    // The clank chip is the only running indicator.
     expect(host.textContent).toContain("Clanking…");
   });
 
@@ -153,7 +187,7 @@ describe("the shell, painted from events alone", () => {
     expect(host.innerHTML).not.toContain("code-branch");
   });
 
-  test("the clank line times the whole turn, not the last thing in it", () => {
+  test("the clank chip times the whole turn, not the last thing in it", () => {
     const store = offline();
     const host = paint(store);
     const state = (status: SessionStatus): ServerEvent => ({
@@ -167,6 +201,10 @@ describe("the shell, painted from events alone", () => {
     const real = Date.now;
     let now = real();
     Date.now = () => now;
+    // The whole reading lives in the chip's title, words and all, because a
+    // narrow screen drops the words from the pill itself.
+    const chip = (): HTMLElement =>
+      host.querySelector<HTMLElement>("[title*='lank']")!;
 
     try {
       store.ingest(attached());
@@ -180,7 +218,10 @@ describe("the shell, painted from events alone", () => {
       store.ingest(state("tool"));
       store.ingest(state("streaming"));
       flush();
-      expect(host.textContent).toContain("Clanking…");
+      // The reading itself only moves on the interval, which is a real timer
+      // and has not fired; what is asserted here is the running state.
+      expect(chip().title).toStartWith("Clanking…");
+      expect(chip().innerHTML).toContain("animate-spin");
 
       // Idle settles the reading, and idle again — a branch poll, say — must
       // not carry on adding to it.
@@ -190,10 +231,58 @@ describe("the shell, painted from events alone", () => {
       now += 60_000;
       store.ingest(state("idle"));
       flush();
-      expect(host.textContent).toContain("Clanked for 9s");
+      expect(chip().title).toBe("Clanked for 9s");
+      // Settled reads as a tick where running read as the spun ring.
+      expect(chip().innerHTML).toContain("i-griddy-icons:check");
+      expect(chip().innerHTML).not.toContain("animate-spin");
     } finally {
       Date.now = real;
     }
+  });
+
+  test("a session being fetched is a skeleton, not a half-painted log", () => {
+    const store = offline();
+    const host = paint(store);
+
+    store.ingest(attached());
+    store.ingest({
+      seq: 2,
+      type: "message",
+      messageId: "u1",
+      role: "user",
+      text: "the session being left",
+      timestamp: 0,
+    });
+    flush();
+
+    store.client.attachTo = async () => ({
+      type: "response",
+      id: "1",
+      success: true,
+    });
+    void store.switchTo("s2");
+    flush();
+    expect(host.textContent).not.toContain("the session being left");
+
+    store.ingest(attached("s2"));
+    store.ingest({
+      seq: 2,
+      type: "message",
+      messageId: "u2",
+      role: "user",
+      text: "the session being opened",
+      timestamp: 0,
+    });
+    store.ingest({
+      type: "session_state",
+      cwd: "/repo",
+      model: "sonnet",
+      thinking: "off",
+      cost: 0,
+      status: "idle",
+    });
+    flush();
+    expect(host.textContent).toContain("the session being opened");
   });
 
   test("an error is a rose line above the composer", () => {
@@ -205,6 +294,64 @@ describe("the shell, painted from events alone", () => {
     flush();
 
     expect(host.textContent).toContain("provider said no");
+  });
+
+  test("sending re-pins the transcript to its end", () => {
+    const store = offline();
+    const host = paint(store);
+    store.ingest(attached());
+
+    // happy-dom lays nothing out, so the scroller is given a page worth of
+    // content to have scrolled away from.
+    const { element: scroller } = scrollerOf(host);
+    scroller.scrollTop = 0;
+    scroller.dispatchEvent(new Event("scroll"));
+
+    const input = host.querySelector("textarea")!;
+    type(input, "hello");
+    press(input, "Enter");
+    flush();
+
+    expect(scroller.scrollTop).toBe(1000);
+  });
+
+  test("a transcript that grows under its own scroll stays pinned", () => {
+    const store = offline();
+    const host = paint(store);
+    store.ingest(attached());
+    const { element: scroller, grow } = scrollerOf(host);
+
+    store.ingest(message(2, "hello"));
+    flush();
+    expect(scroller.scrollTop).toBe(1000);
+
+    // Markdown parses, a code block grows a copy button: the row is taller
+    // than it was when the scroll above was written, and the browser delivers
+    // that scroll now, against the taller transcript. Read as distance from
+    // the end, this is a reader who has scrolled up; it is not one.
+    grow(600);
+    scroller.dispatchEvent(new Event("scroll"));
+
+    store.ingest(message(3, "and the next one"));
+    flush();
+    expect(scroller.scrollTop).toBe(1600);
+  });
+
+  test("a reader who scrolls up is left where they are", () => {
+    const store = offline();
+    const host = paint(store);
+    store.ingest(attached());
+    const { element: scroller } = scrollerOf(host);
+
+    store.ingest(message(2, "hello"));
+    flush();
+
+    scroller.scrollTop = 120;
+    scroller.dispatchEvent(new Event("scroll"));
+
+    store.ingest(message(3, "and the next one"));
+    flush();
+    expect(scroller.scrollTop).toBe(120);
   });
 });
 

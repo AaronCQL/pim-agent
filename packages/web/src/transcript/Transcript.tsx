@@ -105,10 +105,18 @@ function MessageBubble(props: { readonly row: MessageRow }) {
         <article class="min-w-0 space-y-[--line]">
           <Show when={props.row.thinking}>
             {(thinking) => (
-              <p class="whitespace-pre-wrap italic opacity-60">
-                <span class="font-bold">Thinking: </span>
-                {thinking()}
-              </p>
+              // Thinking is markdown too, so it gets the same painter as the
+              // answer; only weight and opacity say it is not the answer. Once
+              // the answer has started the thinking can no longer grow, so it
+              // is flushed even while the message is still streaming.
+              <div class="font-300 italic opacity-60">
+                <Markdown
+                  text={thinking()}
+                  complete={
+                    props.row.streaming !== true || props.row.text !== ""
+                  }
+                />
+              </div>
             )}
           </Show>
           <Markdown

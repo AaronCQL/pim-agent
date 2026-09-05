@@ -144,19 +144,19 @@ describe("globView title", () => {
         { pattern: "**/*.ts", path: "/repo/src" },
         result("src/a.ts", { fileCount: 3 })
       )
-    ).toBe("**/*.ts in src (3 files)");
+    ).toBe("**/*.ts in src 3 files");
   });
 
   test("uses singular noun for a single file", () => {
     expect(
       title({ pattern: "**/*.ts" }, result("a.ts", { fileCount: 1 }))
-    ).toBe("**/*.ts (1 file)");
+    ).toBe("**/*.ts 1 file");
   });
 
   test("shows zero count without omitting the suffix", () => {
     expect(
       title({ pattern: "**/*.ts" }, result("No matches.", { fileCount: 0 }))
-    ).toBe("**/*.ts (0 files)");
+    ).toBe("**/*.ts 0 files");
   });
 });
 

@@ -1,6 +1,10 @@
 import type { ServerWebSocket } from "bun";
 
-import { isDurableEvent, type ServerEvent } from "#protocol/ServerEvent";
+import {
+  isDurableEvent,
+  type ServerEvent,
+  type StreamEvent,
+} from "#protocol/ServerEvent";
 
 /**
  * The half of `SessionStream` a connection needs: subscribe to what happens
@@ -9,7 +13,7 @@ import { isDurableEvent, type ServerEvent } from "#protocol/ServerEvent";
  */
 export type AttachableStream = {
   readonly subscribe: (listener: (event: ServerEvent) => void) => () => void;
-  readonly replay: (fromSeq: number) => Promise<readonly ServerEvent[]>;
+  readonly replay: (fromSeq: number) => Promise<readonly StreamEvent[]>;
   readonly sessionId: string;
 };
 
@@ -88,10 +92,14 @@ export class ClientConnection {
   }
 
   /**
-   * Replay everything this client is missing, then go live. Live events that
-   * land during the read are queued and reconciled against the replay by
-   * `seq`; ephemeral ones are discarded because the in-flight snapshot taken
-   * at the end of the read already contains them.
+   * Replay everything this client is missing as a single frame, then go live.
+   * Live events that land during the read are queued and reconciled against
+   * the replay by `seq`; ephemeral ones are discarded because the in-flight
+   * snapshot taken at the end of the read already contains them.
+   *
+   * One frame rather than one per event because the receiver pays a render
+   * pass per frame: a thousand-line session arriving line by line is a
+   * thousand repaints of a document that grows with each one.
    */
   private async sync(): Promise<void> {
     const stream = this.stream;
@@ -103,16 +111,10 @@ export class ClientConnection {
     if (this.stream !== stream || this.closed) {
       return;
     }
-    for (const event of replayed) {
-      this.write(event);
-    }
-    for (const event of this.gate) {
-      if (isDurableEvent(event)) {
-        this.write(event);
-      }
-    }
+    const queued = this.gate.filter(isDurableEvent);
     this.gate.length = 0;
     this.gated = false;
+    this.writeBatch([...replayed, ...queued]);
   }
 
   private onStreamEvent(event: ServerEvent): void {
@@ -121,6 +123,44 @@ export class ClientConnection {
       return;
     }
     this.write(event);
+  }
+
+  /**
+   * The resume as one `replay` frame. Sent whole or not at all: a socket that
+   * refuses it is paused, and `drain` re-derives the same batch from the
+   * cursor, which has not moved.
+   */
+  private writeBatch(events: readonly StreamEvent[]): void {
+    if (this.closed || this.paused) {
+      return;
+    }
+    // Filtered against a cursor that moves inside the batch: the replay read
+    // and the queue behind it can both name the same line.
+    let cursor = this.cursor;
+    const fresh: StreamEvent[] = [];
+    for (const event of events) {
+      if (isDurableEvent(event)) {
+        if (event.seq <= cursor) {
+          continue;
+        }
+        cursor = event.seq;
+      }
+      fresh.push(event);
+    }
+    if (fresh.length === 0) {
+      return;
+    }
+    const status = this.ws.send(
+      JSON.stringify({ type: "replay", events: fresh })
+    );
+    if (status === 0) {
+      this.paused = true;
+      return;
+    }
+    this.cursor = cursor;
+    if (this.ws.getBufferedAmount() > HIGH_WATER_MARK) {
+      this.paused = true;
+    }
   }
 
   private write(event: ServerEvent): void {

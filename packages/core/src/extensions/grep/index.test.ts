@@ -77,7 +77,7 @@ describe("grep tool renderer", () => {
     const callComponent = renderCall();
 
     expect(callComponent.render(120).join("\n")).toContain("Grep: /alpha/");
-    expect(callComponent.render(120).join("\n")).not.toContain("(2 files)");
+    expect(callComponent.render(120).join("\n")).not.toContain("2 files");
 
     renderResult({
       content: [{ type: "text", text: "src/a.ts\nsrc/b.ts" }],
@@ -85,7 +85,7 @@ describe("grep tool renderer", () => {
     });
     await flush();
 
-    expect(callComponent.render(120).join("\n")).toContain("(2 files)");
+    expect(callComponent.render(120).join("\n")).toContain("2 files");
   });
 
   test("renders the result body verbatim for every output mode", () => {

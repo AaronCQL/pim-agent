@@ -44,4 +44,9 @@ function contextFill(percent: number): ContextFill {
   return percent > 40 ? "warn" : "ok";
 }
 
-export const Format = { formatTokens, formatElapsed, contextFill };
+/** `1 file` / `3 files`, for the counts that trail a tool title. */
+function count(value: number, noun: string): string {
+  return `${value} ${noun}${value === 1 ? "" : "s"}`;
+}
+
+export const Format = { formatTokens, formatElapsed, contextFill, count };

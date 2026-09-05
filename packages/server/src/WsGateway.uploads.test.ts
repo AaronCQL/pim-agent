@@ -187,6 +187,30 @@ test("an uploaded non-image reaches the agent as a server path", async () => {
   expect(await Bun.file(uploaded.path).text()).toBe("client side notes\n");
 });
 
+// The dev client is served from another port, so its upload is cross-origin
+// and only reaches the handler if the browser is told the origin is welcome.
+test("an upload from another origin is allowed", async () => {
+  const probe = await connect();
+  const form = new FormData();
+  form.append("file", new Blob([Uint8Array.from(PNG)]), "image.png");
+  const url = `http://127.0.0.1:${gateway.port}/upload?session=${probe.sessionId}`;
+  const response = await fetch(url, {
+    method: "POST",
+    body: form,
+    headers: { origin: "http://localhost:5173" },
+  });
+
+  expect(response.status).toBe(200);
+  expect(response.headers.get("access-control-allow-origin")).toBe("*");
+
+  const preflight = await fetch(url, {
+    method: "OPTIONS",
+    headers: { origin: "http://localhost:5173" },
+  });
+  expect(preflight.status).toBe(204);
+  expect(preflight.headers.get("access-control-allow-origin")).toBe("*");
+});
+
 test("no client-local path ever enters the conversation", async () => {
   const probe = await connect();
   const image = await probe.upload(join(clientDir, CLIENT_FILE));

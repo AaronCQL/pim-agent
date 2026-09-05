@@ -1,3 +1,4 @@
+import { Format } from "../../shared/Format";
 import { OutputBudget } from "../../shared/OutputBudget";
 import { Paths } from "../../shared/Paths";
 import { Renderer } from "../../shared/Renderer";
@@ -54,6 +55,7 @@ type GlobViewInput = ToolViewInput<typeof globSchema, GlobDetails>;
 
 export function globView({ args, result, cwd }: GlobViewInput): ToolView {
   const input = (args ?? {}) as Partial<GlobInput>;
+  const fileCount = result?.details?.fileCount;
   return {
     label: "Glob",
     icon: "search",
@@ -64,9 +66,17 @@ export function globView({ args, result, cwd }: GlobViewInput): ToolView {
           pattern: input.pattern,
           path: input.path,
           cwd,
-          fileCount: result?.details?.fileCount,
         }),
       },
+      ...(fileCount === undefined
+        ? []
+        : ([
+            {
+              kind: "text",
+              tone: "muted",
+              text: Format.count(fileCount, "file"),
+            },
+          ] as const)),
     ],
     body: formatBody(result),
   };
@@ -91,9 +101,9 @@ type TitleOptions = {
   readonly pattern: string | undefined;
   readonly path: string | undefined;
   readonly cwd: string;
-  readonly fileCount?: number;
 };
 
+/** The subject only; the match count trails it as its own muted block. */
 function formatTitle(options: TitleOptions): string {
   const pattern = options.pattern ?? "...";
   const resolved =
@@ -105,11 +115,7 @@ function formatTitle(options: TitleOptions): string {
       ? undefined
       : Paths.displayRelative(resolved, options.cwd);
   const location = target ? ` in ${target}` : "";
-  const suffix =
-    options.fileCount === undefined
-      ? ""
-      : ` (${options.fileCount} ${options.fileCount === 1 ? "file" : "files"})`;
-  return `${pattern}${location}${suffix}`;
+  return `${pattern}${location}`;
 }
 
 function formatPath(path: string, options: RenderOptions): string {

@@ -11,10 +11,15 @@ import type { DurableEvent } from "#protocol/ServerEvent";
 import type { SessionStore } from "../session/SessionStore";
 
 /**
- * The one running indicator, at the foot of the transcript where the mockup
- * puts `Clanked for 2m 32s`. The agent status word, tok/s and the `seq`
- * readout are gone with the footer; this line is what replaced them, and it
- * says exactly what the TUI's working indicator says.
+ * The one running indicator: a pill above the composer's left edge, inline
+ * with the cost and context pill on its right and drawn in the same style.
+ * The agent status word, tok/s and the `seq` readout are gone with the
+ * footer; this is what replaced them, and it says exactly what the TUI's
+ * working indicator says.
+ *
+ * The leading mark carries the state on its own — a spinning three-quarter
+ * ring while the turn runs, a tick once it has settled — so the words are
+ * free to go when there is no room for them, which on a phone there is not.
  *
  * The running clock is client-side: it starts when the status leaves `idle`,
  * so nothing about a live turn has to travel on the wire. A client that was
@@ -22,10 +27,14 @@ import type { SessionStore } from "../session/SessionStore";
  * the durable log instead, as last user message → last assistant message.
  * Neither needs `turn_end` to be persisted, which is why it never is.
  */
-export function ClankLine(props: { readonly store: SessionStore }) {
+export function ClankChip(props: { readonly store: SessionStore }) {
   const [elapsed, setElapsed] = createSignal<number | undefined>(undefined);
   const replayed = createMemo(() => lastTurnMs(props.store.state.durable));
   const shown = createMemo(() => elapsed() ?? replayed());
+  const words = createMemo(() =>
+    props.store.isBusy() ? "Clanking…" : "Clanked for"
+  );
+  const reading = createMemo(() => Format.formatElapsed(shown() ?? 0));
   let timer: ReturnType<typeof setInterval> | undefined;
   let startedAt = 0;
   onCleanup(() => {
@@ -64,8 +73,41 @@ export function ClankLine(props: { readonly store: SessionStore }) {
     // Tested against `undefined`, not for truth: a turn one tick old measures
     // zero, and zero is a reading rather than an absence.
     <Show when={shown() !== undefined}>
-      <div class="text-neutral-500">
-        {`${props.store.isBusy() ? "Clanking…" : "Clanked for"} ${Format.formatElapsed(shown() ?? 0)}`}
+      <div
+        // `pointer-events-auto` against the row's `none`: the words are
+        // dropped on a narrow viewport, and a narrow *desktop* window still
+        // has a pointer to put on the title.
+        class="pointer-events-auto flex items-center gap-1.5 rounded-lg bg-neutral-900 px-2.5 py-1 text-sm text-neutral-350 tabular-nums ring-1 ring-neutral-750"
+        // The mark and the reading are all a narrow screen gets, so the
+        // words it drops have to survive on hover and to a screen reader.
+        title={`${words()} ${reading()}`}
+        aria-label={`${words()} ${reading()}`}
+      >
+        <Show
+          when={props.store.isBusy()}
+          fallback={
+            <span
+              class="i-griddy-icons:check size-3.5 shrink-0"
+              aria-hidden="true"
+            />
+          }
+        >
+          {/* Hand-rolled rather than an icon: the pack has no loader glyph,
+              and a ring with one quadrant knocked out is the three-quarter
+              arc every spinner is. The lit sides are per-side colours, not
+              `border-indigo-400`: that shorthand is emitted twice, once as an
+              srgb fallback and once inside a trailing `@supports color-mix(in
+              lab)` block, and the second copy lands after
+              `border-t-transparent` and paints the gap back in. The spin is
+              unguarded by `motion-reduce`: a frozen arc reads as a hung turn,
+              and a 12px mark is not the moving content that rule is for. */}
+          <span
+            class="size-3 shrink-0 animate-spin rounded-full border-1.5 border-x-indigo-400 border-b-indigo-400 border-t-transparent"
+            aria-hidden="true"
+          />
+        </Show>
+        <span class="hidden sm:inline">{words()}</span>
+        <span>{reading()}</span>
       </div>
     </Show>
   );

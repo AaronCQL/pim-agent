@@ -16,6 +16,19 @@ export type UploadEndpointDeps = {
 const DEFAULT_MAX_BYTES = 25 * 1024 * 1024;
 
 /**
+ * A WebSocket is exempt from the same-origin policy; this endpoint is not, and
+ * in development the client is served by vite on its own port — so its upload
+ * is a cross-origin request and dies in the browser before it is ever sent.
+ * Allowing every origin gives away nothing the socket does not already give
+ * away, since any page can open one against this port without asking.
+ */
+function allow(response: Response): Response {
+  response.headers.set("access-control-allow-origin", "*");
+  response.headers.set("access-control-allow-headers", "content-type");
+  return response;
+}
+
+/**
  * `POST /upload?session=<id>` with a `multipart/form-data` `file` field.
  *
  * The bytes land in the server's world and the client is answered with the
@@ -36,6 +49,13 @@ export class UploadEndpoint {
   }
 
   public async handle(request: Request): Promise<Response> {
+    if (request.method === "OPTIONS") {
+      return allow(new Response(null, { status: 204 }));
+    }
+    return allow(await this.upload(request));
+  }
+
+  private async upload(request: Request): Promise<Response> {
     if (request.method !== "POST") {
       return new Response("expected POST", { status: 405 });
     }

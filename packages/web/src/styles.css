@@ -1,8 +1,9 @@
 /* Commit Mono — self-hosted via @fontsource. Latin is the only subset the
    family ships, and these are the only faces the UI paints: 400 body, 600 for
-   a session title, 700 for a tool label or a heading, and 400 italic for
-   thinking. The family's other nine faces are ~1MB of woff we would ship in
-   the tarball and never fetch. */
+   a session title, 700 for a tool label or a heading, 300 italic for thinking
+   and 400 italic for markdown emphasis. The family's other eight faces are
+   ~1MB of woff we would ship in the tarball and never fetch. */
+@import "@fontsource/commit-mono/latin-300-italic.css";
 @import "@fontsource/commit-mono/latin-400.css";
 @import "@fontsource/commit-mono/latin-400-italic.css";
 @import "@fontsource/commit-mono/latin-600.css";
@@ -10,12 +11,56 @@
 
 :root {
   font-family: "Commit Mono", ui-monospace, monospace;
-  font-feature-settings: "ss01", "ss02", "ss03", "cv01";
+  /* Only cv01 (single storey 'a') is ours to pick. ss03/ss04/ss05 — smart
+     case, symbol spacing, smart kerning — are baked into this build's calt
+     and are on unconditionally, so naming them here would do nothing. The
+     ligature sets ss01 (<= != ===) and ss02 (-> =>) stay off: this view is a
+     transcript of literal bytes, and an arrow in log output or ASCII art
+     should not silently become one glyph. */
+  font-feature-settings: "cv01";
   /* One terminal row. Message copy is laid out on a strict grid of these:
      every line is exactly --line tall and the only vertical gaps are whole
      blank rows, so prose reads like terminal output rather than typeset
      paragraphs. Matches text-base's 14/20. */
   --line: 1.25rem;
+}
+
+/* Dark UI: tell the browser so form controls and any unstyled scrollbar come
+   up dark, then overlay a hairline thumb on a transparent track. The track is
+   transparent rather than tinted so a scrollable pane keeps a flush edge
+   instead of a gutter stripe. */
+:root {
+  color-scheme: dark;
+  /* Shared, because an overlay that masks a scrolling pane has to stop at the
+     scrollbar rather than paint over it. */
+  --scrollbar: 6px;
+}
+/* The standard properties cannot express an exact width — `scrollbar-width`
+   only offers auto/thin/none, and Chrome's `thin` is ~11px — so the 6px comes
+   from the -webkit- pseudo-elements and the standard ones are scoped to
+   engines that lack them. Setting either standard property makes Chrome
+   ignore the pseudo-elements outright, so this is an either/or, not a
+   fallback stack. */
+@supports not selector(::-webkit-scrollbar) {
+  :root {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(64 64 64) transparent;
+  }
+}
+::-webkit-scrollbar {
+  width: var(--scrollbar);
+  height: var(--scrollbar);
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(64 64 64);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(82 82 82);
 }
 
 html,
@@ -32,8 +77,9 @@ body,
   margin-top: var(--line);
 }
 
-/* Weight only. A larger heading would push the row off the grid, and a
-   terminal transcript has no type scale to begin with. */
+/* Weight and hue only. A larger heading would push the row off the grid, and
+   a terminal transcript has no type scale to begin with, so the accent hue
+   carries the level distinction the type scale would have. */
 .pim-markdown h1,
 .pim-markdown h2,
 .pim-markdown h3,
@@ -41,7 +87,7 @@ body,
 .pim-markdown h5,
 .pim-markdown h6 {
   font-weight: 700;
-  color: rgb(250 250 250);
+  color: rgb(165 180 252);
 }
 
 /* The mockup's hanging indent: the marker sits in the negative text-indent so
@@ -79,8 +125,11 @@ body,
   color: rgb(244 114 182);
 }
 
-/* No background, no radius, no padding: a fence is drawn as visible ``` text
-   by the block above and below it, and the code itself sits on the page. */
+/* No background, no radius, no padding: the fence is drawn as visible ```
+   text above and below, and the code itself sits on the page. The parser
+   consumes the fence and puts the language in the <code> class, so the
+   backticks are restored here; a block with no language has no class and
+   `attr(class)` resolves to nothing, leaving a bare ```. */
 .pim-markdown pre {
   overflow-x: auto;
   line-height: var(--line);
@@ -88,6 +137,17 @@ body,
 }
 .pim-markdown pre code {
   color: inherit;
+}
+.pim-markdown pre > code::before,
+.pim-markdown pre > code::after {
+  display: block;
+  color: rgb(115 115 115);
+}
+.pim-markdown pre > code::before {
+  content: "```" attr(class);
+}
+.pim-markdown pre > code::after {
+  content: "```";
 }
 
 .pim-markdown a {

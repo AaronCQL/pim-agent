@@ -1,3 +1,4 @@
+import { Format } from "../../shared/Format";
 import { OutputBudget } from "../../shared/OutputBudget";
 import { Paths } from "../../shared/Paths";
 import type { ToolView, ViewBlock } from "../../view/ViewBlock";
@@ -82,9 +83,9 @@ export type TitleOptions = {
   readonly path: string | undefined;
   readonly glob: string | undefined;
   readonly cwd: string;
-  readonly fileCount?: number;
 };
 
+/** The subject only; the match count trails it as its own muted block. */
 export function formatTitle(options: TitleOptions): string {
   const pattern = formatPattern(options.pattern);
   const resolved =
@@ -97,11 +98,7 @@ export function formatTitle(options: TitleOptions): string {
       : Paths.displayRelative(resolved, options.cwd);
   const target = joinTarget(dir, options.glob);
   const location = target ? ` in ${target}` : "";
-  const suffix =
-    options.fileCount === undefined
-      ? ""
-      : ` (${options.fileCount} ${options.fileCount === 1 ? "file" : "files"})`;
-  return `${pattern}${location}${suffix}`;
+  return `${pattern}${location}`;
 }
 
 export type GrepViewDetails = {
@@ -124,6 +121,7 @@ export function buildView({
   details,
   cwd,
 }: GrepViewInput): ToolView {
+  const fileCount = details?.fileCount;
   return {
     label: "Grep",
     icon: "search",
@@ -135,9 +133,17 @@ export function buildView({
           path: args.path,
           glob: args.glob,
           cwd,
-          fileCount: details?.fileCount,
         }),
       },
+      ...(fileCount === undefined
+        ? []
+        : ([
+            {
+              kind: "text",
+              tone: "muted",
+              text: Format.count(fileCount, "file"),
+            },
+          ] as const)),
     ],
     body: bodyBlocks(body, details?.outputMode),
   };

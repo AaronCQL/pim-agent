@@ -13,7 +13,11 @@ import type {
   TurnStats,
 } from "#protocol/ServerEvent";
 import { isDurableEvent } from "#protocol/ServerEvent";
-import { WsClient, type ConnectionStatus } from "../ws/WsClient";
+import {
+  WsClient,
+  type AttachTarget,
+  type ConnectionStatus,
+} from "../ws/WsClient";
 
 export type LiveTool = {
   readonly callId: string;
@@ -79,6 +83,12 @@ export type SessionState = {
   durable: DurableEvent[];
   live: LiveMessage[];
   optimistic: OptimisticMessage[];
+  /**
+   * Attached to a session whose log has not arrived yet. Only ever true
+   * between an `attached` naming a new session and the frame that replays it,
+   * so the transcript is painted once, whole, rather than assembled on screen.
+   */
+  loading: boolean;
   stats: TurnStats | undefined;
   error: string | undefined;
   /** Highest durable seq this browser has painted, per session. */
@@ -122,8 +132,16 @@ export class SessionStore {
   private optimisticId = 0;
   /** The catalogue is a property of the server, so one query per connection. */
   private catalogue: Promise<ModelCatalogue> | undefined;
+  /**
+   * The read cursors, synchronously. The store copy is the same numbers, but
+   * a batch of events writes it many times before anything reads it back, so
+   * the guard and the persisted value are taken from here.
+   */
+  private readonly seen: Record<string, number>;
+  private persisting = false;
 
   public constructor(options: SessionStoreOptions) {
+    const seen = readSeen();
     const [state, setState] = createStore<SessionState>({
       connection: "closed",
       sessionId: "",
@@ -140,10 +158,12 @@ export class SessionStore {
       durable: [],
       live: [],
       optimistic: [],
+      loading: false,
       stats: undefined,
       error: undefined,
-      seen: readSeen(),
+      seen: { ...seen },
     });
+    this.seen = seen;
     this.state = state;
     this.setState = setState;
     this.client = new WsClient({
@@ -330,26 +350,35 @@ export class SessionStore {
   }
 
   /**
-   * The read cursor moves forward only, and is written through to
-   * `localStorage` on the spot: a tab closed mid-turn must not come back
-   * claiming it never read the turn it painted.
+   * The read cursor moves forward only. Persisted on the next microtask
+   * rather than on the spot, because a replay moves it once per event and
+   * `localStorage` is synchronous disk: what a reload needs is where the
+   * cursor ended up, not each place it passed through.
    */
   private markSeen(sessionId: string, seq: number): void {
-    if (sessionId === "" || (this.state.seen[sessionId] ?? 0) >= seq) {
+    if (sessionId === "" || (this.seen[sessionId] ?? 0) >= seq) {
       return;
     }
-    // Written from the value going in, not from `state` after the fact:
-    // store writes land on a microtask, so reading it back here would
-    // persist the cursor one event behind.
-    const seen = { ...this.state.seen, [sessionId]: seq };
+    this.seen[sessionId] = seq;
     this.setState((draft) => {
       draft.seen[sessionId] = seq;
     });
-    try {
-      localStorage.setItem(SEEN_KEY, JSON.stringify(seen));
-    } catch {
-      // Private mode, a full quota, or no storage at all: unread is a nicety.
+    this.persistSeen();
+  }
+
+  private persistSeen(): void {
+    if (this.persisting) {
+      return;
     }
+    this.persisting = true;
+    queueMicrotask(() => {
+      this.persisting = false;
+      try {
+        localStorage.setItem(SEEN_KEY, JSON.stringify(this.seen));
+      } catch {
+        // Private mode, a full quota, or no storage at all: unread is a nicety.
+      }
+    });
   }
 
   private async set(
@@ -369,11 +398,30 @@ export class SessionStore {
     if (sessionId === this.state.sessionId) {
       return;
     }
-    await this.client.attachTo({ sessionId });
+    await this.attach({ sessionId });
   }
 
   public async newSession(cwd?: string): Promise<void> {
-    await this.client.attachTo(cwd === undefined ? {} : { cwd });
+    await this.attach(cwd === undefined ? {} : { cwd });
+  }
+
+  /**
+   * The curtain goes up on the click, not on the answer: a session the server
+   * does not already have in memory takes a moment to resume, and until it
+   * answers the screen would otherwise still show the conversation being left.
+   */
+  private async attach(target: AttachTarget): Promise<void> {
+    this.setState((draft) => {
+      draft.loading = true;
+    });
+    try {
+      await this.client.attachTo(target);
+    } catch (error) {
+      this.setState((draft) => {
+        draft.loading = false;
+      });
+      throw error;
+    }
   }
 
   /**
@@ -404,6 +452,13 @@ export class SessionStore {
       return;
     }
     switch (event.type) {
+      // Applied in order and in one task, so the store settles once and the
+      // transcript is painted once, however long the conversation is.
+      case "replay":
+        for (const inner of event.events) {
+          this.ingest(inner);
+        }
+        return;
       case "attached":
         this.setState((draft) => {
           // A different session means a different log, so the ordinals this
@@ -412,6 +467,10 @@ export class SessionStore {
           if (draft.sessionId !== event.sessionId) {
             draft.durable = [];
             draft.optimistic = [];
+            // A resume of the same session keeps what is on screen and needs
+            // no curtain; a different one has nothing to show until its log
+            // lands, and half a log painting itself is worse than a wait.
+            draft.loading = event.head > 0;
           }
           draft.sessionId = event.sessionId;
           draft.cwd = event.cwd;
@@ -472,6 +531,9 @@ export class SessionStore {
         return;
       case "session_state":
         this.setState((draft) => {
+          // The last event of a replay, so this is where the log is complete
+          // and the transcript can be shown — in one paint, at its end.
+          draft.loading = false;
           draft.cwd = event.cwd;
           draft.model = event.model;
           draft.thinking = event.thinking;

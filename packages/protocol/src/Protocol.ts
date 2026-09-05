@@ -13,12 +13,15 @@
  * connection rather than mis-parsing a newer frame. Versioned from day one so
  * the first incompatible change is a rejection, not a silent field mismatch.
  *
+ * 5 — a resume arrives as one `replay` frame carrying the events, rather than
+ * as one frame per event.
+ *
  * 4 — the approval gate is gone (`approve_tool`, `approval_request`,
  * `approval_resolved` deleted, every tool call now runs unattended); sessions
  * carry a `title` and a `head`; `session_state` carries context usage and the
  * git branch; durable messages carry a `timestamp`; `list_models` answers
  * with the model catalogue and this model's thinking levels.
  */
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 export type ProtocolVersion = typeof PROTOCOL_VERSION;

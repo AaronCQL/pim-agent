@@ -224,12 +224,25 @@ export class WsClient {
   }
 
   private receive(raw: string): void {
-    let event: ServerEvent;
+    let frame: ServerEvent;
     try {
-      event = JSON.parse(raw) as ServerEvent;
+      frame = JSON.parse(raw) as ServerEvent;
     } catch {
       return;
     }
+    // Fanned out synchronously, which is the whole point of the envelope: a
+    // consumer that batches its own work by task sees one task, not one per
+    // event, and paints the resume in a single pass.
+    if (frame.type === "replay") {
+      for (const event of frame.events) {
+        this.dispatch(event);
+      }
+      return;
+    }
+    this.dispatch(frame);
+  }
+
+  private dispatch(event: ServerEvent): void {
     if (event.type === "response") {
       const waiter = this.pending.get(event.id);
       this.pending.delete(event.id);

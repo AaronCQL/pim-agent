@@ -9,11 +9,9 @@ import type {
 } from "../session/SessionStore";
 import { Combobox, createComboboxNavigation } from "../ui/Combobox";
 import { Menu } from "../ui/Menu";
+import { ClankChip } from "./ClankChip";
 import { activeToken, applyCompletion, tokenKey } from "./token";
 
-const ANCHOR = "--pim-composer";
-const MODEL_ANCHOR = "--pim-model";
-const THINKING_ANCHOR = "--pim-thinking";
 const FILE_LIMIT = 50;
 const COMMAND_LIMIT = 20;
 
@@ -34,12 +32,17 @@ const CONTEXT_TONES: Record<ContextFill, string> = {
  * server's world first, and only the id the server answered with is ever
  * attached to a message.
  *
- * The card also carries what used to be the footer: the cost pill above its
- * right edge, the model and thinking chips on its control row, and the last
- * error as a rose line above it. The mockup has no stop state, so the send
- * button turns rose and becomes Stop while a turn is running.
+ * The card also carries what used to be the footer: a row of pills above it —
+ * the clank reading on the left, spend and context fill on the right — the
+ * model and thinking chips on its control row, and the last error as a rose
+ * line above it. The mockup has no stop state, so the send button turns rose
+ * and becomes Stop while a turn is running.
  */
-export function Composer(props: { readonly store: SessionStore }) {
+export function Composer(props: {
+  readonly store: SessionStore;
+  /** Sending is a claim on the end of the transcript; the shell scrolls to it. */
+  readonly onSend: () => void;
+}) {
   const [text, setText] = createSignal("");
   const [caret, setCaret] = createSignal(0);
   const [items, setItems] = createSignal<readonly PickerItem[]>([]);
@@ -57,6 +60,9 @@ export function Composer(props: { readonly store: SessionStore }) {
     thinkingLevels: [],
   });
   let input!: HTMLTextAreaElement;
+  // The picker is placed over the whole card, not the textarea: the card is
+  // what the reader sees the completion belonging to.
+  let card!: HTMLDivElement;
   let generation = 0;
 
   const token = createMemo(() => activeToken(text(), caret()));
@@ -166,6 +172,9 @@ export function Composer(props: { readonly store: SessionStore }) {
     setAttachments([]);
     setItems([]);
     input.value = "";
+    // Before the await, so the optimistic message the store appends is
+    // already anchored by the time it paints.
+    props.onSend();
     await props.store.prompt(draft, attached);
   }
 
@@ -179,33 +188,37 @@ export function Composer(props: { readonly store: SessionStore }) {
   }
 
   return (
-    <div
-      class="pointer-events-auto relative w-full max-w-3xl"
-      style={{ "anchor-name": ANCHOR }}
-    >
-      {/* The divided pill: spend on the left, context fill on the right, each
-          half drawn only once there is something to say. */}
-      <Show when={props.store.state.cost > 0 || fill() !== undefined}>
-        <div class="pointer-events-none absolute bottom-full right-0 mb-2 flex items-center divide-x-1.5 divide-neutral-750 rounded-lg bg-neutral-900 text-sm text-neutral-350 tabular-nums ring-1 ring-neutral-750">
-          <Show when={props.store.state.cost > 0}>
-            <div class="px-2.5 py-1">{`$${props.store.state.cost.toFixed(3)}`}</div>
-          </Show>
-          <Show when={fill()}>
-            {(shown) => (
-              <div class={`px-2.5 py-1 ${shown().tone}`}>
-                {shown().text}
-                <Show when={props.store.state.contextWindow}>
-                  {(window) => (
-                    <span class="hidden text-neutral-500 sm:inline">
-                      {`/${Format.formatTokens(window())}`}
-                    </span>
-                  )}
-                </Show>
-              </div>
-            )}
-          </Show>
-        </div>
-      </Show>
+    <div class="pointer-events-auto relative w-full max-w-3xl">
+      {/* The pill row. The clank reading is the only one that changes width
+          every second, so it sits at the left end where its digits push
+          nothing around; `ml-auto` keeps spend and fill against the card's
+          right edge whether or not it is drawn. */}
+      <div class="pointer-events-none absolute inset-x-0 bottom-full mb-2 flex items-center gap-2">
+        <ClankChip store={props.store} />
+        {/* The divided pill: spend on the left, context fill on the right,
+            each half drawn only once there is something to say. */}
+        <Show when={props.store.state.cost > 0 || fill() !== undefined}>
+          <div class="ml-auto flex items-center divide-x-1.5 divide-neutral-750 rounded-lg bg-neutral-900 text-sm text-neutral-350 tabular-nums ring-1 ring-neutral-750">
+            <Show when={props.store.state.cost > 0}>
+              <div class="px-2.5 py-1">{`$${props.store.state.cost.toFixed(3)}`}</div>
+            </Show>
+            <Show when={fill()}>
+              {(shown) => (
+                <div class={`px-2.5 py-1 ${shown().tone}`}>
+                  {shown().text}
+                  <Show when={props.store.state.contextWindow}>
+                    {(window) => (
+                      <span class="hidden text-neutral-500 sm:inline">
+                        {`/${Format.formatTokens(window())}`}
+                      </span>
+                    )}
+                  </Show>
+                </div>
+              )}
+            </Show>
+          </div>
+        </Show>
+      </div>
 
       <Show when={props.store.state.error ?? failed()}>
         {(message) => (
@@ -214,6 +227,9 @@ export function Composer(props: { readonly store: SessionStore }) {
       </Show>
 
       <div
+        ref={(element: HTMLDivElement) => {
+          card = element;
+        }}
         class={{
           "relative space-y-3 rounded-lg bg-neutral-850 p-4 ring-1": true,
           "ring-neutral-700": !dropping(),
@@ -301,7 +317,6 @@ export function Composer(props: { readonly store: SessionStore }) {
                 label={model()}
                 title="Model"
                 icon="i-griddy-icons:robot"
-                anchor={MODEL_ANCHOR}
                 value={model()}
                 options={modelOptions()}
                 onOpen={loadCatalogue}
@@ -317,7 +332,6 @@ export function Composer(props: { readonly store: SessionStore }) {
                 label={thinking()}
                 title="Thinking"
                 icon="i-griddy-icons:lightbulb-on"
-                anchor={THINKING_ANCHOR}
                 value={thinking()}
                 options={levelOptions()}
                 onOpen={loadCatalogue}
@@ -361,7 +375,7 @@ export function Composer(props: { readonly store: SessionStore }) {
 
       <Combobox
         open={open()}
-        anchor={ANCHOR}
+        anchor={() => card}
         items={items()}
         activeIndex={navigation.activeIndex()}
         onActivate={navigation.setActiveIndex}

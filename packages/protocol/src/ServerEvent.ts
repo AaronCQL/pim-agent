@@ -84,6 +84,14 @@ export type EphemeralEvent =
       /** Highest durable `seq` at attach time; replay follows immediately. */
       readonly head: number;
     }
+  /**
+   * A resume handed over as one frame instead of one frame per event. A
+   * client applies these in order and is otherwise free to treat each exactly
+   * as it would have arrived on its own — the envelope carries no meaning
+   * beyond "these landed together", which is what lets a client paint a
+   * whole conversation in a single pass rather than once per line of it.
+   */
+  | { readonly type: "replay"; readonly events: readonly StreamEvent[] }
   | {
       readonly type: "message_start";
       readonly role: "assistant";
@@ -193,6 +201,9 @@ export type ResponseEvent = {
 };
 
 export type ServerEvent = DurableEvent | EphemeralEvent | ResponseEvent;
+
+/** Anything a session emits: everything on the wire but an answer to a command. */
+export type StreamEvent = DurableEvent | EphemeralEvent;
 
 export type ServerEventType = ServerEvent["type"];
 
