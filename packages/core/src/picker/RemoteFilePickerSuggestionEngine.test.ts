@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import type { PickerItem } from "../../core/src/picker/PickerItem";
+import type { PickerItem } from "./PickerItem";
 import { RemoteFilePickerSuggestionEngine } from "./RemoteFilePickerSuggestionEngine";
 
 function recorder(): {
@@ -67,4 +67,18 @@ test("an aborted keystroke never reaches the server", async () => {
 
   expect(await pending).toEqual([]);
   expect(queries).toEqual([]);
+});
+
+test("the cache is bounded, evicting the oldest query first", async () => {
+  const { queries, query } = recorder();
+  const engine = new RemoteFilePickerSuggestionEngine(query, 0);
+
+  for (let i = 0; i < 101; i++) {
+    await engine.rank(`q${i}`, { limit: 10 });
+  }
+  await engine.rank("q0", { limit: 10 });
+  await engine.rank("q100", { limit: 10 });
+
+  expect(queries).toHaveLength(102);
+  expect(queries.at(-1)).toBe("q0");
 });

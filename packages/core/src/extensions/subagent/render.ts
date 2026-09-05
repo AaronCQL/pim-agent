@@ -1,3 +1,5 @@
+import { Format } from "../../shared/Format";
+import { Renderer } from "../../shared/Renderer";
 import type { ToolViewInput } from "../../shared/Tools";
 import type { Span, ToolView, ViewBlock } from "../../view/ViewBlock";
 import type { subagentSchema } from "./schema";
@@ -89,8 +91,7 @@ function summaryBlocks(
 }
 
 function bodyBlocks(result: SubagentViewInput["result"]): readonly ViewBlock[] {
-  const first = result?.content?.[0];
-  const text = first && "text" in first ? (first.text ?? "") : "";
+  const text = Renderer.firstText(result);
   return text === "" ? [] : [{ kind: "markdown", text }];
 }
 
@@ -121,28 +122,12 @@ function formatContext(snapshot: StatusFields): string {
   if (!window || window <= 0) {
     return "?/?";
   }
-  const windowText = formatTokens(window);
+  const windowText = Format.formatTokens(window);
   const tokens = snapshot.usage.contextTokens;
   if (tokens === undefined) {
     return `?/${windowText}`;
   }
   return `${((tokens / window) * 100).toFixed(1)}%/${windowText}`;
-}
-
-function formatTokens(tokens: number): string {
-  if (tokens < 1000) {
-    return `${tokens}`;
-  }
-  if (tokens < 10_000) {
-    return `${(tokens / 1000).toFixed(1)}K`;
-  }
-  if (tokens < 1_000_000) {
-    return `${Math.round(tokens / 1000)}K`;
-  }
-  if (tokens < 10_000_000) {
-    return `${(tokens / 1_000_000).toFixed(1)}M`;
-  }
-  return `${Math.round(tokens / 1_000_000)}M`;
 }
 
 function formatCost(cost: number): string {

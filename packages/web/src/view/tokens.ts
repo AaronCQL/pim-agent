@@ -1,3 +1,4 @@
+import { Painting } from "../../../core/src/view/Painting";
 import type {
   NoticeSeverity,
   Tone,
@@ -13,19 +14,10 @@ import type {
  */
 export type Frame = "flow" | "embed" | "heading";
 
-export const FRAMES = {
-  text: "flow",
-  markdown: "embed",
-  spans: "flow",
-  section: "heading",
-  code: "embed",
-  diff: "embed",
-  file: "flow",
-  list: "flow",
-  kv: "flow",
-  link: "flow",
-  notice: "flow",
-} as const satisfies Record<ViewBlock["kind"], Frame>;
+export const FRAMES = Painting.FRAMES satisfies Record<
+  ViewBlock["kind"],
+  Frame
+>;
 
 export const FRAME_CLASSES = {
   flow: "flex flex-col gap-0.5",
@@ -94,15 +86,5 @@ export type FrameGroup = {
 export function groupByFrame(
   blocks: readonly ViewBlock[]
 ): readonly FrameGroup[] {
-  const groups: Array<{ frame: Frame; blocks: ViewBlock[] }> = [];
-  for (const block of blocks) {
-    const frame = FRAMES[block.kind];
-    const open = groups.at(-1);
-    if (open?.frame === frame && frame !== "heading") {
-      open.blocks.push(block);
-    } else {
-      groups.push({ frame, blocks: [block] });
-    }
-  }
-  return groups;
+  return Painting.groupByFrame(blocks, FRAMES, (frame) => frame !== "heading");
 }

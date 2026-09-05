@@ -1,8 +1,8 @@
 import { createStore, type Store, type StoreSetter } from "solid-js";
 
 import type { PickerItem } from "../../../core/src/picker/PickerItem";
+import { RemoteFilePickerSuggestionEngine } from "../../../core/src/picker/RemoteFilePickerSuggestionEngine";
 import type { ToolView } from "../../../core/src/view/ViewBlock";
-import { RemoteFilePickerSuggestionEngine } from "../../../server/src/RemoteFilePickerSuggestionEngine";
 import type { AttachmentRef } from "../../../protocol/src/Command";
 import type {
   DurableEvent,
@@ -151,12 +151,20 @@ export class SessionStore {
   }
 
   /**
-   * What the transcript paints: the durable log, then this client's own
-   * unacknowledged additions. The live turn is shaped as an ordinary
-   * assistant `message` so `toRows` dedupes its tool calls against the
-   * durable ones on `callId` with no special case anywhere.
+   * What the transcript paints: the durable log, then `trailing()`. The two
+   * halves are also exposed separately so the transcript can memoise the
+   * durable flattening instead of redoing it on every delta.
    */
   public timeline(): readonly DurableEvent[] {
+    return [...this.state.durable, ...this.trailing()];
+  }
+
+  /**
+   * This client's own unacknowledged additions. The live turn is shaped as an
+   * ordinary assistant `message` so the row builder dedupes its tool calls
+   * against the durable ones on `callId` with no special case anywhere.
+   */
+  public trailing(): readonly DurableEvent[] {
     const trailing: DurableEvent[] = [];
     for (const pending of this.state.optimistic) {
       trailing.push({
@@ -181,7 +189,7 @@ export class SessionStore {
         })),
       });
     }
-    return [...this.state.durable, ...trailing];
+    return trailing;
   }
 
   /** The message id whose markdown must stay un-finalised, if any. */

@@ -1,6 +1,7 @@
 import { Dynamic } from "@solidjs/web";
 import { createMemo, For, Show, type Component } from "solid-js";
 
+import { Painting } from "../../../core/src/view/Painting";
 import type {
   DiffHunk,
   Span,
@@ -211,11 +212,7 @@ function FileBlock(props: { readonly block: BlockOf<"file"> }) {
       {props.block.path}
       <Show when={props.block.range}>
         {(range) => (
-          <span class="text-neutral-500">
-            {range()[1] === undefined
-              ? `:${range()[0]}`
-              : `:${range()[0]}-${range()[1]}`}
-          </span>
+          <span class="text-neutral-500">{Painting.formatRange(range())}</span>
         )}
       </Show>
       <Show when={props.block.truncated === true}>

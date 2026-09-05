@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import { Painting } from "./Painting";
 import type {
   DiffHunk,
   NoticeSeverity,
@@ -70,21 +71,10 @@ function paintInline(blocks: readonly ViewBlock[]): string {
 
 /** Groups a body by frame so a caller can treat payloads differently. */
 function paintBody(blocks: readonly ViewBlock[]): MarkdownGroup[] {
-  const groups: MarkdownGroup[] = [];
-  let open: { frame: MarkdownFrame; lines: string[] } | undefined;
-
-  for (const block of blocks) {
-    const frame = FRAMES[block.kind];
-    const painted = paintBlock(block, "block");
-    if (open?.frame === frame) {
-      open.lines.push(...painted);
-    } else {
-      open = { frame, lines: [...painted] };
-      groups.push(open);
-    }
-  }
-
-  return groups;
+  return Painting.groupByFrame(blocks, Painting.FRAMES).map((group) => ({
+    frame: group.frame,
+    lines: group.blocks.flatMap((block) => paintBlock(block, "block")),
+  }));
 }
 
 function icon(toolIcon: ToolIcon | undefined): string {
@@ -289,14 +279,9 @@ const DIFF_MARKERS = {
 /** Inline slots have no room for directories, so a path shows as its leaf. */
 function paintFile(block: BlockOf<"file">, mode: Mode): readonly string[] {
   const path = mode === "inline" ? basename(block.path) : block.path;
-  const range = block.range ? formatRange(block.range) : "";
+  const range = block.range ? Painting.formatRange(block.range) : "";
   const truncated = block.truncated === true ? " (truncated)" : "";
   return [`<code>${escape(oneLine(path) + range)}</code>${truncated}`];
-}
-
-function formatRange(range: readonly [number, number | undefined]): string {
-  const [start, end] = range;
-  return end === undefined ? `:${start}` : `:${start}-${end}`;
 }
 
 function paintList(block: BlockOf<"list">, mode: Mode): readonly string[] {
@@ -357,20 +342,6 @@ const PAINTERS: PainterMap = {
   link: paintLink,
   notice: paintNotice,
 };
-
-const FRAMES = {
-  text: "flow",
-  markdown: "embed",
-  spans: "flow",
-  section: "heading",
-  code: "embed",
-  diff: "embed",
-  file: "flow",
-  list: "flow",
-  kv: "flow",
-  link: "flow",
-  notice: "flow",
-} as const satisfies Record<ViewBlock["kind"], MarkdownFrame>;
 
 /**
  * Paints a `ViewBlock` tree to Telegram-flavoured HTML. Telegram's "markdown"

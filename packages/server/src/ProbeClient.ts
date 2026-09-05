@@ -1,6 +1,7 @@
 import { basename } from "node:path";
 
 import type { PickerItem } from "../../core/src/picker/PickerItem";
+import { RemoteFilePickerSuggestionEngine } from "../../core/src/picker/RemoteFilePickerSuggestionEngine";
 import type { AttachmentRef, CommandDraft } from "../../protocol/src/Command";
 import { PROTOCOL_VERSION } from "../../protocol/src/Protocol";
 import {
@@ -9,7 +10,6 @@ import {
   type ServerEvent,
   type SessionSummaryView,
 } from "../../protocol/src/ServerEvent";
-import { RemoteFilePickerSuggestionEngine } from "./RemoteFilePickerSuggestionEngine";
 
 export type ProbeOptions = {
   readonly url: string;

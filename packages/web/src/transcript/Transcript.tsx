@@ -1,5 +1,5 @@
 import { Dynamic } from "@solidjs/web";
-import { For, Show, type Component } from "solid-js";
+import { createMemo, For, Show, type Component } from "solid-js";
 
 import type { DurableEvent } from "../../../protocol/src/ServerEvent";
 import { Markdown } from "../markdown/Markdown";
@@ -8,7 +8,8 @@ import { CopyButton } from "../ui/CopyButton";
 import { ToolCard } from "../view/ToolCard";
 import { NOTICE_CLASSES } from "../view/tokens";
 import {
-  toRows,
+  buildRows,
+  extendRows,
   type MessageRow,
   type NoticeRow,
   type Row,
@@ -27,24 +28,28 @@ type RowMap = {
  * The whole conversation, painted from durable events alone.
  *
  * `streamingId` names the one message whose markdown must stay open; the live
- * turn reaches here as an ordinary assistant `message`, which is what lets the
- * in-flight bucket merge with the durable log through `toRows` and nothing
- * else.
+ * turn reaches here as `trailing` — ordinary assistant `message`s — which is
+ * what lets the in-flight bucket merge with the durable log through
+ * `extendRows` and nothing else.
  *
- * Keyed on the row id rather than on identity, because `toRows` rebuilds every
- * row object on every delta and an unkeyed `<For>` would remount the entire
- * transcript sixty times a second.
+ * Two memos so a text delta, which ticks many times a second, only rebuilds
+ * the few trailing rows: the durable log is flattened once per durable event,
+ * not once per delta. Keyed on the row id rather than on identity, because
+ * the trailing rows are still rebuilt on every delta and an unkeyed `<For>`
+ * would remount them each time.
  */
 export function Transcript(props: {
   readonly events: readonly DurableEvent[];
+  readonly trailing?: readonly DurableEvent[];
   readonly streamingId?: string;
 }) {
+  const durable = createMemo(() => buildRows(props.events, props.streamingId));
+  const rows = createMemo(() =>
+    extendRows(durable(), props.trailing ?? [], props.streamingId)
+  );
   return (
     <div class="flex flex-col gap-3">
-      <For
-        each={toRows(props.events, props.streamingId)}
-        keyed={(row: Row) => row.id}
-      >
+      <For each={rows()} keyed={(row: Row) => row.id}>
         {(row) => (
           <Dynamic
             component={ROWS[row().kind] as Component<{ row: Row }>}

@@ -41,14 +41,6 @@ export class StaticClient {
 
   public async handle(request: Request): Promise<Response> {
     const { pathname } = new URL(request.url);
-    const index = Bun.file(join(this.root, "index.html"));
-    if (!(await index.exists())) {
-      return new Response(BUILD_HINT, {
-        status: 503,
-        headers: { "content-type": "text/plain; charset=utf-8" },
-      });
-    }
-
     const path = this.within(pathname);
     if (path !== undefined) {
       const file = Bun.file(path);
@@ -64,6 +56,13 @@ export class StaticClient {
     }
     if (looksLikeAsset(pathname)) {
       return new Response("not found", { status: 404 });
+    }
+    const index = Bun.file(join(this.root, "index.html"));
+    if (!(await index.exists())) {
+      return new Response(BUILD_HINT, {
+        status: 503,
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      });
     }
     return new Response(index, {
       headers: {

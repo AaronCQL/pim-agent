@@ -1,3 +1,4 @@
+import { Renderer } from "../../shared/Renderer";
 import type { ToolViewInput } from "../../shared/Tools";
 import type { ToolView } from "../../view/ViewBlock";
 import type { BashDetails, bashSchema } from "./schema";
@@ -23,15 +24,10 @@ export function bashView({ args, result }: BashViewInput): ToolView {
         spans: [{ text: commandTitle(args?.command), code: true }],
       },
     ],
-    body: [{ kind: "text", text: bodyText(result) }],
+    body: [{ kind: "text", text: Renderer.firstText(result) }],
   };
 }
 
 function commandTitle(command: unknown): string {
   return typeof command === "string" && command !== "" ? command : "...";
-}
-
-function bodyText(result: BashViewInput["result"]): string {
-  const first = result?.content?.[0];
-  return first && "text" in first ? (first.text ?? "") : "";
 }

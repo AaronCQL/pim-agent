@@ -1,7 +1,10 @@
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { DiffRenderer } from "../shared/DiffRenderer";
 import { Renderer } from "../shared/Renderer";
+import { type BlockFrame, Painting } from "./Painting";
 import type { NoticeSeverity, Span, Tone, ViewBlock } from "./ViewBlock";
+
+export type { BlockFrame } from "./Painting";
 
 type BlockOf<TKind extends ViewBlock["kind"]> = Extract<
   ViewBlock,
@@ -14,14 +17,6 @@ type Painter<TKind extends ViewBlock["kind"]> = (
 ) => readonly string[];
 
 type PainterMap = { readonly [TKind in ViewBlock["kind"]]: Painter<TKind> };
-
-/**
- * How a block sits relative to the container the caller draws around a body.
- * `flow` is ordinary output the container may restyle and re-wrap; `embed` is
- * preformatted and already coloured, so the container must leave it alone;
- * `heading` steps outside the container entirely.
- */
-export type BlockFrame = "flow" | "embed" | "tight" | "heading";
 
 /**
  * Markdown wraps at the render-time width, so a body hands the source on to
@@ -65,28 +60,22 @@ function themeColorFor(tone: Tone | undefined): ThemeColor | undefined {
  * caller draws one container per run instead of one per block.
  */
 function paintBody(blocks: readonly ViewBlock[], theme: Theme): PaintedGroup[] {
-  const groups: PaintedGroup[] = [];
-  let open: { frame: BlockFrame; lines: string[] } | undefined;
-
-  for (const block of blocks) {
-    if (block.kind === "markdown") {
-      open = undefined;
-      groups.push({ frame: "embed", markdown: block.text });
-      continue;
+  // Markdown (the only `embed` here) never merges: it is handed over as
+  // source for the caller to wrap at the render-time width.
+  return Painting.groupByFrame(
+    blocks,
+    FRAMES,
+    (frame) => frame !== "embed"
+  ).map((group): PaintedGroup => {
+    const [first] = group.blocks;
+    if (first?.kind === "markdown") {
+      return { frame: "embed", markdown: first.text };
     }
-
-    const frame = FRAMES[block.kind];
-    const lines = paintBlock(block, theme);
-
-    if (open?.frame === frame) {
-      open.lines.push(...lines);
-    } else {
-      open = { frame, lines: [...lines] };
-      groups.push(open);
-    }
-  }
-
-  return groups;
+    return {
+      frame: group.frame,
+      lines: group.blocks.flatMap((block) => paintBlock(block, theme)),
+    };
+  });
 }
 
 const TONE_COLORS = {
@@ -192,15 +181,10 @@ function paintDiff(block: BlockOf<"diff">, theme: Theme): readonly string[] {
 }
 
 function paintFile(block: BlockOf<"file">, theme: Theme): readonly string[] {
-  const range = block.range ? formatRange(block.range) : "";
+  const range = block.range ? Painting.formatRange(block.range) : "";
   const truncated = block.truncated === true ? " (truncated)" : "";
   const suffix = `${range}${truncated}`;
   return [suffix === "" ? block.path : block.path + theme.fg("muted", suffix)];
-}
-
-function formatRange(range: readonly [number, number | undefined]): string {
-  const [start, end] = range;
-  return end === undefined ? `:${start}` : `:${start}-${end}`;
 }
 
 function paintList(block: BlockOf<"list">, theme: Theme): readonly string[] {
@@ -265,21 +249,12 @@ const PAINTERS: PainterMap = {
   notice: paintNotice,
 };
 
+// The terminal's deltas from the shared map: code is plain lines the gutter
+// may restyle, and diff paints its own leading column (`tight`).
 const FRAMES = {
-  text: "flow",
-  // Markdown carries its own SGR state; re-colouring it corrupts it.
-  markdown: "embed",
-  spans: "flow",
-  section: "heading",
+  ...Painting.FRAMES,
   code: "flow",
-  // Diff lines carry their own SGR state too, and paint their own leading
-  // column, so the gutter has to give that column up.
   diff: "tight",
-  file: "flow",
-  list: "flow",
-  kv: "flow",
-  link: "flow",
-  notice: "flow",
 } as const satisfies Record<ViewBlock["kind"], BlockFrame>;
 
 /**

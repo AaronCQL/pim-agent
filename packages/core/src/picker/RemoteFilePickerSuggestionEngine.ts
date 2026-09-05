@@ -1,8 +1,8 @@
 import type {
   FilePickerSuggestionEngine,
   RankFilePickerOptions,
-} from "../../core/src/picker/FilePickerSuggestionEngine";
-import type { PickerItem } from "../../core/src/picker/PickerItem";
+} from "./FilePickerSuggestionEngine";
+import type { PickerItem } from "./PickerItem";
 
 export type RemotePickerQuery = (
   query: string,
@@ -11,6 +11,9 @@ export type RemotePickerQuery = (
 
 /** Long enough to swallow a fast typist's keystroke, short enough to feel local. */
 const DEBOUNCE_MS = 30;
+
+/** Distinct queries kept between invalidations; oldest-first eviction beyond it. */
+const CACHE_LIMIT = 100;
 
 /**
  * The client half of the `@` picker: the same engine contract the TUI drives
@@ -54,6 +57,12 @@ export class RemoteFilePickerSuggestionEngine implements FilePickerSuggestionEng
     }
     const items = await this.query(query, options.limit);
     this.cache.set(key, items);
+    if (this.cache.size > CACHE_LIMIT) {
+      const oldest = this.cache.keys().next().value;
+      if (oldest !== undefined) {
+        this.cache.delete(oldest);
+      }
+    }
     return mine === this.generation ? items : [];
   }
 }

@@ -50,6 +50,10 @@ export type SessionDeps = {
 
 const MAIN = "main";
 
+function stamp(): string {
+  return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
 /**
  * Telegram's adapter over the frontend-agnostic `SessionHost`: chat-scoped
  * identity, the bot's own tools and system instruction, and the two settings
@@ -78,10 +82,8 @@ export class Session {
       settingsManagerFor: deps.settingsManagerFor,
       persistSettings: deps.persistSettings,
       mainSessionPath: () => this.sessionPath("sessions"),
-      isolatedSessionPath: () => {
-        const ts = new Date().toISOString().replace(/[:.]/g, "-");
-        return this.sessionPath("isolated-sessions", `-${ts}`);
-      },
+      isolatedSessionPath: () =>
+        this.sessionPath("isolated-sessions", `-${stamp()}`),
       systemInstruction: () => this.getSystemInstruction(),
       customTools: (cwd) => [
         Tools.wrap(
@@ -177,28 +179,27 @@ export class Session {
   }
 
   public setLogsMode(mode: LogsMode): Promise<void> {
-    return this.patchChatSettings({ logsMode: mode });
+    return this.host.serialize(async () => {
+      if (this.chatSettings.logsMode === mode) {
+        return;
+      }
+      this.chatSettings = { ...this.chatSettings, logsMode: mode };
+      await this.deps.persistSettings({ logsMode: mode });
+    });
   }
 
   public setTemporary(value: boolean): Promise<void> {
-    return this.patchChatSettings({ temporary: value });
+    return this.host.serialize(async () => {
+      if (this.chatSettings.temporary === value) {
+        return;
+      }
+      this.chatSettings = { ...this.chatSettings, temporary: value };
+      await this.deps.persistSettings({ temporary: value });
+    });
   }
 
   public dispose(): Promise<void> {
     return this.host.dispose();
-  }
-
-  private patchChatSettings(
-    patch: Pick<SessionSettings, "logsMode" | "temporary">
-  ): Promise<void> {
-    return this.host.serialize(async () => {
-      const [key] = Object.keys(patch) as ["logsMode" | "temporary"];
-      if (this.chatSettings[key] === patch[key]) {
-        return;
-      }
-      this.chatSettings = { ...this.chatSettings, ...patch };
-      await this.deps.persistSettings(patch);
-    });
   }
 
   private sessionPath(dir: string, suffix = ""): string {
@@ -210,9 +211,8 @@ export class Session {
   }
 
   private async archive(path: string): Promise<void> {
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     try {
-      await rename(path, `${path}.archived-${stamp}`);
+      await rename(path, `${path}.archived-${stamp()}`);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
         console.warn(`[session ${encodeId(this.id)}] archive ${path}:`, err);

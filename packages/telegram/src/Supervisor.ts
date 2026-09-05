@@ -130,28 +130,24 @@ function restart(): never {
 
 async function readVersion(): Promise<string> {
   const mode = await detectMode();
-  const pkg = await Bun.file(join(mode.packageRoot, "package.json")).json();
-  return versionOf(pkg);
+  return versionAt(join(mode.packageRoot, "package.json"));
 }
 
 async function readPiVersion(): Promise<string> {
   try {
     const url = import.meta.resolve(`${PI_PACKAGE}/package.json`);
-    const pkg = await Bun.file(Bun.fileURLToPath(url)).json();
-    return versionOf(pkg);
+    return await versionAt(Bun.fileURLToPath(url));
   } catch {
     return "?";
   }
 }
 
-function versionOf(pkg: { readonly version?: unknown }): string {
-  return typeof pkg?.version === "string" ? pkg.version : "?";
+async function versionAt(path: string): Promise<string> {
+  const pkg = (await Bun.file(path).json()) as { readonly version?: unknown };
+  return typeof pkg.version === "string" ? pkg.version : "?";
 }
 
 async function detectMode(): Promise<Mode> {
-  if (cachedMode) {
-    return cachedMode;
-  }
   const here = await realpath(Bun.fileURLToPath(import.meta.url));
   // Start above the workspace package so the walk lands on the published
   // root (the one holding `.git`, `bin/pim.ts`, and the shipped version).
@@ -159,13 +155,12 @@ async function detectMode(): Promise<Mode> {
     join(dirname(here), "..", "..", "..")
   );
   const hasGit = await pathExists(join(packageRoot, ".git"));
-  cachedMode = {
+  return {
     kind: hasGit ? "dev" : "prod",
     packageRoot,
     pimEntry: join(packageRoot, "bin", "pim.ts"),
     bunPath: process.execPath,
   };
-  return cachedMode;
 }
 
 async function appendUpdateConfirm(
@@ -209,8 +204,6 @@ async function clearUpdateConfirm(configDir: string): Promise<void> {
     }
   }
 }
-
-let cachedMode: Mode | undefined;
 
 function updateConfirmPath(configDir: string): string {
   return join(configDir, CONFIRM_FILE);

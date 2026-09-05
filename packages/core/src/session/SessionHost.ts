@@ -105,7 +105,7 @@ export class SessionHost {
   private cachedUnsubscribe: (() => void) | undefined;
   private cachedSystemInstruction: string | undefined;
   private cachedLog: EventLog | undefined;
-  private queue: Promise<void> = Promise.resolve();
+  private queue: Promise<unknown> = Promise.resolve();
   private runningTools = 0;
   private streaming = false;
   private producing = false;
@@ -226,9 +226,17 @@ export class SessionHost {
     });
   }
 
+  /**
+   * Build (or reuse) the cached agent inside the turn queue. Once this
+   * resolves, pi has assigned the session's identity and file.
+   */
+  public ensureAgent(): Promise<AgentSession> {
+    return this.enqueue(() => this.ensureCached());
+  }
+
   /** Run `work` in this session's turn queue without touching the agent. */
   public serialize<T>(work: () => Promise<T>): Promise<T> {
-    return this.enqueueResult(work);
+    return this.enqueue(work);
   }
 
   public async cancel(): Promise<boolean> {
@@ -247,7 +255,7 @@ export class SessionHost {
   }
 
   public setCwd(newCwd: string): Promise<SetCwdResult> {
-    return this.enqueueResult(async (): Promise<SetCwdResult> => {
+    return this.enqueue(async (): Promise<SetCwdResult> => {
       try {
         const st = await stat(newCwd);
         if (!st.isDirectory()) {
@@ -267,7 +275,7 @@ export class SessionHost {
   }
 
   public setModel(pattern: string): Promise<SetModelResult> {
-    return this.enqueueResult(async (): Promise<SetModelResult> => {
+    return this.enqueue(async (): Promise<SetModelResult> => {
       const result = this.resolveModel(pattern);
       if (result.kind === "none" || result.kind === "ambiguous") {
         return { ok: false, kind: result.kind, candidates: result.candidates };
@@ -295,7 +303,7 @@ export class SessionHost {
   }
 
   public compact(customInstructions?: string): Promise<SessionCompactResult> {
-    return this.enqueueResult(async (): Promise<SessionCompactResult> => {
+    return this.enqueue(async (): Promise<SessionCompactResult> => {
       const agent = await this.ensureCached();
       const compaction = await agent.compact(customInstructions);
       return { compaction, activeMessages: agent.messages.length };
@@ -310,31 +318,15 @@ export class SessionHost {
     }
   }
 
-  private enqueue(work: () => Promise<void>): Promise<void> {
+  private enqueue<T>(work: () => Promise<T>): Promise<T> {
     const next = this.queue.then(work);
-    const tail = next.catch((err: unknown) => {
+    // Only the stored tail swallows, so the chain never rejects while callers
+    // still see their own failure.
+    this.queue = next.catch((err: unknown) => {
       console.error(`[${this.label}] work failed:`, err);
     });
-    this.queue = tail;
     this.lastUsed = Date.now();
     return next;
-  }
-
-  private enqueueResult<T>(work: () => Promise<T>): Promise<T> {
-    let resolve!: (value: T) => void;
-    let reject!: (err: unknown) => void;
-    const result = new Promise<T>((res, rej) => {
-      resolve = res;
-      reject = rej;
-    });
-    void this.enqueue(async () => {
-      try {
-        resolve(await work());
-      } catch (err) {
-        reject(err);
-      }
-    });
-    return result;
   }
 
   private async ensureCached(): Promise<AgentSession> {

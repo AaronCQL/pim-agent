@@ -75,7 +75,8 @@ export function Shell(props: { readonly store: SessionStore }) {
         }}
       >
         <Transcript
-          events={props.store.timeline()}
+          events={props.store.state.durable}
+          trailing={props.store.trailing()}
           streamingId={props.store.streamingId()}
         />
       </div>

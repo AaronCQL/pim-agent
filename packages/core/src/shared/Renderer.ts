@@ -176,6 +176,24 @@ function markerColorFor(isPartial: boolean, isError: boolean): MarkerStatus {
   return "success";
 }
 
+/**
+ * The text of a result's first content item, or "" when the result, its
+ * content, or the text is missing — the body every text-shaped tool renders.
+ */
+function firstText(
+  result:
+    | {
+        readonly content?: ReadonlyArray<{
+          readonly type: string;
+          readonly text?: string;
+        }>;
+      }
+    | undefined
+): string {
+  const first = result?.content?.[0];
+  return first && "text" in first ? (first.text ?? "") : "";
+}
+
 function extractErrorText(
   result: {
     readonly content?: ReadonlyArray<{
@@ -378,8 +396,7 @@ function renderBorderedResult(args: {
     return container;
   }
 
-  const first = result.content?.[0];
-  const body = first && "text" in first ? (first.text ?? "") : "";
+  const body = firstText(result);
   if (!body) {
     return container;
   }
@@ -413,6 +430,7 @@ export const Renderer = {
   GAPPED_PREFIX,
   TIGHT_PREFIX,
   markerColorFor,
+  firstText,
   extractErrorText,
   buildPreviewLines,
   toolTitleText,

@@ -3,6 +3,7 @@ import type {
   ThinkingLevelChangeEntry,
 } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Format } from "../../../../core/src/shared/Format";
 import { Paths } from "../../../../core/src/shared/Paths";
 import type { GitState } from "./git";
 import {
@@ -23,22 +24,6 @@ import {
   type Segment,
   thinChevronLeft,
 } from "./powerline";
-
-function formatTokens(n: number): string {
-  if (n < 1000) {
-    return `${n}`;
-  }
-  if (n < 10_000) {
-    return `${(n / 1000).toFixed(1)}K`;
-  }
-  if (n < 1_000_000) {
-    return `${Math.round(n / 1000)}K`;
-  }
-  if (n < 10_000_000) {
-    return `${(n / 1_000_000).toFixed(1)}M`;
-  }
-  return `${Math.round(n / 1_000_000)}M`;
-}
 
 function gitSegment(state: GitState): Segment | null {
   const { branch, dirty, ahead, behind } = state;
@@ -69,7 +54,7 @@ function ctxSegment(ctx: ExtensionContext): Segment | null {
   if (!usage || usage.contextWindow === 0) {
     return null;
   }
-  const window = formatTokens(usage.contextWindow);
+  const window = Format.formatTokens(usage.contextWindow);
   const text =
     usage.percent === null
       ? `?/${window}`

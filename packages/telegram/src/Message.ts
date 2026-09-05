@@ -116,6 +116,17 @@ async function download(
   return out;
 }
 
+const MEDIA_KINDS = [
+  {
+    key: "document",
+    defaultMime: "application/octet-stream",
+    defaultExt: ".bin",
+  },
+  { key: "video", defaultMime: "video/mp4", defaultExt: ".mp4" },
+  { key: "audio", defaultMime: "audio/mpeg", defaultExt: ".mp3" },
+  { key: "voice", defaultMime: "audio/ogg", defaultExt: ".ogg" },
+] as const;
+
 function refsOf(ctx: Filter<Context, "message">): ReadonlyArray<FileRef> {
   const message = ctx.message;
   if ("photo" in message && message.photo) {
@@ -129,50 +140,19 @@ function refsOf(ctx: Filter<Context, "message">): ReadonlyArray<FileRef> {
       },
     ];
   }
-  if ("document" in message && message.document) {
-    const doc = message.document;
+  for (const { key, defaultMime, defaultExt } of MEDIA_KINDS) {
+    const file = key in message ? message[key] : undefined;
+    if (!file) {
+      continue;
+    }
+    const name = "file_name" in file ? file.file_name : undefined;
     return [
       {
-        fileId: doc.file_id,
-        uniqueId: doc.file_unique_id,
-        name: doc.file_name,
-        mimeType: doc.mime_type ?? "application/octet-stream",
-        ext: extname(doc.file_name ?? "") || ".bin",
-      },
-    ];
-  }
-  if ("video" in message && message.video) {
-    const video = message.video;
-    return [
-      {
-        fileId: video.file_id,
-        uniqueId: video.file_unique_id,
-        name: video.file_name,
-        mimeType: video.mime_type ?? "video/mp4",
-        ext: extname(video.file_name ?? "") || ".mp4",
-      },
-    ];
-  }
-  if ("audio" in message && message.audio) {
-    const audio = message.audio;
-    return [
-      {
-        fileId: audio.file_id,
-        uniqueId: audio.file_unique_id,
-        name: audio.file_name,
-        mimeType: audio.mime_type ?? "audio/mpeg",
-        ext: extname(audio.file_name ?? "") || ".mp3",
-      },
-    ];
-  }
-  if ("voice" in message && message.voice) {
-    const voice = message.voice;
-    return [
-      {
-        fileId: voice.file_id,
-        uniqueId: voice.file_unique_id,
-        mimeType: voice.mime_type ?? "audio/ogg",
-        ext: ".ogg",
+        fileId: file.file_id,
+        uniqueId: file.file_unique_id,
+        name,
+        mimeType: file.mime_type ?? defaultMime,
+        ext: extname(name ?? "") || defaultExt,
       },
     ];
   }

@@ -75,17 +75,17 @@ export class SessionRegistry {
     if (!(await stat(root).catch(() => undefined))?.isDirectory()) {
       return [];
     }
-    const summaries: SessionSummary[] = [];
+    const paths: string[] = [];
     for await (const relative of new Bun.Glob("*/*.jsonl").scan({
       cwd: root,
       onlyFiles: true,
     })) {
-      const path = join(root, relative);
-      const summary = await readSummary(path);
-      if (summary && (cwd === undefined || summary.cwd === cwd)) {
-        summaries.push(summary);
-      }
+      paths.push(join(root, relative));
     }
+    const summaries = (await Promise.all(paths.map(readSummary))).filter(
+      (summary): summary is SessionSummary =>
+        summary !== undefined && (cwd === undefined || summary.cwd === cwd)
+    );
     return summaries.sort((a, b) => b.modifiedAt - a.modifiedAt);
   }
 
@@ -123,13 +123,8 @@ export class SessionRegistry {
     const host = this.buildHost("pending", {
       cwd: cwd ?? this.deps.defaults.cwd,
     });
-    await host.run(async () => {});
-    const sessionId = host.sessionId;
-    if (!sessionId) {
-      await host.dispose();
-      throw new Error("pi did not assign a session id");
-    }
-    return this.adopt(sessionId, host);
+    const agent = await host.ensureAgent();
+    return this.adopt(agent.sessionId, host);
   }
 
   public async disposeAll(): Promise<void> {

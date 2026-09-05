@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Paths } from "../../shared/Paths";
+import { Renderer } from "../../shared/Renderer";
 import { Tools } from "../../shared/Tools";
 import { buildMatcher, findMatches } from "./grep";
 import { buildView, type GrepViewDetails, renderMatches } from "./render";
@@ -100,10 +101,9 @@ export default function (pi: ExtensionAPI): void {
       };
     },
     toViewModel({ args, result, cwd }) {
-      const first = result?.content?.[0];
       return buildView({
         args: (args ?? {}) as Partial<GrepInput>,
-        body: first && "text" in first ? (first.text ?? "") : "",
+        body: Renderer.firstText(result),
         details: result?.details as GrepViewDetails | undefined,
         cwd,
       });

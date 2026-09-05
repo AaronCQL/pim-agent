@@ -5,6 +5,7 @@ import type {
 import type { FileEntry } from "@earendil-works/pi-coding-agent";
 
 import { EventLog, type LoggedEntry } from "../../core/src/session/EventLog";
+import { MessageText } from "../../core/src/session/MessageText";
 import { Tools } from "../../core/src/shared/Tools";
 import type {
   DurableEvent,
@@ -89,7 +90,7 @@ export class SessionProjection {
           type: "message",
           messageId: entry.id,
           role: "user",
-          text: textOf(message.content),
+          text: MessageText.textOf(message.content),
         };
       case "assistant": {
         const toolCalls: ToolCallView[] = [];
@@ -109,13 +110,13 @@ export class SessionProjection {
             }),
           });
         }
-        const thinking = partsOf(message.content, "thinking");
+        const thinking = MessageText.textOf(message.content, "thinking");
         return {
           seq,
           type: "message",
           messageId: entry.id,
           role: "assistant",
-          text: partsOf(message.content, "text"),
+          text: MessageText.textOf(message.content),
           ...(thinking ? { thinking } : {}),
           ...(toolCalls.length > 0 ? { toolCalls } : {}),
         };
@@ -150,24 +151,4 @@ type MessageEntry = { readonly id: string; readonly message: AgentMessage };
 
 function isMessageEntry(entry: FileEntry): entry is FileEntry & MessageEntry {
   return entry.type === "message";
-}
-
-function partsOf(
-  content: readonly { readonly type: string }[],
-  kind: "text" | "thinking"
-): string {
-  let out = "";
-  for (const part of content) {
-    if (part.type === kind) {
-      out += (part as Record<string, string>)[kind] ?? "";
-    }
-  }
-  return out;
-}
-
-function textOf(content: unknown): string {
-  if (typeof content === "string") {
-    return content;
-  }
-  return partsOf(content as readonly { readonly type: string }[], "text");
 }

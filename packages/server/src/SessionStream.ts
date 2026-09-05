@@ -4,6 +4,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import { PickerService } from "../../core/src/picker/PickerService";
+import { MessageText } from "../../core/src/session/MessageText";
 import type { SessionHost } from "../../core/src/session/SessionHost";
 import { Tools } from "../../core/src/shared/Tools";
 import type {
@@ -209,7 +210,7 @@ export class SessionStream {
         if (event.message.role !== "assistant") {
           return;
         }
-        const full = textOf(event.message.content);
+        const full = MessageText.textOf(event.message.content);
         if (full.startsWith(this.streamedText) && full !== this.streamedText) {
           this.emit({
             type: "text_delta",
@@ -321,17 +322,4 @@ function approvalRequestEvent(
     }),
     reason: request.reason,
   };
-}
-
-function textOf(content: unknown): string {
-  if (!Array.isArray(content)) {
-    return "";
-  }
-  let out = "";
-  for (const part of content as readonly Record<string, unknown>[]) {
-    if (part.type === "text" && typeof part.text === "string") {
-      out += part.text;
-    }
-  }
-  return out;
 }

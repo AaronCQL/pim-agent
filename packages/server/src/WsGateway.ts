@@ -334,12 +334,12 @@ export class WsGateway {
     const host = sessionId
       ? await this.registry.open(sessionId)
       : await this.registry.create(cwd);
-    // Pi assigns the id and the file, and only does so once an agent exists.
-    await host.run(async () => {});
-    const agent = host.agentSession;
-    const id = host.sessionId;
-    const path = agent?.sessionFile ?? host.settings.sessionPath;
-    if (!agent || !id || !path) {
+    // Pi assigns the id and the file, and only does so once an agent exists;
+    // `create` built one already, so only a resumed host pays for it here.
+    const agent = host.agentSession ?? (await host.ensureAgent());
+    const id = agent.sessionId;
+    const path = agent.sessionFile ?? host.settings.sessionPath;
+    if (!path) {
       throw new Error(`session ${sessionId ?? "(new)"} has no agent`);
     }
     const existing = this.streams.get(id);

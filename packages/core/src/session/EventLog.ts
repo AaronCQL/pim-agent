@@ -1,10 +1,11 @@
-import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type {
   AgentSessionEvent,
   FileEntry,
   SessionHeader,
 } from "@earendil-works/pi-coding-agent";
 import { parseSessionEntries } from "@earendil-works/pi-coding-agent";
+
+import { MessageText } from "./MessageText";
 
 /**
  * One durable line of a pi session file, tagged with its physical append
@@ -94,7 +95,7 @@ export class EventLog {
     }
 
     this.cursor = {
-      offset: start.offset + new TextEncoder().encode(complete).length,
+      offset: start.offset + Buffer.byteLength(complete, "utf8"),
       seq: start.seq + lines.length,
     };
     return entries;
@@ -147,8 +148,8 @@ export class EventLog {
         const turn = this.ensureTurn();
         this.inFlightTurn = {
           ...turn,
-          text: textOf(event.message.content, "text"),
-          thinking: textOf(event.message.content, "thinking"),
+          text: MessageText.textOf(event.message.content),
+          thinking: MessageText.textOf(event.message.content, "thinking"),
         };
         return;
       }
@@ -192,19 +193,4 @@ export class EventLog {
     };
     return this.inFlightTurn;
   }
-}
-
-function textOf(
-  content: AssistantMessage["content"],
-  kind: "text" | "thinking"
-): string {
-  let out = "";
-  for (const part of content) {
-    if (kind === "text" && part.type === "text") {
-      out += part.text;
-    } else if (kind === "thinking" && part.type === "thinking") {
-      out += part.thinking;
-    }
-  }
-  return out;
 }

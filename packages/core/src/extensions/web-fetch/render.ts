@@ -1,3 +1,4 @@
+import { Renderer } from "../../shared/Renderer";
 import type { ToolViewInput } from "../../shared/Tools";
 import type { ToolView, ViewBlock } from "../../view/ViewBlock";
 import type {
@@ -44,8 +45,7 @@ function titleOutcome(
 }
 
 function formatBody(result: WebFetchViewInput["result"]): readonly ViewBlock[] {
-  const first = result?.content?.[0];
-  const text = first && "text" in first ? (first.text ?? "") : "";
+  const text = Renderer.firstText(result);
   return text === "" ? [] : [{ kind: "text", text }];
 }
 
