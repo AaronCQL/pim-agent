@@ -420,4 +420,22 @@ describe("chip menu", () => {
     flush();
     expect(options(host)).toHaveLength(0);
   });
+
+  // A touch scroll of the list starts with a `pointerdown` on a row, and a
+  // tap's `mousedown` only arrives at `touchend`: if that first pointer
+  // dismissed the menu, the list could neither be scrolled nor chosen from.
+  test("a pointer on the list itself does not close it", () => {
+    const { host, chosen } = paint();
+    host.querySelector("button")!.click();
+    flush();
+
+    const row = options(host)[1]!;
+    row.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    flush();
+    expect(options(host)).toHaveLength(2);
+
+    row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    flush();
+    expect(chosen).toEqual(["openai/gpt-6"]);
+  });
 });

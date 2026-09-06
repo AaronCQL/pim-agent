@@ -20,6 +20,14 @@ export type MenuOption = {
  * `popover="auto"`'s light dismiss: the popover is `manual`, and the two
  * mechanisms would disagree about who closed it — the chip's own click would
  * re-open what the light dismiss had just closed.
+ *
+ * "Outside" is measured against the whole menu, chip and panel together, and
+ * not the chip alone. A touch scroll of the list opens with a `pointerdown`
+ * on a row, so a chip-only test closes the menu under the finger before it
+ * moves — and takes the tap with it, since touch defers its compat
+ * `mousedown` to `touchend`, by which point the row is unmounted. A mouse
+ * hides the bug: its `mousedown` follows in the same task, while the list is
+ * still there.
  */
 export function Menu(props: {
   readonly label: string;
@@ -31,6 +39,7 @@ export function Menu(props: {
   readonly onSelect: (value: string) => void;
 }) {
   const [open, setOpen] = createSignal(false);
+  let root!: HTMLDivElement;
   let chip!: HTMLButtonElement;
 
   const choose = (index: number): void => {
@@ -64,7 +73,9 @@ export function Menu(props: {
       );
       navigation.setActiveIndex(at === -1 ? 0 : at);
       const dismiss = (event: PointerEvent): void => {
-        if (!chip.contains(event.target as Node)) {
+        // The panel is in the top layer but still a DOM child of the root,
+        // so one containment test covers both halves.
+        if (!root.contains(event.target as Node)) {
           setOpen(false);
         }
       };
@@ -76,7 +87,12 @@ export function Menu(props: {
   );
 
   return (
-    <div class="relative">
+    <div
+      ref={(element: HTMLDivElement) => {
+        root = element;
+      }}
+      class="relative"
+    >
       <button
         ref={(element: HTMLButtonElement) => {
           chip = element;
