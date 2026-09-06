@@ -11,8 +11,6 @@ import { AnsiPainter } from "../view/AnsiPainter";
 import { BodyRenderer } from "../view/BodyRenderer";
 import type { ToolView } from "../view/ViewBlock";
 
-const DEFAULT_PREVIEW_LINES = 10;
-
 export type ToolViewInput<TParams extends TSchema, TDetails> = {
   /** Partially streamed while the call is in flight; treat fields as optional. */
   readonly args: Static<TParams>;
@@ -72,8 +70,6 @@ export type PimToolDefinition<
   TState = unknown,
 > = ToolDefinition<TParams, TDetails, TState> & {
   readonly toViewModel?: (input: ToolViewInput<TParams, TDetails>) => ToolView;
-  /** Error-output lines shown before the row is expanded. Defaults to 10. */
-  readonly previewLines?: number;
   /** Omitted means `unbounded`; see `ToolEffect`. */
   readonly effect?: ToolEffect<TParams>;
 };
@@ -166,7 +162,7 @@ function wrap<TParams extends TSchema, TDetails = unknown, TState = unknown>(
 ): ToolDefinition<TParams, TDetails, TState> {
   const schema = def.parameters as unknown as JsonSchema;
   // Pi rejects unknown definition fields, so strip pim-only ones here.
-  const { toViewModel, previewLines: _previewLines, effect, ...piDef } = def;
+  const { toViewModel, effect, ...piDef } = def;
   if (toViewModel !== undefined) {
     viewFactories.set(def.name, toViewModel as ToolViewFactory);
   }
@@ -285,8 +281,6 @@ function synthesizeRenderers<TParams extends TSchema, TDetails, TState>(
   ToolDefinition<TParams, TDetails, TState>,
   "renderCall" | "renderResult"
 > {
-  const previewLines = def.previewLines ?? DEFAULT_PREVIEW_LINES;
-
   return {
     renderCall:
       def.renderCall ??
@@ -324,12 +318,11 @@ function synthesizeRenderers<TParams extends TSchema, TDetails, TState>(
         }
 
         if (context.isError) {
-          return Renderer.renderBorderedResult({
+          return Renderer.renderErrorResult({
             result,
             options,
             theme,
             context,
-            previewLines,
           });
         }
 
@@ -343,10 +336,7 @@ function synthesizeRenderers<TParams extends TSchema, TDetails, TState>(
         return BodyRenderer.render({
           summary: view.summary,
           body: view.body,
-          options: {
-            ...options,
-            expanded: options.expanded || view.collapsed === false,
-          },
+          options,
           theme,
           context,
         });

@@ -63,10 +63,6 @@ describe("bashView", () => {
   test("supplies the title-cased display label", () => {
     expect(bashView(input({ command: "ls" })).label).toBe("Bash");
   });
-
-  test("leaves the body collapsed by default", () => {
-    expect(bashView(input({ command: "ls" })).collapsed).toBeUndefined();
-  });
 });
 
 describe("bashView title", () => {

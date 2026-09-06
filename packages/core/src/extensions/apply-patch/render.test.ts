@@ -267,15 +267,4 @@ describe("applyPatchView trailing entries", () => {
       )
     );
   });
-
-  test("forces the body open so diffs are never hidden behind an expand", () => {
-    expect(
-      view([
-        {
-          action: { kind: "update", path: "/repo/a.txt" },
-          diff: changeDiff("/repo/a.txt"),
-        },
-      ]).collapsed
-    ).toBe(false);
-  });
 });

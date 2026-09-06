@@ -134,7 +134,6 @@ describe("subagentView", () => {
     );
 
     expect(view.body).toEqual([{ kind: "markdown", text: "Final **answer**" }]);
-    expect(view.collapsed).toBeUndefined();
   });
 
   test("omits an empty body", () => {

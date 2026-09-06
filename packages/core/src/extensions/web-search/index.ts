@@ -10,8 +10,6 @@ import { SearchChain } from "./SearchChain";
 import { type WebSearchInput, webSearchSchema } from "./schema";
 import { clampNumResults, formatResults } from "./search";
 
-const ERROR_PREVIEW_LINES = 6;
-
 async function createChain(): Promise<SearchChain> {
   const [exaApiKey, firecrawlApiKey, jinaApiKey] = await Promise.all([
     PimSettings.getExaApiKey(),
@@ -88,6 +86,5 @@ export default function (pi: ExtensionAPI): void {
       };
     },
     toViewModel: webSearchView,
-    previewLines: ERROR_PREVIEW_LINES,
   });
 }

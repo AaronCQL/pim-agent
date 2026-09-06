@@ -475,9 +475,12 @@ describe("Tools.wrap view model synthesis", () => {
   }
 
   test("strips pim-only fields before pi sees the definition", () => {
-    const wrapped = Tools.wrap({ ...readLikeDef(), previewLines: 3 });
+    const wrapped = Tools.wrap({
+      ...readLikeDef(),
+      effect: { kind: "readOnly" },
+    });
     expect("toViewModel" in wrapped).toBe(false);
-    expect("previewLines" in wrapped).toBe(false);
+    expect("effect" in wrapped).toBe(false);
   });
 
   test("does not synthesize renderers without a view model", () => {
@@ -551,22 +554,15 @@ describe("Tools.wrap view model synthesis", () => {
     expect(component.render(80)).toEqual([" │ 1:alpha", " │ 2:beta"]);
   });
 
-  test("collapsed:false opens the body without an expanded row", () => {
-    const def = readLikeDef();
-    const wrapped = Tools.wrap({
-      ...def,
-      toViewModel: (input) => ({
-        ...def.toViewModel!(input),
-        collapsed: false,
-      }),
-    });
+  test("a body stays shut until the row is expanded", () => {
+    const wrapped = Tools.wrap(readLikeDef());
     const component = wrapped.renderResult!(
       persistedResult(),
       { expanded: false, isPartial: false },
       theme,
       context()
     );
-    expect(component.render(80)).toEqual([" │ 1:alpha", " │ 2:beta"]);
+    expect(component.render(80)).toEqual([]);
   });
 
   test("a summary renders while streaming, collapsed, and expanded", () => {
@@ -656,6 +652,20 @@ describe("Tools.wrap view model synthesis", () => {
       context({ isError: true })
     );
     expect(component.render(80)).toEqual([" │ Path not found: src/foo.ts"]);
+  });
+
+  test("an error row stays shut like every other row", () => {
+    const wrapped = Tools.wrap(readLikeDef());
+    const component = wrapped.renderResult!(
+      {
+        content: [{ type: "text", text: "Path not found: src/foo.ts" }],
+        details: undefined as never,
+      },
+      { expanded: false, isPartial: false },
+      theme,
+      context({ isError: true })
+    );
+    expect(component.render(80)).toEqual([]);
   });
 
   test("the redraw for a details-dependent title is deferred past the render", async () => {

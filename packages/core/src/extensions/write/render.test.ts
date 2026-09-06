@@ -57,13 +57,6 @@ describe("writeView", () => {
         .label
     ).toBe("Write");
   });
-
-  test("forces the diff body open regardless of expansion", () => {
-    expect(
-      writeView({ args: { path: "a.ts" } as never, cwd, isPartial: false })
-        .collapsed
-    ).toBe(false);
-  });
 });
 
 describe("writeView title", () => {

@@ -6,8 +6,6 @@ import { bashView } from "./render";
 import { killAllActiveBashGroups, runBashCommand } from "./run";
 import { type BashInput, bashSchema, DEFAULT_TIMEOUT_MS } from "./schema";
 
-const ERROR_PREVIEW_LINES = 5;
-
 let lifecycleHandlersInstalled = false;
 
 function installLifecycleHandlers(): void {
@@ -66,6 +64,5 @@ export default function (pi: ExtensionAPI): void {
       };
     },
     toViewModel: bashView,
-    previewLines: ERROR_PREVIEW_LINES,
   });
 }

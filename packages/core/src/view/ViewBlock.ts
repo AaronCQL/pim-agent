@@ -140,10 +140,4 @@ export type ToolView = {
   readonly summary?: readonly ViewBlock[];
   /** Rendered only once the row is expanded, and never while streaming. */
   readonly body?: readonly ViewBlock[];
-  /**
-   * `false` forces the body open even when the row is not expanded. It says
-   * nothing about `summary`, which always renders, and never opens a body
-   * mid-stream: a partial result has no final payload to show.
-   */
-  readonly collapsed?: boolean;
 };

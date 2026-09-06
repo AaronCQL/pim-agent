@@ -1,14 +1,10 @@
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createMemo, For, Show } from "solid-js";
 
-import { Lines } from "#core/shared/Lines";
 import type { ToolView, ViewBlock } from "#core/view/ViewBlock";
 import { Markdown } from "../markdown/Markdown";
 import { Caret, Collapsible } from "../ui/Collapsible";
 import { Blocks, Body } from "./Blocks";
 import { toneClass } from "./tokens";
-
-/** `Tools.DEFAULT_PREVIEW_LINES`: what the TUI collapses an error body to. */
-const ERROR_PREVIEW_LINES = 10;
 
 /**
  * One tool row. The mockup supplies the shape; the TUI supplies the semantics,
@@ -27,9 +23,9 @@ const ERROR_PREVIEW_LINES = 10;
  *   it off that, which is how a subagent shows its run state.
  * - `summary` renders in every state — streaming, collapsed, expanded — so it
  *   sits outside the disclosure.
- * - `body` is expand-only, and **every** row starts closed — including a
- *   failure and a diff the TUI insists on showing (`collapsed: false`). A
- *   transcript you scroll on a phone is a list of what happened; what a row
+ * - `body` is expand-only, and **every** row starts closed — a failure and a
+ *   diff included, exactly as in the TUI. A transcript you scroll on a phone
+ *   is a list of what happened; what a row
  *   did is the one line, and the payload is what you ask for. A call that is
  *   still running gets the same affordance as a settled one as soon as it has
  *   anything in it: output that only becomes readable once the tool returns is
@@ -38,8 +34,8 @@ const ERROR_PREVIEW_LINES = 10;
  *   draws the caret, in amber, so the row keeps its shape and its text keeps
  *   its column while it waits — but nothing brightens it and nothing points
  *   at it, because there is nothing behind it to reach.
- * - An error keeps the TUI's body: the same 10-line preview, with the same
- *   `… N more lines` line as the way through to the rest.
+ * - An opened error shows its output whole and untruncated: a failure is read
+ *   to be acted on, and the tail of a stack trace is not an aside.
  */
 export function ToolCard(props: {
   readonly view: ToolView;
@@ -49,10 +45,9 @@ export function ToolCard(props: {
   readonly isPartial?: boolean;
 }) {
   // Memoised: a partial call re-renders on every delta, and this is read by
-  // the class object, the disclosure and `failure()` on each of them.
+  // both the class object and the disclosure on each of them.
   const body = createMemo(() => (props.view.body ?? []).filter(isDrawn));
   const error = () => props.isError === true;
-  const failure = createMemo(() => (error() ? errorText(body()) : undefined));
 
   return (
     // A row recedes until hovered; an open one is the thing you asked to look
@@ -88,9 +83,7 @@ export function ToolCard(props: {
           spine={error() ? "bg-rose-400" : "bg-neutral-750"}
         >
           <div class="text-neutral-400">
-            <Show when={failure()} fallback={<Body blocks={body()} />}>
-              {(text) => <ErrorBody text={text()} />}
-            </Show>
+            <Body blocks={body()} />
           </div>
         </Collapsible>
       </Show>
@@ -182,51 +175,4 @@ function Detail(props: { readonly block: ViewBlock }) {
       <Show when={bracketed()}>{")"}</Show>
     </span>
   );
-}
-
-/**
- * The TUI's overflow rule, imported rather than re-derived: `… N more lines`
- * is both the notice and the way to the rest of the text.
- */
-function ErrorBody(props: { readonly text: string }) {
-  const [expanded, setExpanded] = createSignal(false);
-  const preview = createMemo(() =>
-    Lines.buildPreviewLines(props.text, ERROR_PREVIEW_LINES)
-  );
-
-  return (
-    <>
-      <p class="overflow-x-auto whitespace-pre">
-        {expanded() ? props.text : preview().preview}
-      </p>
-      <Show when={!expanded() && preview().overflow > 0}>
-        <button
-          type="button"
-          class="text-neutral-500 hover:text-neutral-300"
-          onClick={() => {
-            setExpanded(true);
-          }}
-        >
-          {`… ${preview().overflow} more lines`}
-        </button>
-      </Show>
-    </>
-  );
-}
-
-/**
- * The text an error body is made of, or undefined when it is made of anything
- * else. A failing tool answers with its stderr, so in practice this is every
- * error row; a view that puts a diff or a table in one keeps the ordinary
- * painter instead of being flattened into a string.
- */
-function errorText(blocks: readonly ViewBlock[]): string | undefined {
-  const texts: string[] = [];
-  for (const block of blocks) {
-    if (block.kind !== "text" && block.kind !== "notice") {
-      return undefined;
-    }
-    texts.push(block.text);
-  }
-  return texts.length === 0 ? undefined : texts.join("\n");
 }

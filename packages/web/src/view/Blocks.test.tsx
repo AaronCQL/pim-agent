@@ -289,11 +289,8 @@ describe("ToolCard", () => {
     );
   });
 
-  test("every row starts closed, `collapsed: false` included", () => {
+  test("every row starts closed, a diff row included", () => {
     expect(paintTool(view).querySelector("details")?.open).toBe(false);
-    expect(
-      paintTool({ ...view, collapsed: false }).querySelector("details")?.open
-    ).toBe(false);
   });
 
   // A row is at full strength when *it* is open, never because something
@@ -376,7 +373,7 @@ describe("ToolCard", () => {
     expect(host.textContent).toContain("+2");
   });
 
-  test("an error stays closed and previews ten lines of the failure", () => {
+  test("an error stays closed, and opens onto the whole failure", () => {
     const host = mountPoint();
     const text = Array.from({ length: 14 }, (_, line) => `line ${line}`);
     render(
@@ -395,14 +392,8 @@ describe("ToolCard", () => {
     details.open = true;
     flush();
     expect(host.innerHTML).toContain("bg-rose-400");
-    expect(host.textContent).toContain("line 9");
-    expect(host.textContent).not.toContain("line 10");
-    expect(host.textContent).toContain("… 4 more lines");
-
-    host
-      .querySelector("details button")!
-      .dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    flush();
+    expect(host.textContent).toContain("line 0");
     expect(host.textContent).toContain("line 13");
+    expect(host.textContent).not.toContain("more lines");
   });
 });

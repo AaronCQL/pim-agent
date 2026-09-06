@@ -77,8 +77,4 @@ describe("DiffBlocks.fileView", () => {
   test("falls back to a placeholder before the path streams in", () => {
     expect(AnsiPainter.paint(view(undefined).title, theme)).toEqual(["..."]);
   });
-
-  test("never hides the diff behind an expand", () => {
-    expect(view("/repo/src/foo.ts").collapsed).toBe(false);
-  });
 });

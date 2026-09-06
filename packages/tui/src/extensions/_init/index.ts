@@ -3,7 +3,10 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 
+import { PimVersion } from "#core/shared/PimVersion";
+
 const SPLASH_ID = "pim-splash";
+const UPDATE_CHECK_TIMEOUT_MS = 3_000;
 
 const shortcuts = [
   ["Ctrl+C", "Clear editor (first) / exit (second)"],
@@ -26,18 +29,29 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     );
   }
 
-  const pkgPath = `${import.meta.dir}/../../../../../package.json`;
-  const { version } = (await Bun.file(pkgPath).json()) as { version: string };
+  const version = await PimVersion.current();
 
   const keyCol = Math.max(...shortcuts.map(([k]) => k.length)) + 2;
 
   let splashShown = false;
+  let update: string | undefined;
+  let updateCheck: Promise<string | undefined> | undefined;
 
-  pi.on("session_start", (event, ctx) => {
-    if (event.reason !== "startup" && event.reason !== "new") {
-      return;
-    }
+  // Pi's own update banner is suppressed: it names a `pi update` that cannot
+  // reach the copy pim bundles. One line on the splash replaces it.
+  const checkForUpdate = (): Promise<string | undefined> => {
+    updateCheck ??= process.env["PI_OFFLINE"]
+      ? Promise.resolve(undefined)
+      : PimVersion.latest({ timeoutMs: UPDATE_CHECK_TIMEOUT_MS }).then(
+          (available) =>
+            available !== undefined && PimVersion.isNewer(available, version)
+              ? available
+              : undefined
+        );
+    return updateCheck;
+  };
 
+  const showSplash = (ctx: ExtensionContext): void => {
     const theme = ctx.ui.theme;
     const renderKey = (key: string, muted: string | undefined): string => {
       const padding = " ".repeat(Math.max(0, keyCol - key.length));
@@ -65,8 +79,31 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       ...shortcuts.map(
         ([k, d, muted]) => renderKey(k, muted) + theme.fg("dim", d)
       ),
+      ...(update === undefined
+        ? []
+        : [
+            "",
+            theme.fg("warning", `Update available: v${update}`) +
+              theme.fg("dim", " - run ") +
+              theme.fg("mdCode", "pim update"),
+          ]),
     ]);
     splashShown = true;
+  };
+
+  pi.on("session_start", (event, ctx) => {
+    if (event.reason !== "startup" && event.reason !== "new") {
+      return;
+    }
+
+    showSplash(ctx);
+    void checkForUpdate().then((available) => {
+      if (available === undefined || !splashShown) {
+        return;
+      }
+      update = available;
+      showSplash(ctx);
+    });
   });
 
   const clearSplash = (ctx: ExtensionContext) => {

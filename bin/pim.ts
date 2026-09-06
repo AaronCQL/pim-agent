@@ -8,6 +8,7 @@ import {
   type PimInlineExtension,
 } from "#core/extensions/CoreExtensions";
 import { ExtensionToggles } from "#core/shared/ExtensionToggles";
+import { PimVersion } from "#core/shared/PimVersion";
 import init from "#tui/extensions/_init/index";
 import commandPicker from "#tui/extensions/command-picker/index";
 import filePicker from "#tui/extensions/file-picker/index";
@@ -30,13 +31,22 @@ const extensionFactories: readonly PimInlineExtension[] = [
   { name: "working-indicator", factory: workingIndicator },
 ];
 
-async function readVersion(url: URL): Promise<string> {
-  try {
-    const pkg = (await Bun.file(url).json()) as { readonly version?: unknown };
-    return typeof pkg.version === "string" ? pkg.version : "?";
-  } catch {
-    return "?";
+async function runUpdate(force: boolean): Promise<number> {
+  const installed = await PimVersion.current();
+  const available = await PimVersion.latest({ timeoutMs: 10_000 });
+  if (available === undefined) {
+    console.error("Could not determine the latest pim version.");
+    return 1;
   }
+  if (!force && !PimVersion.isNewer(available, installed)) {
+    console.log(`pim is already up to date (v${installed})`);
+    return 0;
+  }
+  const code = await PimVersion.install(available);
+  if (code === 0) {
+    console.log(`Updated pim from v${installed} to v${available}`);
+  }
+  return code;
 }
 
 const cliArgs = process.argv.slice(2);
@@ -55,11 +65,28 @@ if (dashDashIdx >= 0) {
 // that wraps it invisible. Name both, like a distro naming its kernel.
 if (cliArgs.includes("--version") || cliArgs.includes("-v")) {
   console.log(
-    `pim ${await readVersion(new URL("../package.json", import.meta.url))} ` +
-      `(pi ${await readVersion(new URL(import.meta.resolve("@earendil-works/pi-coding-agent/package.json")))})`
+    `pim ${await PimVersion.current()} (pi ${await PimVersion.pi()})`
   );
   process.exit(0);
 }
+
+// Pi's own `update` self-updates the pi package, which pim carries as a
+// dependency: the pi a user runs lives in pim's install tree, so only
+// reinstalling pim can move it. Pi's other update targets — model catalogs,
+// installed pi packages — are still pi's to handle.
+if (cliArgs[0] === "update") {
+  const rest = cliArgs.slice(1);
+  const isSelf = rest.every(
+    (arg) => arg === "self" || arg === "pim" || arg === "--force"
+  );
+  if (isSelf) {
+    process.exit(await runUpdate(rest.includes("--force")));
+  }
+}
+
+// Pi's startup banner points at `pi update`, which cannot reach the bundled
+// copy; pim's splash carries its own check and points at `pim update`.
+process.env["PI_SKIP_VERSION_CHECK"] = "1";
 
 const modeIdx = cliArgs.findIndex(
   (a) => a === "--mode" || a.startsWith("--mode=")

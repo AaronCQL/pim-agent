@@ -5,8 +5,6 @@ import { writeView } from "./render";
 import { type WriteInput, writeSchema } from "./schema";
 import { writeContent, type WriteOutcome } from "./write";
 
-const ERROR_PREVIEW_LINES = 12;
-
 export default function (pi: ExtensionAPI): void {
   Tools.register(pi, {
     name: "write",
@@ -34,7 +32,6 @@ export default function (pi: ExtensionAPI): void {
       };
     },
     toViewModel: writeView,
-    previewLines: ERROR_PREVIEW_LINES,
   });
 }
 

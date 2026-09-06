@@ -1,0 +1,105 @@
+import ky from "ky";
+
+const REGISTRY = "https://registry.npmjs.org";
+const DEFAULT_TIMEOUT_MS = 5_000;
+
+type Manifest = {
+  readonly name: string;
+  readonly version: string;
+};
+
+type LatestOptions = {
+  readonly fetch?: typeof fetch;
+  readonly timeoutMs?: number;
+};
+
+async function read(url: URL): Promise<Manifest> {
+  try {
+    const pkg = (await Bun.file(url).json()) as Partial<Manifest>;
+    return {
+      name: typeof pkg.name === "string" ? pkg.name : "?",
+      version: typeof pkg.version === "string" ? pkg.version : "?",
+    };
+  } catch {
+    return { name: "?", version: "?" };
+  }
+}
+
+function self(): Promise<Manifest> {
+  return read(new URL("../../../../package.json", import.meta.url));
+}
+
+async function current(): Promise<string> {
+  return (await self()).version;
+}
+
+/** Pi ships inside pim's install tree, so this is the pi a user actually runs. */
+async function pi(): Promise<string> {
+  return (
+    await read(
+      new URL(
+        import.meta.resolve("@earendil-works/pi-coding-agent/package.json")
+      )
+    )
+  ).version;
+}
+
+async function latest(
+  options: LatestOptions = {}
+): Promise<string | undefined> {
+  const { name } = await self();
+  const client = options.fetch ? ky.create({ fetch: options.fetch }) : ky;
+  try {
+    const release = await client(
+      `${REGISTRY}/${name.replace("/", "%2f")}/latest`,
+      {
+        timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        retry: 0,
+        headers: { accept: "application/json" },
+      }
+    ).json<{ readonly version?: unknown }>();
+    return typeof release.version === "string" && release.version.trim()
+      ? release.version.trim()
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function core(version: string): readonly number[] | undefined {
+  const parts = version.trim().split(/[-+]/)[0]!.split(".");
+  const numbers = parts.map(Number);
+  return parts.length === 3 &&
+    numbers.every((part) => Number.isInteger(part) && part >= 0)
+    ? numbers
+    : undefined;
+}
+
+function isNewer(candidate: string, installed: string): boolean {
+  const left = core(candidate);
+  const right = core(installed);
+  if (!left || !right) {
+    return candidate.trim() !== installed.trim();
+  }
+  for (const [index, part] of left.entries()) {
+    if (part !== right[index]) {
+      return part > right[index]!;
+    }
+  }
+  // Same core: the only step forward left is a prerelease reaching its release.
+  return installed.includes("-") && !candidate.includes("-");
+}
+
+/**
+ * Pim requires Bun and documents `bun install -g`, so a reinstall through the
+ * same command is the whole update: pi arrives as one of pim's dependencies.
+ */
+async function install(version: string): Promise<number> {
+  const { name } = await self();
+  const proc = Bun.spawn(["bun", "install", "-g", `${name}@${version}`], {
+    stdio: ["inherit", "inherit", "inherit"],
+  });
+  return await proc.exited;
+}
+
+export const PimVersion = { current, pi, latest, isNewer, install };

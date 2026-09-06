@@ -84,8 +84,7 @@
               "path": "greeter.ts"
             }
           ],
-          "body": [],
-          "collapsed": false
+          "body": []
         }
       }
     ]
@@ -246,8 +245,7 @@
             }
           ]
         }
-      ],
-      "collapsed": false
+      ]
     }
   },
   {

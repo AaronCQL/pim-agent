@@ -62,13 +62,6 @@ describe("editView", () => {
       editView({ args: { path: "a.ts" } as never, cwd, isPartial: false }).label
     ).toBe("Edit");
   });
-
-  test("forces the diff body open regardless of expansion", () => {
-    expect(
-      editView({ args: { path: "a.ts" } as never, cwd, isPartial: false })
-        .collapsed
-    ).toBe(false);
-  });
 });
 
 describe("editView title", () => {

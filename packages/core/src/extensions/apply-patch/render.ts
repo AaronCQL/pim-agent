@@ -65,8 +65,6 @@ export function applyPatchView({
         ...DiffBlocks.body(entry.body),
       ]),
     ],
-    // The diffs are the whole point of the row; never hide them behind expand.
-    collapsed: false,
   };
 }
 

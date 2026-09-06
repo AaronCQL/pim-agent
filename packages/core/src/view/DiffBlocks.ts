@@ -48,8 +48,6 @@ function fileView(args: {
       ...stats(args.diff),
     ],
     body: body(args.diff),
-    // A diff is the whole point of the row; never hide it behind an expand.
-    collapsed: false,
   };
 }
 

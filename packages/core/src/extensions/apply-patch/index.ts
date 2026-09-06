@@ -11,8 +11,6 @@ import {
   prepareApplyPatchArguments,
 } from "./schema";
 
-const ERROR_PREVIEW_LINES = 12;
-
 export default function (pi: ExtensionAPI): void {
   Tools.register(pi, {
     name: "apply_patch",
@@ -36,7 +34,6 @@ export default function (pi: ExtensionAPI): void {
         ),
     },
     executionMode: "sequential",
-    previewLines: ERROR_PREVIEW_LINES,
     async execute(_id, params, signal, _onUpdate, ctx) {
       const { input } = params as ApplyPatchInput;
 

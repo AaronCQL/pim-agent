@@ -5,8 +5,6 @@ import { editFile, formatEditSummary } from "./edit";
 import { editView } from "./render";
 import { type EditInput, editSchema } from "./schema";
 
-const ERROR_PREVIEW_LINES = 12;
-
 export default function (pi: ExtensionAPI): void {
   Tools.register(pi, {
     name: "edit",
@@ -34,6 +32,5 @@ export default function (pi: ExtensionAPI): void {
       };
     },
     toViewModel: editView,
-    previewLines: ERROR_PREVIEW_LINES,
   });
 }

@@ -57,43 +57,20 @@ describe("Renderer.markerColorFor", () => {
   });
 });
 
-describe("Renderer.buildPreviewLines", () => {
-  test("returns body unchanged when within limit", () => {
-    expect(Renderer.buildPreviewLines("a\nb\nc", 5)).toEqual({
-      preview: "a\nb\nc",
-      overflow: 0,
-    });
-  });
-  test("truncates and reports overflow", () => {
-    const body = "1\n2\n3\n4\n5\n6\n7";
-    expect(Renderer.buildPreviewLines(body, 3)).toEqual({
-      preview: "1\n2\n3",
-      overflow: 4,
-    });
-  });
-  test("limit equal to line count is not truncated", () => {
-    expect(Renderer.buildPreviewLines("a\nb\nc", 3)).toEqual({
-      preview: "a\nb\nc",
-      overflow: 0,
-    });
-  });
-});
-
-describe("Renderer.renderBorderedResult", () => {
+describe("Renderer.renderErrorResult", () => {
   test("wraps expanded output by default", () => {
-    const component = Renderer.renderBorderedResult({
+    const component = Renderer.renderErrorResult({
       result: textResult("0123456789abcdef\nnext"),
       options: expandedOptions,
       theme: stubTheme,
-      context: rendererContext,
-      previewLines: 10,
+      context: { ...rendererContext, isError: true },
     });
 
     expect(component.render(10)).toHaveLength(4);
   });
 
-  test("expanded output includes all lines even beyond the preview limit", () => {
-    const component = Renderer.renderBorderedResult({
+  test("an expanded failure is shown whole, never truncated", () => {
+    const component = Renderer.renderErrorResult({
       result: textResult(
         [
           "  src/file.ts:10:before",
@@ -103,8 +80,7 @@ describe("Renderer.renderBorderedResult", () => {
       ),
       options: expandedOptions,
       theme: stubTheme,
-      context: rendererContext,
-      previewLines: 1,
+      context: { ...rendererContext, isError: true },
     });
 
     expect(component.render(80)).toEqual([
@@ -112,6 +88,17 @@ describe("Renderer.renderBorderedResult", () => {
       " │ > src/file.ts:11:matched",
       " │   src/file.ts:12:after",
     ]);
+  });
+
+  test("a collapsed failure draws nothing", () => {
+    const component = Renderer.renderErrorResult({
+      result: textResult("boom\nstack"),
+      options: { expanded: false, isPartial: false },
+      theme: stubTheme,
+      context: { ...rendererContext, isError: true },
+    });
+
+    expect(component.render(80)).toEqual([]);
   });
 });
 

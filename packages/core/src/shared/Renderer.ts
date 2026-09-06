@@ -13,8 +13,6 @@ import {
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 
-import { Lines } from "./Lines";
-
 export type RenderContext = {
   readonly lastComponent: Component | undefined;
   readonly isPartial: boolean;
@@ -365,22 +363,24 @@ function makeMarkdownBlock(args: {
   };
 }
 
-function renderBorderedResult(args: {
+/**
+ * The gutter body of a failed call. Like every other row it stays shut until
+ * the row is expanded, and once opened it shows the failure whole: an error is
+ * read to be acted on, and a stack trace cut off at its tenth line is the part
+ * that says least.
+ */
+function renderErrorResult(args: {
   readonly result: AgentToolResult<unknown>;
   readonly options: ToolRenderResultOptions;
   readonly theme: Theme;
   readonly context: RenderContext;
-  readonly previewLines: number;
 }): Container {
-  const { result, options, theme, context, previewLines } = args;
+  const { result, options, theme, context } = args;
   const container =
     (context.lastComponent as Container | undefined) ?? new Container();
   container.clear();
 
-  if (options.isPartial) {
-    return container;
-  }
-  if (!context.isError && !options.expanded) {
+  if (options.isPartial || !options.expanded) {
     return container;
   }
 
@@ -389,26 +389,14 @@ function renderBorderedResult(args: {
     return container;
   }
 
-  const lineColor = context.isError ? "error" : "toolOutput";
-  const block = (text: string): Component =>
+  container.addChild(
     makePrefixedBlock({
-      text,
+      text: body,
       theme,
       prefix: GAPPED_PREFIX,
-      lineColor,
-    });
-
-  if (options.expanded) {
-    container.addChild(block(body));
-  } else {
-    const { preview, overflow } = Lines.buildPreviewLines(body, previewLines);
-    if (preview) {
-      container.addChild(block(preview));
-    }
-    if (overflow > 0) {
-      container.addChild(block(`… ${overflow} more lines`));
-    }
-  }
+      lineColor: "error",
+    })
+  );
 
   container.invalidate();
   return container;
@@ -420,7 +408,6 @@ export const Renderer = {
   markerColorFor,
   firstText,
   extractErrorText,
-  buildPreviewLines: Lines.buildPreviewLines,
   toolTitleText,
   makeTitleBlock,
   renderToolCallTitle,
@@ -428,5 +415,5 @@ export const Renderer = {
   makePrefixedBlock,
   markdownLines,
   makeMarkdownBlock,
-  renderBorderedResult,
+  renderErrorResult,
 };

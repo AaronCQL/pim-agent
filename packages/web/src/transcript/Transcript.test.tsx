@@ -117,7 +117,6 @@ describe("static replay of a real session", () => {
     );
 
     expect(diff?.textContent).toContain("  return `Hello, ${name}!`;");
-    // `edit` declares `collapsed: false` for the TUI; the web ignores it.
     expect(diff?.open).toBe(false);
     expect(read?.open).toBe(false);
   });
