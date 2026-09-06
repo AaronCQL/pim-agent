@@ -1,6 +1,6 @@
 import "../test/dom";
 
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { flush } from "solid-js";
 
 import { PROTOCOL_VERSION } from "#protocol/Protocol";
@@ -402,5 +402,156 @@ describe("the read cursor", () => {
         head: 1,
       })
     ).toBe(true);
+  });
+});
+
+describe("drafts", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  /** An unwritten session belongs to the browser, so it is seeded there. */
+  function held(sessionId: string, drafts: Record<string, string> = {}): void {
+    localStorage.setItem(
+      "pim.unwritten",
+      JSON.stringify({ sessionId, cwd: "/repo", sent: false })
+    );
+    localStorage.setItem("pim.drafts", JSON.stringify(drafts));
+  }
+
+  test("one message per session, kept where it was typed", async () => {
+    const target = store();
+    feed(target, attached("s1"));
+    target.setDraftText("half a thought");
+    feed(target, attached("s2"));
+
+    // The box is one box: what it holds is a property of the session
+    // attached, so switching finds the other session's message and not this
+    // one's.
+    expect(target.draftText("s2")).toBe("");
+    target.setDraftText("another one");
+    flush();
+    expect(target.draftText("s1")).toBe("half a thought");
+    expect(target.draftText("s2")).toBe("another one");
+
+    await Promise.resolve();
+    // A reload is another store over the same storage.
+    expect(store().draftText("s1")).toBe("half a thought");
+  });
+
+  test("an emptied box leaves nothing behind", async () => {
+    const target = store();
+    feed(target, attached("s1"));
+    target.setDraftText("typed");
+    target.setDraftText("");
+    flush();
+
+    expect(target.state.drafts).toEqual({});
+    await Promise.resolve();
+    expect(localStorage.getItem("pim.drafts")).toBe("{}");
+  });
+
+  test("a new chat is a row only once there is something in it", () => {
+    held("d1");
+    const target = store();
+    feed(target, attached("d1"));
+
+    // An empty composer is not a conversation: there is nothing to name the
+    // row and nothing in it to come back to.
+    expect(target.unwrittenSummary()).toBeUndefined();
+
+    target.setDraftText("rework the sidebar");
+    flush();
+    expect(target.unwrittenSummary()).toEqual({
+      sessionId: "d1",
+      cwd: "/repo",
+      title: "rework the sidebar",
+    });
+
+    // And the row goes with the message that drew it.
+    target.setDraftText("");
+    flush();
+    expect(target.unwrittenSummary()).toBeUndefined();
+  });
+
+  test("a sent message keeps the row the listing still cannot draw", async () => {
+    held("d1");
+    const target = store();
+    target.client.send = async () => ({
+      type: "response",
+      id: "1",
+      success: true,
+    });
+    feed(target, attached("d1"));
+    target.setDraftText("say hello");
+    flush();
+
+    await target.prompt("say hello");
+    flush();
+
+    // Empty box, and a row named by what was sent rather than by what is
+    // typed — pi has not written the log yet, so nothing else can draw one.
+    expect(target.draftText("d1")).toBe("");
+    expect(target.unwrittenSummary()).toEqual({
+      sessionId: "d1",
+      cwd: "/repo",
+      title: "say hello",
+    });
+  });
+
+  test("the row stops being drawn once the directory can answer for it", async () => {
+    held("d1", { d1: "typed" });
+    const target = store();
+    target.client.send = async () => ({
+      type: "response",
+      id: "1",
+      success: true,
+      sessions: [
+        { sessionId: "d1", cwd: "/repo", createdAt: 0, modifiedAt: 5, head: 2 },
+      ],
+    });
+
+    await target.listSessions();
+    flush();
+
+    expect(target.unwrittenSummary()).toBeUndefined();
+    await Promise.resolve();
+    expect(localStorage.getItem("pim.unwritten")).toBeNull();
+    // The message typed into it is untouched: the session it belongs to is a
+    // listed one now, and the box it is waiting in is the same box.
+    expect(target.draftText("d1")).toBe("typed");
+  });
+
+  test("a session the gateway has forgotten is replaced, message and all", async () => {
+    held("gone", { gone: "still typed" });
+    const target = store();
+    // An unwritten session has no file, so a gateway that restarted since
+    // cannot resume it: the id is refused and the reload would otherwise
+    // land nowhere.
+    target.client.connect = async () => ({
+      type: "response",
+      id: "1",
+      success: false,
+      error: "no such session",
+    });
+    target.client.attachTo = async () => {
+      target.ingest(attached("fresh"));
+      return { type: "response", id: "2", success: true };
+    };
+
+    await target.connect();
+    flush();
+
+    expect(target.state.sessionId).toBe("fresh");
+    expect(target.draftText("gone")).toBe("");
+    expect(target.draftText("fresh")).toBe("still typed");
+    expect(target.unwrittenSummary()).toEqual({
+      sessionId: "fresh",
+      cwd: "/repo",
+      title: "still typed",
+    });
   });
 });

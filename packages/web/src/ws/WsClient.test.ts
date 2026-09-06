@@ -307,3 +307,51 @@ test("the model catalogue is asked for once and switching it lands on state", as
   await store.setModel("test/echo");
   await until(() => store.state.model === "test/echo", "the model on state");
 });
+
+test("a new chat is the browser's alone until pi writes its first line", async () => {
+  const store = await connect();
+  const first = store.state.sessionId;
+  // The session a fresh tab is given is a new chat like any other: nothing
+  // has been written to it, so nothing but this browser knows it exists —
+  // and with an empty composer there is nothing to draw a row with either.
+  expect(store.unwrittenSummary()).toBeUndefined();
+  expect(
+    (await store.listSessions()).map((row) => row.sessionId)
+  ).not.toContain(first);
+
+  store.setDraftText("say hello");
+  flush();
+  expect(store.unwrittenSummary()).toEqual({
+    sessionId: first,
+    cwd: harness.tmp,
+    title: "say hello",
+  });
+
+  // Asking for a new chat while holding one is a request to go back to it.
+  await store.newSession(harness.tmp);
+  expect(store.state.sessionId).toBe(first);
+
+  await store.prompt("say hello");
+  flush();
+  // Sent: the box is empty and the row keeps its place, named by the message
+  // that went out, for as long as the directory cannot answer for it.
+  expect(store.draftText(first)).toBe("");
+  expect(store.unwrittenSummary()).toEqual({
+    sessionId: first,
+    cwd: harness.tmp,
+    title: "say hello",
+  });
+  await idle(store);
+
+  const listed = await store.listSessions();
+  flush();
+  expect(listed.map((row) => row.sessionId)).toContain(first);
+  // A second row for a session the listing has would be the same
+  // conversation twice.
+  expect(store.unwrittenSummary()).toBeUndefined();
+
+  // A conversation, so a new chat is a new session now.
+  await store.newSession(harness.tmp);
+  await until(() => store.state.sessionId !== first, "a second session");
+  expect(store.state.unwritten?.sessionId).toBe(store.state.sessionId);
+});

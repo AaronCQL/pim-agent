@@ -1,4 +1,13 @@
-import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  Match,
+  onCleanup,
+  Show,
+  Switch,
+} from "solid-js";
 
 import type { SessionSummaryView } from "#protocol/ServerEvent";
 // The one place the distribution's own version reaches the browser. Vite and
@@ -7,6 +16,7 @@ import { version } from "../../../../package.json";
 import type { SessionStore } from "../session/SessionStore";
 import type { ConnectionStatus } from "../ws/WsClient";
 import { abbreviateHome, relativeTime } from "../format";
+import { Spinner } from "../ui/Spinner";
 
 const CONNECTION_CLASSES: Record<ConnectionStatus, string> = {
   connecting: "text-amber-400",
@@ -16,9 +26,27 @@ const CONNECTION_CLASSES: Record<ConnectionStatus, string> = {
 };
 
 /**
+ * One row, from either source: the server's listing or the unwritten session
+ * only this browser knows about, which is what `listed: undefined` means: no
+ * age, because nothing has been written for a clock to measure, and no head
+ * to have gone unread.
+ */
+type Row = {
+  readonly sessionId: string;
+  readonly cwd: string;
+  readonly title: string | undefined;
+  readonly listed: SessionSummaryView | undefined;
+};
+
+/**
  * The session list, read straight off the server's sessions directory: there
  * is no index and no metadata store on either side, so a session the TUI
  * started shows up here with no synchronisation at all.
+ *
+ * Which is also why the unwritten session is passed in beside it rather than
+ * found there: a session with no line written has no file to be listed, so
+ * without a row of its own a new chat would be invisible until its first
+ * reply landed.
  *
  * Switching re-attaches the existing socket at `fromSeq: 0`; the connection
  * outlives the session it points at, and every session outlives every
@@ -63,10 +91,41 @@ export function Sidebar(props: {
     }
   );
 
+  // The unwritten session goes on top: it is the newest thing there is, and
+  // the list is most-recent-first. It is dropped the moment the listing can
+  // answer for it, which is the one frame where both sources describe the
+  // same session.
+  //
+  // Which rows there are, and nothing about what is on them: the marks are
+  // read per row in the JSX, so a keystroke or a read cursor moving does not
+  // rebuild the list.
+  const rows = createMemo<readonly Row[]>(() => {
+    const listed = sessions().map((session) => ({
+      sessionId: session.sessionId,
+      cwd: session.cwd,
+      title: session.title,
+      listed: session,
+    }));
+    const held = props.store.unwrittenSummary();
+    if (!held || listed.some((row) => row.sessionId === held.sessionId)) {
+      return listed;
+    }
+    return [{ ...held, listed: undefined }, ...listed];
+  });
+
   const go = (run: () => Promise<void>): void => {
     props.onNavigate?.();
-    void run();
+    // A refused attach is already on `state.error`, where the shell paints
+    // it; there is nothing left here but an unhandled rejection.
+    void run().catch(() => undefined);
   };
+
+  // Undefined only for the unwritten session: it has no line on disk, so
+  // there is no modified time for the clock to measure it against.
+  const age = (row: Row): string | undefined =>
+    row.listed === undefined
+      ? undefined
+      : relativeTime(row.listed.modifiedAt, now());
 
   return (
     <div class="flex h-full flex-col bg-neutral-950">
@@ -92,10 +151,10 @@ export function Sidebar(props: {
 
       <ul class="min-h-0 flex-1 space-y-2 overflow-y-auto px-3">
         <Show
-          when={sessions().length > 0}
+          when={rows().length > 0}
           fallback={<li class="text-sm text-neutral-500">No sessions yet.</li>}
         >
-          <For each={sessions()}>
+          <For each={rows()}>
             {(session) => (
               <li>
                 <button
@@ -112,22 +171,48 @@ export function Sidebar(props: {
                   }}
                 >
                   <div class="flex items-center justify-between gap-2">
-                    {/* A session is named by its opening message; one that
-                        has none on disk yet has only its id. */}
+                    {/* A session is named by its opening message — the
+                        unwritten one by the message it is about to send. One
+                        with neither has only its id. */}
                     <div class="truncate font-semibold">
                       {session.title ?? session.sessionId.slice(0, 8)}
                     </div>
-                    <Show when={props.store.isUnread(session)}>
+                    <Show
+                      when={
+                        session.listed && props.store.isUnread(session.listed)
+                      }
+                    >
                       <div
                         class="size-1.5 shrink-0 rounded-full bg-indigo-400"
                         aria-label="Unread"
                       />
                     </Show>
                   </div>
-                  <div class="flex justify-between gap-6 text-neutral-400">
+                  <div class="flex items-center justify-between gap-6 text-neutral-400">
                     <div class="truncate">{abbreviateHome(session.cwd)}</div>
-                    <div class="shrink-0">
-                      {relativeTime(session.modifiedAt, now())}
+                    {/* The pencil marks a message typed here and not sent,
+                        which is true of a row whatever its age; the slot
+                        beside it holds one of two, since a turn in flight
+                        says everything an age would and an age is a lie
+                        about a session that has never been written to. */}
+                    <div class="flex shrink-0 items-center gap-1.5">
+                      <Show
+                        when={props.store.draftText(session.sessionId) !== ""}
+                      >
+                        <span
+                          class="i-griddy-icons:edit size-3 text-amber-400"
+                          aria-label="Unsent draft"
+                          title="Unsent draft"
+                        />
+                      </Show>
+                      <Switch>
+                        <Match when={running(props.store, session)}>
+                          <Spinner />
+                        </Match>
+                        <Match when={age(session)}>
+                          {(shown) => <span>{shown()}</span>}
+                        </Match>
+                      </Switch>
                     </div>
                   </div>
                 </button>
@@ -152,4 +237,13 @@ export function Sidebar(props: {
 
 function hostOf(url: string): string {
   return URL.parse(url)?.host ?? url;
+}
+
+/**
+ * Whether this row's agent is working. Only the attached session reports a
+ * status to this browser, so a session the terminal is driving sits still
+ * here until its next listing.
+ */
+function running(store: SessionStore, row: Row): boolean {
+  return row.sessionId === store.state.sessionId && store.isBusy();
 }

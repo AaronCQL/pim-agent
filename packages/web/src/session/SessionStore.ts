@@ -64,6 +64,34 @@ type OptimisticMessage = {
 };
 
 /**
+ * A session this client made and the server has not written a line of yet, so
+ * it exists in the gateway's memory and nowhere else: the sessions directory
+ * cannot list it, which is why the sidebar is handed it separately.
+ */
+export type Unwritten = {
+  readonly sessionId: string;
+  readonly cwd: string;
+  /**
+   * A message has gone out, so it is a conversation now and only the listing
+   * is behind. The row stays until the directory can answer for it, but a new
+   * chat asked for from here is a new session rather than a return to this
+   * one.
+   */
+  readonly sent: boolean;
+};
+
+/**
+ * The unwritten session as the sidebar paints it: one row the listing has no
+ * answer for. Titled like any other row — by the message the conversation
+ * opens with — which here is the one still sitting in the composer.
+ */
+export type UnwrittenSummary = {
+  readonly sessionId: string;
+  readonly cwd: string;
+  readonly title: string | undefined;
+};
+
+/**
  * Store state is a draft the setter mutates, so its fields are deliberately
  * mutable; consumers only ever see it through the readonly `Store<T>` view.
  */
@@ -98,6 +126,14 @@ export type SessionState = {
   error: string | undefined;
   /** Highest durable seq this browser has painted, per session. */
   seen: Record<string, number>;
+  /**
+   * The composer's unsent message, per session. The box belongs to the
+   * session it is typed into rather than to the page, so switching swaps
+   * what is in it and leaves the other message where it was written.
+   */
+  drafts: Record<string, string>;
+  /** The one session with no file yet, if this browser is holding one. */
+  unwritten: Unwritten | undefined;
 };
 
 export type SessionStoreOptions = {
@@ -118,6 +154,15 @@ const COMMAND_PICKER_LIMIT = 20;
  * has its own answer — so it is stored here and never sent.
  */
 const SEEN_KEY = "pim.seen";
+
+/**
+ * Where the unsent messages and the id of the unwritten session live across a
+ * reload. Local to this browser for the same reason the read cursor is: an
+ * unsent message is not part of the conversation, and no other client has any
+ * business seeing it.
+ */
+const DRAFTS_KEY = "pim.drafts";
+const UNWRITTEN_KEY = "pim.unwritten";
 
 /**
  * Everything the browser knows about one session, and the only place an
@@ -143,14 +188,37 @@ export class SessionStore {
    * the guard and the persisted value are taken from here.
    */
   private readonly seen: Record<string, number>;
-  private persisting = false;
+  /** The unsent messages, synchronously, for the same reason as `seen`. */
+  private readonly drafts: Record<string, string>;
+  /**
+   * Pending `localStorage` writes, one per key. Both things stored here move
+   * far faster than a reload can read them — the cursor once per replayed
+   * event, the draft once per keystroke — and `localStorage` is synchronous
+   * disk, so the writes are coalesced onto the next microtask: what a reload
+   * needs is where a value ended up, not each place it passed through.
+   */
+  private readonly writes = new Map<string, () => string | undefined>();
+  /**
+   * The unsent message waiting for a session to belong to, held while an
+   * attach for a *new* chat is in flight. Id and cwd are the server's to
+   * assign, so the draft is recorded where they arrive — the `attached`
+   * frame — rather than read back out of a store that settles its writes on
+   * its own schedule.
+   */
+  private claimed: string | undefined;
 
   public constructor(options: SessionStoreOptions) {
     const seen = readSeen();
+    const drafts = readDrafts();
+    // An unwritten session has no file, so nothing but this browser remembers
+    // it; resuming it is the whole reason the id was written down.
+    const unwritten = readUnwritten();
+    const sessionId = options.sessionId ?? unwritten?.sessionId;
+    const cwd = options.cwd ?? unwritten?.cwd;
     const [state, setState] = createStore<SessionState>({
       connection: "closed",
       sessionId: "",
-      cwd: options.cwd ?? "",
+      cwd: cwd ?? "",
       model: "",
       modelLabel: "",
       thinking: "",
@@ -170,16 +238,21 @@ export class SessionStore {
       stats: undefined,
       error: undefined,
       seen: { ...seen },
+      drafts: { ...drafts },
+      unwritten,
     });
     this.seen = seen;
+    this.drafts = drafts;
+    // Nothing to attach to means the server is about to make a session, and
+    // a session made for this browser with nothing in it is a draft — the
+    // first chat of a fresh tab belongs in the sidebar like any other.
+    this.claimed = sessionId === undefined ? "" : undefined;
     this.state = state;
     this.setState = setState;
     this.client = new WsClient({
       url: options.url,
-      ...(options.sessionId === undefined
-        ? {}
-        : { sessionId: options.sessionId }),
-      ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+      ...(sessionId === undefined ? {} : { sessionId }),
+      ...(cwd === undefined ? {} : { cwd }),
       ...(options.backoffMs === undefined
         ? {}
         : { backoffMs: options.backoffMs }),
@@ -200,9 +273,18 @@ export class SessionStore {
 
   public async connect(): Promise<void> {
     const response = await this.client.connect();
-    if (!response.success) {
+    if (response.success) {
+      return;
+    }
+    const unwritten = this.state.unwritten;
+    // The refused session is the unwritten one this browser was holding: it
+    // only ever existed in a gateway that has since restarted, and a session
+    // with no file cannot be resumed from one. Anything else refused is a
+    // refusal the caller asked for and has to hear about.
+    if (!unwritten || this.client.sessionId !== unwritten.sessionId) {
       throw new Error(response.error ?? "attach was refused");
     }
+    await this.restart(unwritten);
   }
 
   public dispose(): void {
@@ -258,6 +340,7 @@ export class SessionStore {
       draft.optimistic.push({ id, text: trimmed });
       draft.error = undefined;
     });
+    this.spendDraft();
     const refs: readonly AttachmentRef[] = attachments.map(({ id: ref }) => ({
       id: ref,
     }));
@@ -321,7 +404,125 @@ export class SessionStore {
     const response = await this.client
       .send({ type: "list_sessions", ...(cwd === undefined ? {} : { cwd }) })
       .catch(() => undefined);
-    return response?.sessions ?? [];
+    const sessions = response?.sessions ?? [];
+    // Pi has written the session's first line, so the directory answers for
+    // it now and the synthetic row would be a second copy of a real one.
+    const unwritten = this.state.unwritten;
+    if (
+      unwritten &&
+      sessions.some(({ sessionId }) => sessionId === unwritten.sessionId)
+    ) {
+      this.setUnwritten(undefined);
+    }
+    return sessions;
+  }
+
+  /**
+   * The row the server's listing cannot produce. Titled by the unsent
+   * message while there is one, and by the message that was sent once the
+   * turn is running — the same rule the listing itself uses, applied to a
+   * session whose first line has not reached disk yet.
+   *
+   * A new chat nobody has typed into yet gets no row at all: an empty
+   * composer is not a conversation, and a row for it would be the sidebar
+   * listing the button that made it.
+   */
+  public unwrittenSummary(): UnwrittenSummary | undefined {
+    const unwritten = this.state.unwritten;
+    if (!unwritten) {
+      return undefined;
+    }
+    const written = this.openingText(unwritten);
+    const typed = this.draftText(unwritten.sessionId).trim();
+    if (typed === "" && written === undefined && !unwritten.sent) {
+      return undefined;
+    }
+    return {
+      sessionId: unwritten.sessionId,
+      cwd: unwritten.cwd,
+      title: typed || written,
+    };
+  }
+
+  /** The unsent message typed into a session; empty when there is none. */
+  public draftText(sessionId: string): string {
+    return this.state.drafts[sessionId] ?? "";
+  }
+
+  /**
+   * Mirrors the composer's unsent message onto the session it is being typed
+   * into. Which session that is, is the store's answer and not the box's:
+   * the composer is one box shared by every session.
+   */
+  public setDraftText(text: string): void {
+    this.putDraft(this.state.sessionId, text);
+  }
+
+  private putDraft(sessionId: string, text: string): void {
+    if (sessionId === "" || (this.drafts[sessionId] ?? "") === text) {
+      return;
+    }
+    // An empty draft is no draft, and deleting rather than storing `""` is
+    // what keeps this from growing one entry per session ever opened.
+    if (text === "") {
+      delete this.drafts[sessionId];
+    } else {
+      this.drafts[sessionId] = text;
+    }
+    this.setState((state) => {
+      if (text === "") {
+        delete state.drafts[sessionId];
+      } else {
+        state.drafts[sessionId] = text;
+      }
+    });
+    this.persist(DRAFTS_KEY, () => JSON.stringify(this.drafts));
+  }
+
+  /**
+   * The message is on its way, so the box it left is empty. An unwritten
+   * session keeps its row — nothing else can draw one until pi has written
+   * the log — but it is a conversation from here, named by what was sent
+   * rather than by what is typed.
+   */
+  private spendDraft(): void {
+    this.putDraft(this.state.sessionId, "");
+    const unwritten = this.state.unwritten;
+    if (unwritten && unwritten.sessionId === this.state.sessionId) {
+      this.setUnwritten({ ...unwritten, sent: true });
+    }
+  }
+
+  /**
+   * The message the unwritten session opens with, if it has one. Only the
+   * attached session's content is readable here; one left behind by a switch
+   * has nothing but what was typed into it.
+   */
+  private openingText(unwritten: Unwritten): string | undefined {
+    return unwritten.sessionId === this.state.sessionId
+      ? this.firstUserText()
+      : undefined;
+  }
+
+  private setUnwritten(unwritten: Unwritten | undefined): void {
+    this.setState((state) => {
+      state.unwritten = unwritten;
+    });
+    // Written from the value just set rather than read back at flush time:
+    // a store write lands on its own schedule, and storage must not be told
+    // what state was before it did.
+    const written =
+      unwritten === undefined ? undefined : JSON.stringify(unwritten);
+    this.persist(UNWRITTEN_KEY, () => written);
+  }
+
+  private firstUserText(): string | undefined {
+    for (const event of this.state.durable) {
+      if (event.type === "message" && event.role === "user") {
+        return event.text;
+      }
+    }
+    return this.state.optimistic[0]?.text;
   }
 
   /**
@@ -371,20 +572,36 @@ export class SessionStore {
     this.setState((draft) => {
       draft.seen[sessionId] = seq;
     });
-    this.persistSeen();
+    this.persist(SEEN_KEY, () => JSON.stringify(this.seen));
   }
 
-  private persistSeen(): void {
-    if (this.persisting) {
+  /**
+   * Queues one key's write. The value is a thunk so a caller whose value is
+   * expensive — the read cursor, re-serialised once per replayed event —
+   * pays for the write that actually happens rather than for each one
+   * coalesced away. `undefined` removes the key.
+   */
+  private persist(key: string, value: () => string | undefined): void {
+    const flushing = this.writes.size > 0;
+    this.writes.set(key, value);
+    if (flushing) {
       return;
     }
-    this.persisting = true;
     queueMicrotask(() => {
-      this.persisting = false;
-      try {
-        localStorage.setItem(SEEN_KEY, JSON.stringify(this.seen));
-      } catch {
-        // Private mode, a full quota, or no storage at all: unread is a nicety.
+      const pending = [...this.writes];
+      this.writes.clear();
+      for (const [name, read] of pending) {
+        const written = read();
+        try {
+          if (written === undefined) {
+            localStorage.removeItem(name);
+          } else {
+            localStorage.setItem(name, written);
+          }
+        } catch {
+          // Private mode, a full quota, or no storage at all. Both of these
+          // are niceties: unread marks and a message that survives a reload.
+        }
       }
     });
   }
@@ -409,8 +626,49 @@ export class SessionStore {
     await this.attach({ sessionId });
   }
 
+  /**
+   * A second press while a new chat is open is not a second session: there is
+   * one unwritten session at a time, and asking for a new chat while holding
+   * one is a request to go back to it.
+   */
   public async newSession(cwd?: string): Promise<void> {
-    await this.attach(cwd === undefined ? {} : { cwd });
+    const unwritten = this.state.unwritten;
+    if (
+      unwritten &&
+      !unwritten.sent &&
+      this.openingText(unwritten) === undefined
+    ) {
+      await this.switchTo(unwritten.sessionId).catch(async () => {
+        await this.restart(unwritten);
+      });
+      return;
+    }
+    await this.startDraft("", cwd);
+  }
+
+  /**
+   * The gateway has forgotten the unwritten session — it restarted under us —
+   * so the id is gone and only the message typed into it is worth carrying
+   * into its replacement.
+   */
+  private async restart(unwritten: Unwritten): Promise<void> {
+    const typed = this.draftText(unwritten.sessionId);
+    this.putDraft(unwritten.sessionId, "");
+    await this.startDraft(typed, unwritten.cwd);
+  }
+
+  /** Attaches to a session the server is about to make, and claims it. */
+  private async startDraft(
+    text: string,
+    cwd: string | undefined
+  ): Promise<void> {
+    this.claimed = text;
+    try {
+      await this.attach(cwd ? { cwd } : {});
+    } catch (error) {
+      this.claimed = undefined;
+      throw error;
+    }
   }
 
   /**
@@ -423,10 +681,18 @@ export class SessionStore {
       draft.loading = true;
     });
     try {
-      await this.client.attachTo(target);
+      const response = await this.client.attachTo(target);
+      if (!response.success) {
+        throw new Error(response.error ?? "attach was refused");
+      }
     } catch (error) {
+      // Reported here rather than by the caller: every one of them is a
+      // click, and a click has nowhere to put an exception. The `attached`
+      // frame clears it, so an attach that recovers by making another
+      // session leaves nothing behind.
       this.setState((draft) => {
         draft.loading = false;
+        draft.error = (error as Error).message;
       });
       throw error;
     }
@@ -487,6 +753,17 @@ export class SessionStore {
           draft.live = [];
           draft.error = undefined;
         });
+        // A chat the reader just started: the server has named it, so the
+        // message typed into it now has somewhere to live.
+        if (this.claimed !== undefined) {
+          this.setUnwritten({
+            sessionId: event.sessionId,
+            cwd: event.cwd,
+            sent: false,
+          });
+          this.putDraft(event.sessionId, this.claimed);
+          this.claimed = undefined;
+        }
         // Attaching is reading: the replay that follows this frame paints
         // everything up to `head`.
         this.markSeen(event.sessionId, event.head);
@@ -656,10 +933,29 @@ function liveMessage(live: LiveMessage[], messageId: string): LiveMessage {
 }
 
 function readSeen(): Record<string, number> {
+  return readRecord<number>(SEEN_KEY);
+}
+
+function readDrafts(): Record<string, string> {
+  return readRecord<string>(DRAFTS_KEY);
+}
+
+/** Anything storage has none of, or has nonsense in, reads as empty. */
+function readRecord<T>(key: string): Record<string, T> {
   try {
-    const raw = localStorage.getItem(SEEN_KEY);
-    return raw === null ? {} : (JSON.parse(raw) as Record<string, number>);
+    const raw = localStorage.getItem(key);
+    return raw === null ? {} : (JSON.parse(raw) as Record<string, T>);
   } catch {
     return {};
+  }
+}
+
+function readUnwritten(): Unwritten | undefined {
+  try {
+    const raw = localStorage.getItem(UNWRITTEN_KEY);
+    const held = raw === null ? undefined : (JSON.parse(raw) as Unwritten);
+    return typeof held?.sessionId === "string" ? held : undefined;
+  } catch {
+    return undefined;
   }
 }

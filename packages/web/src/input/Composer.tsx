@@ -65,6 +65,17 @@ export function Composer(props: {
   let card!: HTMLDivElement;
   let generation = 0;
 
+  /**
+   * Every write to the message goes through here: the store mirrors it as
+   * the session's draft, so a box that changed without telling it would lose
+   * the message on the next switch and leave the sidebar naming a row after
+   * one that is no longer typed.
+   */
+  function edit(next: string): void {
+    setText(next);
+    props.store.setDraftText(next);
+  }
+
   const token = createMemo(() => activeToken(text(), caret()));
   const key = createMemo(() => tokenKey(token()));
   const open = createMemo(() => key() !== "" && dismissed() !== key());
@@ -94,6 +105,30 @@ export function Composer(props: {
     () => key(),
     (current) => {
       void refine(current);
+    }
+  );
+
+  /**
+   * The box belongs to the session, not to the page: what is in it is the
+   * draft of whichever session is attached, so a switch swaps it — and a
+   * reload finds the unsent message where it was left rather than only in
+   * the sidebar row it names. The textarea is uncontrolled, so the swap is
+   * written into the element like every other write to it.
+   *
+   * Attachments do not come along. They were uploaded against the session
+   * being left, and the ids the server answered with mean nothing to
+   * another one.
+   */
+  createEffect(
+    () => props.store.state.sessionId,
+    (sessionId) => {
+      const held = props.store.draftText(sessionId);
+      setText(held);
+      setCaret(held.length);
+      setItems([]);
+      setDismissed("");
+      setAttachments([]);
+      input.value = held;
     }
   );
 
@@ -136,7 +171,7 @@ export function Composer(props: {
       return;
     }
     const completion = applyCompletion(text(), caret(), active, item);
-    setText(completion.text);
+    edit(completion.text);
     setCaret(completion.caret);
     setDismissed(
       completion.keepOpen
@@ -149,7 +184,7 @@ export function Composer(props: {
   }
 
   function track(): void {
-    setText(input.value);
+    edit(input.value);
     setCaret(input.selectionStart ?? input.value.length);
   }
 
@@ -172,6 +207,9 @@ export function Composer(props: {
       return;
     }
     setText("");
+    // Not `edit`: the store empties the session's draft itself when the
+    // message is handed to it, and it is the store that decides what the row
+    // is called from there on.
     setCaret(0);
     setAttachments([]);
     setItems([]);

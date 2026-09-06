@@ -1,9 +1,10 @@
 import "../test/dom";
 
 import { render } from "@solidjs/web";
-import { expect, jest, setSystemTime, test } from "bun:test";
+import { beforeEach, expect, jest, setSystemTime, test } from "bun:test";
 import { flush } from "solid-js";
 
+import { PROTOCOL_VERSION } from "#protocol/Protocol";
 import type { SessionSummaryView } from "#protocol/ServerEvent";
 import { SessionStore } from "../session/SessionStore";
 import { mountPoint } from "../test/dom";
@@ -34,6 +35,7 @@ function paint(
 ): {
   readonly host: HTMLElement;
   readonly switched: string[];
+  readonly store: SessionStore;
 } {
   // The read cursor is this browser's, so it is seeded where it lives.
   localStorage.setItem("pim.seen", JSON.stringify(seen ?? {}));
@@ -49,8 +51,24 @@ function paint(
     host
   );
   flush();
-  return { host, switched };
+  return { host, switched, store };
 }
+
+/** Both live in the browser, so both are seeded where the browser keeps them. */
+function draft(sessionId: string, text: string): void {
+  localStorage.setItem("pim.drafts", JSON.stringify({ [sessionId]: text }));
+}
+
+function unwritten(sessionId: string): void {
+  localStorage.setItem(
+    "pim.unwritten",
+    JSON.stringify({ sessionId, cwd: "/home/ada/dev/pim", sent: false })
+  );
+}
+
+beforeEach(() => {
+  localStorage.clear();
+});
 
 test("one flat row per session: name, cwd and how long ago", async () => {
   const { host } = paint();
@@ -129,4 +147,91 @@ test("the server row names the host and tints itself with the connection", () =>
 
   expect(host.textContent).toContain("127.0.0.1:1");
   expect(host.innerHTML).toContain("text-rose-400");
+});
+
+test("a new chat is a row before it is a file, marked and ageless", async () => {
+  unwritten("draft-1");
+  draft("draft-1", "rework the sidebar");
+  const { host } = paint();
+  await Bun.sleep(0);
+  flush();
+
+  const rows = [...host.querySelectorAll("li")];
+  // Newest first, and nothing is newer than the chat being started.
+  expect(rows).toHaveLength(3);
+  // Named by the message it is about to send, exactly as a written session is
+  // named by the one it did.
+  expect(rows[0]?.textContent).toContain("rework the sidebar");
+  // An amber pencil and nothing else: the row it sits on is the selected
+  // one, whose fill the old neutral pill was painted in.
+  expect(rows[0]?.textContent).not.toContain("draft");
+  expect(rows[0]?.innerHTML).toContain("i-griddy-icons:edit");
+  expect(rows[0]?.innerHTML).toContain("text-amber-400");
+  // No age: nothing has been written for a clock to measure.
+  expect(rows[0]?.textContent).not.toMatch(/\d+[smhd]/);
+});
+
+test("a new chat nobody has typed into is not a row at all", async () => {
+  unwritten("draft-1");
+  const { host } = paint();
+  await Bun.sleep(0);
+  flush();
+
+  // Two, not three: an empty composer is not a conversation.
+  expect(host.querySelectorAll("li")).toHaveLength(2);
+  expect(host.innerHTML).not.toContain("i-griddy-icons:edit");
+});
+
+test("the pencil follows the message, onto a listed session's row", async () => {
+  draft("bbbbbbbb-2222", "not sent yet");
+  const { host } = paint();
+  await Bun.sleep(0);
+  flush();
+
+  const rows = [...host.querySelectorAll("li")];
+  expect(rows[0]?.innerHTML).not.toContain("i-griddy-icons:edit");
+  // Beside the age, not instead of it: a session on disk has both to say.
+  expect(rows[1]?.innerHTML).toContain("i-griddy-icons:edit");
+  expect(rows[1]?.textContent).toMatch(/\d+[smhd]/);
+});
+
+test("the unwritten row gives way to the real one, never doubles it", async () => {
+  unwritten("aaaaaaaa-1111");
+  draft("aaaaaaaa-1111", "already on disk");
+  const { host } = paint();
+  await Bun.sleep(0);
+  flush();
+
+  const rows = [...host.querySelectorAll("li")];
+  expect(rows).toHaveLength(2);
+  expect(rows[0]?.textContent).toContain("Modernise the string building");
+});
+
+test("a running turn spins where the age would be", async () => {
+  const { host, store } = paint();
+  await Bun.sleep(0);
+  flush();
+  expect(host.innerHTML).not.toContain("animate-spin");
+
+  store.ingest({
+    type: "attached",
+    protocolVersion: PROTOCOL_VERSION,
+    sessionId: "aaaaaaaa-1111",
+    cwd: "/home/ada/dev/pim",
+    head: 12,
+  });
+  store.ingest({
+    type: "session_state",
+    cwd: "/home/ada/dev/pim",
+    model: "m",
+    thinking: "off",
+    cost: 0,
+    status: "thinking",
+  });
+  flush();
+
+  const row = host.querySelector("li")!;
+  expect(row.innerHTML).toContain("animate-spin");
+  // The mark stands in for the age rather than beside it.
+  expect(row.textContent).not.toMatch(/\d+[smhd]/);
 });

@@ -21,6 +21,12 @@ function attached(sessionId = "s1"): ServerEvent {
   };
 }
 
+// Each test is its own browser: a draft outlives a tab by design, so the
+// storage it lives in must not outlive the test that wrote it.
+beforeEach(() => {
+  localStorage.clear();
+});
+
 function paint(store: SessionStore): HTMLElement {
   const host = mountPoint();
   render(() => <Shell store={store} />, host);
@@ -301,7 +307,10 @@ describe("the shell, painted from events alone", () => {
     });
     void store.switchTo("s2");
     flush();
-    expect(host.textContent).not.toContain("the session being left");
+    // The transcript alone: the sidebar goes on naming the session that was
+    // left, which is the point of a sidebar.
+    const transcript = host.querySelector("div.overflow-y-auto")!;
+    expect(transcript.textContent).not.toContain("the session being left");
 
     store.ingest(attached("s2"));
     store.ingest({
@@ -333,6 +342,27 @@ describe("the shell, painted from events alone", () => {
     flush();
 
     expect(host.textContent).toContain("provider said no");
+  });
+
+  test("the box belongs to the session, and keeps what was left in it", () => {
+    const store = offline();
+    const host = paint(store);
+    store.ingest(attached("s1"));
+    flush();
+    const input = host.querySelector("textarea")!;
+    type(input, "half a thought");
+
+    // Another session is another box: this one has never been typed into.
+    store.ingest(attached("s2"));
+    flush();
+    expect(input.value).toBe("");
+    type(input, "and something else");
+
+    // And back, to the message exactly as it was left.
+    store.ingest(attached("s1"));
+    flush();
+    expect(input.value).toBe("half a thought");
+    expect(store.draftText("s2")).toBe("and something else");
   });
 
   test("sending re-pins the transcript to its end", () => {
