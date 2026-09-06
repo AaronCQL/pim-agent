@@ -13,10 +13,9 @@ import { Skeleton } from "./transcript/Skeleton";
 import { Transcript } from "./transcript/Transcript";
 import { Topbar } from "./topbar/Topbar";
 import { Drawer } from "./ui/Drawer";
+import { createMediaQuery, DESKTOP } from "./ui/media";
 
 const DEFAULT_PORT = 4319;
-/** `md`, the one breakpoint that decides drawer or column. */
-const DESKTOP = "(min-width: 48rem)";
 /** How far off the end still counts as reading the end, in pixels. */
 const SLACK = 40;
 
@@ -278,24 +277,4 @@ function observeHeight(
   onCleanup(() => {
     observer.disconnect();
   });
-}
-
-/**
- * A media query as a signal. Not persisted and not a preference — it is what
- * the viewport currently is, which is why resizing a desktop window narrow
- * hands the sidebar to the drawer without a reload.
- */
-function createMediaQuery(query: string): () => boolean {
-  const list = globalThis.matchMedia?.(query);
-  const [matches, setMatches] = createSignal(list?.matches ?? true);
-  if (list) {
-    const onChange = (event: MediaQueryListEvent): void => {
-      setMatches(event.matches);
-    };
-    list.addEventListener("change", onChange);
-    onCleanup(() => {
-      list.removeEventListener("change", onChange);
-    });
-  }
-  return matches;
 }

@@ -27,6 +27,30 @@ beforeEach(() => {
   localStorage.clear();
 });
 
+let realMatchMedia: typeof globalThis.matchMedia | undefined;
+
+/**
+ * A device whose only keyboard is the one drawn over the page: no hover and
+ * no fine pointer, and so no Shift+Enter for the composer to offer. happy-dom
+ * answers every feature query like a desktop, which is the right default for
+ * every other test here and has to be taken away for these.
+ */
+function softKeyboard(): void {
+  realMatchMedia ??= globalThis.matchMedia;
+  const real = realMatchMedia.bind(globalThis);
+  globalThis.matchMedia = ((query: string) =>
+    query.includes("hover")
+      ? { matches: false, addEventListener() {}, removeEventListener() {} }
+      : real(query)) as typeof globalThis.matchMedia;
+}
+
+afterEach(() => {
+  if (realMatchMedia) {
+    globalThis.matchMedia = realMatchMedia;
+    realMatchMedia = undefined;
+  }
+});
+
 function paint(store: SessionStore): HTMLElement {
   const host = mountPoint();
   render(() => <Shell store={store} />, host);
@@ -365,6 +389,59 @@ describe("the shell, painted from events alone", () => {
     expect(store.draftText("s2")).toBe("and something else");
   });
 
+  test("Enter sends where Shift+Enter exists to type the newline", () => {
+    const store = offline();
+    const host = paint(store);
+    store.ingest(attached());
+    flush();
+    const input = host.querySelector("textarea")!;
+
+    type(input, "hello");
+    press(input, "Enter", { shiftKey: true });
+    expect(input.value).toBe("hello");
+
+    press(input, "Enter");
+    flush();
+    expect(input.value).toBe("");
+  });
+
+  test("on a soft keyboard Enter is the newline and a modifier is the send", () => {
+    softKeyboard();
+    const store = offline();
+    const host = paint(store);
+    store.ingest(attached());
+    flush();
+    const input = host.querySelector("textarea")!;
+
+    // Left to the browser, which is what puts the second line in the box.
+    type(input, "hello");
+    expect(press(input, "Enter").defaultPrevented).toBe(false);
+    flush();
+    expect(input.value).toBe("hello");
+
+    // The key is drawn from this hint, so it must not read "send" either.
+    expect(input.getAttribute("enterkeyhint")).toBe("enter");
+
+    // An external keyboard on the same device still has a way through.
+    press(input, "Enter", { metaKey: true });
+    flush();
+    expect(input.value).toBe("");
+  });
+
+  test("the send button sends what Enter no longer does", () => {
+    softKeyboard();
+    const store = offline();
+    const host = paint(store);
+    store.ingest(attached());
+    flush();
+    const input = host.querySelector("textarea")!;
+    type(input, "hello");
+
+    host.querySelector<HTMLButtonElement>('[aria-label="Send"]')!.click();
+    flush();
+    expect(input.value).toBe("");
+  });
+
   test("sending re-pins the transcript to its end", () => {
     const store = offline();
     const host = paint(store);
@@ -513,8 +590,17 @@ function type(input: HTMLTextAreaElement, text: string): void {
   flush();
 }
 
-function press(input: HTMLTextAreaElement, key: string): void {
-  input.dispatchEvent(
-    new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })
-  );
+function press(
+  input: HTMLTextAreaElement,
+  key: string,
+  modifiers: Partial<KeyboardEvent> = {}
+): KeyboardEvent {
+  const event = new KeyboardEvent("keydown", {
+    key,
+    bubbles: true,
+    cancelable: true,
+    ...modifiers,
+  });
+  input.dispatchEvent(event);
+  return event;
 }

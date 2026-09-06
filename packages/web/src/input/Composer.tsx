@@ -8,6 +8,7 @@ import type {
   UploadedAttachment,
 } from "../session/SessionStore";
 import { Combobox, createComboboxNavigation } from "../ui/Combobox";
+import { createMediaQuery, KEYBOARD } from "../ui/media";
 import { Menu } from "../ui/Menu";
 import { ClankChip } from "./ClankChip";
 import { activeToken, applyCompletion, tokenKey } from "./token";
@@ -21,6 +22,21 @@ const CONTEXT_TONES: Record<ContextFill, string> = {
   warn: "text-amber-400",
   full: "text-rose-400",
 };
+
+/**
+ * Whether an Enter is a send or a newline. Same rule on both platforms —
+ * send is whatever the fingers present can actually reach — which reads as
+ * two behaviours because the hardware differs: a modifier always sends, and
+ * bare Enter sends only where Shift+Enter exists to type the newline
+ * instead. A soft keyboard has no modifier at all, so there bare Enter is the
+ * only way to reach a second line and the send button is the only send.
+ */
+function sends(event: KeyboardEvent, keyboard: boolean): boolean {
+  if (event.ctrlKey || event.metaKey) {
+    return true;
+  }
+  return keyboard && !event.shiftKey;
+}
 
 /**
  * The draft, the pickers over it, and the two ways bytes get in.
@@ -55,6 +71,7 @@ export function Composer(props: {
     readonly UploadedAttachment[]
   >([]);
   const [dropping, setDropping] = createSignal(false);
+  const keyboard = createMediaQuery(KEYBOARD);
   const [catalogue, setCatalogue] = createSignal<ModelCatalogue>({
     models: [],
     thinkingLevels: [],
@@ -323,6 +340,9 @@ export function Composer(props: {
           rows={1}
           placeholder="Type your message here"
           aria-label="Message"
+          // A soft keyboard draws this key from the hint, and a Return that
+          // is labelled "send" while it types a newline is a lie.
+          enterkeyhint={keyboard() ? "send" : "enter"}
           class="max-h-50 w-full resize-none bg-transparent outline-none [field-sizing:content] placeholder:text-neutral-500"
           onInput={track}
           onClick={track}
@@ -340,8 +360,8 @@ export function Composer(props: {
             }
             if (
               event.key === "Enter" &&
-              !event.shiftKey &&
-              !event.isComposing
+              !event.isComposing &&
+              sends(event, keyboard())
             ) {
               event.preventDefault();
               void submit();
