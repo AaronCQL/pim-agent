@@ -267,7 +267,7 @@ test("a tool that writes invalidates the picker without a watcher", async () => 
   );
 });
 
-test("stays well under 100ms per keystroke on a repo-sized tree", async () => {
+test("stays well under 50ms per keystroke on a repo-sized tree", async () => {
   await Promise.all(
     Array.from({ length: BIG_TREE_FILES }, (_, i) =>
       Bun.write(
@@ -290,13 +290,18 @@ test("stays well under 100ms per keystroke on a repo-sized tree", async () => {
     expect(items?.length).toBeGreaterThan(0);
   }
 
-  const slowest = Math.max(...warm);
-  // The timings are only worth reading when they are heading for the budget;
-  // printed every run they are a number nobody compares against anything.
-  if (slowest > 50) {
+  // A budget on the slowest of five queries is a budget on the machine's
+  // scheduler: a shared CI core preempts one of them and the run goes red
+  // while nothing regressed. What a regression looks like — an index rebuilt
+  // per keystroke instead of reused — is every query getting slower, so the
+  // median is what carries the claim.
+  const median = warm.toSorted((a, b) => a - b)[Math.floor(warm.length / 2)]!;
+  // Only worth reading on the way to the budget; printed every run it is a
+  // number nobody compares against anything.
+  if (median > 25) {
     console.log(
-      `[picker] ${String(BIG_TREE_FILES)} files: cold ${coldMs.toFixed(1)}ms, warm max ${slowest.toFixed(1)}ms, warm ${warm.map((ms) => ms.toFixed(1)).join("/")}ms`
+      `[picker] ${String(BIG_TREE_FILES)} files: cold ${coldMs.toFixed(1)}ms, warm median ${median.toFixed(1)}ms, warm ${warm.map((ms) => ms.toFixed(1)).join("/")}ms`
     );
   }
-  expect(slowest).toBeLessThan(100);
+  expect(median).toBeLessThan(50);
 });
