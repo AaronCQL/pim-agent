@@ -8,6 +8,7 @@ import type { DurableEvent } from "#protocol/ServerEvent";
 import { clockTime } from "../format";
 import { FIXTURE_EVENTS } from "../replay/fixture";
 import { mountPoint } from "../test/dom";
+import { DIFF_ROW_CLASSES } from "../view/tokens";
 import { Transcript } from "./Transcript";
 import { toRows } from "./rows";
 
@@ -109,7 +110,7 @@ describe("static replay of a real session", () => {
   test("a body sits behind a disclosure, and nothing opens itself", () => {
     const details = [...replay().querySelectorAll("details")];
     const diff = details.find((node) =>
-      node.innerHTML.includes("bg-emerald-500/10")
+      node.innerHTML.includes(DIFF_ROW_CLASSES.added)
     );
     const read = details.find((node) =>
       node.textContent?.includes("export function greet")

@@ -8,7 +8,12 @@ import type { ToolView, ViewBlock } from "#core/view/ViewBlock";
 import { mountPoint } from "../test/dom";
 import { Blocks, Body } from "./Blocks";
 import { ToolCard } from "./ToolCard";
-import { FRAMES, groupByFrame } from "./tokens";
+import {
+  DIFF_EMPHASIS_CLASSES,
+  DIFF_ROW_CLASSES,
+  FRAMES,
+  groupByFrame,
+} from "./tokens";
 
 function paint(blocks: readonly ViewBlock[]): string {
   const host = mountPoint();
@@ -141,8 +146,8 @@ describe("ViewBlock HTML painter", () => {
 
     expect(host.querySelector("details")).toBeNull();
     expect(host.innerHTML).not.toContain("@@");
-    expect(host.innerHTML).toContain("bg-emerald-500/10");
-    expect(host.innerHTML).toContain("bg-rose-500/10");
+    expect(host.innerHTML).toContain(DIFF_ROW_CLASSES.added);
+    expect(host.innerHTML).toContain(DIFF_ROW_CLASSES.removed);
     expect(host.textContent).toContain(" 2 − old");
     expect(host.textContent).toContain(" 2 + new");
     // The washes have to reach past the frame's edge, not stop at it.
@@ -204,7 +209,7 @@ describe("ViewBlock HTML painter", () => {
       (node) => node.textContent === "const"
     );
     const changed = [...host.querySelectorAll("span")].filter((node) =>
-      node.className.includes("bg-emerald-500/25")
+      node.className.includes(DIFF_EMPHASIS_CLASSES.added)
     );
 
     expect(keyword?.className).toContain("text-fuchsia-300");
