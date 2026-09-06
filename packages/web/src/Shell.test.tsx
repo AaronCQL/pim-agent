@@ -437,7 +437,17 @@ describe("the shell, painted from events alone", () => {
     const input = host.querySelector("textarea")!;
     type(input, "hello");
 
-    host.querySelector<HTMLButtonElement>('[aria-label="Send"]')!.click();
+    const send = host.querySelector<HTMLButtonElement>('[aria-label="Send"]')!;
+    // The press before the click keeps the box focused, so the soft keyboard
+    // does not retract and slide the button out from under the finger.
+    const tap = new MouseEvent("mousedown", {
+      bubbles: true,
+      cancelable: true,
+    });
+    send.dispatchEvent(tap);
+    expect(tap.defaultPrevented).toBe(true);
+
+    send.click();
     flush();
     expect(input.value).toBe("");
   });

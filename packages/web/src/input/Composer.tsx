@@ -39,6 +39,19 @@ function sends(event: KeyboardEvent, keyboard: boolean): boolean {
 }
 
 /**
+ * A press that must not move focus. Neither button needs it, and a phone
+ * charges for taking it: blurring the textarea retracts the soft keyboard,
+ * which reflows the card down the screen before the tap becomes a click, so
+ * the first tap is spent putting the keyboard away and the second is the one
+ * that sends. `mousedown` is where the browser decides to focus, and touch
+ * defers its compat `mousedown` to the end of the tap, so refusing the
+ * default there covers both pointers.
+ */
+function keepFocus(event: MouseEvent): void {
+  event.preventDefault();
+}
+
+/**
  * The draft, the pickers over it, and the two ways bytes get in.
  *
  * Ranking never happens here: `@` names a file on the *agent's* disk and a
@@ -413,6 +426,7 @@ export function Composer(props: {
                 type="button"
                 aria-label="Send"
                 class="flex items-center justify-center rounded-full bg-indigo-500 p-2 text-indigo-50 ring-indigo-300 hover:ring-1 active:bg-indigo-500/80"
+                onMouseDown={keepFocus}
                 onClick={() => {
                   void submit();
                 }}
@@ -425,6 +439,7 @@ export function Composer(props: {
               type="button"
               aria-label="Stop"
               class="flex items-center justify-center rounded-full bg-rose-500 p-2 text-rose-50 ring-rose-300 hover:ring-1 active:bg-rose-500/80"
+              onMouseDown={keepFocus}
               onClick={() => {
                 void props.store.cancel();
               }}
