@@ -162,7 +162,10 @@ export type EphemeralEvent =
       readonly contextWindow?: number;
       /** The cwd's git branch, absent outside a repository. */
       readonly branch?: string;
-      readonly dirty?: boolean;
+      /** Paths git reports as changed; zero is a clean tree. */
+      readonly dirtyCount?: number;
+      readonly ahead?: number;
+      readonly behind?: number;
     }
   /** A frame the server could not attribute to any command. */
   | { readonly type: "error"; readonly message: string };

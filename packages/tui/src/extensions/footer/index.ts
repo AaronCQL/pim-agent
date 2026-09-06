@@ -64,7 +64,7 @@ export function createFooterWidget(
         const next = await deps.fetchGitStatus(ctx.cwd);
         if (
           next.branch !== gitState.branch ||
-          next.dirty !== gitState.dirty ||
+          next.dirtyCount !== gitState.dirtyCount ||
           next.ahead !== gitState.ahead ||
           next.behind !== gitState.behind
         ) {

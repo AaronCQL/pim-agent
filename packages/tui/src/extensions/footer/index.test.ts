@@ -110,11 +110,11 @@ describe("createFooterWidget", () => {
     gitWatchHandler();
     expect(fetches).toHaveLength(1);
 
-    first.resolve({ branch: "main", dirty: false, ahead: 0, behind: 0 });
+    first.resolve({ branch: "main", dirtyCount: 0, ahead: 0, behind: 0 });
     await flushPromises();
     expect(fetches).toHaveLength(2);
 
-    second.resolve({ branch: "next", dirty: true, ahead: 1, behind: 0 });
+    second.resolve({ branch: "next", dirtyCount: 1, ahead: 1, behind: 0 });
     await flushPromises();
     expect(fetches).toHaveLength(2);
     expect(renderRequests).toBe(2);
@@ -152,7 +152,7 @@ describe("createFooterWidget", () => {
       }
     );
 
-    refresh.resolve({ branch: null, dirty: false, ahead: 0, behind: 0 });
+    refresh.resolve({ branch: null, dirtyCount: 0, ahead: 0, behind: 0 });
     await flushPromises();
 
     expect(renderRequests).toBe(0);

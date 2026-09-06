@@ -31,13 +31,13 @@ describe("parseGitStatus", () => {
       )
     ).toEqual({
       branch: "main",
-      dirty: false,
+      dirtyCount: 0,
       ahead: 0,
       behind: 0,
     });
   });
 
-  test("parses dirty state and ahead/behind counts", () => {
+  test("counts one dirty path per entry, tracked or not", () => {
     expect(
       Git.parseStatus(
         [
@@ -51,7 +51,7 @@ describe("parseGitStatus", () => {
       )
     ).toEqual({
       branch: "feature/footer",
-      dirty: true,
+      dirtyCount: 2,
       ahead: 12,
       behind: 3,
     });
@@ -60,7 +60,7 @@ describe("parseGitStatus", () => {
   test("labels detached heads explicitly", () => {
     expect(Git.parseStatus("# branch.head (detached)\n")).toEqual({
       branch: "detached",
-      dirty: false,
+      dirtyCount: 0,
       ahead: 0,
       behind: 0,
     });

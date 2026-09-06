@@ -26,12 +26,12 @@ import {
 } from "./powerline";
 
 function gitSegment(state: GitState): Segment | null {
-  const { branch, dirty, ahead, behind } = state;
+  const { branch, dirtyCount, ahead, behind } = state;
   if (!branch) {
     return null;
   }
   let text = `${GIT_ICON} ${branch}`;
-  if (dirty) {
+  if (dirtyCount > 0) {
     text += ` ${GIT_DIRTY_ICON}`;
   }
   if (ahead > 0 || behind > 0) {
@@ -45,7 +45,11 @@ function gitSegment(state: GitState): Segment | null {
     text += arrows;
   }
   const bg =
-    behind > 0 ? BG_BRIGHT_RED : dirty ? BG_BRIGHT_YELLOW : BG_BRIGHT_GREEN;
+    behind > 0
+      ? BG_BRIGHT_RED
+      : dirtyCount > 0
+        ? BG_BRIGHT_YELLOW
+        : BG_BRIGHT_GREEN;
   return { text, fg: FG_BLACK, bg };
 }
 

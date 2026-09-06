@@ -3,14 +3,15 @@ import { join } from "node:path";
 
 export type GitState = {
   readonly branch: string | null;
-  readonly dirty: boolean;
+  /** Paths `git status` lists as changed; zero is a clean tree. */
+  readonly dirtyCount: number;
   readonly ahead: number;
   readonly behind: number;
 };
 
 const EMPTY: GitState = {
   branch: null,
-  dirty: false,
+  dirtyCount: 0,
   ahead: 0,
   behind: 0,
 };
@@ -19,7 +20,7 @@ function parseStatus(text: string): GitState {
   let branch: string | null = null;
   let ahead = 0;
   let behind = 0;
-  let dirty = false;
+  let dirtyCount = 0;
   for (const line of text.split("\n")) {
     if (line.startsWith("# branch.head ")) {
       const head = line.slice("# branch.head ".length);
@@ -31,10 +32,10 @@ function parseStatus(text: string): GitState {
         behind = Number(m[2]);
       }
     } else if (line.length > 0 && !line.startsWith("#")) {
-      dirty = true;
+      dirtyCount++;
     }
   }
-  return { branch, dirty, ahead, behind };
+  return { branch, dirtyCount, ahead, behind };
 }
 
 function watchDir(cwd: string, onChange: () => void): () => void {

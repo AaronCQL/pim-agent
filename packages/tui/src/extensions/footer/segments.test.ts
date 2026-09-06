@@ -53,7 +53,7 @@ describe("renderFooterLine", () => {
         ctx,
         {
           branch: "feat/some-very-long-branch",
-          dirty: true,
+          dirtyCount: 1,
           ahead: 12,
           behind: 3,
         },
@@ -71,7 +71,7 @@ describe("renderFooterLine", () => {
     );
     const git = {
       branch: "main",
-      dirty: true,
+      dirtyCount: 1,
       ahead: 2,
       behind: 0,
     };
@@ -111,7 +111,7 @@ describe("renderFooterLine", () => {
       renderFooterLine(
         120,
         createCtx([{ type: "thinking_level_change", thinkingLevel: "medium" }]),
-        { branch: null, dirty: false, ahead: 0, behind: 0 },
+        { branch: null, dirtyCount: 0, ahead: 0, behind: 0 },
         0
       )
     );
@@ -125,7 +125,7 @@ describe("renderFooterLine", () => {
           { type: "thinking_level_change", thinkingLevel: "minimal" },
           { type: "thinking_level_change", thinkingLevel: "xhigh" },
         ]),
-        { branch: null, dirty: false, ahead: 0, behind: 0 },
+        { branch: null, dirtyCount: 0, ahead: 0, behind: 0 },
         0
       )
     );
@@ -136,7 +136,7 @@ describe("renderFooterLine", () => {
       renderFooterLine(
         120,
         createCtx(),
-        { branch: null, dirty: false, ahead: 0, behind: 0 },
+        { branch: null, dirtyCount: 0, ahead: 0, behind: 0 },
         0
       )
     );
@@ -153,7 +153,7 @@ describe("renderFooterLine", () => {
             model: { id: "gpt-5.5" },
           }
         ),
-        { branch: null, dirty: false, ahead: 0, behind: 0 },
+        { branch: null, dirtyCount: 0, ahead: 0, behind: 0 },
         0
       )
     );

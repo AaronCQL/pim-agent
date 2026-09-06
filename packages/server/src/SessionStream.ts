@@ -176,7 +176,7 @@ export class SessionStream {
   public sessionState(): EphemeralEvent {
     const tps = this.host.tps;
     const usage = this.host.agentSession?.getContextUsage();
-    const { branch, dirty } = this.gitState();
+    const { branch, dirtyCount, ahead, behind } = this.gitState();
     const modelLabel = this.host.currentModelLabel;
     return {
       type: "session_state",
@@ -193,7 +193,7 @@ export class SessionStream {
             contextPercent: usage.percent,
             contextWindow: usage.contextWindow,
           }),
-      ...(branch === null ? {} : { branch, dirty }),
+      ...(branch === null ? {} : { branch, dirtyCount, ahead, behind }),
     };
   }
 
@@ -218,7 +218,10 @@ export class SessionStream {
         this.gitInFlight = false;
         this.gitReadAt = Date.now();
         const changed =
-          next.branch !== this.git.branch || next.dirty !== this.git.dirty;
+          next.branch !== this.git.branch ||
+          next.dirtyCount !== this.git.dirtyCount ||
+          next.ahead !== this.git.ahead ||
+          next.behind !== this.git.behind;
         this.git = next;
         if (changed) {
           this.emit(this.sessionState());

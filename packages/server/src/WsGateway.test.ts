@@ -518,7 +518,9 @@ test("session state carries context usage and the cwd's git branch", async () =>
     { from: mark }
   );
   expect(state.type === "session_state" && state.branch).toBe("trunk");
-  expect(state.type === "session_state" && state.dirty).toBe(true);
+  expect(
+    state.type === "session_state" && (state.dirtyCount ?? 0) > 0
+  ).toBeTrue();
 
   const usage = probe.events.findLast(
     (event) =>

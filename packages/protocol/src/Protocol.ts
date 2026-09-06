@@ -13,6 +13,9 @@
  * connection rather than mis-parsing a newer frame. Versioned from day one so
  * the first incompatible change is a rejection, not a silent field mismatch.
  *
+ * 6 — `session_state` reports the git tree as a `dirtyCount` rather than a
+ * `dirty` flag, and carries `ahead` / `behind`.
+ *
  * 5 — a resume arrives as one `replay` frame carrying the events, rather than
  * as one frame per event.
  *
@@ -22,6 +25,6 @@
  * git branch; durable messages carry a `timestamp`; `list_models` answers
  * with the model catalogue and this model's thinking levels.
  */
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 
 export type ProtocolVersion = typeof PROTOCOL_VERSION;
