@@ -17,7 +17,8 @@ export type MarkdownSnapshotElementNode = {
 };
 
 export type MarkdownSnapshotNode =
-  MarkdownSnapshotTextNode | MarkdownSnapshotElementNode;
+  | MarkdownSnapshotTextNode
+  | MarkdownSnapshotElementNode;
 
 type BrowserMarkdownSnapshotRenderer = (
   root: MarkdownSnapshotNode,

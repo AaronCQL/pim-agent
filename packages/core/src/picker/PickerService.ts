@@ -29,7 +29,8 @@ export class PickerService {
   private engineCwd: string | undefined;
   private catalogLoaded = false;
   private commandCache:
-    { readonly cwd: string; readonly items: readonly PickerItem[] } | undefined;
+    | { readonly cwd: string; readonly items: readonly PickerItem[] }
+    | undefined;
 
   public constructor(deps: PickerServiceDeps) {
     this.deps = deps;

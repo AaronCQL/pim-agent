@@ -48,6 +48,13 @@ jobs:
         if: steps.version.outputs.changed == 'true'
         run: bun run check
 
+      # Must stay ahead of the tag: `npm publish` runs the same build in
+      # `prepack`, but it is the last step, so a build that only fails there
+      # strands a tag and a GitHub Release with nothing on npm behind them.
+      - name: Verify the published tarball
+        if: steps.version.outputs.changed == 'true'
+        run: bun run check pack
+
       - name: Create tag
         if: steps.version.outputs.changed == 'true'
         run: |

@@ -150,7 +150,8 @@ function renderLines(
 function applyByteCap(lines: readonly RenderedLine[]): {
   readonly visible: readonly RenderedLine[];
   readonly firstLineTooBig:
-    { readonly line: number; readonly bytes: number } | undefined;
+    | { readonly line: number; readonly bytes: number }
+    | undefined;
 } {
   const visible: RenderedLine[] = [];
   let bytes = 0;

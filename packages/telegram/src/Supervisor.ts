@@ -24,7 +24,8 @@ export type Mode = {
 };
 
 export type UpdateResult =
-  { readonly ok: true } | { readonly ok: false; readonly error: string };
+  | { readonly ok: true }
+  | { readonly ok: false; readonly error: string };
 
 async function install(): Promise<void> {
   const mode = await detectMode();

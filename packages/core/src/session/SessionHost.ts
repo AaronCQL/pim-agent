@@ -39,7 +39,8 @@ export type HostSettings = {
 };
 
 export type SetCwdResult =
-  { readonly ok: true } | { readonly ok: false; readonly error: string };
+  | { readonly ok: true }
+  | { readonly ok: false; readonly error: string };
 
 export type SetModelResult =
   | { readonly ok: true; readonly id: string }

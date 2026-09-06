@@ -1,16 +1,20 @@
 /**
  * Every quality gate this repo has, and the only place their arguments live.
  *
- *   bun scripts/check.ts                 # all of it
- *   bun scripts/check.ts agent web pack  # a subset
+ *   bun scripts/check.ts                 # the per-commit set
+ *   bun scripts/check.ts pack            # a subset, including the CI-only ones
  *   bun scripts/check.ts agent --changed # ...with flags for the test runner
  *
- * Two rules earn this a script instead of a `&&` chain in package.json.
+ * Three rules earn this a script instead of a `&&` chain in package.json.
  *
- * `oxlint --fix` and `prettier --write` rewrite the same files, so they run
- * first and in that order — a reader racing them typechecks a half-written
- * tree, and prettier has to see what oxlint fixed. Everything after them only
- * reads, so it runs at once.
+ * `oxlint --fix` and `oxfmt` rewrite the same files, so they run first and in
+ * that order — a reader racing them typechecks a half-written tree, and the
+ * formatter has to see what oxlint fixed. Everything after them only reads,
+ * so it runs at once.
+ *
+ * A bare run is the set an agent pays for after every commit, so a task worth
+ * less than its seconds there is `ciOnly` and has to be named to run. CI names
+ * them; see `.github/workflows/ci.yml`.
  *
  * A task that passes prints nothing: on a green run the exit code is the whole
  * report. The exceptions are the two things worth tokens — a task that failed,
@@ -25,9 +29,28 @@ type Task = {
   readonly mutates?: boolean;
   /** Takes `bun test` flags, and must never legitimately run zero tests. */
   readonly tests?: boolean;
-  /** Its output on success is the list of files it rewrote, so print it. */
-  readonly reportsChanges?: boolean;
+  /** Too slow to earn a place in the per-commit set: run it by name. */
+  readonly ciOnly?: boolean;
+  /**
+   * Run before `argv`; its stdout is the list of files `argv` would rewrite,
+   * and an empty list skips `argv` entirely. Exists because oxfmt's
+   * `--list-different` and `--write` are mutually exclusive, so naming the
+   * damage and repairing it are two passes — and the clean case, which is
+   * nearly every case, is then the cheap pass alone with no file touched.
+   */
+  readonly listArgv?: readonly string[];
 };
+
+/** Everything `format` owns, and nothing it merely happens to be able to parse. */
+const FORMAT_PATHS = [
+  "packages/**/*.{ts,tsx}",
+  "bin/**/*.ts",
+  "scripts/**/*.ts",
+  "package.json",
+  "tsconfig.json",
+  ".oxlintrc.json",
+  ".oxfmtrc.json",
+];
 
 const TASKS: readonly Task[] = [
   {
@@ -39,20 +62,14 @@ const TASKS: readonly Task[] = [
   },
   {
     name: "format",
-    argv: [
-      "prettier",
-      "--write",
-      "--list-different",
-      "package.json",
-      "tsconfig.json",
-      ".oxlintrc.json",
-      ".prettierrc.json",
-      "packages/**/*.{ts,tsx}",
-      "bin/**/*.ts",
-      "scripts/**/*.ts",
-    ],
+    // Named globs, never a bare `.`: oxfmt will happily walk the whole tree,
+    // and it formats Markdown and JSON too. Under `proseWrap: never` that
+    // folds a `> [!TIP]` callout onto one line, which is not a restyling but
+    // a break — GitHub stops rendering it. Benchmark result JSON is data and
+    // is not ours to reflow either. So the scope is the source we own.
+    listArgv: ["oxfmt", "--list-different", ...FORMAT_PATHS],
+    argv: ["oxfmt", ...FORMAT_PATHS],
     mutates: true,
-    reportsChanges: true,
   },
   { name: "typecheck", argv: ["tsgo", "--noEmit"] },
   {
@@ -87,7 +104,12 @@ const TASKS: readonly Task[] = [
   },
   {
     name: "pack",
-    // Packs a real tarball, so it is slow and stays out of the `agent` glob.
+    // Packs a real tarball, and `prepack` makes that a full Vite build — the
+    // only thing anywhere that runs Rolldown, UnoCSS and the Solid plugin, so
+    // it is what catches a stale `index.html` entry, an unresolvable lazy
+    // `import()`, or a moved stylesheet. All of that is a publish-time
+    // failure, not a per-commit one, hence `ciOnly`. Also stays out of the
+    // `agent` glob, which is why it is its own task at all.
     argv: [
       "bun",
       "test",
@@ -95,6 +117,7 @@ const TASKS: readonly Task[] = [
       "--only-failures",
     ],
     tests: true,
+    ciOnly: true,
   },
 ];
 
@@ -104,7 +127,8 @@ const TAIL_LINES = 5;
 
 const USAGE = `usage: bun scripts/check.ts [task…] [test flags…]
 
-tasks:  ${TASKS.map((task) => task.name).join(" ")}   (default: all)
+tasks:  ${TASKS.map((task) => (task.ciOnly ? `${task.name}*` : task.name)).join(" ")}
+        * CI-only: slow, and skipped unless you name it
 flags:  forwarded to the test tasks — bun scripts/check.ts agent --changed`;
 
 function select(args: readonly string[]): {
@@ -133,7 +157,7 @@ function select(args: readonly string[]): {
 
   const tasks =
     names.length === 0
-      ? TASKS
+      ? TASKS.filter((task) => !task.ciOnly)
       : TASKS.filter((task) => names.includes(task.name));
   if (forwarded.length > 0 && !tasks.some((task) => task.tests)) {
     process.stderr.write(
@@ -144,12 +168,18 @@ function select(args: readonly string[]): {
   return { tasks, forwarded };
 }
 
-async function run(task: Task, forwarded: readonly string[]): Promise<boolean> {
-  const child = Bun.spawn([...task.argv, ...(task.tests ? forwarded : [])], {
+type Output = {
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly exitCode: number;
+};
+
+async function spawn(argv: readonly string[]): Promise<Output> {
+  const child = Bun.spawn([...argv], {
     cwd: ROOT,
-    // oxlint, prettier and tsgo are `node_modules/.bin` shims that only `bun
-    // run` puts on PATH, and going through `bun run` would re-print every
-    // command as it starts.
+    // oxlint, oxfmt and tsgo are `node_modules/.bin` shims that only `bun run`
+    // puts on PATH, and going through `bun run` would re-print every command
+    // as it starts.
     env: {
       ...process.env,
       PATH: `${ROOT}/node_modules/.bin:${process.env.PATH}`,
@@ -162,6 +192,17 @@ async function run(task: Task, forwarded: readonly string[]): Promise<boolean> {
     new Response(child.stderr).text(),
     child.exited,
   ]);
+  return { stdout, stderr, exitCode };
+}
+
+async function run(task: Task, forwarded: readonly string[]): Promise<boolean> {
+  if (task.listArgv !== undefined) {
+    return await runTwoPhase(task, task.listArgv);
+  }
+  const { stdout, stderr, exitCode } = await spawn([
+    ...task.argv,
+    ...(task.tests ? forwarded : []),
+  ]);
 
   // A path filter that stops matching anything reports as a pass. Only trust
   // that on an unnarrowed run: `--changed` legitimately finds nothing.
@@ -169,14 +210,6 @@ async function run(task: Task, forwarded: readonly string[]): Promise<boolean> {
     task.tests && forwarded.length === 0 && !/Ran [1-9]\d* tests/.test(stderr);
 
   if (exitCode === 0 && !ranNothing) {
-    if (task.reportsChanges && stdout.trim().length > 0) {
-      const count = stdout.trim().split("\n").length;
-      report(
-        `${task.name} rewrote ${String(count)} file${count === 1 ? "" : "s"}`,
-        stdout,
-        task.name
-      );
-    }
     return true;
   }
 
@@ -188,6 +221,50 @@ async function run(task: Task, forwarded: readonly string[]): Promise<boolean> {
     task.name
   );
   return false;
+}
+
+/**
+ * Name the damage, then repair it — and say what got repaired, since a file
+ * rewritten under an agent's feet is worth its tokens.
+ */
+async function runTwoPhase(
+  task: Task,
+  listArgv: readonly string[]
+): Promise<boolean> {
+  // Exit 1 is oxfmt's way of saying "these differ", which is the whole point
+  // of asking. Only a higher code is a formatter that could not read the tree.
+  const listed = await spawn(listArgv);
+  if (listed.exitCode > 1) {
+    report(
+      `${task.name} failed (exit ${String(listed.exitCode)})`,
+      `${listed.stdout}${listed.stderr}`,
+      task.name
+    );
+    return false;
+  }
+
+  const files = listed.stdout.trim();
+  if (files.length === 0) {
+    return true;
+  }
+
+  const fixed = await spawn(task.argv);
+  if (fixed.exitCode !== 0) {
+    report(
+      `${task.name} failed (exit ${String(fixed.exitCode)})`,
+      `${fixed.stdout}${fixed.stderr}`,
+      task.name
+    );
+    return false;
+  }
+
+  const count = files.split("\n").length;
+  report(
+    `${task.name} rewrote ${String(count)} file${count === 1 ? "" : "s"}`,
+    files,
+    task.name
+  );
+  return true;
 }
 
 function report(headline: string, body: string, rerun: string): void {
