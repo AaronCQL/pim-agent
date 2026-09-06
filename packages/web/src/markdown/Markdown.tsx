@@ -2,7 +2,10 @@ import { render } from "@solidjs/web";
 import { createEffect, onCleanup } from "solid-js";
 import * as smd from "streaming-markdown";
 
+import { Languages } from "#core/shared/Languages";
 import { CopyButton } from "../ui/CopyButton";
+import { Highlight } from "../view/highlight";
+import { syntaxClass } from "../view/tokens";
 
 /**
  * The `<pre>` the parser may still append to: it is always the deepest last
@@ -61,6 +64,43 @@ function mountCopyButtons(host: HTMLElement, complete: boolean): () => void {
 }
 
 /**
+ * Syntax highlighting for a fence, on the same rule the copy button follows:
+ * only once the block has closed. The parser writes this DOM append-only and
+ * never repaints it — which is why it can stream at all — so a fence cannot
+ * be coloured while it is still growing without fighting it. A finished one
+ * is also the only one worth colouring: half a line of TypeScript tokenises
+ * as something it is about to stop being.
+ *
+ * The parser puts the fence language in the `<code>` class, which the fence
+ * markers in CSS also read, so the marker here is a `data-` attribute and the
+ * class is left exactly as it was found.
+ */
+function highlightFences(host: HTMLElement, complete: boolean): void {
+  const skip = complete ? undefined : openBlock(host);
+
+  for (const code of host.querySelectorAll("pre > code:not([data-hl])")) {
+    if (code.parentElement === skip) {
+      continue;
+    }
+
+    const lang = Languages.resolve(code.className);
+    const lines = Highlight.tokenize(code.textContent ?? "", lang);
+    code.setAttribute("data-hl", "");
+    code.replaceChildren(
+      ...lines.flatMap((tokens, index) => {
+        const spans = tokens.map((token) => {
+          const span = document.createElement("span");
+          span.className = syntaxClass(token.role);
+          span.textContent = token.text;
+          return span;
+        });
+        return index === 0 ? spans : [document.createTextNode("\n"), ...spans];
+      })
+    );
+  }
+}
+
+/**
  * Markdown, rendered by `streaming-markdown`, chosen over the re-parsing
  * renderers (marked, markdown-it, micromark) by measuring partial input: they
  * re-parse the whole prefix on every chunk, so a growing message repaints what
@@ -83,14 +123,22 @@ export function Markdown(props: {
   let written = "";
   let parser: smd.Parser | undefined;
   let disposeButtons = (): void => {};
+  /** The grammar generation the fences on screen were painted against. */
+  let painted = Highlight.version();
 
   onCleanup(() => {
     disposeButtons();
   });
 
   createEffect(
-    () => ({ text: props.text, complete: props.complete !== false }),
-    ({ text, complete }) => {
+    () => ({
+      text: props.text,
+      complete: props.complete !== false,
+      // A grammar arriving is a repaint: every fence painted plain while it
+      // was still loading is offered to the highlighter again.
+      grammars: Highlight.version(),
+    }),
+    ({ text, complete, grammars }) => {
       if (parser === undefined || !text.startsWith(written)) {
         disposeButtons();
         disposeButtons = () => {};
@@ -104,6 +152,13 @@ export function Markdown(props: {
         smd.parser_end(parser);
         parser = undefined;
       }
+      if (grammars !== painted) {
+        painted = grammars;
+        for (const code of host.querySelectorAll("code[data-hl]")) {
+          code.removeAttribute("data-hl");
+        }
+      }
+      highlightFences(host, complete);
       const disposeAdded = mountCopyButtons(host, complete);
       const disposePrevious = disposeButtons;
       disposeButtons = () => {

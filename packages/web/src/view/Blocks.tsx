@@ -1,16 +1,22 @@
 import { Dynamic } from "@solidjs/web";
 import { createMemo, For, Show, type Component, type Element } from "solid-js";
 
+import type { IntraLineRange, ToolDiffLine } from "#core/shared/DiffLines";
+import { Languages } from "#core/shared/Languages";
+import { DiffLayout } from "#core/view/DiffLayout";
 import { Painting } from "#core/view/Painting";
 import type { DiffHunk, Span, ViewBlock } from "#core/view/ViewBlock";
 import { Markdown } from "../markdown/Markdown";
-import { Collapsible } from "../ui/Collapsible";
 import { CopyButton } from "../ui/CopyButton";
+import { Highlight, type Token } from "./highlight";
 import {
-  DIFF_LINE_CLASSES,
+  DIFF_EMPHASIS_CLASSES,
+  DIFF_GUTTER_CLASSES,
+  DIFF_ROW_CLASSES,
   FRAME_CLASSES,
   NOTICE_CLASSES,
   groupByFrame,
+  syntaxClass,
   toneClass,
 } from "./tokens";
 
@@ -119,14 +125,18 @@ function SectionBlock(props: { readonly block: BlockOf<"section"> }) {
  * payload reads exactly as it would in the terminal that produced it.
  */
 function CodeBlock(props: { readonly block: BlockOf<"code"> }) {
+  const lines = createMemo(() =>
+    Highlight.tokenize(props.block.text, Languages.resolve(props.block.lang))
+  );
+
   return (
     <div class="relative">
-      <pre class="overflow-x-auto leading-[--line] text-neutral-200">
+      <pre class="overflow-x-auto leading-[--line] text-neutral-200 [tab-size:3]">
         <span class="block text-neutral-500" aria-hidden="true">
           {`\`\`\`${props.block.lang}`}
         </span>
         <code data-lang={props.block.lang}>
-          <For each={props.block.text.split("\n")}>
+          <For each={lines()}>
             {(line, index) => (
               <span class="block">
                 <Show when={props.block.startLine !== undefined}>
@@ -134,7 +144,11 @@ function CodeBlock(props: { readonly block: BlockOf<"code"> }) {
                     {(props.block.startLine ?? 1) + index()}
                   </span>
                 </Show>
-                {line}
+                <For each={line}>
+                  {(token) => (
+                    <span class={syntaxClass(token.role)}>{token.text}</span>
+                  )}
+                </For>
               </span>
             )}
           </For>
@@ -152,57 +166,168 @@ function CodeBlock(props: { readonly block: BlockOf<"code"> }) {
   );
 }
 
+/**
+ * A diff, drawn the way the terminal draws one: a numbered gutter, a sign,
+ * syntax-highlighted code under a wash of green or red, and `⋯` where hunks
+ * skip over unchanged lines. No `@@` headers and no per-hunk disclosure — the
+ * gutter says where you are, and a payload you had to open a second time to
+ * read was never worth opening the first.
+ *
+ * `w-max` is what makes the washes right: the rows sit in a horizontally
+ * scrolling frame, and a row only as wide as the frame would have its
+ * background stop mid-line the moment anything scrolled past the edge. The
+ * gutter is `select-none`, so copying a diff yields the code and nothing else,
+ * and tabs are sized rather than expanded, so the emphasis ranges — which
+ * count characters of the original line — still land on the right ones.
+ */
 function DiffBlock(props: { readonly block: BlockOf<"diff"> }) {
+  const lang = createMemo(() => Languages.fromPath(props.block.path));
+  const width = createMemo(() => DiffLayout.gutterWidth(props.block.hunks));
+
   return (
-    <div class="leading-[--line]">
-      <For each={props.block.hunks}>{(hunk) => <Hunk hunk={hunk} />}</For>
+    <div class="w-max min-w-full leading-[--line] text-neutral-300 [tab-size:3]">
+      <For each={props.block.hunks}>
+        {(hunk, index) => (
+          <>
+            <Show when={index() > 0}>
+              <div class={`whitespace-pre ${DIFF_GUTTER_CLASSES.context}`}>
+                {`${" ".repeat(width() + 1)}   ⋯`}
+              </div>
+            </Show>
+            <Hunk hunk={hunk} lang={lang()} width={width()} />
+          </>
+        )}
+      </For>
     </div>
   );
 }
 
-/**
- * One hunk, one disclosure. A rename touching thirty files arrives as one
- * `diff` block, and the reason to read it on a phone is usually one hunk of
- * it — so each is foldable on its own and opens by default.
- */
-function Hunk(props: { readonly hunk: DiffHunk }) {
-  const stat = createMemo(() => ({
-    added: props.hunk.lines.filter((line) => line.kind === "added").length,
-    removed: props.hunk.lines.filter((line) => line.kind === "removed").length,
-  }));
+function Hunk(props: {
+  readonly hunk: DiffHunk;
+  readonly lang: string | undefined;
+  readonly width: number;
+}) {
+  // One tokenisation per side of the hunk, not one per line: see
+  // `DiffLayout.mapSides`. Memoised because it re-runs whenever a grammar
+  // finishes loading, and that is the only time it should.
+  const tokens = createMemo(() =>
+    DiffLayout.mapSides(props.hunk, (block) =>
+      Highlight.tokenize(block, props.lang)
+    )
+  );
 
   return (
-    <Collapsible
-      open
-      caret="bg-neutral-500"
-      summary={
-        <span class="flex items-baseline gap-1ch text-neutral-500">
-          <span>{hunkRange(props.hunk)}</span>
-          <span class="text-emerald-400">{`+${stat().added}`}</span>
-          <span class="text-rose-400">{`-${stat().removed}`}</span>
-        </span>
-      }
-    >
-      <For each={props.hunk.lines}>
-        {(line) => (
-          <div class={`whitespace-pre ${DIFF_LINE_CLASSES[line.kind]}`}>
-            {`${DIFF_MARKERS[line.kind]}${line.text}`}
-          </div>
-        )}
-      </For>
-    </Collapsible>
+    <For each={props.hunk.lines}>
+      {(line, index) => (
+        <DiffRow
+          line={line}
+          tokens={tokens()[index()] ?? [{ text: line.text }]}
+          width={props.width}
+        />
+      )}
+    </For>
   );
 }
 
-function hunkRange(hunk: DiffHunk): string {
-  return `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`;
+function DiffRow(props: {
+  readonly line: ToolDiffLine;
+  readonly tokens: readonly Token[];
+  readonly width: number;
+}) {
+  const kind = () => props.line.kind;
+  const gutter = () =>
+    ` ${String(DiffLayout.lineNumber(props.line) ?? "").padStart(props.width)} ${SIGNS[kind()]} `;
+
+  return (
+    <div class={`whitespace-pre ${DIFF_ROW_CLASSES[kind()]}`}>
+      <span class={`select-none ${DIFF_GUTTER_CLASSES[kind()]}`}>
+        {gutter()}
+      </span>
+      <For each={emphasize(props.tokens, props.line.emphasis)}>
+        {(piece) => (
+          <span
+            class={`${syntaxClass(piece.role)} ${
+              piece.emphasis ? DIFF_EMPHASIS_CLASSES[kind()] : ""
+            }`}
+          >
+            {piece.text}
+          </span>
+        )}
+      </For>
+    </div>
+  );
 }
 
-const DIFF_MARKERS = {
+/** `−` is the terminal's minus sign, and it lines up with `+`. */
+const SIGNS = {
   context: " ",
   added: "+",
-  removed: "-",
-} as const;
+  removed: "−",
+} as const satisfies Record<ToolDiffLine["kind"], string>;
+
+type Piece = Token & { readonly emphasis: boolean };
+
+/**
+ * Syntax tokens re-cut against the intra-line emphasis ranges — the words a
+ * line actually changed, which the terminal paints in a stronger wash. The two
+ * are independent cuts of the same characters, so a token straddling the edge
+ * of a range has to be split at it; ranges count characters, tokens carry
+ * them, and this walks both at once.
+ */
+function emphasize(
+  tokens: readonly Token[],
+  ranges: readonly IntraLineRange[] = []
+): readonly Piece[] {
+  if (ranges.length === 0) {
+    return tokens.map((token) => ({ ...token, emphasis: false }));
+  }
+
+  const pieces: Piece[] = [];
+  let at = 0;
+
+  for (const token of tokens) {
+    let cut = 0;
+    for (const stop of cuts(ranges, at, at + token.text.length)) {
+      const text = token.text.slice(cut, stop);
+      if (text !== "") {
+        pieces.push({
+          text,
+          role: token.role,
+          emphasis: inRange(ranges, at + cut),
+        });
+      }
+      cut = stop;
+    }
+    at += token.text.length;
+  }
+
+  return pieces;
+}
+
+/**
+ * Where a token spanning `[from, to)` has to be cut, as offsets into the
+ * token itself and always ending at its end, so one pass over these produces
+ * every piece the token is made of.
+ */
+function cuts(
+  ranges: readonly IntraLineRange[],
+  from: number,
+  to: number
+): readonly number[] {
+  const stops = new Set<number>([to - from]);
+  for (const range of ranges) {
+    for (const edge of [range.start, range.end]) {
+      if (edge > from && edge < to) {
+        stops.add(edge - from);
+      }
+    }
+  }
+  return Array.from(stops).sort((first, second) => first - second);
+}
+
+function inRange(ranges: readonly IntraLineRange[], at: number): boolean {
+  return ranges.some((range) => at >= range.start && at < range.end);
+}
 
 function FileBlock(props: { readonly block: BlockOf<"file"> }) {
   return (

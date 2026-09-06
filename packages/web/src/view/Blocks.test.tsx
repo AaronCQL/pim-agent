@@ -65,9 +65,9 @@ const SAMPLES = {
         newStart: 1,
         newLines: 2,
         lines: [
-          { kind: "context", text: "keep" },
-          { kind: "removed", text: "old" },
-          { kind: "added", text: "new" },
+          { kind: "context", text: "keep", oldLine: 1, newLine: 1 },
+          { kind: "removed", text: "old", oldLine: 2 },
+          { kind: "added", text: "new", newLine: 2 },
         ],
       },
     ],
@@ -132,12 +132,84 @@ describe("ViewBlock HTML painter", () => {
     expect(html).toContain("inner");
   });
 
-  test("a diff paints one row per line, marker included", () => {
-    const html = paint([SAMPLES.diff]);
-    expect(html).toContain("@@ -1,2 +1,2 @@");
-    expect(html).toContain("-old");
-    expect(html).toContain("+new");
-    expect(html).toContain("bg-emerald-500/10");
+  // The terminal's diff: a numbered gutter and a sign, no `@@` header, and no
+  // disclosure of its own to open before the payload can be read.
+  test("a diff paints one flat row per line, gutter included", () => {
+    const host = mountPoint();
+    render(() => <Blocks blocks={[SAMPLES.diff]} />, host);
+    flush();
+
+    expect(host.querySelector("details")).toBeNull();
+    expect(host.innerHTML).not.toContain("@@");
+    expect(host.innerHTML).toContain("bg-emerald-500/10");
+    expect(host.innerHTML).toContain("bg-rose-500/10");
+    expect(host.textContent).toContain(" 2 − old");
+    expect(host.textContent).toContain(" 2 + new");
+    // The washes have to reach past the frame's edge, not stop at it.
+    expect(host.querySelector("div")?.className).toContain("w-max");
+  });
+
+  // Only the code, never the gutter: a diff is copied to be pasted somewhere.
+  test("the gutter is unselectable, so a copied diff is code alone", () => {
+    expect(paint([SAMPLES.diff])).toContain("select-none");
+  });
+
+  /**
+   * The two cuts of a changed line — what the syntax highlighter makes of it
+   * and which of its characters actually changed — landing on the same row:
+   * the keyword keeps its colour and only the new word takes the brighter
+   * wash. `+` and `−` carry the change; the wash says where inside the line.
+   */
+  test("a diff colours its code and washes only the words that changed", async () => {
+    const host = mountPoint();
+    render(
+      () => (
+        <Blocks
+          blocks={[
+            {
+              kind: "diff",
+              path: "greeter.ts",
+              hunks: [
+                {
+                  oldStart: 1,
+                  oldLines: 1,
+                  newStart: 1,
+                  newLines: 1,
+                  lines: [
+                    {
+                      kind: "added",
+                      text: "const name = 2;",
+                      newLine: 1,
+                      emphasis: [{ start: 13, end: 14 }],
+                    },
+                  ],
+                },
+              ],
+            },
+          ]}
+        />
+      ),
+      host
+    );
+
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      flush();
+      if (host.innerHTML.includes("text-fuchsia-300")) {
+        break;
+      }
+      await Bun.sleep(10);
+    }
+
+    const keyword = [...host.querySelectorAll("span")].find(
+      (node) => node.textContent === "const"
+    );
+    const changed = [...host.querySelectorAll("span")].filter((node) =>
+      node.className.includes("bg-emerald-500/25")
+    );
+
+    expect(keyword?.className).toContain("text-fuchsia-300");
+    expect(changed.map((node) => node.textContent)).toEqual(["2"]);
+    expect(host.textContent).toContain("const name = 2;");
   });
 
   test("a code block numbers from startLine", () => {
@@ -205,7 +277,7 @@ describe("ToolCard", () => {
     const host = paintTool(view);
     const details = host.querySelector("details");
     expect(details).not.toBeNull();
-    expect(details?.textContent).toContain("@@ -1,2 +1,2 @@");
+    expect(details?.textContent).toContain(" 2 + new");
     expect(host.textContent).toContain("+2");
     expect(host.querySelector("details > div")?.textContent).not.toContain(
       "+2"
@@ -219,11 +291,12 @@ describe("ToolCard", () => {
     ).toBe(false);
   });
 
-  // A diff body opens every hunk it holds, so a descendant `details[open]`
-  // would hold a closed edit row at full strength.
-  test("a closed row recedes even when its hidden body has open hunks", () => {
+  // A row is at full strength when *it* is open, never because something
+  // inside it is; the child combinator is what says so, and a diff body — the
+  // one payload that used to nest disclosures — now holds none at all.
+  test("a closed row recedes, and its body opens nothing of its own", () => {
     const host = paintTool(view);
-    expect(host.querySelectorAll("details[open]").length).toBeGreaterThan(0);
+    expect(host.querySelectorAll("details")).toHaveLength(1);
     expect(host.querySelector("article")?.className).toContain(
       "has-[>details[open]]:opacity-100"
     );
@@ -260,7 +333,6 @@ describe("ToolCard", () => {
     expect(html).toContain("text-indigo-300");
     // The caret is the only icon a row draws, and it carries state, not identity.
     expect(html.match(/i-griddy-icons:[\w-]+/g)).toEqual([
-      "i-griddy-icons:chevron-right-small-filled",
       "i-griddy-icons:chevron-right-small-filled",
     ]);
   });

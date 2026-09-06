@@ -108,12 +108,14 @@ describe("static replay of a real session", () => {
 
   test("a body sits behind a disclosure, and nothing opens itself", () => {
     const details = [...replay().querySelectorAll("details")];
-    const diff = details.find((node) => node.textContent?.includes("@@ -"));
+    const diff = details.find((node) =>
+      node.innerHTML.includes("bg-emerald-500/10")
+    );
     const read = details.find((node) =>
       node.textContent?.includes("export function greet")
     );
 
-    expect(diff?.textContent).toContain("+  return `Hello, ${name}!`;");
+    expect(diff?.textContent).toContain("  return `Hello, ${name}!`;");
     // `edit` declares `collapsed: false` for the TUI; the web ignores it.
     expect(diff?.open).toBe(false);
     expect(read?.open).toBe(false);

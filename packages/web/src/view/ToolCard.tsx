@@ -58,9 +58,9 @@ export function ToolCard(props: {
     // A row recedes until hovered; an open one is the thing you asked to look
     // at, so it stays at full strength — that is *this* disclosure's own
     // state, not whether the row has a payload to disclose. Hence the child
-    // combinator: a diff body opens each of its hunks, and a descendant
-    // `details[open]` would hold a collapsed edit row at full strength for
-    // hunks nobody can see yet.
+    // combinator, which keeps that true no matter what a body turns out to
+    // contain: a descendant `details[open]` would otherwise hold a collapsed
+    // row at full strength for something nobody can see yet.
     //
     // A row with no body brightens for nobody: hover that leads to nothing is
     // a promise the row cannot keep.

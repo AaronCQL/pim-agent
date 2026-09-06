@@ -13,6 +13,17 @@ import { defineConfig, presetIcons, presetWind4 } from "unocss";
  * matching utility is used.
  */
 export default defineConfig({
+  /**
+   * Plain `.ts` as well as `.tsx`. UnoCSS scans what Vite transforms, and its
+   * default pipeline is JSX-only — so a class named in a lookup table rather
+   * than in a template (`tokens.ts`, which is *all* lookup tables) would have
+   * no rule generated for it, and the palette would silently paint nothing.
+   */
+  content: {
+    pipeline: {
+      include: [/\.[jt]sx?($|\?)/],
+    },
+  },
   presets: [
     presetWind4({
       preflights: {

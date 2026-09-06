@@ -14,6 +14,7 @@ function mount(initial: string, complete = true) {
   flush();
   return {
     html: () => host.querySelector(".pim-markdown")?.innerHTML ?? "",
+    text: () => host.textContent ?? "",
     write: (next: string) => {
       setText(next);
       flush();
@@ -86,5 +87,33 @@ describe("Markdown", () => {
     const view = mount("```ts\nconst a = 1;\n```\n\ntext", false);
     view.write("```ts\nconst a = 1;\n```\n\ntext and more");
     expect(view.html().match(/aria-label="Copy code"/gu)).toHaveLength(1);
+  });
+
+  /**
+   * Fences are highlighted on the copy button's rule — only once closed —
+   * because the parser owns this DOM and never repaints it. The grammar
+   * arrives a tick later, so the block is written plain and coloured in
+   * place; what must never change through any of it is the code itself.
+   */
+  test("a finished fence is syntax highlighted once its grammar lands", async () => {
+    const view = mount("```ts\nconst a = 1;\n```\n\nprose\n");
+
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      flush();
+      if (view.html().includes("text-fuchsia-300")) {
+        break;
+      }
+      await Bun.sleep(10);
+    }
+
+    expect(view.html()).toContain("text-fuchsia-300");
+    expect(view.text()).toContain("const a = 1;");
+    // The fence markers are drawn from the language class, which stays put.
+    expect(view.html()).toContain('class="ts"');
+  });
+
+  test("a fence still being written is left plain", () => {
+    const view = mount("```ts\nconst a = 1;", false);
+    expect(view.html()).not.toContain("data-hl");
   });
 });

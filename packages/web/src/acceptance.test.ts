@@ -89,4 +89,32 @@ describe("web client architecture rules", () => {
     expect(manifest.files).not.toContain("packages/web/src/");
     expect(JSON.stringify(manifest.dependencies)).not.toContain("solid");
   });
+
+  /**
+   * UnoCSS generates a rule only for a class it has *seen*, and its default
+   * pipeline reads JSX alone — so the palettes in `view/tokens.ts`, which are
+   * lookup tables in a plain `.ts` file, would compile to nothing at all and
+   * the failure would be invisible: markup with a class no stylesheet
+   * defines, which is exactly what unstyled correct markup looks like.
+   */
+  test("the stylesheet is generated from .ts as well as .tsx", async () => {
+    const config = await Bun.file(join(WEB, "uno.config.ts")).text();
+
+    expect(config).toContain("pipeline");
+    expect(config).toContain("/\\.[jt]sx?($|\\?)/");
+  });
+
+  /**
+   * The syntax highlighter is the largest thing the client can load, and it
+   * is worth nothing to a session of prose and shell output — so neither the
+   * engine nor any grammar may be reachable from the entry graph except
+   * through an `import()`.
+   */
+  test("highlight.js is only ever reached through a dynamic import", async () => {
+    for (const path of await sources()) {
+      const text = await Bun.file(path).text();
+      const statc = /(?:^|\n)\s*import\s+(?!type\b)[^\n]*"highlight\.js/;
+      expect(`${path}: ${statc.test(text)}`).toEndWith("false");
+    }
+  });
 });
