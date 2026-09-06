@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { abbreviateHome, clockTime, relativeTime } from "./format";
+import { abbreviateHome, clockTime, relativeTime, splitTail } from "./format";
 
 const NOW = Date.UTC(2026, 0, 2, 12, 0, 0);
 const ago = (ms: number): string => relativeTime(NOW - ms, NOW);
@@ -47,5 +47,24 @@ describe("clockTime", () => {
   test("a message with no usable stamp prints nothing", () => {
     expect(clockTime(0)).toBe("");
     expect(clockTime(Number.NaN)).toBe("");
+  });
+});
+
+describe("splitTail", () => {
+  test("cuts at the last separator, so the tail is what identifies it", () => {
+    expect(splitTail("~/src/deep/pim-agent")).toEqual([
+      "~/src/deep/",
+      "pim-agent",
+    ]);
+  });
+
+  test("a separator too near either edge is ignored for the middle", () => {
+    expect(splitTail("feat/a-long-branch-name")).toEqual([
+      "feat/a-long-",
+      "branch-name",
+    ]);
+    expect(splitTail("feature/x")).toEqual(["featu", "re/x"]);
+    expect(splitTail("very-long-project")).toEqual(["very-long", "-project"]);
+    expect(splitTail("")).toEqual(["", ""]);
   });
 });

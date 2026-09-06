@@ -81,7 +81,10 @@ export type SessionState = {
   contextPercent: number | undefined;
   contextWindow: number | undefined;
   branch: string | undefined;
-  dirty: boolean;
+  /** Paths git reports as changed; zero is a clean tree. */
+  dirtyCount: number;
+  ahead: number;
+  behind: number;
   durable: DurableEvent[];
   live: LiveMessage[];
   optimistic: OptimisticMessage[];
@@ -157,7 +160,9 @@ export class SessionStore {
       contextPercent: undefined,
       contextWindow: undefined,
       branch: undefined,
-      dirty: false,
+      dirtyCount: 0,
+      ahead: 0,
+      behind: 0,
       durable: [],
       live: [],
       optimistic: [],
@@ -547,7 +552,9 @@ export class SessionStore {
           draft.contextPercent = event.contextPercent;
           draft.contextWindow = event.contextWindow;
           draft.branch = event.branch;
-          draft.dirty = event.dirty ?? false;
+          draft.dirtyCount = event.dirtyCount ?? 0;
+          draft.ahead = event.ahead ?? 0;
+          draft.behind = event.behind ?? 0;
           // The server only says `idle` after it has flushed every entry the
           // turn wrote, so anything still live here has been superseded and
           // would otherwise sit under the durable copy of itself forever.

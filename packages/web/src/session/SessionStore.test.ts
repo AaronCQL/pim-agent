@@ -275,7 +275,8 @@ test("session_state lands on the fields the sidebar and composer paint", () => {
     contextPercent: 20.2,
     contextWindow: 1_000_000,
     branch: "trunk",
-    dirty: true,
+    dirtyCount: 3,
+    behind: 2,
   });
 
   expect(target.state.agent).toBe("streaming");
@@ -284,7 +285,8 @@ test("session_state lands on the fields the sidebar and composer paint", () => {
   expect(target.state.contextPercent).toBe(20.2);
   expect(target.state.contextWindow).toBe(1_000_000);
   expect(target.state.branch).toBe("trunk");
-  expect(target.state.dirty).toBe(true);
+  expect(target.state.dirtyCount).toBe(3);
+  expect(target.state.behind).toBe(2);
   expect(target.isBusy()).toBe(true);
 });
 

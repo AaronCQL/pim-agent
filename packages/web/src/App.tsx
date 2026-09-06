@@ -11,6 +11,7 @@ import { SessionStore } from "./session/SessionStore";
 import { Sidebar } from "./sessions/Sidebar";
 import { Skeleton } from "./transcript/Skeleton";
 import { Transcript } from "./transcript/Transcript";
+import { Topbar } from "./topbar/Topbar";
 import { Drawer } from "./ui/Drawer";
 
 const DEFAULT_PORT = 4319;
@@ -175,36 +176,13 @@ export function Shell(props: { readonly store: SessionStore }) {
       </Drawer>
 
       <div class="flex w-full min-w-0 flex-col">
-        <div class="flex h-12 shrink-0 items-center gap-2 border-b border-neutral-700 px-3">
-          <button
-            type="button"
-            aria-label="Toggle sessions"
-            class="flex size-8 items-center justify-center rounded-lg text-neutral-350 hover:bg-neutral-800 hover:text-neutral-50"
-            onClick={() => {
-              setSidebar((open) => !open);
-            }}
-          >
-            <span class="i-griddy-icons:sidebar size-5" />
-          </button>
-
-          <div class="flex-1" />
-
-          {/* Nothing to draw outside a git repository, which is also why the
-              chip is not a button: the branch is read here, never set. */}
-          <Show when={props.store.state.branch}>
-            {(branch) => (
-              <div class="flex h-8 items-center gap-1.5 rounded-lg bg-neutral-850 px-2 text-neutral-350">
-                <span class="i-griddy-icons:code-branch size-4 shrink-0" />
-                <span class="max-w-32 truncate text-sm">{branch()}</span>
-                <Show when={props.store.state.dirty}>
-                  <span class="text-amber-400" title="Uncommitted changes">
-                    •
-                  </span>
-                </Show>
-              </div>
-            )}
-          </Show>
-        </div>
+        <Topbar
+          store={props.store}
+          compact={!desktop()}
+          onToggleSidebar={() => {
+            setSidebar((open) => !open);
+          }}
+        />
 
         <div class="relative min-h-0 flex-1">
           <div

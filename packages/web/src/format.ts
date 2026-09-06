@@ -42,6 +42,41 @@ export function abbreviateHome(path: string): string {
 }
 
 /**
+ * The directory a path ends in, for a viewport with no room for the route to
+ * it. Root and a bare `~` are their own last segment, and a trailing slash is
+ * not a segment of its own.
+ */
+export function baseName(path: string): string {
+  const trimmed = path.replace(/\/+$/, "");
+  return trimmed.slice(trimmed.lastIndexOf("/") + 1) || trimmed || path;
+}
+
+/**
+ * Cuts a path or a branch into the part that may be eaten and the part that
+ * must survive: `~/src/pim/` + `packages`, `feat/` + `add-chips`.
+ *
+ * Middle truncation, done by the layout rather than by counting characters.
+ * The head is painted in a shrinking box with `text-overflow: ellipsis` and
+ * the tail in a fixed one, so the browser spends every pixel it actually has
+ * and elides only what does not fit — where a character budget has to guess
+ * the font's width and therefore truncates a wide viewport early and a
+ * narrow one late.
+ *
+ * The last `/` is the natural seam, but only when it lands in the middle
+ * third. A head is the half that gets eaten, so a seam near either edge
+ * makes one end disposable in full: `feat/` + `add-topbar-chips` loses its
+ * prefix on the first pixel of pressure, and silently, since a box shrunk
+ * past one character has no room for the ellipsis either. Off-centre names
+ * are cut down the middle instead, which keeps both ends whatever the shape.
+ */
+export function splitTail(text: string): readonly [string, string] {
+  const slash = text.lastIndexOf("/") + 1;
+  const centred = slash * 3 >= text.length && slash * 3 <= text.length * 2;
+  const cut = centred ? slash : Math.ceil(text.length / 2);
+  return [text.slice(0, cut), text.slice(cut)];
+}
+
+/**
  * Wall-clock `17:24` for the line under a user message, in the *reader's*
  * timezone: the stamp travels as epoch ms precisely so the browser can say
  * when the message happened where the reader is sitting.

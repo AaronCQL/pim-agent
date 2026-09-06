@@ -139,14 +139,14 @@ describe("the shell, painted from events alone", () => {
     expect(host.textContent).toContain("Clanking…");
   });
 
-  test("the branch is a topbar chip and the context fill is half the pill", () => {
+  test("the topbar chips say where and what, and the context fill is half the pill", () => {
     const store = offline();
     const host = paint(store);
 
     store.ingest(attached());
     store.ingest({
       type: "session_state",
-      cwd: "/repo",
+      cwd: "/home/ada/src/repo",
       model: "sonnet",
       thinking: "medium",
       cost: 0.5,
@@ -154,12 +154,20 @@ describe("the shell, painted from events alone", () => {
       contextPercent: 74.5,
       contextWindow: 1_000_000,
       branch: "feat/new-stuff",
-      dirty: true,
+      dirtyCount: 3,
+      ahead: 2,
+      behind: 1,
     });
     flush();
 
+    expect(host.innerHTML).toContain("i-griddy-icons:folder");
+    expect(host.textContent).toContain("~/src/repo");
     expect(host.innerHTML).toContain("i-griddy-icons:code-branch");
     expect(host.textContent).toContain("feat/new-stuff");
+    // Dirt is a count, not a flag, and divergence rides along beside it.
+    expect(host.textContent).toContain("●3");
+    expect(host.textContent).toContain("↑2");
+    expect(host.textContent).toContain("↓1");
 
     const fill = [...host.querySelectorAll("div")].find((node) =>
       node.textContent?.startsWith("74.5%")
@@ -185,6 +193,8 @@ describe("the shell, painted from events alone", () => {
     flush();
 
     expect(host.innerHTML).not.toContain("code-branch");
+    // A clean tree says nothing rather than saying zero.
+    expect(host.textContent).not.toContain("●");
   });
 
   /**
