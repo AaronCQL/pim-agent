@@ -206,7 +206,13 @@ test("re-attaching does not replay the in-flight text twice", async () => {
   const release = harness.holdTurn();
   const store = await connect();
   await store.prompt("say hello");
-  await until(() => liveText(store).length > 5, "some streamed text");
+  // The prompt takes two steps and only the second one is held open, so the
+  // drop has to land in it: a prefix of `REPLY` is what says we are there,
+  // where "some text arrived" would also match the tool step's prose.
+  await until(() => {
+    const text = liveText(store).trim();
+    return text.length > 0 && REPLY.startsWith(text);
+  }, "the held step to start streaming");
   const partial = liveText(store);
 
   await harness.dropGateway();

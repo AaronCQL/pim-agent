@@ -12,7 +12,9 @@ function recorder(): {
     queries,
     query: async (q) => {
       queries.push(q);
-      await Bun.sleep(1);
+      // A round trip, not a delay: the engine only needs `query` to settle
+      // asynchronously, and the bounded-cache test makes a hundred of them.
+      await Promise.resolve();
       return [{ value: q, label: q }];
     },
   };

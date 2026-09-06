@@ -1,7 +1,7 @@
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 
 import type { SessionId } from "./Session";
 import { TaskScheduler, parseDuration } from "./TaskScheduler";
@@ -135,9 +135,14 @@ describe("TaskScheduler.tick", () => {
     };
     await TaskStore.save(tmp, stale);
 
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
     const { scheduler, fired } = makeScheduler({ now: () => t0 });
     await scheduler.tick();
     expect(fired).toHaveLength(0);
+    expect(warn).toHaveBeenCalledWith(
+      "[scheduler] task stale-task missed by >24h, advanced silently"
+    );
+    warn.mockRestore();
 
     const reloaded = (await TaskStore.loadAll(tmp))[0]!;
     expect(Date.parse(reloaded.nextRun)).toBeGreaterThan(t0);

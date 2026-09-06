@@ -291,8 +291,12 @@ test("stays well under 100ms per keystroke on a repo-sized tree", async () => {
   }
 
   const slowest = Math.max(...warm);
-  console.log(
-    `[picker] ${String(BIG_TREE_FILES)} files: cold ${coldMs.toFixed(1)}ms, warm max ${slowest.toFixed(1)}ms, warm ${warm.map((ms) => ms.toFixed(1)).join("/")}ms`
-  );
+  // The timings are only worth reading when they are heading for the budget;
+  // printed every run they are a number nobody compares against anything.
+  if (slowest > 50) {
+    console.log(
+      `[picker] ${String(BIG_TREE_FILES)} files: cold ${coldMs.toFixed(1)}ms, warm max ${slowest.toFixed(1)}ms, warm ${warm.map((ms) => ms.toFixed(1)).join("/")}ms`
+    );
+  }
   expect(slowest).toBeLessThan(100);
 });

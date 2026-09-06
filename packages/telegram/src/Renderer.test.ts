@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, spyOn, test } from "bun:test";
 import type {
   AgentSessionEvent,
   ExtensionAPI,
@@ -34,6 +34,14 @@ for (const extension of [
   extension(fakePi);
 }
 Tools.wrap(TaskTool.build({} as never));
+
+// Every delivered message logs a line, which is the daemon's journal and this
+// suite's noise: a hundred `[send] ... ok` lines around the one failure that
+// matters. Silenced here rather than in `Renderer`, so the log stays real.
+const sendLog = spyOn(console, "log").mockImplementation(() => {});
+afterAll(() => {
+  sendLog.mockRestore();
+});
 
 type SentMessage = {
   readonly chatId: number;

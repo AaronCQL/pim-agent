@@ -13,6 +13,17 @@ export const REPLY = "hello from the gateway";
 export const REASONING = "a ping is what was asked for";
 export const TOOL_PROSE = "Pinging now.";
 
+/**
+ * Paces the reply so a test that drops the socket mid-turn still finds the
+ * step open. Load-bearing, unlike the equivalent in the gateway's own tests:
+ * shrinking it makes "re-attaching does not replay the in-flight text twice"
+ * reconnect to a session whose projection comes back empty.
+ */
+const TOKEN_DELAY_MS = 15;
+
+/** Fine enough that polling is not itself the thing the tests are waiting on. */
+const POLL_MS = 1;
+
 const pingSchema = Type.Object({ text: Type.String() });
 
 function pingTool(): PimToolDefinition<typeof pingSchema, { echoed: string }> {
@@ -213,7 +224,7 @@ export class GatewayHarness {
             } else {
               for (const word of REPLY.split(" ")) {
                 encode(chunk({ content: `${word} ` }));
-                await Bun.sleep(15);
+                await Bun.sleep(TOKEN_DELAY_MS);
               }
               await gate;
               encode(chunk({}, "stop"));
@@ -241,6 +252,6 @@ export async function until(
     if (Date.now() > deadline) {
       throw new Error(`timed out waiting for ${label}`);
     }
-    await Bun.sleep(10);
+    await Bun.sleep(POLL_MS);
   }
 }

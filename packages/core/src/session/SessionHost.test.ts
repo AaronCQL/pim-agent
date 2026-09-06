@@ -21,6 +21,42 @@ let hosts: SessionHost[] = [];
 let requested: () => void;
 let requestSeen: Promise<void>;
 
+/**
+ * Yields between chunks so the deltas arrive as a stream rather than one
+ * write. Duration is irrelevant: a test that has to look at a turn while it is
+ * still open holds it open with `holdTurn` instead of racing a sleep.
+ */
+const TOKEN_DELAY_MS = 1;
+
+/** Set by `holdTurn` to stall the reply just before it finishes. */
+let gate: Promise<void> | undefined;
+let releaseGate: (() => void) | undefined;
+
+function holdTurn(): () => void {
+  gate = new Promise<void>((resolve) => {
+    releaseGate = resolve;
+  });
+  return () => {
+    gate = undefined;
+    releaseGate?.();
+    releaseGate = undefined;
+  };
+}
+
+/**
+ * Polls a condition rather than sleeping long enough that it is probably true.
+ * The deadline is well inside bun's per-test one so a stuck wait says which.
+ */
+async function until(ready: () => boolean, what: string): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (!ready()) {
+    if (Date.now() > deadline) {
+      throw new Error(`timed out waiting for ${what}`);
+    }
+    await Bun.sleep(1);
+  }
+}
+
 function chunk(delta: Record<string, unknown>): string {
   return `data: ${JSON.stringify({
     id: "1",
@@ -33,7 +69,8 @@ function chunk(delta: Record<string, unknown>): string {
 
 /**
  * An OpenAI-compatible endpoint that streams a fixed reply one token at a
- * time, slowly enough that a test can abort mid-stream.
+ * time, stalling before the final chunk while a test holds `gate` so the turn
+ * can be inspected or aborted mid-flight.
  */
 function startModelServer(): void {
   server = Bun.serve({
@@ -50,8 +87,9 @@ function startModelServer(): void {
           encode(chunk({ role: "assistant", content: "" }));
           for (const word of ["hello", " ", "from", " ", "the", " ", "host"]) {
             encode(chunk({ content: word }));
-            await Bun.sleep(30);
+            await Bun.sleep(TOKEN_DELAY_MS);
           }
+          await gate;
           encode(
             `data: ${JSON.stringify({
               id: "1",
@@ -97,6 +135,9 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  gate = undefined;
+  releaseGate?.();
+  releaseGate = undefined;
   await Promise.all(hosts.map((host) => host.dispose()));
   hosts = [];
   await server?.stop(true);
@@ -167,15 +208,18 @@ test("prompts, streams, and lands the turn in the event log", async () => {
 
 test("buffers the in-flight turn while it streams, then clears it", async () => {
   const host = await buildHost();
-  let midFlight: string | undefined;
-
+  const release = holdTurn();
   const turn = host.run(async (agent) => {
     await agent.prompt("say hello");
   });
   await requestSeen;
-  await Bun.sleep(120);
-  midFlight = host.eventLog?.inFlight?.text;
+  await until(
+    () => (host.eventLog?.inFlight?.text.length ?? 0) > 0,
+    "the in-flight buffer to take a delta"
+  );
+  const midFlight = host.eventLog?.inFlight?.text;
   const busyStatus = host.status;
+  release();
   await turn;
 
   expect(midFlight).toBeString();
@@ -186,14 +230,15 @@ test("buffers the in-flight turn while it streams, then clears it", async () => 
 
 test("aborts a running turn", async () => {
   const host = await buildHost();
+  const release = holdTurn();
   const turn = host.run(async (agent) => {
     await agent.prompt("say hello");
   });
 
   await requestSeen;
-  await Bun.sleep(60);
-  expect(host.isStreaming).toBe(true);
+  await until(() => host.isStreaming, "the turn to start streaming");
   expect(await host.cancel()).toBe(true);
+  release();
   await turn;
 
   expect(host.isStreaming).toBe(false);

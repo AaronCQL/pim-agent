@@ -1,7 +1,7 @@
 import "../test/dom";
 
 import { render } from "@solidjs/web";
-import { expect, setSystemTime, test } from "bun:test";
+import { expect, jest, setSystemTime, test } from "bun:test";
 import { flush } from "solid-js";
 
 import type { SessionSummaryView } from "#protocol/ServerEvent";
@@ -99,11 +99,16 @@ test("picking a row attaches to it and tells the host to get out of the way", as
 });
 
 test("a row's age follows the clock, not the next render", async () => {
+  // The row's clock is a `setInterval`, so it has to be the fake one by the
+  // time the component mounts. This resets the wall clock, hence the order.
+  jest.useFakeTimers();
   // The fixture's sessions were last written at the epoch, so the mocked
   // wall clock *is* the age.
   setSystemTime(new Date(30_000));
   const { host } = paint();
-  await Bun.sleep(0);
+  // Not `Bun.sleep`: under fake timers nothing advances the clock but this
+  // test, and the stubbed `listSessions` only needs its microtask drained.
+  await Promise.resolve();
   flush();
   const age = (): string | undefined =>
     host.querySelector("li button > div:last-child > div:last-child")
@@ -112,9 +117,10 @@ test("a row's age follows the clock, not the next render", async () => {
 
   setSystemTime(new Date(90_000));
   // Nothing here re-renders the list; only the component's own tick does.
-  await Bun.sleep(1100);
+  jest.advanceTimersByTime(1000);
   flush();
   expect(age()).toBe("1m");
+  jest.useRealTimers();
   setSystemTime();
 });
 

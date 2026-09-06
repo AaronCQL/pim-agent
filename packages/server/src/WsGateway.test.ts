@@ -21,6 +21,12 @@ const REASONING = "the user wants a ping, so call the tool";
 const PROSE = "Pinging the tool now.";
 const TOOL_ARGS = { text: "hi" };
 const TOOL_OUTPUT = `pong: ${TOOL_ARGS.text}`;
+/**
+ * Yields between chunks so each delta reaches the client as its own frame
+ * rather than one batched write. Only the interleaving matters, never the
+ * duration — a test that needs a turn held open mid-stream uses `holdTurn`.
+ */
+const TOKEN_DELAY_MS = 1;
 
 let tmp: string;
 let agentDir: string;
@@ -130,7 +136,7 @@ function startModelServer(): void {
           } else {
             for (const word of REPLY.split(" ")) {
               encode(chunk({ content: `${word} ` }));
-              await Bun.sleep(20);
+              await Bun.sleep(TOKEN_DELAY_MS);
             }
             await gate;
             encode(chunk({}, "stop"));
@@ -345,7 +351,14 @@ test("hands a reconnecting client every step of the in-flight turn", async () =>
   const sessionId = first.sessionId!;
   const mark = first.events.length;
   await first.prompt("say hello");
-  await first.waitFor((e) => e.type === "text_delta", { from: mark });
+  // The gate holds the *second* step open, so that is the one the reconnect
+  // has to land in. The first step streams prose too, and only this step's
+  // words are a prefix of `REPLY`, so waiting on any delta was waiting on the
+  // first step being quicker than this line.
+  await first.waitFor(
+    (e) => e.type === "text_delta" && REPLY.startsWith(e.delta.trim()),
+    { from: mark }
+  );
   first.kill();
 
   const second = await connect({ sessionId, fromSeq: first.seq });
@@ -398,9 +411,8 @@ test("finishes a turn with zero clients attached", async () => {
 
   const host = registry.peek(sessionId)!;
   while (host.status !== "idle" || host.isStreaming) {
-    await Bun.sleep(25);
+    await Bun.sleep(1);
   }
-  await Bun.sleep(50);
 
   const late = await connect({ sessionId, fromSeq: 0 });
   const messages = durable(late).filter((e) => e.type === "message");

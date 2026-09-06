@@ -50,4 +50,11 @@ Never write:
 - `type` over `interface`.
 - Mark data-shape fields `readonly` where possible.
 - Default to `Bun.*` APIs over Node built-ins, unless Bun has no equivalent.
-- Run `bun run check` after every change to run tests and lints
+
+## Tests
+
+**Never wait on wall time.** Poll the condition, or hold the fake model server's turn open and release it once the state under test exists. A `sleep` tuned until it passes is tuned to one machine's load: it is dead time on every run and a failure on a slower one. The suite is a couple of seconds whole, and stays that way only because nothing in it sleeps.
+
+**Print nothing on success.** `bun scripts/check.ts` is the gate — lint, format, typecheck, and the `agent`, `web` and `pack` suites — and a green run is silent, so everything on screen is a failure or a file that was rewritten. Run it after every change. Narrow it by task and forward flags to the suites: `bun scripts/check.ts agent --changed`, `bun scripts/check.ts web -t Sidebar`.
+
+That contract only holds if the tests hold it too. A `console.log` left in a passing test is printed on every run of it forever; if a log line is worth keeping, assert on it with `spyOn(console, …)` instead, and if a number is only interesting when it regresses, print it only when it does.

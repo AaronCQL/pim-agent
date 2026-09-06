@@ -48,15 +48,10 @@
     "prepack": "bun run build:web",
     "serve": "bun packages/server/src/serve.ts",
     "probe": "bun packages/server/src/probe.ts",
-    "typecheck": "tsgo --noEmit",
-    "test": "bun run test:agent && bun run test:web",
-    "test:agent": "bun test ./packages --path-ignore-patterns='**/packages/web/**' --only-failures",
-    "test:web": "bun test ./packages/web --conditions=browser --isolate --only-failures",
+    "test": "bun scripts/check.ts agent web pack",
+    "check": "bun scripts/check.ts",
     "build:web": "cd packages/web && vite build",
-    "dev:web": "cd packages/web && vite",
-    "lint": "oxlint . --fix",
-    "format": "prettier --write --list-different package.json tsconfig.json .oxlintrc.json .prettierrc.json \"packages/**/*.{ts,tsx}\" \"bin/**/*.ts\"",
-    "check": "bun run typecheck && bun run test && bun run lint && bun run format"
+    "dev:web": "cd packages/web && vite"
   },
   "devDependencies": {
     "@fontsource/commit-mono": "^5.3.0",

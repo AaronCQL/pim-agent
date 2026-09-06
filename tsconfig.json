@@ -16,5 +16,5 @@
     "noEmit": true,
     "types": ["bun-types"]
   },
-  "include": ["packages/*/src/**/*", "bin/**/*"]
+  "include": ["packages/*/src/**/*", "bin/**/*", "scripts/**/*.ts"]
 }

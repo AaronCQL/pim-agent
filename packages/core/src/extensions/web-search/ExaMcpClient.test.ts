@@ -72,6 +72,19 @@ const recordingLimiter = (): { limiter: RateLimiter; sleeps: number[] } => {
   return { limiter, sleeps };
 };
 
+/**
+ * A client whose throttling is bookkeeping on a fake clock rather than wall
+ * time. The keyless free tier allows 2 requests per 1100ms window and one
+ * `search` spends three of them — initialize, initialized, tools/call — so
+ * letting `ExaMcpClient` install its default limiter costs a real second in
+ * every test that only cares about what comes back.
+ */
+const parsingClient = (toolCallResponse: () => Response): ExaMcpClient =>
+  new ExaMcpClient({
+    rateLimiter: recordingLimiter().limiter,
+    fetch: handshakeOr(toolCallResponse),
+  });
+
 test("throttles requests on the free tier (no api key)", async () => {
   const { limiter, sleeps } = recordingLimiter();
   const client = new ExaMcpClient({
@@ -100,30 +113,28 @@ test("does not throttle when an api key is provided", async () => {
 });
 
 test("parses Exa JSON results", async () => {
-  const client = new ExaMcpClient({
-    fetch: handshakeOr(() =>
-      Response.json({
-        jsonrpc: "2.0",
-        id: 2,
-        result: {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                results: [
-                  {
-                    title: "Pim docs",
-                    url: "https://example.test/pim",
-                    snippet: "A concise result.",
-                  },
-                ],
-              }),
-            },
-          ],
-        },
-      })
-    ),
-  });
+  const client = parsingClient(() =>
+    Response.json({
+      jsonrpc: "2.0",
+      id: 2,
+      result: {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              results: [
+                {
+                  title: "Pim docs",
+                  url: "https://example.test/pim",
+                  snippet: "A concise result.",
+                },
+              ],
+            }),
+          },
+        ],
+      },
+    })
+  );
 
   await expect(
     client.search({ query: "pim agent", numResults: 3 })
@@ -137,38 +148,36 @@ test("parses Exa JSON results", async () => {
 });
 
 test("parses Exa plain-text result blocks", async () => {
-  const client = new ExaMcpClient({
-    fetch: handshakeOr(() =>
-      Response.json({
-        jsonrpc: "2.0",
-        id: 2,
-        result: {
-          content: [
-            {
-              type: "text",
-              text: [
-                "Title: First text result",
-                "URL: https://example.test/first",
-                "Published: N/A",
-                "Author: N/A",
-                "Highlights:",
-                "First highlighted sentence.",
-                "[...]",
-                "Second highlighted sentence.",
-                "",
-                "---",
-                "",
-                "Title: Second text result",
-                "URL: https://example.test/second",
-                "Highlights:",
-                "Another result.",
-              ].join("\n"),
-            },
-          ],
-        },
-      })
-    ),
-  });
+  const client = parsingClient(() =>
+    Response.json({
+      jsonrpc: "2.0",
+      id: 2,
+      result: {
+        content: [
+          {
+            type: "text",
+            text: [
+              "Title: First text result",
+              "URL: https://example.test/first",
+              "Published: N/A",
+              "Author: N/A",
+              "Highlights:",
+              "First highlighted sentence.",
+              "[...]",
+              "Second highlighted sentence.",
+              "",
+              "---",
+              "",
+              "Title: Second text result",
+              "URL: https://example.test/second",
+              "Highlights:",
+              "Another result.",
+            ].join("\n"),
+          },
+        ],
+      },
+    })
+  );
 
   await expect(
     client.search({ query: "text result", numResults: 2 })
@@ -187,17 +196,15 @@ test("parses Exa plain-text result blocks", async () => {
 });
 
 test("throws clean errors for malformed tool envelopes", async () => {
-  const client = new ExaMcpClient({
-    fetch: handshakeOr(() =>
-      Response.json({
-        jsonrpc: "2.0",
-        id: 2,
-        result: {
-          content: [{ type: "image", url: "https://example.test/image.png" }],
-        },
-      })
-    ),
-  });
+  const client = parsingClient(() =>
+    Response.json({
+      jsonrpc: "2.0",
+      id: 2,
+      result: {
+        content: [{ type: "image", url: "https://example.test/image.png" }],
+      },
+    })
+  );
 
   await expect(client.search({ query: "pim", numResults: 1 })).rejects.toThrow(
     "Exa returned malformed tool content."
