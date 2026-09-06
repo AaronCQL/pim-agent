@@ -177,10 +177,12 @@ export class SessionStream {
     const tps = this.host.tps;
     const usage = this.host.agentSession?.getContextUsage();
     const { branch, dirty } = this.gitState();
+    const modelLabel = this.host.currentModelLabel;
     return {
       type: "session_state",
       cwd: this.host.cwd,
       model: this.host.currentModelId ?? "",
+      ...(modelLabel === undefined ? {} : { modelLabel }),
       thinking: this.host.currentThinkingLevel,
       cost: this.host.settings.cumulativeCost ?? 0,
       status: this.host.status,

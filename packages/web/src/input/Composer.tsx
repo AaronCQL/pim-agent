@@ -80,7 +80,11 @@ export function Composer(props: {
         };
   });
   const modelOptions = createMemo(() =>
-    catalogue().models.map(({ id, label }) => ({ value: id, label }))
+    catalogue().models.map(({ id, label, provider }) => ({
+      value: id,
+      label,
+      tag: provider,
+    }))
   );
   const levelOptions = createMemo(() =>
     catalogue().thinkingLevels.map((level) => ({ value: level, label: level }))
@@ -208,7 +212,7 @@ export function Composer(props: {
                   {shown().text}
                   <Show when={props.store.state.contextWindow}>
                     {(window) => (
-                      <span class="hidden text-neutral-500 sm:inline">
+                      <span class="text-neutral-500">
                         {`/${Format.formatTokens(window())}`}
                       </span>
                     )}
@@ -314,7 +318,7 @@ export function Composer(props: {
           <Show when={props.store.state.model}>
             {(model) => (
               <Menu
-                label={model()}
+                label={props.store.state.modelLabel}
                 title="Model"
                 icon="i-griddy-icons:robot"
                 value={model()}

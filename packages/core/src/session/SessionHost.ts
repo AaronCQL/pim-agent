@@ -173,6 +173,15 @@ export class SessionHost {
     return model ? qualifiedModelId(model) : undefined;
   }
 
+  /**
+   * The model's display name — "Claude Opus 5.0", not `anthropic/claude-opus-5`.
+   * The id is what `setModel` takes and what a client compares against the
+   * catalogue; this is what a reader should be shown.
+   */
+  public get currentModelLabel(): string | undefined {
+    return (this.cached?.model ?? this.resolveDefaultModel())?.name;
+  }
+
   public get supportedThinkingLevels(): readonly ThinkingLevel[] {
     const model = this.cached?.model ?? this.resolveDefaultModel();
     return model ? getSupportedThinkingLevels(model) : [];

@@ -169,6 +169,28 @@ describe("combobox list", () => {
     rows[0]?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     expect(selected).toEqual([0]);
   });
+
+  test("a tag is parked at the row's right edge, after the label", () => {
+    const host = mountPoint();
+    render(
+      () => (
+        <Combobox
+          open
+          items={[{ label: "Claude Opus 5.0", tag: "anthropic" }]}
+          activeIndex={0}
+          onActivate={() => undefined}
+          onSelect={() => undefined}
+        />
+      ),
+      host
+    );
+    flush();
+
+    const tag = host.querySelector('[role="option"] > :last-child')!;
+    expect(tag.textContent).toBe("anthropic");
+    expect(tag.className).toContain("ml-auto");
+    expect(tag.className).toContain("text-xs");
+  });
 });
 
 describe("platform wrappers", () => {

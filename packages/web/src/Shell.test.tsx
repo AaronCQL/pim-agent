@@ -187,6 +187,35 @@ describe("the shell, painted from events alone", () => {
     expect(host.innerHTML).not.toContain("code-branch");
   });
 
+  /**
+   * The chip names the model the way the menu does. The id is what a switch
+   * is sent as, and a server that has not resolved a name yet leaves it as
+   * the only thing there is to say.
+   */
+  test("the model chip says the model's name, falling back to its id", () => {
+    const store = offline();
+    const host = paint(store);
+    const state = (modelLabel?: string): ServerEvent => ({
+      type: "session_state",
+      cwd: "/repo",
+      model: "anthropic/claude-opus-5",
+      ...(modelLabel === undefined ? {} : { modelLabel }),
+      thinking: "medium",
+      cost: 0,
+      status: "idle",
+    });
+
+    store.ingest(attached());
+    store.ingest(state("Claude Opus 5.0"));
+    flush();
+    expect(host.textContent).toContain("Claude Opus 5.0");
+    expect(host.textContent).not.toContain("anthropic/claude-opus-5");
+
+    store.ingest(state());
+    flush();
+    expect(host.textContent).toContain("anthropic/claude-opus-5");
+  });
+
   test("the clank chip times the whole turn, not the last thing in it", () => {
     const store = offline();
     const host = paint(store);

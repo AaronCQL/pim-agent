@@ -147,6 +147,12 @@ export type EphemeralEvent =
       readonly type: "session_state";
       readonly cwd: string;
       readonly model: string;
+      /**
+       * The same model's display name, as the catalogue spells it. Sent
+       * alongside the id so a client can name the current model without
+       * fetching the whole catalogue first; absent before one resolves.
+       */
+      readonly modelLabel?: string;
       readonly thinking: string;
       readonly cost: number;
       readonly status: SessionStatus;
@@ -182,6 +188,8 @@ export type SessionSummaryView = {
 export type ModelView = {
   readonly id: string;
   readonly label: string;
+  /** The provider half of `id`, so a client can tag a row without parsing it. */
+  readonly provider: string;
 };
 
 /** Answer to one `Command`, correlated by its `id`. Never sequenced. */

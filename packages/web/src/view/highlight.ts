@@ -19,7 +19,12 @@ export type SyntaxRole =
   | "comment"
   | "meta"
   | "operator"
-  | "punctuation";
+  | "punctuation"
+  // The diff grammar's two scopes. Not roles any other language emits, but
+  // the terminal colours them too (`toolDiffAdded`/`toolDiffRemoved`), and
+  // without them a ```diff block is plain text apart from its hunk headers.
+  | "added"
+  | "removed";
 
 /** A run of code carrying one role; no role means it reads as plain code. */
 export type Token = {
@@ -54,6 +59,8 @@ const SCOPES: Readonly<Record<string, SyntaxRole>> = {
   operator: "operator",
   tag: "punctuation",
   punctuation: "punctuation",
+  addition: "added",
+  deletion: "removed",
 };
 
 /**

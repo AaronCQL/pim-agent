@@ -78,4 +78,23 @@ describe("Highlight.tokenize", () => {
 
     expect(text(lines).join("")).toContain('"<img src=x>"');
   });
+
+  /**
+   * A fenced ```diff is the one language whose whole body is scopes no other
+   * grammar emits, so forgetting to map them leaves the block plain apart
+   * from its hunk header.
+   */
+  test("a diff colours its added and removed lines", async () => {
+    const lines = await tokenize(
+      "@@ -1,2 +1,2 @@\n-const a = 1;\n+const a = 2;\n unchanged",
+      "diff"
+    );
+
+    expect(lines.map((line) => line[0]?.role)).toEqual([
+      "meta",
+      "removed",
+      "added",
+      undefined,
+    ]);
+  });
 });

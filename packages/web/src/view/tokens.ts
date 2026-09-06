@@ -73,6 +73,10 @@ export const SYNTAX_CLASSES = {
   meta: "text-neutral-400",
   operator: "",
   punctuation: "",
+  // The same greens and roses a rendered diff uses, so a ```diff fence and a
+  // tool's diff body read as the same thing.
+  added: "text-emerald-400",
+  removed: "text-rose-400",
 } as const satisfies Record<SyntaxRole, string>;
 
 export function syntaxClass(role: SyntaxRole | undefined): string {

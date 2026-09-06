@@ -98,6 +98,8 @@ export function createComboboxNavigation(
 export type ComboboxItem = {
   readonly label: string;
   readonly description?: string;
+  /** A short qualifier — a model's provider — parked at the row's right edge. */
+  readonly tag?: string;
 };
 
 /**
@@ -173,6 +175,13 @@ export function Combobox(props: {
                 {(description) => (
                   <span class="min-w-0 truncate text-neutral-500">
                     {description()}
+                  </span>
+                )}
+              </Show>
+              <Show when={item.tag}>
+                {(tag) => (
+                  <span class="ml-auto shrink-0 pl-2ch text-xs text-neutral-500">
+                    {tag()}
                   </span>
                 )}
               </Show>

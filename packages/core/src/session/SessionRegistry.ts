@@ -27,6 +27,8 @@ export type SessionSummary = {
 export type ModelChoice = {
   readonly id: string;
   readonly label: string;
+  /** Who serves it, for a client that groups or tags the catalogue. */
+  readonly provider: string;
 };
 
 export type SessionRegistryDeps = {
@@ -113,6 +115,7 @@ export class SessionRegistry {
     return registry.getAvailable().map((model: Model<ModelApi>) => ({
       id: `${model.provider}/${model.id}`,
       label: model.name,
+      provider: model.provider,
     }));
   }
 

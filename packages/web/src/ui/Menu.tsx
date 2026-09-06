@@ -5,6 +5,8 @@ import { Combobox, createComboboxNavigation } from "./Combobox";
 export type MenuOption = {
   readonly value: string;
   readonly label: string;
+  /** Right-aligned qualifier on the row, e.g. a model's provider. */
+  readonly tag?: string;
 };
 
 /**

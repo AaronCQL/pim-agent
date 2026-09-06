@@ -71,7 +71,9 @@ export type SessionState = {
   connection: ConnectionStatus;
   sessionId: string;
   cwd: string;
+  /** The id `set_model` takes; `modelLabel` is what a reader is shown. */
   model: string;
+  modelLabel: string;
   thinking: string;
   cost: number;
   agent: SessionStatus;
@@ -147,6 +149,7 @@ export class SessionStore {
       sessionId: "",
       cwd: options.cwd ?? "",
       model: "",
+      modelLabel: "",
       thinking: "",
       cost: 0,
       agent: "idle",
@@ -536,6 +539,7 @@ export class SessionStore {
           draft.loading = false;
           draft.cwd = event.cwd;
           draft.model = event.model;
+          draft.modelLabel = event.modelLabel ?? event.model;
           draft.thinking = event.thinking;
           draft.cost = event.cost;
           draft.agent = event.status;

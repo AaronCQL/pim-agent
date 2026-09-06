@@ -291,7 +291,9 @@ test("the model catalogue is asked for once and switching it lands on state", as
   const store = await connect();
 
   const first = await store.listModels();
-  expect(first.models).toEqual([{ id: "test/echo", label: "echo" }]);
+  expect(first.models).toEqual([
+    { id: "test/echo", label: "echo", provider: "test" },
+  ]);
   expect(first.thinkingLevels).toBeArray();
   // Cached for the connection: the catalogue is a property of the machine.
   expect(await store.listModels()).toBe(first);

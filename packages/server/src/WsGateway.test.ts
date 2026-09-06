@@ -477,7 +477,15 @@ test("answers with the model catalogue and this model's thinking levels", async 
   const probe = await connect();
 
   const { models, thinkingLevels } = await probe.listModels();
-  expect(models).toEqual([{ id: "test/echo", label: "echo" }]);
+  expect(models).toEqual([
+    { id: "test/echo", label: "echo", provider: "test" },
+  ]);
+  // The same name the state event carries, so a client can title its picker
+  // without waiting for the catalogue.
+  const state = probe.events.findLast(
+    (event) => event.type === "session_state"
+  );
+  expect(state?.type === "session_state" && state.modelLabel).toBe("echo");
   // The levels belong to the model the session is on, so they only exist
   // once this connection has one.
   expect(thinkingLevels).toBeArray();
