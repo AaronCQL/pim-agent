@@ -2,3 +2,13 @@
 # a Bun plugin. Scoped to `.tsx`, which only `packages/web` has.
 [test]
 preload = ["./packages/web/src/test/preload.ts"]
+# A bare `bun test` — what anyone types before they find `bun run check` — has
+# no `--conditions=browser`, and without it `solid-js`/`@solidjs/web` resolve
+# to their SSR build, whose `template` throws on sight: every `.tsx` test fails
+# for a reason that has nothing to do with the code under it. So the browser
+# tests are not in the default set at all; `check.ts` runs them in a process of
+# their own, and overrides this list with its own `--path-ignore-patterns` to
+# get them back. A CLI list replaces this one rather than adding to it, which
+# is what makes that override possible — and what makes an empty run there a
+# real failure, which `check.ts` already treats as one.
+pathIgnorePatterns = ["**/packages/web/**"]

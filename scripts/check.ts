@@ -106,6 +106,11 @@ const TASKS: readonly Task[] = [
       "test",
       "./packages/web",
       "--conditions=browser",
+      // Overrides `bunfig.toml`, which keeps these tests out of a bare
+      // `bun test` for the reason above. A CLI list replaces the config's
+      // rather than adding to it, so this says "ignore nothing" in the only
+      // vocabulary the flag has: bun never walks `node_modules` anyway.
+      "--path-ignore-patterns=**/node_modules/**",
       "--isolate",
       "--only-failures",
       "--parallel",
