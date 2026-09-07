@@ -12,6 +12,7 @@ import {
   type DurableEvent,
   type ResponseEvent,
   type ServerEvent,
+  type SessionSummaryView,
 } from "#protocol/ServerEvent";
 import { ProbeClient } from "./ProbeClient";
 import { WsGateway } from "./WsGateway";
@@ -162,7 +163,11 @@ async function startGateway(): Promise<void> {
     customTools: () => [Tools.wrap(pingTool()) as unknown as ToolDefinition],
   });
   await registry.init();
-  gateway = new WsGateway({ registry, port: 0 });
+  gateway = new WsGateway({
+    registry,
+    port: 0,
+    readCursorsPath: join(tmp, "read.json"),
+  });
   gateway.start();
 }
 
@@ -207,6 +212,55 @@ function saidBy(probe: ProbeClient): readonly string[] {
   return durable(probe)
     .filter((event) => event.type === "message" && event.role === "user")
     .map((event) => (event.type === "message" ? event.text : ""));
+}
+
+/** The mark one client is shown for one session; absent means read. */
+function unreadIn(
+  rows: readonly SessionSummaryView[],
+  sessionId: string
+): boolean | undefined {
+  return rows.find((row) => row.sessionId === sessionId)?.unread;
+}
+
+/** A whole-second ISO timestamp `n` minutes before now. */
+function minutesAgo(n: number): string {
+  return new Date(Date.now() - n * 60_000).toISOString();
+}
+
+/**
+ * Writes a session pi could have written, to say what a listing cannot be
+ * made to say through the gateway: `repliedAt` is when the agent answered and
+ * `saidAt`, when given, is a message typed in afterwards — which no prompt
+ * can produce, because prompting runs a turn.
+ */
+async function writeSession(
+  id: string,
+  repliedAt: string,
+  saidAt?: string
+): Promise<void> {
+  const line = (entry: unknown) => `${JSON.stringify(entry)}\n`;
+  const message = (at: string, message: unknown) =>
+    line({ type: "message", id: at, parentId: null, timestamp: at, message });
+  const path = join(agentDir, "sessions", "written", `${id}.jsonl`);
+  await mkdir(join(agentDir, "sessions", "written"), { recursive: true });
+  await Bun.write(
+    path,
+    line({ type: "session", version: 3, id, timestamp: repliedAt, cwd: tmp }) +
+      message(repliedAt, {
+        role: "user",
+        content: [{ type: "text", text: "say hello" }],
+      }) +
+      message(repliedAt, {
+        role: "assistant",
+        content: [{ type: "text", text: "hello" }],
+      }) +
+      (saidAt === undefined
+        ? ""
+        : message(saidAt, {
+            role: "user",
+            content: [{ type: "text", text: "and again" }],
+          }))
+  );
 }
 
 beforeEach(async () => {
@@ -424,7 +478,11 @@ test("two probes attached at once see identical durable streams", async () => {
       (event) =>
         !isDurableEvent(event) &&
         event.type !== "response" &&
-        event.type !== "attached"
+        event.type !== "attached" &&
+        // Server-wide, like the response and the handshake above it: which
+        // of these a client has seen says when it arrived, not what the
+        // session it is reading has done.
+        event.type !== "session_read"
     );
   expect(live(second)).toEqual(live(first));
 });
@@ -494,6 +552,145 @@ test("says which sessions are working, to clients attached elsewhere", async () 
   ).toBeUndefined();
 });
 
+test("dates a session by its last completed turn, and holds that while one runs", async () => {
+  const worker = await connect();
+  const sessionId = worker.sessionId!;
+  const first = worker.events.length;
+  await worker.prompt("say hello");
+  await idle(worker, first);
+
+  const watcher = await connect();
+  const settled = (rows: readonly SessionSummaryView[]): number =>
+    rows.find((row) => row.sessionId === sessionId)!.settledAt;
+  const before = settled(await watcher.listSessions());
+
+  const release = holdTurn();
+  const mark = watcher.events.length;
+  await worker.prompt("say hello again");
+  await watcher.waitFor(
+    (event) =>
+      event.type === "session_activity" &&
+      event.sessionId === sessionId &&
+      event.status !== "idle",
+    { from: mark }
+  );
+
+  // The user's message is on disk, so is the step that has already run, and
+  // the file's modified time has moved twice — none of which is the agent
+  // having finished. A row that climbed the list here would climb it again
+  // on the next tool result.
+  expect(settled(await watcher.listSessions())).toBe(before);
+
+  release();
+  await watcher.waitFor(
+    (event) =>
+      event.type === "session_activity" &&
+      event.sessionId === sessionId &&
+      event.status === "idle",
+    { from: mark }
+  );
+
+  // And steps once, when the turn ends.
+  expect(settled(await watcher.listSessions())).toBeGreaterThan(before);
+});
+
+test("goes unread when a turn ends, and not on the lines it ends with", async () => {
+  const worker = await connect();
+  const sessionId = worker.sessionId!;
+  const first = worker.events.length;
+  await worker.prompt("say hello");
+  await idle(worker, first);
+
+  // Read, because a client has been sitting in it the whole turn — and the
+  // answer is the same asked from a second browser, which is the point of
+  // keeping the cursor here rather than in either of them.
+  const watcher = await connect();
+  expect(unreadIn(await watcher.listSessions(), sessionId)).toBeUndefined();
+
+  const release = holdTurn();
+  const mark = watcher.events.length;
+  await worker.prompt("say hello again");
+  await watcher.waitFor(
+    (event) =>
+      event.type === "session_activity" &&
+      event.sessionId === sessionId &&
+      event.status !== "idle",
+    { from: mark }
+  );
+  worker.close();
+
+  // Nobody is reading it and its first step is already written, result and
+  // all. A turn is one thing to be told about, so none of that is news yet.
+  expect(unreadIn(await watcher.listSessions(), sessionId)).toBeUndefined();
+
+  release();
+  await watcher.waitFor(
+    (event) =>
+      event.type === "session_activity" &&
+      event.sessionId === sessionId &&
+      event.status === "idle",
+    { from: mark }
+  );
+  expect(unreadIn(await watcher.listSessions(), sessionId)).toBe(true);
+
+  // Opening it in one client reads it in all of them: the watcher is told
+  // without having asked, because a mark it is holding has just gone stale.
+  const reader = await connect({ sessionId, fromSeq: 0 });
+  expect(reader.sessionId).toBe(sessionId);
+  await watcher.waitFor(
+    (event) => event.type === "session_read" && event.sessionId === sessionId,
+    { from: mark }
+  );
+  expect(unreadIn(await watcher.listSessions(), sessionId)).toBeUndefined();
+});
+
+test("starts with nothing unread, and keeps what is across a restart", async () => {
+  // A fresh install opens on a quiet list rather than on a dot per
+  // conversation its user has already had: everything older than this
+  // server's first launch reads as read.
+  const before = "00000000-0000-4000-8000-00000000old1";
+  const after = "00000000-0000-4000-8000-00000000new1";
+  await writeSession(before, minutesAgo(30));
+  await writeSession(after, new Date(Date.now() + 60_000).toISOString());
+
+  const probe = await connect();
+  const listed = await probe.listSessions();
+  expect(unreadIn(listed, before)).toBeUndefined();
+  expect(unreadIn(listed, after)).toBe(true);
+  probe.close();
+
+  await gateway.stop();
+  await registry.disposeAll();
+  await startGateway();
+
+  // The baseline is on disk rather than on the clock: taken from the clock,
+  // every restart would read everything that had gone unread since the last.
+  const restarted = await connect();
+  const again = await restarted.listSessions();
+  expect(unreadIn(again, before)).toBeUndefined();
+  expect(unreadIn(again, after)).toBe(true);
+});
+
+test("orders the catalogue by the last reply, not by the last keystroke", async () => {
+  // Written newest-file-last, so the modified times say the opposite of what
+  // the conversations do: `stale` was typed into a moment ago and answered an
+  // hour ago, `fresh` was answered a minute ago and left alone since.
+  const fresh = "00000000-0000-4000-8000-0000000fresh";
+  const stale = "00000000-0000-4000-8000-0000000stale";
+  const answered = minutesAgo(60);
+  await writeSession(fresh, minutesAgo(1));
+  await writeSession(stale, answered, minutesAgo(0));
+
+  const probe = await connect();
+  const listed = await probe.listSessions();
+  const written = listed.filter((row) => row.sessionId.startsWith("00000000"));
+
+  expect(written.map((row) => row.sessionId)).toEqual([fresh, stale]);
+  // Dated by the reply it has been waiting on an answer to since, not by the
+  // message that is waiting.
+  expect(written[1]!.settledAt).toBe(Date.parse(answered));
+});
+
 test("survives a restart with sessions resumable from disk", async () => {
   const probe = await connect();
   const sessionId = probe.sessionId!;
@@ -522,18 +719,16 @@ test("lists pi's sessions, before any attach and after one", async () => {
   expect(listed.map((row) => row.sessionId)).toContain(sessionId);
   const mine = listed.find((row) => row.sessionId === sessionId)!;
   expect(mine.cwd).toBe(tmp);
-  expect(mine.modifiedAt).toBeGreaterThan(0);
-  // Named by its opening message, and carrying the head a client compares
-  // against what it has already painted.
+  expect(mine.settledAt).toBeGreaterThan(0);
+  // Named by its opening message, and read: this client has been sitting in
+  // it since before it answered.
   expect(mine.title).toBe("say hello");
-  expect(mine.head).toBeGreaterThan(0);
   // The catalogue is pi's directory layout, not a store of ours.
   expect(Object.keys(mine).sort()).toEqual([
     "createdAt",
     "cwd",
-    "head",
-    "modifiedAt",
     "sessionId",
+    "settledAt",
     "title",
   ]);
 

@@ -22,7 +22,12 @@ function httpUrl(): string {
 }
 
 async function startGateway(dir: string): Promise<void> {
-  gateway = new WsGateway({ registry, port: 0, clientDir: dir });
+  gateway = new WsGateway({
+    registry,
+    port: 0,
+    clientDir: dir,
+    readCursorsPath: join(tmp, "read.json"),
+  });
   gateway.start();
 }
 

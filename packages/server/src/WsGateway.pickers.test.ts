@@ -161,7 +161,11 @@ beforeEach(async () => {
     customTools: () => [Tools.wrap(writeTool()) as unknown as ToolDefinition],
   });
   await registry.init();
-  gateway = new WsGateway({ registry, port: 0 });
+  gateway = new WsGateway({
+    registry,
+    port: 0,
+    readCursorsPath: join(tmp, "read.json"),
+  });
   gateway.start();
 });
 

@@ -130,7 +130,12 @@ beforeEach(async () => {
     agentDir,
   });
   await registry.init();
-  gateway = new WsGateway({ registry, port: 0, attachmentsRoot });
+  gateway = new WsGateway({
+    registry,
+    port: 0,
+    attachmentsRoot,
+    readCursorsPath: join(tmp, "read.json"),
+  });
   gateway.start();
 });
 

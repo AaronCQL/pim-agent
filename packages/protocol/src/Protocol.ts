@@ -13,6 +13,14 @@
  * connection rather than mis-parsing a newer frame. Versioned from day one so
  * the first incompatible change is a rejection, not a silent field mismatch.
  *
+ * 9 — a listed session carries `settledAt`, when its agent last stopped, in
+ * place of `modifiedAt`: the catalogue orders and ages its rows on the end
+ * of the last completed turn, which a user message does not move. It also
+ * says whether it is `unread`, and `session_read` says that one has been
+ * read; the mark lives on the server, one cursor per session rather than one
+ * per client, so `head` is gone from a listing — it was there for a client
+ * to answer that question for itself.
+ *
  * 8 — `session_activity` says that some session's agent started or stopped
  * working, and reaches every client rather than only the one attached to it;
  * a listed session carries the same `status` when this server is running it.
@@ -36,6 +44,6 @@
  * git branch; durable messages carry a `timestamp`; `list_models` answers
  * with the model catalogue and this model's thinking levels.
  */
-export const PROTOCOL_VERSION = 8;
+export const PROTOCOL_VERSION = 9;
 
 export type ProtocolVersion = typeof PROTOCOL_VERSION;

@@ -165,6 +165,13 @@ export type EphemeralEvent =
       readonly sessionId: string;
       readonly status: SessionStatus;
     }
+  /**
+   * Some client has read a session, so its unread mark is gone — everywhere,
+   * because the cursor behind it is one per session rather than one per
+   * client. Sent to every connection for the same reason `session_activity`
+   * is: it is news precisely to the ones not attached to that session.
+   */
+  | { readonly type: "session_read"; readonly sessionId: string }
   | {
       readonly type: "session_state";
       readonly cwd: string;
@@ -202,11 +209,27 @@ export type SessionSummaryView = {
   readonly sessionId: string;
   readonly cwd: string;
   readonly createdAt: number;
-  readonly modifiedAt: number;
+  /**
+   * When this session's agent last stopped: the end of its last completed
+   * turn, and the sort key of the catalogue. Deliberately *not* the file's
+   * modified time — that moves when the user says something, and a row must
+   * not reorder or reset its age because a message was typed into it. It
+   * stands still for the whole of a turn and steps once when that turn ends,
+   * so a list only ever re-sorts on a reply.
+   *
+   * Falls back to `createdAt` for a session whose agent has never answered.
+   */
+  readonly settledAt: number;
   /** The session's first user message, trimmed; absent when it has none. */
   readonly title?: string;
-  /** Highest durable `seq` on disk, so a client can tell read from unread. */
-  readonly head: number;
+  /**
+   * This session has answered since anything last read it; absent means it
+   * has not. Decided here rather than from a cursor sent alongside, because
+   * the comparison is against the end of the last completed turn — which is
+   * `settledAt` only when the session has ever answered, and this is the
+   * side that can tell that from a session falling back to `createdAt`.
+   */
+  readonly unread?: boolean;
   /**
    * What this session's agent is doing, for a list drawn without attaching
    * to every row. Absent when it is doing nothing — which is also the answer

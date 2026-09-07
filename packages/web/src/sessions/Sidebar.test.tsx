@@ -1,7 +1,14 @@
 import "../test/dom";
 
 import { render } from "@solidjs/web";
-import { beforeEach, expect, jest, setSystemTime, test } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  expect,
+  jest,
+  setSystemTime,
+  test,
+} from "bun:test";
 import { flush } from "solid-js";
 
 import { PROTOCOL_VERSION } from "#protocol/Protocol";
@@ -15,33 +22,48 @@ const SESSIONS: readonly SessionSummaryView[] = [
     sessionId: "aaaaaaaa-1111",
     cwd: "/home/ada/dev/pim",
     createdAt: 0,
-    modifiedAt: 0,
+    settledAt: 0,
     title: "Modernise the string building",
-    head: 12,
   },
   {
     sessionId: "bbbbbbbb-2222",
     cwd: "/srv/other",
     createdAt: 0,
-    modifiedAt: 0,
-    head: 0,
+    settledAt: 0,
   },
 ];
 
-/** Offline: `listSessions` is stubbed, which is the only thing this reads. */
+/**
+ * Offline: the listing is the only thing this reads, so it is the only thing
+ * answered. Answered rather than stubbed away, because the marks it carries
+ * are the server's and this is where the store takes them from.
+ */
 function paint(
   onNavigate?: () => void,
-  seen?: Record<string, number>
+  unread: readonly string[] = []
 ): {
   readonly host: HTMLElement;
   readonly switched: string[];
   readonly store: SessionStore;
 } {
-  // The read cursor is this browser's, so it is seeded where it lives.
-  localStorage.setItem("pim.seen", JSON.stringify(seen ?? {}));
   const store = new SessionStore({ url: "ws://127.0.0.1:1" });
   const switched: string[] = [];
-  store.listSessions = async () => SESSIONS;
+  store.client.send = async () => ({
+    type: "response",
+    id: "1",
+    success: true,
+    sessions: SESSIONS.map((session) => {
+      // A real listing says what each session is doing, so this one does
+      // too: the spinner is read off the status, and a row answered for as
+      // idle would stop one mid-turn on the next re-list.
+      const status = store.state.activity[session.sessionId];
+      return {
+        ...session,
+        ...(unread.includes(session.sessionId) ? { unread: true } : {}),
+        ...(status === undefined || status === "idle" ? {} : { status }),
+      };
+    }),
+  });
   store.switchTo = async (sessionId) => {
     switched.push(sessionId);
   };
@@ -70,6 +92,29 @@ beforeEach(() => {
   localStorage.clear();
 });
 
+// A test that leaves the fake clock running takes every test after it down
+// with it: `Bun.sleep` never resolves under one.
+afterEach(() => {
+  jest.useRealTimers();
+  setSystemTime();
+});
+
+/**
+ * Settles the listing, which resolves through a chain of microtasks: the
+ * client's answer, the store's reading of it, and the effect that puts the
+ * rows on screen. Drained a hop at a time rather than slept on, because one
+ * of these tests runs on a fake clock that only it can move — and until the
+ * a row is up rather than for a fixed count, so a hop added to that chain
+ * does not turn into a test that sees an empty list. A row is a `li button`:
+ * the empty state is an `li` too.
+ */
+async function listed(host: HTMLElement): Promise<void> {
+  for (let hop = 0; hop < 20 && !host.querySelector("li button"); hop += 1) {
+    await Promise.resolve();
+    flush();
+  }
+}
+
 test("one flat row per session: name, cwd and how long ago", async () => {
   const { host } = paint();
   await Bun.sleep(0);
@@ -84,22 +129,24 @@ test("one flat row per session: name, cwd and how long ago", async () => {
   expect(rows[1]?.textContent).toContain("/srv/other");
 });
 
-test("the dot marks a session written past what this browser has painted", async () => {
-  const { host } = paint(undefined, { "aaaaaaaa-1111": 12 });
+test("the dot marks a session that has answered since anything read it", async () => {
+  const { host } = paint();
   await Bun.sleep(0);
   flush();
+  expect(host.querySelectorAll('[aria-label="Unread"]')).toHaveLength(0);
 
-  const dots = [...host.querySelectorAll('[aria-label="Unread"]')];
-  // The first session is read up to its head; the second was never opened and
-  // has nothing on disk either, so neither is unread.
-  expect(dots).toHaveLength(0);
-
-  const { host: stale } = paint(undefined, { "aaaaaaaa-1111": 4 });
+  const { host: marked, store } = paint(undefined, ["aaaaaaaa-1111"]);
   await Bun.sleep(0);
   flush();
   expect(
-    stale.querySelectorAll('li:first-child [aria-label="Unread"]')
+    marked.querySelectorAll('li:first-child [aria-label="Unread"]')
   ).toHaveLength(1);
+
+  // Read in another browser, on a cursor this one shares: the dot goes out
+  // here without the list being asked for again.
+  store.ingest({ type: "session_read", sessionId: "aaaaaaaa-1111" });
+  flush();
+  expect(marked.querySelectorAll('[aria-label="Unread"]')).toHaveLength(0);
 });
 
 test("picking a row attaches to it and tells the host to get out of the way", async () => {
@@ -124,10 +171,7 @@ test("a row's age follows the clock, not the next render", async () => {
   // wall clock *is* the age.
   setSystemTime(new Date(30_000));
   const { host } = paint();
-  // Not `Bun.sleep`: under fake timers nothing advances the clock but this
-  // test, and the stubbed `listSessions` only needs its microtask drained.
-  await Promise.resolve();
-  flush();
+  await listed(host);
   const age = (): string | undefined =>
     host.querySelector("li button > div:last-child > div:last-child")
       ?.textContent ?? undefined;
@@ -138,8 +182,6 @@ test("a row's age follows the clock, not the next render", async () => {
   jest.advanceTimersByTime(1000);
   flush();
   expect(age()).toBe("1m");
-  jest.useRealTimers();
-  setSystemTime();
 });
 
 test("the server row names the host and tints itself with the connection", () => {
@@ -295,10 +337,10 @@ test("the listing is re-read when a turn ends, so the age is since the reply", a
   let listings = 0;
   store.listSessions = async () => {
     listings += 1;
-    // Written to just now, which is what a finished turn leaves behind.
+    // Settled just now, which is what a finished turn leaves behind.
     return SESSIONS.map((session) =>
       session.sessionId === "aaaaaaaa-1111"
-        ? { ...session, modifiedAt: Date.now() }
+        ? { ...session, settledAt: Date.now() }
         : session
     );
   };
@@ -326,4 +368,83 @@ test("the listing is re-read when a turn ends, so the age is since the reply", a
   const row = host.querySelector("li")!;
   expect(row.innerHTML).not.toContain("animate-spin");
   expect(row.textContent).toContain("0s");
+});
+
+test("typing into a new chat leaves the rows around it standing", async () => {
+  unwritten("draft-1");
+  draft("draft-1", "re");
+  const { host, store } = paint();
+  await Bun.sleep(0);
+  flush();
+
+  store.ingest({
+    type: "attached",
+    protocolVersion: PROTOCOL_VERSION,
+    sessionId: "draft-1",
+    cwd: "/home/ada/dev/pim",
+    head: 0,
+  });
+  store.ingest({
+    type: "session_activity",
+    sessionId: "aaaaaaaa-1111",
+    status: "thinking",
+  });
+  flush();
+  await Bun.sleep(0);
+  flush();
+
+  const before = [...host.querySelectorAll("li")];
+  const spinner = host.querySelector(".animate-spin");
+  expect(spinner).not.toBeNull();
+
+  store.setDraftText("rework the sidebar");
+  flush();
+
+  // The same elements, not merely the same markup: a remounted row starts its
+  // spin over, which is what a turn running elsewhere looks like being reset
+  // by a keystroke here.
+  const after = [...host.querySelectorAll("li")];
+  expect(after).toHaveLength(before.length);
+  for (const [index, row] of after.entries()) {
+    expect(row).toBe(before[index]!);
+  }
+  expect(host.querySelector(".animate-spin")).toBe(spinner!);
+  // And the row still followed the message it is named by.
+  expect(after[0]?.textContent).toContain("rework the sidebar");
+});
+
+test("switching moves the highlight without rebuilding the list", async () => {
+  const { host, store } = paint();
+  await Bun.sleep(0);
+  flush();
+
+  store.ingest({
+    type: "session_activity",
+    sessionId: "aaaaaaaa-1111",
+    status: "thinking",
+  });
+  flush();
+  const before = [...host.querySelectorAll("li")];
+  const spinner = host.querySelector(".animate-spin");
+
+  store.ingest({
+    type: "attached",
+    protocolVersion: PROTOCOL_VERSION,
+    sessionId: "bbbbbbbb-2222",
+    cwd: "/srv/other",
+    head: 0,
+  });
+  flush();
+  // The switch re-reads the listing, which answers with the same sessions.
+  await Bun.sleep(0);
+  flush();
+
+  const after = [...host.querySelectorAll("li")];
+  expect(after).toHaveLength(before.length);
+  for (const [index, row] of after.entries()) {
+    expect(row).toBe(before[index]!);
+  }
+  expect(host.querySelector(".animate-spin")).toBe(spinner!);
+  expect(after[1]?.innerHTML).toContain("bg-neutral-850");
+  expect(after[0]?.innerHTML).not.toContain("bg-neutral-850");
 });

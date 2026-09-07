@@ -7,12 +7,14 @@ import { toAttachmentPrompt } from "#core/attachments/AttachmentStore";
 import type { PickerItem } from "#core/picker/PickerItem";
 import { EventLog } from "#core/session/EventLog";
 import type { SessionDigest } from "#core/session/EventLog";
+import { ReadCursors } from "#core/session/ReadCursors";
 import type { SessionRegistry } from "#core/session/SessionRegistry";
 import type { SessionHost } from "#core/session/SessionHost";
 import type { Command } from "#protocol/Command";
 import { PROTOCOL_VERSION } from "#protocol/Protocol";
 import type {
   ModelView,
+  ServerEvent,
   SessionStatus,
   SessionSummaryView,
 } from "#protocol/ServerEvent";
@@ -35,6 +37,8 @@ export type WsGatewayDeps = {
   readonly port?: number;
   /** Where `POST /upload` materialises bytes; defaults to `~/.pim/attachments`. */
   readonly attachmentsRoot?: string;
+  /** Where the read cursors live; defaults to `~/.pim/read.json`. */
+  readonly readCursorsPath?: string;
   /** The built web client; defaults to the bundle shipped beside this package. */
   readonly clientDir?: string;
 };
@@ -75,6 +79,12 @@ export class WsGateway {
   private readonly hostname: string;
   private readonly requestedPort: number;
   private readonly uploads: UploadEndpoint;
+  /**
+   * Which sessions have been read, shared by every client: the mark is a
+   * property of the machine, so it is kept beside the sessions rather than
+   * in whichever browser happened to be reading.
+   */
+  private readonly cursors: ReadCursors;
   private readonly client: StaticClient;
   private readonly streams = new Map<string, SessionStream>();
   private readonly opening = new Map<string, Promise<SessionStream>>();
@@ -90,6 +100,12 @@ export class WsGateway {
    * needs the edges — a row starts spinning once and stops once.
    */
   private readonly activity = new Map<string, SessionStatus>();
+  /**
+   * When each session this server runs last settled, as its file read at the
+   * time. Held because that reading is only true of an idle session: see
+   * `settleTime`.
+   */
+  private readonly settled = new Map<string, number>();
   private readonly connections = new Map<
     ServerWebSocket<undefined>,
     ClientConnection
@@ -103,6 +119,7 @@ export class WsGateway {
     this.uploads = new UploadEndpoint(
       deps.attachmentsRoot === undefined ? {} : { root: deps.attachmentsRoot }
     );
+    this.cursors = new ReadCursors(deps.readCursorsPath);
     this.client = new StaticClient(deps.clientDir);
   }
 
@@ -164,6 +181,10 @@ export class WsGateway {
     }
     this.streams.clear();
     this.activity.clear();
+    this.settled.clear();
+    // The marks taken during the run are written behind their callers, so a
+    // stop is where the last of them lands.
+    await this.cursors.flush();
     for (const connection of this.connections.values()) {
       connection.close();
     }
@@ -313,6 +334,9 @@ export class WsGateway {
       head: await stream.refresh(),
     });
     await connection.attach(stream, command.fromSeq);
+    // Opening a session is reading it, and there is one mark for all of
+    // them, so this is also where every other client's dot goes out.
+    await this.markRead(stream.sessionId);
     return {};
   }
 
@@ -320,42 +344,137 @@ export class WsGateway {
     command: Command & { readonly type: "list_sessions" }
   ): Promise<readonly SessionSummaryView[]> {
     const summaries = await this.registry.list(command.cwd);
+    // Only an unfiltered listing knows every session there is; pruning
+    // against one cut to a cwd would forget every other directory. The
+    // sessions this server holds open are alive too — a new chat has a mark
+    // before it has a file.
+    if (command.cwd === undefined) {
+      await this.cursors.prune(
+        new Set([
+          ...summaries.map((summary) => summary.sessionId),
+          ...this.streams.keys(),
+        ])
+      );
+    }
     // Only the page about to be sent is digested, so a thousand-session
     // directory is not read to answer for fifty rows.
-    return await Promise.all(
+    //
+    // Which is also why the *cut* is by modified time and the *order* is not:
+    // a session's settle time is in its digest, so ranking the whole
+    // directory by it would mean reading every session on disk to send fifty.
+    // A file is never modified before its agent settles, so the two disagree
+    // only inside the page, where the sort below has the real answer.
+    const page = await Promise.all(
       summaries
         .slice(0, command.limit ?? DEFAULT_SESSION_LIMIT)
         .map(async ({ sessionId, cwd, path, createdAt, modifiedAt }) => {
-          const { title, head } = await this.digestOf(path, modifiedAt);
+          const { title, settledAt } = await this.digestOf(path, modifiedAt);
           // Only a session this server holds open has an agent to answer for
           // it; anything else on disk is a file, and a file is never working.
           const status = this.streams.get(sessionId)?.host.status;
+          const answeredAt = this.answerTime(sessionId, status, settledAt);
+          const unread = await this.cursors.isUnread(sessionId, answeredAt);
           return {
             sessionId,
             cwd,
             createdAt,
-            modifiedAt,
-            head,
+            // The last turn known to have finished; failing that whatever the
+            // file last had, which is all there is to date a session running
+            // its first one by; failing that, when it was made.
+            settledAt: answeredAt ?? settledAt ?? createdAt,
             ...(title === undefined ? {} : { title }),
             ...(status === undefined || status === "idle" ? {} : { status }),
+            // Off the completed turn alone, so intermediate lines raise no
+            // mark: a row goes unread when its turn ends, which is also when
+            // it climbs to the top of this list.
+            ...(unread ? { unread: true } : {}),
           };
         })
     );
+    return page.sort((a, b) => b.settledAt - a.settledAt);
+  }
+
+  /**
+   * When this session's last *completed* turn ended, and — for an idle one —
+   * where that answer is remembered from. Absent when there is no such turn
+   * to point at: an agent that has never answered, or one running the first
+   * turn this server has seen of it.
+   *
+   * The file's answer is the last thing the agent wrote, which is where it
+   * stopped only while nothing is running: mid-turn it is the message or
+   * tool result that just landed, and a row would climb to the top of the
+   * list — and go unread — on every one of them. So a running session is
+   * answered for out of what its file said while it was last idle, and the
+   * file takes over again the moment the turn ends.
+   *
+   * A session another process is driving reports no status and is always
+   * answered for by its file, drifting while that process writes and correct
+   * again as soon as it stops: there is no liveness on disk to do better
+   * with, and nothing is remembered for it to be wrong about later.
+   */
+  private answerTime(
+    sessionId: string,
+    status: SessionStatus | undefined,
+    fromFile: number | undefined
+  ): number | undefined {
+    if (status === undefined) {
+      return fromFile;
+    }
+    if (status !== "idle") {
+      return this.settled.get(sessionId);
+    }
+    if (fromFile !== undefined) {
+      this.settled.set(sessionId, fromFile);
+    }
+    return fromFile;
   }
 
   /**
    * Says that a session's agent started or stopped working, to every client
-   * on the server. Every client, because the session it names is precisely
-   * the one they are *not* attached to: nothing else a client receives says
-   * anything about a session it is not reading.
+   * on the server, and only on the edges.
+   *
+   * A turn that ends under a client that is reading it is read, not unread —
+   * and the announcement goes first and synchronously, because it is a frame
+   * of the session's own stream and every client attached must see it in the
+   * same place. The mark trails it by a microtask, which no client can be
+   * inside of: the re-list that frame provokes is a whole round trip away.
    */
-  private announce(sessionId: string, status: SessionStatus): void {
+  private onSessionState(sessionId: string, status: SessionStatus): void {
     if (this.activity.get(sessionId) === status) {
       return;
     }
     this.activity.set(sessionId, status);
+    this.broadcast({ type: "session_activity", sessionId, status });
+    if (status === "idle" && this.isBeingRead(sessionId)) {
+      void this.markRead(sessionId);
+    }
+  }
+
+  private isBeingRead(sessionId: string): boolean {
+    return [...this.connections.values()].some(
+      (connection) => connection.sessionId === sessionId
+    );
+  }
+
+  /**
+   * Moves a session's read cursor to now and says so to every client. Said
+   * unconditionally, including for a session that was already read: the
+   * frame is a few bytes, it is idempotent at every receiver, and the price
+   * of skipping it is knowing whether some other client had a dot up.
+   */
+  private async markRead(sessionId: string): Promise<void> {
+    await this.cursors.mark(sessionId);
+    this.broadcast({ type: "session_read", sessionId });
+  }
+
+  /**
+   * To every client on the server, attached to whatever. What travels this
+   * way names a session that its receivers are precisely *not* reading:
+   * nothing else they are sent says anything about a row they are not in.
+   */
+  private broadcast(event: ServerEvent): void {
     for (const connection of this.connections.values()) {
-      connection.send({ type: "session_activity", sessionId, status });
+      connection.send(event);
     }
   }
 
@@ -426,7 +545,7 @@ export class WsGateway {
     this.activity.set(id, host.status);
     stream.subscribe((event) => {
       if (event.type === "session_state") {
-        this.announce(id, event.status);
+        this.onSessionState(id, event.status);
       }
     });
     this.streams.set(id, stream);

@@ -8,6 +8,8 @@ import { EventLog } from "./EventLog";
 
 const FIXTURE = join(import.meta.dir, "fixtures", "pi-session-v3.jsonl");
 
+const line = (entry: unknown) => `${JSON.stringify(entry)}\n`;
+
 let tmp: string;
 
 beforeEach(async () => {
@@ -125,18 +127,16 @@ describe("EventLog replay", () => {
 });
 
 describe("EventLog digest", () => {
-  test("names a session by its first user message and counts its lines", async () => {
+  test("names a session by its first user message", async () => {
     const digest = await new EventLog(FIXTURE).digest();
 
     expect(digest.title).toBe(
       "Use the subagent tool with the prompt 'reply with exactly PONG'. Then tell me the subagent's output."
     );
-    expect(digest.head).toBe(7);
   });
 
   test("trims a long opening message rather than widening the sidebar", async () => {
     const path = join(tmp, "long.jsonl");
-    const line = (entry: unknown) => `${JSON.stringify(entry)}\n`;
     await Bun.write(
       path,
       line({
@@ -159,14 +159,106 @@ describe("EventLog digest", () => {
 
     const digest = await new EventLog(path).digest();
     expect(digest.title).toBe(`${"x".repeat(120)}…`);
-    expect(digest.head).toBe(2);
   });
 
-  test("a session with no user message yet has no name and no lines", async () => {
+  test("a session with no user message yet has no name", async () => {
     const digest = await new EventLog(join(tmp, "absent.jsonl")).digest();
 
     expect(digest.title).toBeUndefined();
-    expect(digest.head).toBe(0);
+    expect(digest.settledAt).toBeUndefined();
+  });
+});
+
+describe("EventLog settle time", () => {
+  const at = (n: number) =>
+    `2026-08-01T10:00:${String(n).padStart(2, "0")}.000Z`;
+  const said = (n: number, message: unknown) =>
+    line({
+      type: "message",
+      id: `m${n}`,
+      parentId: null,
+      timestamp: at(n),
+      message,
+    });
+  const user = (n: number) =>
+    said(n, { role: "user", content: [{ type: "text", text: "go on" }] });
+  const assistant = (n: number, content: unknown[]) =>
+    said(n, { role: "assistant", content });
+  const result = (n: number) =>
+    said(n, {
+      role: "toolResult",
+      toolCallId: "c1",
+      toolName: "ping",
+      content: [{ type: "text", text: "pong" }],
+    });
+
+  async function write(...lines: string[]): Promise<EventLog> {
+    // A fresh directory per test, so one name serves every case.
+    const path = join(tmp, "settle.jsonl");
+    await Bun.write(
+      path,
+      line({ type: "session", id: "s1", timestamp: at(0), cwd: "/tmp" }) +
+        lines.join("")
+    );
+    return new EventLog(path);
+  }
+
+  test("dates the agent's last word, whatever the user said after it", async () => {
+    const log = await write(
+      user(1),
+      assistant(2, [{ type: "text", text: "done" }]),
+      // Queued while the agent was idle: three messages, no reply. None of
+      // them is the agent having answered, so none of them is the date.
+      user(3),
+      user(4),
+      user(5)
+    );
+
+    expect((await log.digest()).settledAt).toBe(Date.parse(at(2)));
+  });
+
+  test("a turn that stopped on a tool is dated by the tool", async () => {
+    // No closing message: a tool that terminated the run, or an abort. The
+    // agent stopped there all the same, and there is no line in pi's file
+    // that says so — only the fact that nothing was written after it.
+    const log = await write(
+      user(1),
+      assistant(2, [
+        { type: "toolCall", id: "c1", name: "ping", arguments: {} },
+      ]),
+      result(3)
+    );
+
+    expect((await log.digest()).settledAt).toBe(Date.parse(at(3)));
+  });
+
+  test("an agent that has never answered has no settle time", async () => {
+    const log = await write(user(1));
+
+    expect((await log.digest()).settledAt).toBeUndefined();
+  });
+
+  test("a final line with no newline yet is a write in progress, not a date", async () => {
+    // pi flushes the entry and its terminator separately, so a whole valid
+    // entry can be on disk before it is durable. Dating a session by one
+    // would move a row — and raise its dot — mid-write.
+    const log = await write(
+      user(1),
+      assistant(2, [{ type: "text", text: "done" }]),
+      assistant(3, [{ type: "text", text: "still typing" }]).trimEnd()
+    );
+
+    expect((await log.digest()).settledAt).toBe(Date.parse(at(2)));
+  });
+
+  test("reads back past a large final message rather than a fixed window", async () => {
+    const log = await write(
+      user(1),
+      assistant(2, [{ type: "text", text: "x".repeat(512 * 1024) }]),
+      user(3)
+    );
+
+    expect((await log.digest()).settledAt).toBe(Date.parse(at(2)));
   });
 });
 

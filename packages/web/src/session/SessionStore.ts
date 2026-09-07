@@ -150,8 +150,13 @@ export type SessionState = {
   loading: boolean;
   stats: TurnStats | undefined;
   error: string | undefined;
-  /** Highest durable seq this browser has painted, per session. */
-  seen: Record<string, number>;
+  /**
+   * Which sessions have answered since anything last read them, as the
+   * server says it. Written from the listing and cleared by the frame that
+   * says some client has opened one — this browser or another, since the
+   * cursor behind it is one per session and not one per client.
+   */
+  unread: Record<string, boolean>;
   /**
    * The composer's unsent message, per session. The box belongs to the
    * session it is typed into rather than to the page, so switching swaps
@@ -188,15 +193,8 @@ const FILE_PICKER_LIMIT = 50;
 const COMMAND_PICKER_LIMIT = 20;
 
 /**
- * Where the read cursor of every session lives. Unread is a property of this
- * browser, not of the conversation — a second client reading the same session
- * has its own answer — so it is stored here and never sent.
- */
-const SEEN_KEY = "pim.seen";
-
-/**
  * Where the unsent messages and the id of the unwritten session live across a
- * reload. Local to this browser for the same reason the read cursor is: an
+ * reload. Local to this browser deliberately, unlike the read cursor: an
  * unsent message is not part of the conversation, and no other client has any
  * business seeing it.
  */
@@ -222,19 +220,17 @@ export class SessionStore {
   /** The catalogue is a property of the server, so one query per connection. */
   private catalogue: Promise<ModelCatalogue> | undefined;
   /**
-   * The read cursors, synchronously. The store copy is the same numbers, but
-   * a batch of events writes it many times before anything reads it back, so
-   * the guard and the persisted value are taken from here.
+   * The unsent messages, synchronously. The store copy is the same strings,
+   * but a keystroke writes it before anything reads it back, so the
+   * persisted value is taken from here.
    */
-  private readonly seen: Record<string, number>;
-  /** The unsent messages, synchronously, for the same reason as `seen`. */
   private readonly drafts: Record<string, string>;
   /**
-   * Pending `localStorage` writes, one per key. Both things stored here move
-   * far faster than a reload can read them — the cursor once per replayed
-   * event, the draft once per keystroke — and `localStorage` is synchronous
-   * disk, so the writes are coalesced onto the next microtask: what a reload
-   * needs is where a value ended up, not each place it passed through.
+   * Pending `localStorage` writes, one per key. A draft moves far faster
+   * than a reload can read it — once per keystroke — and `localStorage` is
+   * synchronous disk, so the writes are coalesced onto the next microtask:
+   * what a reload needs is where a value ended up, not each place it passed
+   * through.
    */
   private readonly writes = new Map<string, () => string | undefined>();
   /**
@@ -247,7 +243,6 @@ export class SessionStore {
   private claimed: string | undefined;
 
   public constructor(options: SessionStoreOptions) {
-    const seen = readSeen();
     const drafts = readDrafts();
     // An unwritten session has no file, so nothing but this browser remembers
     // it; resuming it is the whole reason the id was written down.
@@ -277,12 +272,11 @@ export class SessionStore {
       loading: false,
       stats: undefined,
       error: undefined,
-      seen: { ...seen },
+      unread: {},
       drafts: { ...drafts },
       openings: {},
       unwritten,
     });
-    this.seen = seen;
     this.drafts = drafts;
     // Nothing to attach to means the server is about to make a session, and
     // a session made for this browser with nothing in it is a draft — the
@@ -524,6 +518,7 @@ export class SessionStore {
     this.setState((draft) => {
       for (const session of sessions) {
         draft.activity[session.sessionId] = session.status ?? "idle";
+        draft.unread[session.sessionId] = session.unread ?? false;
         // The listing can name it now, so the copy held for the gap has
         // nothing left to cover: dropping it here is what keeps this from
         // growing one entry per session this browser has ever written to.
@@ -689,26 +684,9 @@ export class SessionStore {
     await this.set("set_thinking", level);
   }
 
-  /** True when the session's `head` is beyond what this browser has painted. */
-  public isUnread(session: SessionSummaryView): boolean {
-    return session.head > (this.state.seen[session.sessionId] ?? 0);
-  }
-
-  /**
-   * The read cursor moves forward only. Persisted on the next microtask
-   * rather than on the spot, because a replay moves it once per event and
-   * `localStorage` is synchronous disk: what a reload needs is where the
-   * cursor ended up, not each place it passed through.
-   */
-  private markSeen(sessionId: string, seq: number): void {
-    if (sessionId === "" || (this.seen[sessionId] ?? 0) >= seq) {
-      return;
-    }
-    this.seen[sessionId] = seq;
-    this.setState((draft) => {
-      draft.seen[sessionId] = seq;
-    });
-    this.persist(SEEN_KEY, () => JSON.stringify(this.seen));
+  /** True when the session has answered since anything last read it. */
+  public isUnread(sessionId: string): boolean {
+    return this.state.unread[sessionId] ?? false;
   }
 
   /**
@@ -736,7 +714,7 @@ export class SessionStore {
           }
         } catch {
           // Private mode, a full quota, or no storage at all. Both of these
-          // are niceties: unread marks and a message that survives a reload.
+          // are niceties: a draft and a session id that survive a reload.
         }
       }
     });
@@ -900,9 +878,6 @@ export class SessionStore {
           this.putDraft(event.sessionId, this.claimed);
           this.claimed = undefined;
         }
-        // Attaching is reading: the replay that follows this frame paints
-        // everything up to `head`.
-        this.markSeen(event.sessionId, event.head);
         return;
       case "message_start":
         this.setState((draft) => {
@@ -962,6 +937,11 @@ export class SessionStore {
       case "session_activity":
         this.setState((draft) => {
           draft.activity[event.sessionId] = event.status;
+        });
+        return;
+      case "session_read":
+        this.setState((draft) => {
+          draft.unread[event.sessionId] = false;
         });
         return;
       case "session_state":
@@ -1031,7 +1011,6 @@ export class SessionStore {
         }
       }
     });
-    this.markSeen(this.state.sessionId, event.seq);
   }
 
   /** Rewrites one live call wherever in the turn it was made. */
@@ -1096,10 +1075,6 @@ function liveMessage(live: LiveMessage[], messageId: string): LiveMessage {
   };
   live.push(message);
   return message;
-}
-
-function readSeen(): Record<string, number> {
-  return readRecord<number>(SEEN_KEY);
 }
 
 function readDrafts(): Record<string, string> {

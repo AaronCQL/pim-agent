@@ -28,8 +28,8 @@ const CONNECTION_CLASSES: Record<ConnectionStatus, string> = {
 /**
  * One row, from either source: the server's listing or the unwritten session
  * only this browser knows about, which is what `listed: undefined` means: no
- * age, because nothing has been written for a clock to measure, and no head
- * to have gone unread.
+ * age, because nothing has been written for a clock to measure, and nothing
+ * written to have gone unread.
  */
 type Row = {
   readonly sessionId: string;
@@ -79,10 +79,10 @@ export function Sidebar(props: {
 
   // Re-read on attach, on a switch, when the socket comes back, and when
   // *any* session's turn ends — the one being read or one left running behind
-  // a switch. A session only appears on disk once it has content, and its
-  // modified time, which is both the sort key here and the age on the row,
-  // moves every time the agent writes to it: the moment it stops moving is
-  // the moment that age starts meaning "since the last reply".
+  // a switch. A turn ending is the only one of those that changes an order or
+  // an age, because the server dates a row by the end of its last completed
+  // turn: the list is otherwise as true an hour later as it was when it
+  // arrived, whatever was typed or sent in the meantime.
   //
   // Nothing a row draws changes when a turn *starts* — the spinner is read
   // off the status — so that edge is not worth a directory scan. A socket
@@ -106,6 +106,16 @@ export function Sidebar(props: {
     }
   );
 
+  // Whether there is an unwritten row and which session it is for — never
+  // what it says. `unwrittenSummary` decides that a new chat has become a
+  // conversation by reading what has been typed into it, so it is re-asked on
+  // every keystroke and answers with a new object each time; comparing the
+  // answer is what keeps typing out of `rows` below.
+  const held = createMemo(() => props.store.unwrittenSummary(), {
+    equals: (before, after) =>
+      before?.sessionId === after?.sessionId && before?.cwd === after?.cwd,
+  });
+
   // The unwritten session goes on top: it is the newest thing there is, and
   // the list is most-recent-first. It is dropped the moment the listing can
   // answer for it, which is the one frame where both sources describe the
@@ -120,11 +130,14 @@ export function Sidebar(props: {
       cwd: session.cwd,
       listed: session,
     }));
-    const held = props.store.unwrittenSummary();
-    if (!held || listed.some((row) => row.sessionId === held.sessionId)) {
+    const unwritten = held();
+    if (
+      !unwritten ||
+      listed.some((row) => row.sessionId === unwritten.sessionId)
+    ) {
       return listed;
     }
-    return [{ ...held, listed: undefined }, ...listed];
+    return [{ ...unwritten, listed: undefined }, ...listed];
   });
 
   // The listing names a session by its opening message, and the store names
@@ -143,12 +156,14 @@ export function Sidebar(props: {
     void run().catch(() => undefined);
   };
 
-  // Undefined only for the unwritten session: it has no line on disk, so
-  // there is no modified time for the clock to measure it against.
+  // How long the agent has been done: dated from the end of its last
+  // completed turn, so it keeps counting up while the user types and while a
+  // message sits queued, and resets only on a reply. Undefined only for the
+  // unwritten session, which has no line on disk to be dated by.
   const age = (row: Row): string | undefined =>
     row.listed === undefined
       ? undefined
-      : relativeTime(row.listed.modifiedAt, now());
+      : relativeTime(row.listed.settledAt, now());
 
   return (
     <div class="flex h-full flex-col bg-neutral-950">
@@ -177,32 +192,32 @@ export function Sidebar(props: {
           when={rows().length > 0}
           fallback={<li class="text-sm text-neutral-500">No sessions yet.</li>}
         >
-          <For each={rows()}>
-            {(session) => (
+          {/* Keyed on the session rather than on identity: a listing is a
+              directory scan, so it answers with fresh objects whether or not
+              anything moved, and an unkeyed `<For>` would remount every row
+              on each one — restarting the spin of every turn still running. */}
+          <For each={rows()} keyed={(row: Row) => row.sessionId}>
+            {(row) => (
               <li>
                 <button
                   type="button"
                   class={{
                     "w-full space-y-1 rounded-lg px-3 py-2 text-left text-sm": true,
                     "bg-neutral-850":
-                      session.sessionId === props.store.state.sessionId,
+                      row().sessionId === props.store.state.sessionId,
                     "text-neutral-300 hover:bg-neutral-900":
-                      session.sessionId !== props.store.state.sessionId,
+                      row().sessionId !== props.store.state.sessionId,
                   }}
                   onClick={() => {
-                    go(() => props.store.switchTo(session.sessionId));
+                    go(() => props.store.switchTo(row().sessionId));
                   }}
                 >
                   <div class="flex items-center justify-between gap-2">
                     {/* A session is named by its opening message — one that
                         has not been sent by the message about to open it. A
                         session with neither has only its id. */}
-                    <div class="truncate font-semibold">{title(session)}</div>
-                    <Show
-                      when={
-                        session.listed && props.store.isUnread(session.listed)
-                      }
-                    >
+                    <div class="truncate font-semibold">{title(row())}</div>
+                    <Show when={props.store.isUnread(row().sessionId)}>
                       <div
                         class="size-1.5 shrink-0 rounded-full bg-indigo-400"
                         aria-label="Unread"
@@ -210,7 +225,7 @@ export function Sidebar(props: {
                     </Show>
                   </div>
                   <div class="flex items-center justify-between gap-6 text-neutral-400">
-                    <div class="truncate">{abbreviateHome(session.cwd)}</div>
+                    <div class="truncate">{abbreviateHome(row().cwd)}</div>
                     {/* The pencil marks a message typed here and not sent,
                         which is true of a row whatever its age; the slot
                         beside it holds one of two, since a turn in flight
@@ -218,7 +233,7 @@ export function Sidebar(props: {
                         about a session that has never been written to. */}
                     <div class="flex shrink-0 items-center gap-1.5">
                       <Show
-                        when={props.store.draftText(session.sessionId) !== ""}
+                        when={props.store.draftText(row().sessionId) !== ""}
                       >
                         <span
                           class="i-griddy-icons:edit size-3 text-amber-400"
@@ -227,10 +242,10 @@ export function Sidebar(props: {
                         />
                       </Show>
                       <Switch>
-                        <Match when={props.store.isRunning(session.sessionId)}>
+                        <Match when={props.store.isRunning(row().sessionId)}>
                           <Spinner />
                         </Match>
-                        <Match when={age(session)}>
+                        <Match when={age(row())}>
                           {(shown) => <span>{shown()}</span>}
                         </Match>
                       </Switch>

@@ -451,49 +451,38 @@ describe("switching", () => {
   });
 });
 
-describe("the read cursor", () => {
-  test("attaching reads to the head, and every durable event past it", async () => {
-    localStorage.clear();
+describe("unread", () => {
+  test("is the server's answer, and any client reading a session clears it", async () => {
     const target = store();
-    const summary = (head: number) => ({
-      sessionId: "s1",
-      cwd: "/repo",
-      createdAt: 0,
-      modifiedAt: 0,
-      head,
+    target.client.send = async () => ({
+      type: "response",
+      id: "1",
+      success: true,
+      sessions: [
+        {
+          sessionId: "s1",
+          cwd: "/repo",
+          createdAt: 0,
+          settledAt: 5,
+          unread: true,
+        },
+        { sessionId: "s2", cwd: "/repo", createdAt: 0, settledAt: 5 },
+      ],
     });
 
-    feed(target, attached("s1", 4));
-    expect(target.isUnread(summary(4))).toBe(false);
-    expect(target.isUnread(summary(9))).toBe(true);
+    await target.listSessions();
+    expect(target.isUnread("s1")).toBe(true);
+    expect(target.isUnread("s2")).toBe(false);
 
-    feed(target, { seq: 9, type: "notice", severity: "info", text: "hi" });
-    expect(target.isUnread(summary(9))).toBe(false);
-
-    // It is this browser's cursor, so a reload finds it where it was left —
-    // written once the batch that moved it has been applied, not per event.
-    await Promise.resolve();
-    expect(
-      JSON.parse(localStorage.getItem("pim.seen") ?? "{}") as Record<
-        string,
-        number
-      >
-    ).toEqual({ s1: 9 });
+    // One cursor per session rather than one per client, so this frame is
+    // what a session opened in another browser looks like from here — no
+    // re-listing, and no waiting for one.
+    feed(target, { type: "session_read", sessionId: "s1" });
+    expect(target.isUnread("s1")).toBe(false);
   });
 
-  test("a session this browser never opened is unread as soon as it has a line", () => {
-    localStorage.clear();
-    const target = store();
-
-    expect(
-      target.isUnread({
-        sessionId: "other",
-        cwd: "/repo",
-        createdAt: 0,
-        modifiedAt: 0,
-        head: 1,
-      })
-    ).toBe(true);
+  test("a session no listing has mentioned yet is read", () => {
+    expect(store().isUnread("unheard-of")).toBe(false);
   });
 });
 
@@ -646,8 +635,7 @@ describe("drafts", () => {
           sessionId: "d1",
           cwd: "/repo",
           createdAt: 0,
-          modifiedAt: 5,
-          head: 2,
+          settledAt: 5,
           title: "say hello",
         },
       ],
@@ -671,9 +659,7 @@ describe("drafts", () => {
       type: "response",
       id: "1",
       success: true,
-      sessions: [
-        { sessionId: "d1", cwd: "/repo", createdAt: 0, modifiedAt: 5, head: 2 },
-      ],
+      sessions: [{ sessionId: "d1", cwd: "/repo", createdAt: 0, settledAt: 5 }],
     });
 
     await target.listSessions();

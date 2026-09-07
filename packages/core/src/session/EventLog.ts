@@ -1,3 +1,5 @@
+import type { BunFile } from "bun";
+
 import type {
   AgentSessionEvent,
   FileEntry,
@@ -68,6 +70,17 @@ type Cursor = {
  */
 const PROBE_BYTES = 64 * 1024;
 
+/**
+ * How much of the end is read to find where the agent last stopped, and how
+ * far back through it that search may look: enough to clear the queued
+ * messages and setting changes that can trail the agent's last word, and no
+ * more. The window is a guess and the line count is the rule — a session
+ * ending in a message larger than the window is re-read whole rather than
+ * answered for out of a fragment.
+ */
+const TAIL_BYTES = 64 * 1024;
+const TAIL_LINES = 10;
+
 /** Long enough to tell two sessions apart, short enough for a sidebar row. */
 const TITLE_LIMIT = 120;
 
@@ -75,8 +88,26 @@ const TITLE_LIMIT = 120;
 export type SessionDigest = {
   /** The first user message, trimmed; absent when the session has none yet. */
   readonly title?: string;
-  /** Highest durable `seq` — the physical line count. */
-  readonly head: number;
+  /**
+   * When the agent last stopped writing: the timestamp of the file's last
+   * assistant or tool-result entry. Absent until one exists.
+   *
+   * Read as "the end of the last completed turn", which is what it is for
+   * every session nothing is currently running — and only for those. Turn
+   * boundaries are events in pi's loop, never entries in its file: a turn
+   * runs on past an assistant message with no tool calls when a steering
+   * message is queued behind it, and stops on one *with* tool calls when a
+   * tool terminates it. So there is no line here that means "the turn ended"
+   * — but when nobody is writing, the last thing the agent wrote is by
+   * definition where it last stopped, whether it finished, failed, or was
+   * interrupted. A caller that knows a turn is in flight must hold the value
+   * it read before that turn started; this one moves with the turn.
+   *
+   * User entries are skipped rather than dated, which is the whole point: a
+   * message typed into an idle session says nothing about when the agent
+   * last answered.
+   */
+  readonly settledAt?: number;
 };
 
 function isHeader(entry: FileEntry): entry is SessionHeader {
@@ -154,37 +185,24 @@ export class EventLog {
   }
 
   /**
-   * Title and head for the catalogue, in one pass and without parsing the
-   * body: the head is a line count, so the bytes are only scanned for
-   * newlines, and only the first `PROBE_BYTES` are ever handed to the
-   * parser. Deliberately not `read()` — a listing must not pay to project a
-   * conversation it is only naming.
+   * Title and settle time for the catalogue, from the two ends of the file
+   * and without reading between them: the name is in the first entries and
+   * the settle time is in the last, so a listing reads two bounded windows
+   * per session rather than the whole of each. Deliberately not `read()` —
+   * a listing must not pay to project a conversation it is only naming, and
+   * the session being listed is usually the largest file in the directory.
    */
   public async digest(): Promise<SessionDigest> {
     const file = Bun.file(this.path);
-    return await ifPresent(
-      async () => {
-        let head = 0;
-        let probe = "";
-        const decoder = new TextDecoder();
-        for await (const bytes of file.stream()) {
-          // An indexed loop, not `for…of`: this runs over every byte of every
-          // session in the catalogue, and the iterator protocol is the only part
-          // of it that is not free.
-          for (let at = 0; at < bytes.length; at += 1) {
-            if (bytes[at] === 0x0a) {
-              head += 1;
-            }
-          }
-          if (probe.length < PROBE_BYTES) {
-            probe += decoder.decode(bytes, { stream: true });
-          }
-        }
-        const title = firstUserMessage(probe);
-        return { head, ...(title === undefined ? {} : { title }) };
-      },
-      { head: 0 }
-    );
+    const [probe, settledAt] = await Promise.all([
+      ifPresent(() => file.slice(0, PROBE_BYTES).text(), ""),
+      settleTime(file),
+    ]);
+    const title = firstUserMessage(probe);
+    return {
+      ...(title === undefined ? {} : { title }),
+      ...(settledAt === undefined ? {} : { settledAt }),
+    };
   }
 
   public get inFlight(): InFlightTurn | undefined {
@@ -258,6 +276,59 @@ export class EventLog {
     };
     return this.inFlightTurn;
   }
+}
+
+/**
+ * When the agent last wrote, read backwards from the end of the file — which
+ * is where the answer always is, and usually on the very last line, since a
+ * session usually ends in the agent's reply.
+ *
+ * The tail window holds those lines for every session that does not end in a
+ * huge message. One that does is re-read whole, which is rare enough to pay
+ * for when it happens rather than to scan every file to be ready for.
+ */
+async function settleTime(file: BunFile): Promise<number | undefined> {
+  const near = Math.max(0, file.size - TAIL_BYTES);
+  const lines = await tailLines(file, near);
+  const found = lastAgentTime(lines);
+  if (found !== undefined || near === 0 || lines.length >= TAIL_LINES) {
+    return found;
+  }
+  // The window ran out of lines before it ran out of allowance, so it did not
+  // hold the whole tail: this session ends in a message bigger than it.
+  return lastAgentTime(await tailLines(file, 0));
+}
+
+/**
+ * The last `TAIL_LINES` complete lines from `from` on, newest first. The
+ * final line is the file's end or a write in progress, and the first of a
+ * window that does not begin at the file's is the tail of a line that
+ * started outside it; neither is a line, so both are dropped.
+ */
+async function tailLines(file: BunFile, from: number): Promise<string[]> {
+  const text = await ifPresent(() => file.slice(from).text(), "");
+  const lines = text.split("\n");
+  lines.pop();
+  if (from > 0) {
+    lines.shift();
+  }
+  return lines.slice(-TAIL_LINES).reverse();
+}
+
+/** The timestamp of the newest of these lines the agent wrote, if any is. */
+function lastAgentTime(lines: readonly string[]): number | undefined {
+  for (const line of lines) {
+    const entry = parseSessionEntries(line)[0];
+    if (entry?.type !== "message") {
+      continue;
+    }
+    const role = entry.message.role;
+    if (role === "assistant" || role === "toolResult") {
+      const at = Date.parse(entry.timestamp);
+      return Number.isNaN(at) ? undefined : at;
+    }
+  }
+  return undefined;
 }
 
 function firstUserMessage(probe: string): string | undefined {
