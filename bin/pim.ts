@@ -173,7 +173,7 @@ process.emitWarning = () => {};
 // toggle lives in the factory itself: a disabled extension is still handed to
 // pi, it just registers nothing. Pi re-invokes these on `/pim`'s reload, so a
 // toggle lands in the running session.
-await main([...themeCliArgs(), ...cliArgs], {
+await main([...themeCliArgs(cliArgs), ...cliArgs], {
   extensionFactories: extensionFactories.map(({ name, factory }) => ({
     name,
     factory: ExtensionToggles.gate(name, factory),

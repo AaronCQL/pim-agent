@@ -21,11 +21,23 @@ const loadThemeFromPath = async (): Promise<ThemeLoader> => {
 };
 
 const themesDir = (): string => {
-  const [flag, dir] = themeCliArgs();
+  const [flag, dir] = themeCliArgs([]);
   expect(flag).toBe("--theme");
   expect(dir).toBeString();
   return dir as string;
 };
+
+test("a session run is themed and a pi subcommand is left alone", () => {
+  expect(themeCliArgs(["--continue"])[0]).toBe("--theme");
+  expect(themeCliArgs(["-p", "update the docs"])[0]).toBe("--theme");
+
+  // Pi dispatches these off argv[0]; a leading `--theme` made pi treat them as
+  // a prompt instead.
+  expect(themeCliArgs(["update", "--extensions"])).toBeEmpty();
+  expect(themeCliArgs(["auth", "login"])).toBeEmpty();
+  expect(themeCliArgs(["list"])).toBeEmpty();
+  expect(themeCliArgs(["config"])).toBeEmpty();
+});
 
 test("the theme args point pi at a themes directory that exists on disk", () => {
   const entries = readdirSync(themesDir());
