@@ -133,16 +133,61 @@ function viewOf(input: {
   readonly name: string;
   readonly args: unknown;
   readonly result?: AgentToolResult<unknown>;
+  /**
+   * The call failed, so `result` is pi's synthetic error one. Without this
+   * the view is painted from that result like any other, and a tool whose
+   * body comes out of `details` — every diff-carrying one — renders a bare
+   * title row that reads exactly like a call that succeeded.
+   */
+  readonly isError?: boolean;
   readonly isPartial: boolean;
   readonly cwd: string;
 }): ToolView {
-  const { name, result, ...rest } = input;
+  const { name, result, isError, ...rest } = input;
+  if (isError === true) {
+    return errorView(name, rest, result);
+  }
   return (
     viewFor(name)?.({
       ...rest,
       ...(result === undefined ? {} : { result }),
     }) ?? genericView(name, input.args)
   );
+}
+
+/**
+ * A failed call: what was attempted, and why it did not happen. Painted from
+ * the arguments alone, because pi's error result carries no `details` and a
+ * renderer handed it would describe a result that never existed. The message
+ * is the body, which is also the row's only claim to a disclosure — the same
+ * split the TUI makes when it hands an errored call to `renderErrorResult`.
+ *
+ * It replaces whatever body the renderer produced rather than joining it: with
+ * no result to paint from, a body is either empty or the placeholder blocks a
+ * view emits while a call is still in flight, and neither is worth a line
+ * under a failure. A live row loses the output it had streamed by the same
+ * rule, which is the point — it then reads exactly as it will after a reload,
+ * where the log holds nothing but the error either.
+ */
+function errorView(
+  name: string,
+  call: {
+    readonly args: unknown;
+    readonly isPartial: boolean;
+    readonly cwd: string;
+  },
+  result: AgentToolResult<unknown> | undefined
+): ToolView {
+  const view = viewFor(name)?.(call) ?? genericView(name, call.args);
+  const text =
+    result === undefined ? "" : Renderer.extractErrorText(result, "");
+  if (text === "") {
+    return view;
+  }
+  return {
+    ...view,
+    body: [{ kind: "notice", severity: "error", text }],
+  };
 }
 
 /**

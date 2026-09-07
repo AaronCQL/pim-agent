@@ -654,6 +654,33 @@ describe("Tools.wrap view model synthesis", () => {
     expect(component.render(80)).toEqual([" │ Path not found: src/foo.ts"]);
   });
 
+  test("a view of a failed call says so, whatever the tool's renderer paints", () => {
+    Tools.wrap(readLikeDef());
+    const view = Tools.viewOf({
+      name: "read",
+      args: { path: "src/foo.ts" },
+      result: {
+        content: [{ type: "text", text: "Path not found: src/foo.ts" }],
+        details: undefined as never,
+      },
+      isError: true,
+      isPartial: false,
+      cwd: "/work/repo",
+    });
+
+    // Painted from the arguments: an error result has no `details`, so the
+    // range a successful read would put in its title is not invented here.
+    expect(view.title).toEqual([{ kind: "file", path: "src/foo.ts" }]);
+    // The renderer's own body is dropped with the result it could not paint.
+    expect(view.body).toEqual([
+      {
+        kind: "notice",
+        severity: "error",
+        text: "Path not found: src/foo.ts",
+      },
+    ]);
+  });
+
   test("an error row stays shut like every other row", () => {
     const wrapped = Tools.wrap(readLikeDef());
     const component = wrapped.renderResult!(

@@ -135,6 +135,7 @@ export class SessionProjection {
           view: Tools.viewOf({
             name: message.toolName,
             args: call?.args ?? {},
+            isError: message.isError,
             result: {
               content: message.content,
               details: message.details,

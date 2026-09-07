@@ -1,5 +1,7 @@
 import { join } from "node:path";
-import { expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { afterEach, expect, test } from "bun:test";
 
 import { SessionProjection } from "./SessionProjection";
 
@@ -16,6 +18,38 @@ const FIXTURE = join(
 
 function projection(): SessionProjection {
   return new SessionProjection(FIXTURE, () => "/home/htpc/Desktop/dev/mmorpg");
+}
+
+let tmp: string | undefined;
+
+afterEach(async () => {
+  if (tmp) {
+    await rm(tmp, { recursive: true, force: true });
+    tmp = undefined;
+  }
+});
+
+/** A log holding exactly the messages a test needs, one entry per message. */
+async function logOf(
+  ...messages: ReadonlyArray<Record<string, unknown>>
+): Promise<SessionProjection> {
+  tmp = await mkdtemp(join(tmpdir(), "pim-projection-test-"));
+  const path = join(tmp, "session.jsonl");
+  await Bun.write(
+    path,
+    messages
+      .map((message, index) =>
+        JSON.stringify({
+          type: "message",
+          id: `entry-${index}`,
+          timestamp: "2026-08-01T10:17:47.104Z",
+          message,
+        })
+      )
+      .map((line) => `${line}\n`)
+      .join("")
+  );
+  return new SessionProjection(path, () => "/");
 }
 
 test("projects a persisted session into durable events, one per line", async () => {
@@ -73,4 +107,38 @@ test("an unwritten session file projects nothing", async () => {
 
   expect(await p.drain()).toEqual([]);
   expect(p.head).toBe(0);
+});
+
+test("a failed call carries why, not a view of the result it never got", async () => {
+  const events = await (
+    await logOf(
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "call-1",
+            name: "apply_patch",
+            arguments: { input: "*** Begin Patch" },
+          },
+        ],
+        usage: {},
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call-1",
+        toolName: "apply_patch",
+        isError: true,
+        content: [{ type: "text", text: "No files were modified." }],
+        // Pi's error result is synthetic: the message is all it carries.
+        details: {},
+      }
+    )
+  ).drain();
+
+  const result = events[1];
+  expect(result?.type === "tool_result" && result.isError).toBe(true);
+  expect(result?.type === "tool_result" && result.view.body).toEqual([
+    { kind: "notice", severity: "error", text: "No files were modified." },
+  ]);
 });

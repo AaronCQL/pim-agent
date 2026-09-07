@@ -33,7 +33,9 @@ import { toneClass } from "./tokens";
  *   would otherwise open onto nothing. A call with nothing in it yet still
  *   draws the caret, in amber, so the row keeps its shape and its text keeps
  *   its column while it waits — but nothing brightens it and nothing points
- *   at it, because there is nothing behind it to reach.
+ *   at it, because there is nothing behind it to reach. A failed call draws
+ *   the same bodiless caret in rose: a call that did not happen must never
+ *   render identically to one that did, whatever its view left out.
  * - An opened error shows its output whole and untruncated: a failure is read
  *   to be acted on, and the tail of a stack trace is not an aside.
  */
@@ -76,8 +78,8 @@ export function ToolCard(props: {
         when={body().length > 0}
         fallback={
           <span class="flex min-w-0 items-start">
-            <Show when={props.isPartial === true}>
-              <Caret class={PENDING_CARET} />
+            <Show when={props.isPartial === true || error()}>
+              <Caret class={caretClass(props.isPartial === true, error())} />
             </Show>
             <Head view={props.view} name={props.name} />
           </span>

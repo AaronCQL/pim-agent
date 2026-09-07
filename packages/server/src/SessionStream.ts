@@ -346,6 +346,7 @@ export class SessionStream {
           name: event.toolName,
           args: tool?.args,
           result: event.result,
+          isError: event.isError,
           isPartial: false,
           cwd: this.host.cwd,
         });

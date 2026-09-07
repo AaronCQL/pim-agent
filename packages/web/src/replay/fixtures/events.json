@@ -305,7 +305,8 @@
       ],
       "body": [
         {
-          "kind": "text",
+          "kind": "notice",
+          "severity": "error",
           "text": "Exit code: 127\nstderr:\nbash: tsc: command not found"
         }
       ]

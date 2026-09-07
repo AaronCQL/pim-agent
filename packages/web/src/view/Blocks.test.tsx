@@ -487,4 +487,18 @@ describe("ToolCard", () => {
     expect(host.textContent).toContain("line 13");
     expect(host.textContent).not.toContain("more lines");
   });
+
+  test("a failure with nothing to show still reads as one", () => {
+    const host = mountPoint();
+    render(
+      () => (
+        <ToolCard view={{ label: "Edit", title: [SAMPLES.file] }} isError />
+      ),
+      host
+    );
+    flush();
+
+    expect(host.querySelector("details")).toBeNull();
+    expect(host.innerHTML).toContain("bg-rose-400");
+  });
 });
