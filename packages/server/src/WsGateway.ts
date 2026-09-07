@@ -10,6 +10,7 @@ import type { SessionDigest } from "#core/session/EventLog";
 import { ReadCursors } from "#core/session/ReadCursors";
 import type { SessionRegistry } from "#core/session/SessionRegistry";
 import { PimVersion } from "#core/shared/PimVersion";
+import { SubagentLogs } from "#core/shared/SubagentLogs";
 import type { UpdateOutcome } from "#core/shared/Updater";
 import type { Command } from "#protocol/Command";
 import { CLOSE_PROTOCOL_MISMATCH, PROTOCOL_VERSION } from "#protocol/Protocol";
@@ -21,6 +22,7 @@ import type {
 } from "#protocol/ServerEvent";
 import { ClientConnection } from "./ClientConnection";
 import { Reloader } from "./Reloader";
+import { SessionProjection } from "./SessionProjection";
 import { SessionStream } from "./SessionStream";
 import { StaticClient } from "./StaticClient";
 import { AttachmentEndpoint } from "./AttachmentEndpoint";
@@ -304,6 +306,13 @@ export class WsGateway {
             : undefined) ?? [],
       };
     }
+    // Answered without a session because it is about a watch this connection
+    // holds, and a connection that has lost its session has lost that too:
+    // closing a modal must never fail.
+    if (command.type === "unwatch_subagent") {
+      connection.unwatchSubagent(command.callId);
+      return {};
+    }
     // A fact about the machine, like the two above it: what a reload restarts
     // is the server, so it is answered for a client attached to nothing on it.
     if (command.type === "reload") {
@@ -354,9 +363,48 @@ export class WsGateway {
         };
       case "pick_commands":
         return { items: stream.picker.commands(command.query, command.limit) };
+      case "watch_subagent":
+        return await this.watchSubagent(connection, stream, command);
       default:
         return { error: `unknown command: ${(command as Command).type}` };
     }
+  }
+
+  /**
+   * Opens one subagent's log for reading, on the connection that asked.
+   *
+   * The path is *derived* from the parent session and the tool call, and is
+   * neither sent by the client nor looked up in the parent's log. Not sent,
+   * because a path from a client reads arbitrary JSONL off this machine; not
+   * looked up, because a run that threw persists no details to look it up in
+   * — and a failed subagent is the one most worth reading. What is left to
+   * check is that the ids are ids rather than paths, that the parent is the
+   * session this connection is actually attached to, and that the file is
+   * there.
+   */
+  private async watchSubagent(
+    connection: ClientConnection,
+    stream: SessionStream,
+    command: Command & { readonly type: "watch_subagent" }
+  ): Promise<Outcome> {
+    if (command.sessionId !== stream.sessionId) {
+      return {
+        error: `not attached to session ${command.sessionId}; a watch reads a child of the attached session only`,
+      };
+    }
+    const path = SubagentLogs.pathFor(stream.sessionId, command.callId);
+    if (path === null) {
+      return { error: `malformed call id: ${command.callId}` };
+    }
+    if (!(await Bun.file(path).exists())) {
+      return { error: `no subagent log for call ${command.callId}` };
+    }
+    await connection.watchSubagent(
+      command.callId,
+      new SessionProjection(path, () => stream.host.cwd),
+      command.fromSeq
+    );
+    return {};
   }
 
   private async attach(

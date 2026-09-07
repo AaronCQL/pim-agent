@@ -251,6 +251,24 @@ export type EphemeralEvent =
       readonly scope: "files" | "commands" | "all";
       readonly cwd: string;
     }
+  /**
+   * A watched subagent's own events, in an envelope. Enveloped and never
+   * inlined: a durable event *is* one with a `seq`, so a child's messages
+   * sent bare would be indistinguishable from the parent's and would land in
+   * the parent's transcript. The envelope carries `StreamEvent[]` exactly as
+   * `replay` does, so a client applies each with the code it already has —
+   * against the child's transcript rather than the session's.
+   *
+   * Sent only to the connection that asked, because a watch is that
+   * connection's alone. Nothing here can be resumed across a reconnect: a
+   * client whose modal is still open re-watches.
+   */
+  | {
+      readonly type: "subagent_events";
+      /** The parent tool call the watch was opened on. */
+      readonly callId: string;
+      readonly events: readonly StreamEvent[];
+    }
   | { readonly type: "turn_end"; readonly stats: TurnStats }
   /**
    * A session's agent started or stopped working. Sent to every client, not

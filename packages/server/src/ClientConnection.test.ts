@@ -1,5 +1,8 @@
 import type { ServerWebSocket } from "bun";
-import { expect, test } from "bun:test";
+import { appendFile, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, expect, test } from "bun:test";
 
 import type {
   DurableEvent,
@@ -7,6 +10,7 @@ import type {
   StreamEvent,
 } from "#protocol/ServerEvent";
 import { ClientConnection, type AttachableStream } from "./ClientConnection";
+import { SessionProjection } from "./SessionProjection";
 
 /** A socket that reports whatever backpressure a test wants it to. */
 class FakeSocket {
@@ -24,6 +28,14 @@ class FakeSocket {
 
   public getBufferedAmount(): number {
     return this.buffered;
+  }
+
+  /** The child transcripts this socket was handed, oldest frame first. */
+  public get watched(): ReadonlyArray<readonly ServerEvent[]> {
+    return this.frames
+      .map((frame) => JSON.parse(frame) as ServerEvent)
+      .filter((event) => event.type === "subagent_events")
+      .map((event) => event.events);
   }
 
   /** Frames flattened: a resume is one frame carrying many events. */
@@ -89,6 +101,13 @@ class FakeStream implements AttachableStream {
     };
     this.durable.push(event);
     return event;
+  }
+
+  /** A frame about one call, which is how a watch hears the child moved. */
+  public toolUpdate(callId: string): void {
+    for (const listener of this.listeners) {
+      listener({ type: "tool_update", callId, view: { title: [] } });
+    }
   }
 
   public ephemeral(): void {
@@ -233,4 +252,174 @@ test("sends nothing once closed", async () => {
   stream.append(2);
   connection.send({ type: "response", id: "1", success: true });
   expect(socket.frames).toHaveLength(sent);
+});
+
+let tmp: string | undefined;
+
+/** Polls, because a drain of the child's log is a read this side did not await. */
+async function until(ready: () => boolean, what: string): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (!ready()) {
+    if (Date.now() > deadline) {
+      throw new Error(`timed out waiting for ${what}`);
+    }
+    await Bun.sleep(1);
+  }
+}
+
+afterEach(async () => {
+  if (tmp) {
+    await rm(tmp, { recursive: true, force: true });
+    tmp = undefined;
+  }
+});
+
+/**
+ * A subagent's log on disk, plus the way to grow it: a watch is read while
+ * the child is still writing, so a test that cannot append is only ever
+ * testing the settled case.
+ */
+async function childLog(): Promise<{
+  readonly projection: SessionProjection;
+  readonly append: (role: string, text: string) => Promise<void>;
+}> {
+  tmp = await mkdtemp(join(tmpdir(), "pim-watch-test-"));
+  const path = join(tmp, "call_1.jsonl");
+  let entries = 0;
+  const append = async (role: string, text: string): Promise<void> => {
+    entries += 1;
+    await appendFile(
+      path,
+      `${JSON.stringify({
+        type: "message",
+        id: `entry-${entries}`,
+        timestamp: "2026-09-07T10:00:00.000Z",
+        message: { role, content: [{ type: "text", text }] },
+      })}\n`
+    );
+  };
+  await Bun.write(path, "");
+  return { projection: new SessionProjection(path, () => "/"), append };
+}
+
+/**
+ * The child's transcript travels in an envelope so that nothing in it can be
+ * taken for the session's own: a durable event is one with a `seq`, and the
+ * child's messages have theirs.
+ */
+test("hands a watched child over enveloped, never in the transcript", async () => {
+  const { socket, stream, connection } = build();
+  const { projection, append } = await childLog();
+  await append("user", "find every call site");
+  await append("assistant", "three of them are in tests");
+  await connection.attach(stream, 0);
+
+  await connection.watchSubagent("call_1", projection, 0);
+
+  expect(socket.watched).toHaveLength(1);
+  expect(
+    socket.watched[0]?.map((event) => "seq" in event && event.seq)
+  ).toEqual([1, 2]);
+  expect(socket.seqs).toEqual([]);
+  expect(
+    socket.events.some(
+      (event) =>
+        event.type === "message" && event.text === "find every call site"
+    )
+  ).toBe(false);
+});
+
+test("resumes a watch from `fromSeq` rather than replaying it", async () => {
+  const { socket, stream, connection } = build();
+  const { projection, append } = await childLog();
+  await append("user", "find every call site");
+  await append("assistant", "three of them are in tests");
+  await connection.attach(stream, 0);
+
+  await connection.watchSubagent("call_1", projection, 1);
+
+  expect(
+    socket.watched.flat().map((event) => ("seq" in event ? event.seq : 0))
+  ).toEqual([2]);
+});
+
+/**
+ * No poller: the child runs inside the parent's tool call, so the parent's
+ * own frame about that call is the news that the child wrote something.
+ */
+test("drains the child log when the parent reports its call moved", async () => {
+  const { socket, stream, connection } = build();
+  const { projection, append } = await childLog();
+  await append("user", "find every call site");
+  await connection.attach(stream, 0);
+  await connection.watchSubagent("call_1", projection, 0);
+
+  await append("assistant", "three of them are in tests");
+  // Another call's frame says nothing about this child, and is refused
+  // before any read of its log is started — so there is nothing to wait for.
+  stream.toolUpdate("call_other");
+  expect(socket.watched).toHaveLength(1);
+
+  stream.toolUpdate("call_1");
+  await until(() => socket.watched.length === 2, "the child's second entry");
+
+  expect(
+    socket.watched[1]?.map((event) => "seq" in event && event.seq)
+  ).toEqual([2]);
+});
+
+test("stops draining once the watch is dropped", async () => {
+  const { socket, stream, connection } = build();
+  const { projection, append } = await childLog();
+  await append("user", "find every call site");
+  await connection.attach(stream, 0);
+  await connection.watchSubagent("call_1", projection, 0);
+
+  connection.unwatchSubagent("call_2");
+  expect(connection.watchedCallId).toBe("call_1");
+
+  connection.unwatchSubagent("call_1");
+  await append("assistant", "three of them are in tests");
+  stream.toolUpdate("call_1");
+
+  expect(connection.watchedCallId).toBeUndefined();
+  expect(socket.watched).toHaveLength(1);
+});
+
+/**
+ * The leak: a modal whose socket died leaves a projection holding every event
+ * of that child for the life of the process, and nothing else would ever drop
+ * it — the client that would have said `unwatch` is the thing that vanished.
+ */
+test("drops the watch when the socket closes", async () => {
+  const { socket, stream, connection } = build();
+  const { projection, append } = await childLog();
+  await append("user", "find every call site");
+  await connection.attach(stream, 0);
+  await connection.watchSubagent("call_1", projection, 0);
+  const sent = socket.frames.length;
+
+  connection.close();
+
+  expect(connection.watchedCallId).toBeUndefined();
+  await append("assistant", "three of them are in tests");
+  stream.toolUpdate("call_1");
+  expect(socket.frames).toHaveLength(sent);
+});
+
+test("drops the watch when the client attaches elsewhere", async () => {
+  const { socket, stream, connection } = build();
+  const { projection, append } = await childLog();
+  await append("user", "find every call site");
+  await connection.attach(stream, 0);
+  await connection.watchSubagent("call_1", projection, 0);
+  const sent = socket.frames.length;
+
+  await connection.attach(new FakeStream(), 0);
+
+  expect(connection.watchedCallId).toBeUndefined();
+  await append("assistant", "three of them are in tests");
+  stream.toolUpdate("call_1");
+  expect(socket.watched).toHaveLength(1);
+  expect(socket.frames.length).toBeGreaterThan(sent);
 });

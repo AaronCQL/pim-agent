@@ -88,6 +88,35 @@ export type Command =
    */
   | { readonly id: string; readonly type: "list_models" }
   /**
+   * Read one subagent's transcript, live if it is still running. Read-only
+   * and **not** a second `attach`: a connection stays attached to exactly one
+   * session, which is what makes the composer target, `cancel` and `dequeue`
+   * unambiguous. A watched child can never be cancelled, resumed or steered.
+   *
+   * `callId` is the parent's tool call, and the server derives the child's
+   * log from it — a path from a client is a path traversal. `sessionId` names
+   * the parent, and must be the session this connection is attached to.
+   * `fromSeq` mirrors `attach`, so a reopened modal resumes rather than
+   * replays.
+   */
+  | {
+      readonly id: string;
+      readonly type: "watch_subagent";
+      readonly sessionId: string;
+      readonly callId: string;
+      readonly fromSeq: number;
+    }
+  /**
+   * Stop reading it. Carries no session because it names a watch this
+   * connection holds, and answers whether or not one is held: a client
+   * closing a modal it has already lost is not an error.
+   */
+  | {
+      readonly id: string;
+      readonly type: "unwatch_subagent";
+      readonly callId: string;
+    }
+  /**
    * Run the latest code: update this install and restart it, whether or not
    * the update moved anything. Unconditional because the operator is asking
    * to be on the new version, not asking whether there is one.

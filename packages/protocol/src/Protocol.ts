@@ -14,6 +14,15 @@
  * connection rather than mis-parsing a newer frame. Versioned from day one so
  * the first incompatible change is a rejection, not a silent field mismatch.
  *
+ * 11 — a client can read one subagent's transcript, live, with
+ * `watch_subagent` / `unwatch_subagent`; its events arrive enveloped in
+ * `subagent_events` so they can never be mistaken for the parent's. A watch
+ * is read-only and is not an attach: the connection stays attached to the
+ * one session it was, and the child is named by the parent's tool call id,
+ * from which the server derives the log. Breaking because a server that
+ * predates it would answer a watch with "unknown command" — and because a
+ * client that predates it cannot be handed one either.
+ *
  * 10 — a client can ask the machine for the latest code: `reload` updates this
  * install and restarts it whether or not the update moved anything, because
  * the operator is asking to run the new version rather than asking whether
@@ -53,7 +62,7 @@
  * git branch; durable messages carry a `timestamp`; `list_models` answers
  * with the model catalogue and this model's thinking levels.
  */
-export const PROTOCOL_VERSION = 10;
+export const PROTOCOL_VERSION = 11;
 
 export type ProtocolVersion = typeof PROTOCOL_VERSION;
 

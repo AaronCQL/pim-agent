@@ -5,6 +5,7 @@ import {
   type ServerEvent,
   type StreamEvent,
 } from "#protocol/ServerEvent";
+import type { SessionProjection } from "./SessionProjection";
 
 /**
  * The half of `SessionStream` a connection needs: subscribe to what happens
@@ -15,6 +16,19 @@ export type AttachableStream = {
   readonly subscribe: (listener: (event: ServerEvent) => void) => () => void;
   readonly replay: (fromSeq: number) => Promise<readonly StreamEvent[]>;
   readonly sessionId: string;
+};
+
+/**
+ * One subagent log this client is reading, and how far into it that client
+ * has been sent. Per-connection rather than per-session: two clients watching
+ * two children of the same session are two projections, and neither is the
+ * session the connection is attached to.
+ */
+type SubagentWatch = {
+  readonly callId: string;
+  readonly projection: SessionProjection;
+  /** Highest child `seq` written to the socket; the client's own cursor. */
+  cursor: number;
 };
 
 /** Bytes queued inside the socket before this client is treated as lagging. */
@@ -37,6 +51,7 @@ export class ClientConnection {
   private paused = false;
   private cursor = 0;
   private closed = false;
+  private watch: SubagentWatch | undefined;
 
   public constructor(ws: ServerWebSocket<undefined>) {
     this.ws = ws;
@@ -51,6 +66,11 @@ export class ClientConnection {
     return this.cursor;
   }
 
+  /** The subagent this client is reading, if it is reading one. */
+  public get watchedCallId(): string | undefined {
+    return this.watch?.callId;
+  }
+
   public async attach(
     stream: AttachableStream,
     fromSeq: number
@@ -62,6 +82,33 @@ export class ClientConnection {
       this.onStreamEvent(event);
     });
     await this.sync();
+  }
+
+  /**
+   * Read a subagent's log alongside the session this client is attached to.
+   * At most one at a time, because a client shows at most one modal.
+   *
+   * Read-only in the strong sense: nothing here reaches an agent, and the
+   * events go out enveloped, so what is drawn from them can never be mistaken
+   * for the session's own transcript.
+   */
+  public async watchSubagent(
+    callId: string,
+    projection: SessionProjection,
+    fromSeq: number
+  ): Promise<void> {
+    this.watch = { callId, projection, cursor: fromSeq };
+    await this.pumpWatch();
+  }
+
+  /**
+   * Only the named watch, so an `unwatch` for a modal already replaced does
+   * not silently close the one that replaced it.
+   */
+  public unwatchSubagent(callId: string): void {
+    if (this.watch?.callId === callId) {
+      this.watch = undefined;
+    }
   }
 
   /** Send something that belongs to no stream, e.g. a command response. */
@@ -78,12 +125,20 @@ export class ClientConnection {
     }
     this.paused = false;
     void this.sync();
+    this.flushWatch();
   }
 
+  /**
+   * The watch goes with the session: it is read out of a child of *this*
+   * parent, and the client that moves elsewhere has no modal open over it.
+   * Dropping it here is also what keeps an abandoned one from outliving the
+   * socket, holding its projection's events for the life of the process.
+   */
   public detach(): void {
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     this.stream = undefined;
+    this.watch = undefined;
   }
 
   public close(): void {
@@ -118,6 +173,9 @@ export class ClientConnection {
   }
 
   private onStreamEvent(event: ServerEvent): void {
+    if (this.touchesWatch(event)) {
+      void this.pumpWatch();
+    }
     // A drain of the log and the retires it triggered arrive as one batch,
     // and that is the unit they are correct in: a retire without the durable
     // message beside it leaves the client drawing that step twice. It is held
@@ -172,6 +230,77 @@ export class ClientConnection {
       return;
     }
     this.cursor = cursor;
+    if (this.ws.getBufferedAmount() > HIGH_WATER_MARK) {
+      this.paused = true;
+    }
+  }
+
+  /**
+   * Live tailing without a poller. The child runs in this process, under the
+   * parent tool call the watch is named after, so every frame the parent
+   * emits about that call is the parent saying the child has just done
+   * something — and a subagent reports progress precisely when the child's
+   * model call lands. Its log has been appended to by then, so the read is
+   * behind the write rather than racing it.
+   */
+  private touchesWatch(event: ServerEvent): boolean {
+    const callId = this.watch?.callId;
+    if (callId === undefined) {
+      return false;
+    }
+    switch (event.type) {
+      case "tool_update":
+      case "tool_end":
+      case "tool_result":
+        return event.callId === callId;
+      case "replay":
+        return event.events.some((inner) => this.touchesWatch(inner));
+      default:
+        return false;
+    }
+  }
+
+  private async pumpWatch(): Promise<void> {
+    const watch = this.watch;
+    if (!watch || this.closed) {
+      return;
+    }
+    await watch.projection.drain();
+    // The watch can be closed, or replaced by another child, while the log is
+    // being read; what came back then belongs to nobody.
+    if (this.watch !== watch) {
+      return;
+    }
+    this.flushWatch();
+  }
+
+  /**
+   * Everything the child log has that this client has not, as one envelope.
+   * The cursor moves only once the frame is on the socket, so a lagging
+   * client re-derives its tail on `drain` exactly as the session's own does.
+   */
+  private flushWatch(): void {
+    const watch = this.watch;
+    if (!watch || this.closed || this.paused) {
+      return;
+    }
+    const events = watch.projection.since(watch.cursor);
+    const last = events.at(-1);
+    if (!last) {
+      return;
+    }
+    const status = this.ws.send(
+      JSON.stringify({
+        type: "subagent_events",
+        callId: watch.callId,
+        events,
+      })
+    );
+    if (status === 0) {
+      this.paused = true;
+      return;
+    }
+    watch.cursor = last.seq;
     if (this.ws.getBufferedAmount() > HIGH_WATER_MARK) {
       this.paused = true;
     }

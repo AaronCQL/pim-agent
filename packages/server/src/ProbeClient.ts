@@ -153,6 +153,25 @@ export class ProbeClient {
     return itemsOf(response);
   }
 
+  /**
+   * Reads one subagent's transcript. Its events arrive enveloped in
+   * `subagent_events` and are deliberately left that way in `events`: a child
+   * message unwrapped into this list is a child message in the parent's
+   * transcript, which is the whole reason the envelope exists.
+   */
+  public watchSubagent(callId: string, fromSeq = 0): Promise<ResponseEvent> {
+    return this.send({
+      type: "watch_subagent",
+      sessionId: this.sessionId ?? "",
+      callId,
+      fromSeq,
+    });
+  }
+
+  public unwatchSubagent(callId: string): Promise<ResponseEvent> {
+    return this.send({ type: "unwatch_subagent", callId });
+  }
+
   /** Pi's session catalogue; answers whether or not this probe is attached. */
   public async listSessions(
     cwd?: string
