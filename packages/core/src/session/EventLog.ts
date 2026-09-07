@@ -8,6 +8,27 @@ import { parseSessionEntries } from "@earendil-works/pi-coding-agent";
 import { MessageText } from "./MessageText";
 
 /**
+ * Reads a session file, answering `absent` when there is no file to read.
+ *
+ * Testing `exists()` first cannot do this: a session discarded, rotated or
+ * cleaned up under a reader lands in the window between that stat and the
+ * read, and the read then throws where the stat had just promised it would
+ * not. Catching the miss is the only version without the window — and it
+ * costs one syscall less on the path that listing every session runs over
+ * every byte of.
+ */
+async function ifPresent<T>(read: () => Promise<T>, absent: T): Promise<T> {
+  try {
+    return await read();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return absent;
+    }
+    throw err;
+  }
+}
+
+/**
  * One durable line of a pi session file, tagged with its physical append
  * ordinal. The header is line 1, so the first entry is `seq` 2.
  */
@@ -83,10 +104,7 @@ export class EventLog {
     const start =
       this.cursor.seq <= afterSeq ? this.cursor : { offset: 0, seq: 0 };
     const file = Bun.file(this.path);
-    if (!(await file.exists())) {
-      return [];
-    }
-    const text = await file.slice(start.offset).text();
+    const text = await ifPresent(() => file.slice(start.offset).text(), "");
 
     // A trailing fragment is a write in progress: it has no ordinal yet, so
     // stopping short of it is what makes an interrupted read lossless.
@@ -126,10 +144,7 @@ export class EventLog {
   /** Line 1 only, so listing many sessions never reads their bodies. */
   public async header(): Promise<SessionHeader | undefined> {
     const file = Bun.file(this.path);
-    if (!(await file.exists())) {
-      return undefined;
-    }
-    const head = await file.slice(0, PROBE_BYTES).text();
+    const head = await ifPresent(() => file.slice(0, PROBE_BYTES).text(), "");
     const end = head.indexOf("\n");
     if (end === -1) {
       return undefined;
@@ -147,27 +162,29 @@ export class EventLog {
    */
   public async digest(): Promise<SessionDigest> {
     const file = Bun.file(this.path);
-    if (!(await file.exists())) {
-      return { head: 0 };
-    }
-    let head = 0;
-    let probe = "";
-    const decoder = new TextDecoder();
-    for await (const bytes of file.stream()) {
-      // An indexed loop, not `for…of`: this runs over every byte of every
-      // session in the catalogue, and the iterator protocol is the only part
-      // of it that is not free.
-      for (let at = 0; at < bytes.length; at += 1) {
-        if (bytes[at] === 0x0a) {
-          head += 1;
+    return await ifPresent(
+      async () => {
+        let head = 0;
+        let probe = "";
+        const decoder = new TextDecoder();
+        for await (const bytes of file.stream()) {
+          // An indexed loop, not `for…of`: this runs over every byte of every
+          // session in the catalogue, and the iterator protocol is the only part
+          // of it that is not free.
+          for (let at = 0; at < bytes.length; at += 1) {
+            if (bytes[at] === 0x0a) {
+              head += 1;
+            }
+          }
+          if (probe.length < PROBE_BYTES) {
+            probe += decoder.decode(bytes, { stream: true });
+          }
         }
-      }
-      if (probe.length < PROBE_BYTES) {
-        probe += decoder.decode(bytes, { stream: true });
-      }
-    }
-    const title = firstUserMessage(probe);
-    return { head, ...(title === undefined ? {} : { title }) };
+        const title = firstUserMessage(probe);
+        return { head, ...(title === undefined ? {} : { title }) };
+      },
+      { head: 0 }
+    );
   }
 
   public get inFlight(): InFlightTurn | undefined {
