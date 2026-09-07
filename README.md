@@ -170,7 +170,6 @@ Pim revamps Pi's default tools (`bash`, `read`, `write`, `edit`) so they produce
 - **`web_search`** - search the web via [Exa](https://exa.ai) with ranked results and snippets
 - **`web_fetch`** - fetch websites as Markdown via [Jina](https://jina.ai/reader/), with browser-rendered fallback via [`Bun.WebView`](https://bun.com/docs/runtime/webview)
 - **`subagent`** - delegate complex work to isolated sub-sessions with full tool access
-- **`todo`** - in-session task list with a live widget in the UI footer
 
 ## Terminal UI
 

@@ -64,14 +64,15 @@ describe("ExtensionToggles.gate", () => {
 });
 
 describe("ExtensionToggles defaults", () => {
-  test("tps ships disabled and can be turned on", async () => {
-    await expect(ExtensionToggles.disabled()).resolves.toEqual(["tps"]);
+  test("todo and tps ship disabled and can be turned on", async () => {
+    await expect(ExtensionToggles.disabled()).resolves.toEqual(["todo", "tps"]);
 
+    await ExtensionToggles.setDisabled("todo", false);
     await ExtensionToggles.setDisabled("tps", false);
 
     await expect(ExtensionToggles.disabled()).resolves.toEqual([]);
     expect(await Bun.file(PimSettings.path()).json()).toMatchObject({
-      extensions: { toggles: { tps: true } },
+      extensions: { toggles: { todo: true, tps: true } },
     });
   });
 
@@ -93,6 +94,7 @@ describe("ExtensionToggles settings", () => {
       extensions: { toggles: { "web-search": false } },
     });
     await expect(ExtensionToggles.disabled()).resolves.toEqual([
+      "todo",
       "tps",
       "web-search",
     ]);
@@ -106,6 +108,7 @@ describe("ExtensionToggles settings", () => {
     await ExtensionToggles.setDisabled("bash", false);
 
     await expect(ExtensionToggles.disabled()).resolves.toEqual([
+      "todo",
       "tps",
       "web-search",
     ]);
@@ -126,6 +129,7 @@ describe("ExtensionToggles settings", () => {
     await Promise.all([
       ExtensionToggles.setDisabled("bash", true),
       ExtensionToggles.setDisabled("grep", true),
+      ExtensionToggles.setDisabled("todo", false),
       ExtensionToggles.setDisabled("tps", false),
     ]);
 
@@ -152,10 +156,14 @@ describe("ExtensionToggles settings", () => {
 
   test("ignores stale names left in the settings file", async () => {
     await PimSettings.set("extensions", {
-      toggles: { "removed-extension": false, _init: false, todo: false },
+      toggles: { "removed-extension": false, _init: false, grep: false },
     });
 
-    await expect(ExtensionToggles.disabled()).resolves.toEqual(["todo", "tps"]);
+    await expect(ExtensionToggles.disabled()).resolves.toEqual([
+      "grep",
+      "todo",
+      "tps",
+    ]);
   });
 });
 

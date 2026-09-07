@@ -31,8 +31,7 @@ export type PimExtensionName = keyof typeof EXTENSIONS;
 
 const NAMES = Object.keys(EXTENSIONS) as readonly PimExtensionName[];
 
-/** Ships off: opt-in reporting rather than a capability. */
-const DEFAULT_DISABLED: readonly PimExtensionName[] = ["tps"];
+const DEFAULT_DISABLED: readonly PimExtensionName[] = ["todo", "tps"];
 
 let writeQueue: Promise<unknown> = Promise.resolve();
 
@@ -61,7 +60,7 @@ function describe(name: PimExtensionName): string {
  */
 function gate(
   name: PimExtensionName,
-  factory: ExtensionFactory
+  factory: ExtensionFactory,
 ): ExtensionFactory {
   return async (pi) => {
     if (await isDisabled(name)) {
@@ -108,7 +107,7 @@ async function setDisabled(name: string, isOff: boolean): Promise<void> {
 }
 
 async function toggle(
-  name: string
+  name: string,
 ): Promise<{ readonly name: PimExtensionName; readonly disabled: boolean }> {
   if (!isKnown(name)) {
     throw new Error(`Unknown pim extension "${name}"`);
@@ -124,7 +123,7 @@ function defaultEnabled(name: PimExtensionName): boolean {
 
 function enabled(
   name: PimExtensionName,
-  toggles: Readonly<Record<string, boolean>>
+  toggles: Readonly<Record<string, boolean>>,
 ): boolean {
   if (isRequired(name)) {
     return true;

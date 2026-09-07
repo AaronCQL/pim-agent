@@ -170,6 +170,7 @@ describe("/pim command", () => {
     await expect(ExtensionToggles.disabled()).resolves.toEqual([
       "apply-patch",
       "bash",
+      "todo",
       "tps",
     ]);
     expect(reloads()).toBe(1);
