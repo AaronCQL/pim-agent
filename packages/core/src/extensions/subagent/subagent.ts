@@ -21,6 +21,13 @@ import { formatTopLine } from "./render";
 export const PER_TASK_OUTPUT_CAP = 32 * 1024;
 export const SUBAGENT_TOOL_NAME = "subagent";
 
+/**
+ * How long text may accumulate before the parent is told. Time, not a
+ * character count: a short answer that never reaches a byte threshold would
+ * otherwise sit invisible until the call settled.
+ */
+const UPDATE_INTERVAL_MS = 100;
+
 const inSubagent = new AsyncLocalStorage<true>();
 
 export type SubagentUsage = {
@@ -33,37 +40,42 @@ export type SubagentUsage = {
   readonly contextTokens: number | undefined;
 };
 
-export type SubagentToolCall = {
-  readonly name: string;
-  readonly isError: boolean;
+/**
+ * One thing the child did, in the order it did it. Tool entries are names
+ * only: this list is re-serialised into the parent's log and re-shipped on
+ * every partial update, so a child's arguments and output must never ride
+ * along.
+ */
+export type SubagentEntry =
+  | { readonly kind: "text"; readonly text: string }
+  | {
+      readonly kind: "tool";
+      readonly callId: string;
+      readonly name: string;
+      readonly isError: boolean;
+    };
+
+export type SubagentSnapshot = {
+  readonly entries: readonly SubagentEntry[];
+  readonly usage: SubagentUsage;
+  readonly activeToolNames: readonly string[];
+  readonly lastToolName: string | undefined;
+  readonly stopReason: string | undefined;
+  readonly errorMessage: string | undefined;
+  readonly model: string | undefined;
+  readonly contextWindow: number | undefined;
 };
 
-export type SubagentDetails = {
+/**
+ * `returnedOutput` is the child's answer, capped for the parent model;
+ * `fullOutput` is every word it wrote, which is what a reader opens the row
+ * to see.
+ */
+export type SubagentDetails = SubagentSnapshot & {
   readonly returnedOutput: string;
   readonly fullOutput: string;
   readonly outputTruncated: boolean;
   readonly omittedBytes: number;
-  readonly usage: SubagentUsage;
-  readonly toolCalls: readonly SubagentToolCall[];
-  readonly activeToolNames: readonly string[];
-  readonly lastToolName: string | undefined;
-  readonly stopReason: string | undefined;
-  readonly errorMessage: string | undefined;
-  readonly model: string | undefined;
-  readonly contextWindow: number | undefined;
-  readonly topLine: string;
-};
-
-export type SubagentSnapshot = {
-  readonly finalOutput: string;
-  readonly usage: SubagentUsage;
-  readonly toolCalls: readonly SubagentToolCall[];
-  readonly activeToolNames: readonly string[];
-  readonly lastToolName: string | undefined;
-  readonly stopReason: string | undefined;
-  readonly errorMessage: string | undefined;
-  readonly model: string | undefined;
-  readonly contextWindow: number | undefined;
 };
 
 export type SubagentSession = {
@@ -84,6 +96,19 @@ export function childToolNames(
   activeToolNames: readonly string[]
 ): readonly string[] {
   return activeToolNames.filter((name) => name !== SUBAGENT_TOOL_NAME);
+}
+
+/** Everything the child wrote, one paragraph per assistant message. */
+function narrationOf(entries: readonly SubagentEntry[]): string {
+  return entries
+    .filter((entry) => entry.kind === "text")
+    .map((entry) => entry.text)
+    .join("\n\n");
+}
+
+/** The child's last word, which is the answer the parent model asked for. */
+function answerOf(entries: readonly SubagentEntry[]): string {
+  return entries.findLast((entry) => entry.kind === "text")?.text ?? "";
 }
 
 export async function createSdkSubagentSession(
@@ -161,6 +186,7 @@ export async function runSubagent(
       signal?.removeEventListener("abort", onAbort);
       await ensureAbort();
       session?.dispose();
+      capture.dispose();
     }
 
     const snapshot = capture.snapshot();
@@ -168,14 +194,14 @@ export async function runSubagent(
       throw makeFailureError(
         thrownMessage(thrown),
         undefined,
-        snapshot.finalOutput
+        narrationOf(snapshot.entries)
       );
     }
     if (snapshot.stopReason === "error" || snapshot.stopReason === "aborted") {
       throw makeFailureError(
         snapshot.stopReason,
         snapshot.errorMessage,
-        snapshot.finalOutput
+        narrationOf(snapshot.entries)
       );
     }
 
@@ -191,10 +217,10 @@ export async function runSubagent(
 }
 
 export class SubagentEventCapture {
-  private finalOutput = "";
-  private pendingMessage: AssistantMessage | undefined;
+  private readonly entries: SubagentEntry[] = [];
+  private pendingText = "";
+  private updateTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly usage: MutableUsage = emptyUsage();
-  private readonly toolCalls: SubagentToolCall[] = [];
   private readonly activeToolsById = new Map<string, string>();
   private lastToolName: string | undefined;
   private stopReason: string | undefined;
@@ -212,21 +238,14 @@ export class SubagentEventCapture {
   }
 
   public handle(event: AgentSessionEvent): void {
-    if (event.type === "message_start" && isAssistantMessage(event.message)) {
-      this.finalOutput = "";
-      this.pendingMessage = undefined;
-      this.emitUpdate();
-      return;
-    }
-
     if (event.type === "message_update" && isAssistantMessage(event.message)) {
-      this.pendingMessage = event.message;
+      this.pendingText = collectText(event.message);
+      this.scheduleUpdate();
       return;
     }
 
     if (event.type === "message_end" && isAssistantMessage(event.message)) {
-      this.pendingMessage = undefined;
-      this.finalOutput = collectText(event.message);
+      this.commitText(collectText(event.message));
       addUsage(this.usage, event.message.usage);
       this.usage.turns += 1;
       this.stopReason = event.message.stopReason;
@@ -245,7 +264,12 @@ export class SubagentEventCapture {
 
     if (event.type === "tool_execution_end") {
       this.activeToolsById.delete(event.toolCallId);
-      this.toolCalls.push({ name: event.toolName, isError: event.isError });
+      this.entries.push({
+        kind: "tool",
+        callId: event.toolCallId,
+        name: event.toolName,
+        isError: event.isError,
+      });
       this.lastToolName = event.toolName;
       this.emitUpdate();
     }
@@ -256,12 +280,19 @@ export class SubagentEventCapture {
     this.emitUpdate();
   }
 
+  /** Drops a throttled update still in flight once the run is over. */
+  public dispose(): void {
+    this.cancelPending();
+  }
+
+  /** A message still streaming reads as the entry it is about to become. */
   public snapshot(): SubagentSnapshot {
-    this.materializePending();
     return {
-      finalOutput: this.finalOutput,
+      entries:
+        this.pendingText === ""
+          ? [...this.entries]
+          : [...this.entries, { kind: "text", text: this.pendingText }],
       usage: freezeUsage(this.usage),
-      toolCalls: [...this.toolCalls],
       activeToolNames: Array.from(new Set(this.activeToolsById.values())),
       lastToolName: this.lastToolName,
       stopReason: this.stopReason,
@@ -273,24 +304,48 @@ export class SubagentEventCapture {
 
   public details(): SubagentDetails {
     const snapshot = this.snapshot();
-    const cap = applyOutputCap(snapshot.finalOutput);
-    return detailsFromSnapshot(snapshot, cap.text, cap);
+    const cap = applyOutputCap(answerOf(snapshot.entries));
+    return {
+      ...snapshot,
+      returnedOutput: cap.text,
+      fullOutput: narrationOf(snapshot.entries),
+      outputTruncated: cap.truncated,
+      omittedBytes: cap.omittedBytes,
+    };
   }
 
-  private materializePending(): void {
-    if (this.pendingMessage) {
-      this.finalOutput = collectText(this.pendingMessage);
-      this.pendingMessage = undefined;
+  private commitText(text: string): void {
+    this.pendingText = "";
+    if (text !== "") {
+      this.entries.push({ kind: "text", text });
+    }
+  }
+
+  private scheduleUpdate(): void {
+    if (this.onUpdate === undefined || this.updateTimer !== undefined) {
+      return;
+    }
+    this.updateTimer = setTimeout(() => {
+      this.updateTimer = undefined;
+      this.emitUpdate();
+    }, UPDATE_INTERVAL_MS);
+  }
+
+  private cancelPending(): void {
+    if (this.updateTimer !== undefined) {
+      clearTimeout(this.updateTimer);
+      this.updateTimer = undefined;
     }
   }
 
   private emitUpdate(): void {
+    this.cancelPending();
     if (!this.onUpdate) {
       return;
     }
     const details = this.details();
     this.onUpdate({
-      content: [{ type: "text", text: details.topLine }],
+      content: [{ type: "text", text: formatTopLine(details) }],
       details,
     });
   }
@@ -343,28 +398,6 @@ function makeFailureError(
     `Subagent failed: ${reason}. Error: ${errorMessage ?? "none"}.\n` +
       `Partial output before failure:\n${capped.text}`
   );
-}
-
-function detailsFromSnapshot(
-  snapshot: SubagentSnapshot,
-  returnedOutput: string,
-  capResult: OutputCapResult
-): SubagentDetails {
-  return {
-    returnedOutput,
-    fullOutput: snapshot.finalOutput,
-    outputTruncated: capResult.truncated,
-    omittedBytes: capResult.omittedBytes,
-    usage: snapshot.usage,
-    toolCalls: snapshot.toolCalls,
-    activeToolNames: snapshot.activeToolNames,
-    lastToolName: snapshot.lastToolName,
-    stopReason: snapshot.stopReason,
-    errorMessage: snapshot.errorMessage,
-    model: snapshot.model,
-    contextWindow: snapshot.contextWindow,
-    topLine: formatTopLine(snapshot),
-  };
 }
 
 function collectText(message: AssistantMessage): string {

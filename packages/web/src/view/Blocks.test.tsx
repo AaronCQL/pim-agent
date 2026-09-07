@@ -313,6 +313,13 @@ describe("ToolCard", () => {
     );
   });
 
+  // Markdown is prose a model wrote to be read — a subagent's answer — not
+  // output a tool dumped, so it is not quoted material and does not recede.
+  test("a markdown body keeps full strength", () => {
+    const host = paintTool({ ...view, body: [SAMPLES.markdown, SAMPLES.kv] });
+    expect(host.querySelector("details > div > div")?.className).toBe("");
+  });
+
   // A row is at full strength when *it* is open, never because something
   // inside it is; the child combinator is what says so, and a diff body — the
   // one payload that used to nest disclosures — now holds none at all.

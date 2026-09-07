@@ -51,11 +51,14 @@ export function ToolCard(props: {
   const body = createMemo(() => (props.view.body ?? []).filter(isDrawn));
   const error = () => props.isError === true;
   // Opened output is quoted material — it recedes behind the row that names
-  // it. A diff is the exception, and not because of which tool produced it:
-  // its meaning *is* its colour, so dimming a diff dims the one thing that
-  // makes it readable. Asking the blocks rather than `name` keeps that true
-  // for any tool that reports a change, `apply_patch` sections included.
-  const dimmed = () => !body().some((block) => block.kind === "diff");
+  // it. Two kinds of block are not. A diff's meaning *is* its colour, so
+  // dimming one dims the only thing that makes it readable; and markdown is
+  // prose a model wrote to be read rather than a payload it dumped, which is
+  // the whole of a subagent's answer. Asking the blocks rather than `name`
+  // keeps both true for any tool that emits them, `apply_patch` sections
+  // included.
+  const dimmed = () =>
+    !body().some((block) => block.kind === "diff" || block.kind === "markdown");
 
   return (
     // A row recedes until hovered; an open one is the thing you asked to look

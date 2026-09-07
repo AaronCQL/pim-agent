@@ -6,8 +6,23 @@ import {
   childToolNames,
   runSubagent,
   SubagentEventCapture,
+  type SubagentDetails,
   type SubagentSession,
 } from "./subagent";
+
+/**
+ * Polls a condition rather than sleeping long enough that it is probably true.
+ * The deadline is well inside bun's per-test one so a stuck wait says which.
+ */
+async function until(ready: () => boolean, what: string): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (!ready()) {
+    if (Date.now() > deadline) {
+      throw new Error(`timed out waiting for ${what}`);
+    }
+    await Bun.sleep(1);
+  }
+}
 
 type UsageOverrides = Omit<Partial<Usage>, "cost"> & {
   readonly cost?: Partial<Usage["cost"]>;
@@ -100,7 +115,7 @@ describe("childToolNames", () => {
 });
 
 describe("SubagentEventCapture", () => {
-  test("concatenates multi-part text, resets for each assistant message, and records usage/tools", () => {
+  test("keeps every message in order, interleaved with the tools between them", () => {
     const updates: string[] = [];
     const capture = new SubagentEventCapture((partial) => {
       updates.push(
@@ -108,7 +123,6 @@ describe("SubagentEventCapture", () => {
       );
     });
 
-    capture.handle({ type: "message_start", message: assistant([]) } as never);
     capture.handle({
       type: "message_end",
       message: assistant(["first ", "turn"], {
@@ -122,7 +136,6 @@ describe("SubagentEventCapture", () => {
       result: {},
       isError: false,
     } as never);
-    capture.handle({ type: "message_start", message: assistant([]) } as never);
     capture.handle({
       type: "message_end",
       message: assistant(["final", " answer"], {
@@ -136,7 +149,11 @@ describe("SubagentEventCapture", () => {
     } as never);
 
     const snapshot = capture.snapshot();
-    expect(snapshot.finalOutput).toBe("final answer");
+    expect(snapshot.entries).toEqual([
+      { kind: "text", text: "first turn" },
+      { kind: "tool", callId: "1", name: "read", isError: false },
+      { kind: "text", text: "final answer" },
+    ]);
     expect(snapshot.usage).toEqual({
       input: 12,
       output: 12,
@@ -146,38 +163,108 @@ describe("SubagentEventCapture", () => {
       turns: 2,
       contextTokens: undefined,
     });
-    expect(snapshot.toolCalls).toEqual([{ name: "read", isError: false }]);
     expect(snapshot.lastToolName).toBe("read");
-    expect(updates.at(-1)).toBe("$0.03 ⬝ ?/? ⬝ claude-test ⬝ 2 turns ⬝ 1 tool");
+    expect(updates.at(-1)).toBe("read ⬝ 2 turns ⬝ $0.03");
   });
 
-  test("a later message with no text discards the prior message's text", () => {
+  test("narration survives a final message that says nothing", () => {
     const capture = new SubagentEventCapture();
 
-    capture.handle({ type: "message_start", message: assistant([]) } as never);
     capture.handle({
       type: "message_end",
       message: assistant(["intro"], { stopReason: "toolUse" }),
     } as never);
-    capture.handle({ type: "message_start", message: assistant([]) } as never);
     capture.handle({
       type: "message_end",
       message: assistant([], { stopReason: "stop" }),
     } as never);
 
-    expect(capture.snapshot().finalOutput).toBe("");
+    expect(capture.details().fullOutput).toBe("intro");
   });
 
-  test("message_update content is materialized lazily on snapshot read", () => {
+  test("a message still streaming reads as the entry it will become", () => {
     const capture = new SubagentEventCapture();
 
-    capture.handle({ type: "message_start", message: assistant([]) } as never);
     capture.handle({
       type: "message_update",
       message: assistant(["partial"]),
     } as never);
 
-    expect(capture.snapshot().finalOutput).toBe("partial");
+    expect(capture.snapshot().entries).toEqual([
+      { kind: "text", text: "partial" },
+    ]);
+    expect(capture.details().fullOutput).toBe("partial");
+  });
+
+  test("streams the body on a trailing throttle, not on every delta", async () => {
+    const updates: SubagentDetails[] = [];
+    const capture = new SubagentEventCapture((partial) =>
+      updates.push(partial.details)
+    );
+
+    capture.handle({
+      type: "message_update",
+      message: assistant(["Read"]),
+    } as never);
+    capture.handle({
+      type: "message_update",
+      message: assistant(["Reading the confi"]),
+    } as never);
+    expect(updates).toEqual([]);
+
+    await until(() => updates.length === 1, "the throttled update");
+    expect(updates[0]?.fullOutput).toBe("Reading the confi");
+  });
+
+  test("message_end flushes the pending update instead of racing it", async () => {
+    const updates: SubagentDetails[] = [];
+    const capture = new SubagentEventCapture((partial) =>
+      updates.push(partial.details)
+    );
+
+    capture.handle({
+      type: "message_update",
+      message: assistant(["half"]),
+    } as never);
+    capture.handle({
+      type: "message_end",
+      message: assistant(["halfway there"]),
+    } as never);
+    expect(updates.length).toBe(1);
+
+    // A second stream proves the flushed timer was cancelled: had it survived
+    // it would have landed here as an extra update carrying the same text.
+    capture.handle({
+      type: "message_update",
+      message: assistant(["next"]),
+    } as never);
+    await until(() => updates.length === 2, "the next throttled update");
+
+    expect(updates.map((details) => details.fullOutput)).toEqual([
+      "halfway there",
+      "halfway there\n\nnext",
+    ]);
+  });
+
+  test("dispose drops an update the run no longer wants", async () => {
+    const updates: SubagentDetails[] = [];
+    const capture = new SubagentEventCapture((partial) =>
+      updates.push(partial.details)
+    );
+
+    capture.handle({
+      type: "message_update",
+      message: assistant(["orphan"]),
+    } as never);
+    capture.dispose();
+    capture.handle({
+      type: "tool_execution_start",
+      toolCallId: "1",
+      toolName: "read",
+    } as never);
+
+    await until(() => updates.length === 1, "the tool update");
+    expect(updates).toHaveLength(1);
   });
 });
 

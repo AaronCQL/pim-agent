@@ -1,30 +1,28 @@
 import { Format } from "../../shared/Format";
 import { Renderer } from "../../shared/Renderer";
 import type { ToolViewInput } from "../../shared/Tools";
-import type { Span, ToolView, ViewBlock } from "../../view/ViewBlock";
+import type { Span, Tone, ToolView, ViewBlock } from "../../view/ViewBlock";
 import type { subagentSchema } from "./schema";
-import type { SubagentDetails, SubagentSnapshot } from "./subagent";
+import type { SubagentDetails, SubagentEntry } from "./subagent";
 
 const DOT = "⬝";
 
+/**
+ * How many distinct tool names the roster names before it elides. Past this
+ * the summary stops being one line on a phone, and the names it would add are
+ * the ones the run used least.
+ */
+const ROSTER_CAP = 8;
+
 type SubagentViewInput = ToolViewInput<typeof subagentSchema, SubagentDetails>;
 
-type StatusFields = Pick<
-  SubagentSnapshot,
-  | "usage"
-  | "toolCalls"
-  | "activeToolNames"
-  | "lastToolName"
-  | "stopReason"
-  | "model"
-  | "contextWindow"
->;
+type ToolTally = { count: number; failures: number };
 
 /**
- * The status line lives on `summary` so it stays visible while the subagent
- * streams and while the row is collapsed; the final message is `body`, which
- * only the expanded row shows. `details` carries everything both need, so a
- * replayed session renders exactly like the live run did.
+ * The summary is what the run did — roster, turns, cost — and it renders in
+ * every state, so it is the whole of a collapsed row. The body is what the
+ * child wrote, opened on request. `details` carries both, so a replayed
+ * session renders exactly like the live run did.
  */
 export function subagentView({
   args,
@@ -37,7 +35,7 @@ export function subagentView({
     labelTone: labelTone(result, isPartial),
     title: [{ kind: "markdown", text: formatCallTitle(args?.prompt) }],
     summary: summaryBlocks(result?.details, isPartial),
-    body: bodyBlocks(result),
+    body: bodyBlocks(args?.prompt, result),
   };
 }
 
@@ -45,13 +43,14 @@ export function formatCallTitle(prompt: string | undefined): string {
   return (prompt ?? "...").split(/\r?\n/u)[0]?.trim() || "...";
 }
 
-export function formatTopLine(snapshot: StatusFields): string {
-  return [
-    formatCost(snapshot.usage.cost),
-    formatContext(snapshot),
-    snapshot.model ?? "unknown model",
-    formatActivity(snapshot),
-  ].join(` ${DOT} `);
+/**
+ * The status line the parent model reads while the call streams. It is the
+ * summary flattened, so the two can never drift apart.
+ */
+export function formatTopLine(details: SubagentDetails): string {
+  return summarySpans(details, details.stopReason === undefined)
+    .map((span) => span.text)
+    .join("");
 }
 
 /**
@@ -68,66 +67,163 @@ function labelTone(
   return result.details === undefined ? "error" : "accent";
 }
 
-/** Dots stay muted so the segments they separate read as one line of stats. */
 function summaryBlocks(
   details: SubagentDetails | undefined,
   isPartial: boolean
 ): readonly ViewBlock[] {
-  const topLine = details?.topLine;
-  if (!topLine) {
+  const spans = details === undefined ? [] : summarySpans(details, isPartial);
+  return spans.length === 0 ? [] : [{ kind: "spans", spans }];
+}
+
+/**
+ * Accounting recedes once the run is over: a settled row reads muted so the
+ * answer above it is the loudest thing, and amber means only that the child is
+ * still working.
+ */
+function summarySpans(
+  details: SubagentDetails,
+  isPartial: boolean
+): readonly Span[] {
+  // `details` is only as current as whatever wrote it: pi replaces a failed
+  // result with an empty object, and a session recorded before the roster
+  // existed replays without one. Both arrive typed as a whole
+  // `SubagentDetails` and are neither.
+  if (details.usage === undefined) {
     return [];
   }
 
-  const tone = isPartial ? "warning" : "accent";
-  const spans: Span[] = [];
-  topLine.split(DOT).forEach((part, index) => {
-    if (index > 0) {
-      spans.push({ text: DOT, tone: "muted" });
+  const tone: Tone = isPartial ? "warning" : "muted";
+  const segments = [
+    ...rosterSegments(details.entries ?? [], tone),
+    [{ text: formatTurns(details.usage.turns), tone }],
+    [{ text: formatCost(details.usage.cost), tone }],
+    ...(details.stopReason === undefined
+      ? [[{ text: `${activeToolLabel(details)}…`, tone: "warning" as const }]]
+      : []),
+  ];
+
+  return segments.flatMap((spans, index) =>
+    index === 0
+      ? spans
+      : [{ text: ` ${DOT} `, tone: "muted" as const }, ...spans]
+  );
+}
+
+/** `read ×6`, in the order the child first reached for each tool. */
+function rosterSegments(
+  entries: readonly SubagentEntry[],
+  tone: Tone
+): ReadonlyArray<readonly Span[]> {
+  const tallies = new Map<string, ToolTally>();
+  for (const entry of entries) {
+    if (entry.kind !== "tool") {
+      continue;
     }
-    spans.push({ text: part, tone });
+    const tally = tallies.get(entry.name) ?? { count: 0, failures: 0 };
+    tally.count += 1;
+    tally.failures += entry.isError ? 1 : 0;
+    tallies.set(entry.name, tally);
+  }
+
+  const named = Array.from(tallies).slice(0, ROSTER_CAP);
+  const segments = named.map(([name, tally]): readonly Span[] => {
+    const label = tally.count === 1 ? name : `${name} ×${tally.count}`;
+    return tally.failures === 0
+      ? [{ text: label, tone }]
+      : [
+          { text: label, tone },
+          { text: ` (${tally.failures} failed)`, tone: "error" },
+        ];
   });
 
-  return [{ kind: "spans", spans }];
+  const elided = tallies.size - named.length;
+  return elided === 0
+    ? segments
+    : [...segments, [{ text: `… ${elided} more`, tone }]];
 }
 
-function bodyBlocks(result: SubagentViewInput["result"]): readonly ViewBlock[] {
-  const text = Renderer.firstText(result);
-  return text === "" ? [] : [{ kind: "markdown", text }];
+/**
+ * The prompt whole, then everything the child wrote, then the accounting only
+ * a reader who opened the row wants. `Renderer.firstText` is the fallback for
+ * a thrown failure, where pi keeps the error text and drops `details`.
+ */
+function bodyBlocks(
+  prompt: string | undefined,
+  result: SubagentViewInput["result"]
+): readonly ViewBlock[] {
+  if (result === undefined) {
+    return [];
+  }
+
+  const details = result.details;
+  const blocks: ViewBlock[] = [];
+
+  if (prompt !== undefined && prompt.trim().includes("\n")) {
+    blocks.push({
+      kind: "section",
+      label: "Prompt",
+      content: [{ kind: "text", text: prompt.trim() }],
+    });
+  }
+
+  const text = details?.fullOutput ?? Renderer.firstText(result);
+  if (text !== "") {
+    blocks.push({ kind: "markdown", text });
+  }
+
+  const pairs = footPairs(details);
+  if (pairs.length > 0) {
+    blocks.push({ kind: "kv", pairs });
+  }
+
+  return blocks;
 }
 
-function formatActivity(snapshot: StatusFields): string {
-  const turns = `${snapshot.usage.turns} ${snapshot.usage.turns === 1 ? "turn" : "turns"}`;
-  if (snapshot.stopReason !== undefined) {
-    const toolCount = snapshot.toolCalls.length;
-    return toolCount > 0
-      ? `${turns} ${DOT} ${toolCount} ${toolCount === 1 ? "tool" : "tools"}`
-      : turns;
+/**
+ * The child's own context window and model, which say nothing about what the
+ * run achieved and are identical on every row of a session.
+ */
+function footPairs(
+  details: SubagentDetails | undefined
+): ReadonlyArray<readonly [string, string]> {
+  const pairs: Array<readonly [string, string]> = [];
+  if (details === undefined) {
+    return pairs;
   }
 
-  return `${turns} ${DOT} ${activeToolLabel(snapshot)}`;
+  const context = formatContext(details);
+  if (context !== undefined) {
+    pairs.push(["context", context]);
+  }
+  if (details.model !== undefined) {
+    pairs.push(["model", details.model]);
+  }
+  return pairs;
 }
 
-function activeToolLabel(snapshot: StatusFields): string {
-  if (snapshot.activeToolNames.length === 1) {
-    return snapshot.activeToolNames[0]!;
+function activeToolLabel(details: SubagentDetails): string {
+  if (details.activeToolNames.length === 1) {
+    return details.activeToolNames[0]!;
   }
-  if (snapshot.activeToolNames.length > 1) {
-    return `${snapshot.activeToolNames.length} tools`;
+  if (details.activeToolNames.length > 1) {
+    return `${details.activeToolNames.length} tools`;
   }
-  return snapshot.lastToolName ?? "thinking";
+  return details.lastToolName ?? "thinking";
 }
 
-function formatContext(snapshot: StatusFields): string {
-  const window = snapshot.contextWindow;
-  if (!window || window <= 0) {
-    return "?/?";
+function formatContext(details: SubagentDetails): string | undefined {
+  const window = details.contextWindow;
+  // Optional even though the type says otherwise: an emptied `details` from a
+  // thrown call reaches here too.
+  const tokens = details.usage?.contextTokens;
+  if (window === undefined || window <= 0 || tokens === undefined) {
+    return undefined;
   }
-  const windowText = Format.formatTokens(window);
-  const tokens = snapshot.usage.contextTokens;
-  if (tokens === undefined) {
-    return `?/${windowText}`;
-  }
-  return `${((tokens / window) * 100).toFixed(1)}%/${windowText}`;
+  return `${((tokens / window) * 100).toFixed(1)}% of ${Format.formatTokens(window)}`;
+}
+
+function formatTurns(turns: number): string {
+  return `${turns} ${turns === 1 ? "turn" : "turns"}`;
 }
 
 function formatCost(cost: number): string {
