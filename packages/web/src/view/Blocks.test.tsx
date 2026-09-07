@@ -7,7 +7,7 @@ import { flush } from "solid-js";
 import type { ToolView, ViewBlock } from "#core/view/ViewBlock";
 import { mountPoint } from "../test/dom";
 import { Blocks, Body } from "./Blocks";
-import { ToolCard } from "./ToolCard";
+import { ToolCard, ToolCards } from "./ToolCard";
 import {
   DIFF_EMPHASIS_CLASSES,
   DIFF_ROW_CLASSES,
@@ -32,6 +32,14 @@ function paintTool(
     () => <ToolCard view={view} isPartial={isPartial} name={name} />,
     host
   );
+  flush();
+  return host;
+}
+
+/** The same row through the splitter the transcript actually mounts. */
+function paintTools(name: string, view: ToolView): HTMLElement {
+  const host = mountPoint();
+  render(() => <ToolCards view={view} name={name} />, host);
   flush();
   return host;
 }
@@ -293,9 +301,16 @@ describe("ToolCard", () => {
     expect(paintTool(view).querySelector("details")?.open).toBe(false);
   });
 
-  test("expanded output inherits its colour and is uniformly muted", () => {
+  test("a diff keeps full strength, since its colour is its meaning", () => {
     const body = paintTool(view).querySelector("details > div > div");
-    expect(body?.className).toBe("opacity-60");
+    expect(body?.className).toBe("");
+  });
+
+  test("other expanded output inherits its colour and is uniformly muted", () => {
+    const host = paintTool({ ...view, body: [SAMPLES.code] });
+    expect(host.querySelector("details > div > div")?.className).toBe(
+      "opacity-60"
+    );
   });
 
   // A row is at full strength when *it* is open, never because something
@@ -352,6 +367,49 @@ describe("ToolCard", () => {
   test("a view with no body renders a head with no disclosure", () => {
     const host = paintTool({ title: [SAMPLES.text] });
     expect(host.querySelector("details")).toBeNull();
+  });
+
+  test("splits each apply_patch file into its own collapsed row", () => {
+    const host = paintTools("apply_patch", {
+      label: "Edit",
+      title: [{ kind: "file", path: "a.ts" }, SAMPLES.spans],
+      body: [
+        SAMPLES.diff,
+        {
+          kind: "section",
+          label: "Write",
+          icon: "edit",
+          content: [{ kind: "file", path: "b.ts" }, SAMPLES.spans],
+        },
+        SAMPLES.diff,
+        {
+          kind: "section",
+          label: "Delete",
+          icon: "trash",
+          content: [{ kind: "file", path: "c.ts" }, SAMPLES.spans],
+        },
+      ],
+    });
+
+    const rows = host.querySelectorAll("article");
+    expect(rows).toHaveLength(3);
+    expect([...rows].map((row) => row.textContent)).toEqual([
+      expect.stringContaining("Edit:a.ts"),
+      expect.stringContaining("Write:b.ts"),
+      expect.stringContaining("Delete:c.ts"),
+    ]);
+    expect(rows[0]?.querySelector("details")?.open).toBe(false);
+    expect(rows[1]?.querySelector("details")?.open).toBe(false);
+    expect(rows[2]?.querySelector("details")).toBeNull();
+  });
+
+  test("keeps sections in non-patch tools inside their one row", () => {
+    const host = paintTools("edit", {
+      title: [{ kind: "file", path: "a.ts" }],
+      body: [SAMPLES.section],
+    });
+
+    expect(host.querySelectorAll("article")).toHaveLength(1);
   });
 
   // `Grep: /foo/ (2 files)`: the stat is an aside behind the subject, on the

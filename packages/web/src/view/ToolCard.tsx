@@ -48,6 +48,12 @@ export function ToolCard(props: {
   // both the class object and the disclosure on each of them.
   const body = createMemo(() => (props.view.body ?? []).filter(isDrawn));
   const error = () => props.isError === true;
+  // Opened output is quoted material — it recedes behind the row that names
+  // it. A diff is the exception, and not because of which tool produced it:
+  // its meaning *is* its colour, so dimming a diff dims the one thing that
+  // makes it readable. Asking the blocks rather than `name` keeps that true
+  // for any tool that reports a change, `apply_patch` sections included.
+  const dimmed = () => !body().some((block) => block.kind === "diff");
 
   return (
     // A row recedes until hovered; an open one is the thing you asked to look
@@ -82,7 +88,7 @@ export function ToolCard(props: {
           caret={caretClass(props.isPartial === true, error())}
           spine={error() ? "bg-rose-400" : "bg-neutral-750"}
         >
-          <div class="opacity-60">
+          <div class={dimmed() ? "opacity-60" : ""}>
             <Body blocks={body()} />
           </div>
         </Collapsible>
@@ -96,6 +102,24 @@ export function ToolCard(props: {
   );
 }
 
+/**
+ * One patch call can change several files. Its shared view represents each
+ * file after the first as a body section for terminal renderers; on the web,
+ * make those sections peer rows so every path remains visible when collapsed.
+ */
+export function ToolCards(props: {
+  readonly view: ToolView;
+  readonly name?: string;
+  readonly isError?: boolean;
+  readonly isPartial?: boolean;
+}) {
+  return (
+    <For each={splitPatchView(props.name, props.view)}>
+      {(view) => <ToolCard {...props} view={view} />}
+    </For>
+  );
+}
+
 /** The tint of a call still in flight, matching the `warning` tone. */
 const PENDING_CARET = "bg-amber-400";
 
@@ -105,6 +129,41 @@ function caretClass(isPartial: boolean, isError: boolean): string {
     return PENDING_CARET;
   }
   return isError ? "bg-rose-400" : "bg-neutral-300";
+}
+
+/** Splits the `apply_patch` renderer's leading item and trailing sections. */
+function splitPatchView(
+  name: string | undefined,
+  view: ToolView
+): readonly ToolView[] {
+  if (name !== "apply_patch") {
+    return [view];
+  }
+
+  const body = view.body ?? [];
+  const firstSection = body.findIndex((block) => block.kind === "section");
+  if (firstSection === -1) {
+    return [view];
+  }
+
+  const views: ToolView[] = [{ ...view, body: body.slice(0, firstSection) }];
+  // Each section opens a row, and everything up to the next one is that row's
+  // body — held by reference so the walk stays a single forward pass.
+  let rowBody: ViewBlock[] = [];
+  for (const block of body.slice(firstSection)) {
+    if (block.kind !== "section") {
+      rowBody.push(block);
+      continue;
+    }
+    rowBody = [];
+    views.push({
+      label: block.label,
+      icon: block.icon,
+      title: block.content,
+      body: rowBody,
+    });
+  }
+  return views;
 }
 
 /** A block that would paint nothing: an empty body is not a disclosure. */

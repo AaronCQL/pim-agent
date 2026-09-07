@@ -5,7 +5,7 @@ import type { DurableEvent } from "#protocol/ServerEvent";
 import { clockTime } from "../format";
 import { Markdown } from "../markdown/Markdown";
 import type { LiveMessage, PendingMessage } from "../session/SessionStore";
-import { ToolCard } from "../view/ToolCard";
+import { ToolCards } from "../view/ToolCard";
 import { NOTICE_CLASSES } from "../view/tokens";
 import {
   buildRows,
@@ -211,7 +211,7 @@ function Card(props: { readonly row: MessageRow }) {
 
 function ToolRowView(props: { readonly row: ToolRow }) {
   return (
-    <ToolCard
+    <ToolCards
       view={props.row.view}
       name={props.row.name}
       isError={props.row.isError}
