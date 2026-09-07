@@ -2,7 +2,7 @@ import "../test/dom";
 
 import { render } from "@solidjs/web";
 import { describe, expect, test } from "bun:test";
-import { flush } from "solid-js";
+import { createSignal, flush } from "solid-js";
 
 import type { ToolView, ViewBlock } from "#core/view/ViewBlock";
 import { mountPoint } from "../test/dom";
@@ -401,6 +401,34 @@ describe("ToolCard", () => {
     expect(rows[0]?.querySelector("details")?.open).toBe(false);
     expect(rows[1]?.querySelector("details")?.open).toBe(false);
     expect(rows[2]?.querySelector("details")).toBeNull();
+  });
+
+  /**
+   * A streaming call redraws on every delta, and a row that remounts on one
+   * shuts itself in the reader's hands: the disclosure they opened to watch
+   * the output is the first thing a rebuild throws away.
+   */
+  test("a view update redraws the row in place, so an open row stays open", () => {
+    const [view, setView] = createSignal<ToolView>({
+      label: "Bash",
+      title: [{ kind: "text", text: "ls" }],
+      body: [{ kind: "text", text: "one" }],
+    });
+    const host = mountPoint();
+    render(() => <ToolCards view={view()} name="bash" isPartial />, host);
+    flush();
+
+    const details = host.querySelector("details")!;
+    details.open = true;
+    setView((current) => ({
+      ...current,
+      body: [{ kind: "text", text: "one\ntwo" }],
+    }));
+    flush();
+
+    expect(host.querySelector("details")).toBe(details);
+    expect(details.open).toBe(true);
+    expect(details.textContent).toContain("two");
   });
 
   test("keeps sections in non-patch tools inside their one row", () => {

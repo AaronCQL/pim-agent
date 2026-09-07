@@ -113,9 +113,13 @@ export function ToolCards(props: {
   readonly isError?: boolean;
   readonly isPartial?: boolean;
 }) {
+  // Unkeyed, so the rows are matched by position: the split is a fresh array
+  // of fresh views on every delta of a call still streaming, and a keyed list
+  // would rebuild the whole card — disclosure and all — once per update, which
+  // shuts a row the reader opened to watch it.
   return (
-    <For each={splitPatchView(props.name, props.view)}>
-      {(view) => <ToolCard {...props} view={view} />}
+    <For each={splitPatchView(props.name, props.view)} keyed={false}>
+      {(view) => <ToolCard {...props} view={view()} />}
     </For>
   );
 }
