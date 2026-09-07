@@ -41,6 +41,15 @@ export type LiveMessage = {
   text: string;
   thinking: string;
   tools: LiveTool[];
+  /**
+   * The durable copy of this message has landed, so its prose is gone from
+   * here and what is left is a shell holding the calls it made. Those outlive
+   * it: pi writes a step down before it writes the results of the calls that
+   * step asked for, and the durable message restates each call without one,
+   * so until the results are written this is the only settled view of them
+   * there is — and the only place an update to one still running can land.
+   */
+  retired: boolean;
 };
 
 /** What the composer's two chips choose from; one query answers both. */
@@ -920,11 +929,18 @@ export class SessionStore {
         return;
       case "message_retire":
         this.setState((draft) => {
-          // The durable copy of this message arrived on the frame before, so
-          // dropping it here is a swap, not a gap.
-          draft.live = draft.live.filter(
-            (message) => message.messageId !== event.messageId
-          );
+          // The durable copy of this message arrived in the same frame, so
+          // dropping its prose here is a swap, not a gap. Its calls are not
+          // superseded with it — each of them leaves separately, on the
+          // durable result that answers for it.
+          draft.live = draft.live.flatMap((message) => {
+            if (message.messageId !== event.messageId) {
+              return [message];
+            }
+            return message.tools.length === 0
+              ? []
+              : [{ ...message, text: "", thinking: "", retired: true }];
+          });
         });
         return;
       case "text_delta":
@@ -1043,6 +1059,11 @@ export class SessionStore {
             (tool) => tool.callId !== event.callId
           );
         }
+        // A retired message is kept for its calls alone, so the last result
+        // to be written is what takes the shell with it.
+        draft.live = draft.live.filter(
+          (message) => !message.retired || message.tools.length > 0
+        );
       }
     });
   }
@@ -1106,6 +1127,7 @@ function liveMessage(live: LiveMessage[], messageId: string): LiveMessage {
     text: "",
     thinking: "",
     tools: [],
+    retired: false,
   };
   live.push(message);
   return message;

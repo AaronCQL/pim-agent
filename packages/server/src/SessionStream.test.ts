@@ -45,21 +45,38 @@ function thinkingMessage(thinking: string): Record<string, unknown> {
 }
 
 /** Appends the line pi would have written, so the next drain finds it. */
-async function persistAssistant(
+async function persist(
   id: string,
-  content: readonly Record<string, unknown>[]
+  message: Record<string, unknown>
 ): Promise<void> {
   const entry = {
     type: "message",
     id,
     parentId: null,
     timestamp: new Date().toISOString(),
-    message: { role: "assistant", content },
+    message,
   };
   await Bun.write(
     path,
     `${await Bun.file(path).text()}${JSON.stringify(entry)}\n`
   );
+}
+
+async function persistAssistant(
+  id: string,
+  content: readonly Record<string, unknown>[]
+): Promise<void> {
+  await persist(id, { role: "assistant", content });
+}
+
+async function persistToolResult(callId: string): Promise<void> {
+  await persist(`r-${callId}`, {
+    role: "toolResult",
+    toolCallId: callId,
+    toolName: "ping",
+    content: [],
+    isError: false,
+  });
 }
 
 /** One whole step: it streams, pi writes it down, then pi closes it. */
@@ -90,10 +107,21 @@ async function until(ready: () => boolean, what: string): Promise<void> {
   }
 }
 
+/**
+ * What a client is handed, one event at a time: a drain of the log reaches it
+ * as a single frame carrying several, and every reader here cares about the
+ * events rather than about how they were packed.
+ */
+function received(): readonly ServerEvent[] {
+  return seen.flatMap((event): readonly ServerEvent[] =>
+    event.type === "replay" ? event.events : [event]
+  );
+}
+
 /** The live messages that still stand, as a client would track them. */
 function liveIds(): ReadonlySet<string> {
   const live = new Set<string>();
-  for (const event of seen) {
+  for (const event of received()) {
     if (event.type === "message_start") {
       live.add(event.messageId);
     }
@@ -108,7 +136,7 @@ function liveIds(): ReadonlySet<string> {
 function liveThinking(): readonly string[] {
   const standing = liveIds();
   const thinking = new Map<string, string>();
-  for (const event of seen) {
+  for (const event of received()) {
     if (event.type === "thinking_delta" && standing.has(event.messageId)) {
       thinking.set(
         event.messageId,
@@ -120,7 +148,7 @@ function liveThinking(): readonly string[] {
 }
 
 function durableThinking(): readonly string[] {
-  return seen.flatMap((event) =>
+  return received().flatMap((event) =>
     event.type === "message" && event.role === "assistant" && event.thinking
       ? [event.thinking]
       : []
@@ -195,6 +223,77 @@ test("retires the step an entry belongs to, not the oldest live message", async 
   expect(durableThinking()).toEqual(["step one", "step two"]);
   // Nothing the log now holds is still being drawn as live.
   expect(liveThinking()).toEqual([]);
+});
+
+/**
+ * The two events are one swap, and a client that saw either half alone would
+ * paint the step it names twice — once durable and once live — for as long as
+ * it took the other half to arrive.
+ */
+test("sends a written step and the retire that supersedes it as one frame", async () => {
+  await step("step one", "a1");
+
+  const frame = seen.find(
+    (event) =>
+      event.type === "replay" &&
+      event.events.some((inner) => inner.type === "message")
+  );
+  expect(frame?.type === "replay" && frame.events.map((e) => e.type)).toEqual([
+    "message",
+    "message_retire",
+  ]);
+});
+
+/**
+ * Pi closes a message before it runs the calls that message asked for, so a
+ * call can outlive the entry of the step that made it. The stream holds it
+ * anyway: until pi writes the result down, nothing else knows what that call
+ * did, and a client that reattaches in between would be handed it spinning.
+ */
+test("keeps a retired step's calls, and drops each on its durable result", async () => {
+  emit(agentEvent({ type: "message_start", message: thinkingMessage("") }));
+  emit(
+    agentEvent({
+      type: "tool_execution_start",
+      toolCallId: "call_1",
+      toolName: "ping",
+      args: {},
+    })
+  );
+  await persistAssistant("a1", [
+    { type: "toolCall", id: "call_1", name: "ping", arguments: {} },
+  ]);
+  emit(agentEvent({ type: "message_end", message: thinkingMessage("") }));
+  await until(
+    () => received().some((event) => event.type === "message_retire"),
+    "the entry of the step that asked for the call"
+  );
+
+  emit(
+    agentEvent({
+      type: "tool_execution_end",
+      toolCallId: "call_1",
+      toolName: "ping",
+      result: { content: [] },
+      isError: false,
+    })
+  );
+  // Settled, and still the stream's to report: `fromSeq` past the log leaves
+  // the in-flight turn alone as the answer.
+  const running = await stream.replay(99);
+  expect(running.filter((event) => event.type === "tool_end")).toHaveLength(1);
+
+  await persistToolResult("call_1");
+  emit(agentEvent({ type: "entry_appended" }));
+  await until(
+    () => received().some((event) => event.type === "tool_result"),
+    "the result to be read out of the log"
+  );
+
+  // The log answers for the call now, so the live copy would only be a second
+  // sighting of a row the client already has.
+  const settled = await stream.replay(99);
+  expect(settled.filter((event) => event.type === "tool_call")).toEqual([]);
 });
 
 test("hands a reattaching client each step exactly once", async () => {

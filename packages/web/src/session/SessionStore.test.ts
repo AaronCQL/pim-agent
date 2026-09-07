@@ -5,7 +5,7 @@ import { flush } from "solid-js";
 
 import { PROTOCOL_VERSION } from "#protocol/Protocol";
 import type { ServerEvent } from "#protocol/ServerEvent";
-import { toRows } from "../transcript/rows";
+import { toRows, type ToolRow } from "../transcript/rows";
 import { SessionStore } from "./SessionStore";
 
 const VIEW = { title: [{ kind: "text" as const, text: "x" }] };
@@ -24,6 +24,26 @@ function feed(target: SessionStore, ...events: readonly ServerEvent[]): void {
 /** Rows exactly as the transcript builds them: durable, echo, live, queued. */
 function rows(target: SessionStore) {
   return toRows(target.state.durable, target.trailing(), target.state.live);
+}
+
+/**
+ * The rows after each frame, which is the granularity a reader sees: a frame
+ * is one task, and the browser paints between tasks and not inside one.
+ */
+function painted(
+  target: SessionStore,
+  ...frames: readonly (readonly ServerEvent[])[]
+): readonly (readonly string[])[] {
+  return frames.map((frame) => {
+    feed(target, ...frame);
+    return rows(target).map((row) => row.id);
+  });
+}
+
+/** One call's row: where a reader sees whether it settled and what it found. */
+function toolRow(target: SessionStore, callId: string): ToolRow | undefined {
+  const row = rows(target).find((candidate) => candidate.id === callId);
+  return row?.kind === "tool" ? row : undefined;
 }
 
 function attached(sessionId: string, head = 0): ServerEvent {
@@ -248,6 +268,183 @@ describe("the in-flight bucket", () => {
     const settled = rows(target);
     expect(settled).toHaveLength(1);
     expect(settled[0]?.kind === "tool" && settled[0].isPartial).toBe(false);
+  });
+
+  /**
+   * The handoff a settled call has to survive. Pi writes the step down before
+   * it writes the result of the call that step made, and the durable message
+   * restates that call with no result on it — so the only settled view of it
+   * between the two lines is the live one, and dropping that with the retired
+   * message flips a finished row back to pending until the result lands.
+   */
+  test("a call settled live stays settled across the retire of its message", () => {
+    const target = store();
+    const settled = {
+      ...VIEW,
+      summary: [{ kind: "text" as const, text: "12 lines" }],
+      body: [{ kind: "text" as const, text: "the output" }],
+    };
+    feed(
+      target,
+      attached("s1"),
+      { type: "message_start", role: "assistant", messageId: "live-1" },
+      { type: "text_delta", messageId: "live-1", delta: "Let me look." },
+      {
+        type: "tool_call",
+        callId: "c1",
+        name: "read",
+        messageId: "live-1",
+        view: VIEW,
+      },
+      { type: "tool_end", callId: "c1", view: settled, isError: false },
+      {
+        seq: 7,
+        type: "message",
+        messageId: "m1",
+        role: "assistant",
+        text: "Let me look.",
+        timestamp: 0,
+        toolCalls: [{ callId: "c1", name: "read", view: VIEW }],
+      },
+      { type: "message_retire", messageId: "live-1" }
+    );
+
+    expect(rows(target).map((row) => row.id)).toEqual(["m1", "c1"]);
+    // Settled, and still showing what it found: the summary line and the
+    // output behind the caret are what the retire used to take with it.
+    expect(toolRow(target, "c1")?.isPartial).toBe(false);
+    expect(toolRow(target, "c1")?.view.summary).toEqual(settled.summary);
+    expect(toolRow(target, "c1")?.view.body).toEqual(settled.body);
+
+    // And the durable result, whenever pi gets round to writing it, leaves
+    // nothing of the retired message behind.
+    feed(target, {
+      seq: 8,
+      type: "tool_result",
+      callId: "c1",
+      name: "read",
+      view: settled,
+      isError: false,
+    });
+    expect(target.state.live).toEqual([]);
+    expect(rows(target).map((row) => row.id)).toEqual(["m1", "c1"]);
+  });
+
+  /**
+   * Pi closes a message before it runs the calls that message asked for, so a
+   * call can start against a message whose entry is already being read: its
+   * updates arrive after the retire, and a bucket that dropped the call has
+   * nowhere to put them.
+   */
+  test("a call still running when its message retires keeps streaming", () => {
+    const target = store();
+    feed(
+      target,
+      attached("s1"),
+      { type: "message_start", role: "assistant", messageId: "live-1" },
+      {
+        type: "tool_call",
+        callId: "c1",
+        name: "bash",
+        messageId: "live-1",
+        view: VIEW,
+      },
+      {
+        seq: 7,
+        type: "message",
+        messageId: "m1",
+        role: "assistant",
+        text: "",
+        timestamp: 0,
+        toolCalls: [{ callId: "c1", name: "bash", view: VIEW }],
+      },
+      { type: "message_retire", messageId: "live-1" },
+      {
+        type: "tool_update",
+        callId: "c1",
+        view: { ...VIEW, summary: [{ kind: "text", text: "running" }] },
+      }
+    );
+
+    expect(toolRow(target, "c1")?.isPartial).toBe(true);
+    expect(toolRow(target, "c1")?.view.summary).toEqual([
+      { kind: "text", text: "running" },
+    ]);
+
+    feed(target, {
+      type: "tool_end",
+      callId: "c1",
+      view: { ...VIEW, summary: [{ kind: "text", text: "done" }] },
+      isError: false,
+    });
+
+    expect(toolRow(target, "c1")?.isPartial).toBe(false);
+    expect(toolRow(target, "c1")?.view.summary).toEqual([
+      { kind: "text", text: "done" },
+    ]);
+  });
+
+  test("the retired shell draws nothing of its own and holds its calls in place", () => {
+    const target = store();
+    feed(
+      target,
+      attached("s1"),
+      { type: "message_start", role: "assistant", messageId: "live-1" },
+      { type: "text_delta", messageId: "live-1", delta: "one" },
+      {
+        type: "tool_call",
+        callId: "c1",
+        name: "read",
+        messageId: "live-1",
+        view: VIEW,
+      },
+      {
+        seq: 7,
+        type: "message",
+        messageId: "m1",
+        role: "assistant",
+        text: "one",
+        timestamp: 0,
+        toolCalls: [{ callId: "c1", name: "read", view: VIEW }],
+      },
+      { type: "message_retire", messageId: "live-1" },
+      { type: "message_start", role: "assistant", messageId: "live-2" },
+      { type: "text_delta", messageId: "live-2", delta: "two" }
+    );
+
+    // The call of the written step sits under it and above the step that
+    // followed, which is where it was made.
+    expect(rows(target).map((row) => row.id)).toEqual(["m1", "c1", "live-2"]);
+  });
+
+  /**
+   * The entry and the retire that supersedes it arrive together, so there is
+   * no frame in which the step is both durable and live — one in which the
+   * transcript doubles that message's height, and the scroll jumps to the
+   * bottom of the doubled content and back.
+   */
+  test("the handoff to the log never paints a step twice", () => {
+    const target = store();
+
+    expect(
+      painted(
+        target,
+        [attached("s1")],
+        [{ type: "message_start", role: "assistant", messageId: "live-1" }],
+        [{ type: "text_delta", messageId: "live-1", delta: "Let me look." }],
+        [
+          {
+            seq: 7,
+            type: "message",
+            messageId: "m1",
+            role: "assistant",
+            text: "Let me look.",
+            timestamp: 0,
+          },
+          { type: "message_retire", messageId: "live-1" },
+        ]
+      )
+    ).toEqual([[], [], ["live-1"], ["m1"]]);
   });
 
   test("re-attaching to the same session keeps the log and drops the bucket", () => {

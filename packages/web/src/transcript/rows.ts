@@ -135,6 +135,11 @@ function upsertTool(
  * Folds the in-flight turn in after the durable rows: one row per live
  * assistant message, each followed by the calls it made, in the order they
  * were streamed. These rows carry `streaming`, and nothing else does.
+ *
+ * A message the log has taken over stays in the bucket as a shell holding its
+ * calls, and having no prose left it draws no row of its own: what it still
+ * contributes are the settled views of calls the durable message restated
+ * without a result, and those upgrade those partial rows in place.
  */
 function appendLive(
   rows: Row[],

@@ -118,6 +118,20 @@ export class ClientConnection {
   }
 
   private onStreamEvent(event: ServerEvent): void {
+    // A drain of the log and the retires it triggered arrive as one batch,
+    // and that is the unit they are correct in: a retire without the durable
+    // message beside it leaves the client drawing that step twice. It is held
+    // in the gate unwrapped, though — what is reconciled there is events, and
+    // an envelope the filter could not see into would take its durable lines
+    // down with it.
+    if (event.type === "replay") {
+      if (this.gated) {
+        this.gate.push(...event.events);
+        return;
+      }
+      this.writeBatch(event.events);
+      return;
+    }
     if (this.gated) {
       this.gate.push(event);
       return;
@@ -126,9 +140,9 @@ export class ClientConnection {
   }
 
   /**
-   * The resume as one `replay` frame. Sent whole or not at all: a socket that
-   * refuses it is paused, and `drain` re-derives the same batch from the
-   * cursor, which has not moved.
+   * A batch as one `replay` frame. Sent whole or not at all: a socket that
+   * refuses it is paused, and `drain` re-derives the resume from the cursor,
+   * which has not moved.
    */
   private writeBatch(events: readonly StreamEvent[]): void {
     if (this.closed || this.paused) {

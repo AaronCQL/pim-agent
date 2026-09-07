@@ -146,11 +146,14 @@ export type EphemeralEvent =
       readonly piVersion: string;
     }
   /**
-   * A resume handed over as one frame instead of one frame per event. A
-   * client applies these in order and is otherwise free to treat each exactly
-   * as it would have arrived on its own — the envelope carries no meaning
-   * beyond "these landed together", which is what lets a client paint a
-   * whole conversation in a single pass rather than once per line of it.
+   * Events handed over as one frame instead of one frame per event: a resume,
+   * and every read of the log the server makes while a turn runs. A client
+   * applies these in order and is otherwise free to treat each exactly as it
+   * would have arrived on its own — the envelope carries no meaning beyond
+   * "these landed together", which is what lets a client paint a whole
+   * conversation in a single pass rather than once per line of it, and what
+   * keeps a durable message and the `message_retire` that supersedes its live
+   * copy from being two paints with the same step drawn twice in between.
    */
   | { readonly type: "replay"; readonly events: readonly StreamEvent[] }
   | {

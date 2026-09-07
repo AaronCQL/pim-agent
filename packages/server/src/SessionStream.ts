@@ -45,6 +45,14 @@ type LiveMessage = {
    * stays in the turn until the entry lands rather than leaving at the end.
    */
   ended: boolean;
+  /**
+   * The entry has landed and clients have been told to drop the copy they
+   * were drawing, so nothing but the calls is left here. Those stay: they
+   * run after the message that asked for them and settle long before pi
+   * writes their results down, so this is where a client that reattaches in
+   * between is handed a finished call's view.
+   */
+  retired: boolean;
   readonly tools: LiveTool[];
 };
 
@@ -430,6 +438,7 @@ export class SessionStream {
       text: "",
       thinking: "",
       ended: false,
+      retired: false,
       tools: [],
     };
     this.liveTurn.push(message);
@@ -454,35 +463,87 @@ export class SessionStream {
     return undefined;
   }
 
+  /**
+   * Everything pi has appended since the last read, as one frame.
+   *
+   * One frame and not one per event because a retire only means anything
+   * beside the durable message that caused it: sent separately, there is a
+   * moment in which the client holds the entry *and* the live copy it
+   * supersedes, and paints that step twice.
+   */
   private async flushDurable(): Promise<void> {
+    const batch: StreamEvent[] = [];
     for (const event of await this.projection.drain()) {
-      this.emit(event);
+      batch.push(event);
       // The step that was streamed is now a line in the log, and the two must
       // never both be on the wire: a client that reattaches is handed the
       // durable tail *plus* whatever is still live, so a live message kept
       // after its own durable twin would paint the same prose twice.
       if (event.type === "message" && event.role === "assistant") {
-        this.retireLive();
+        const retired = this.retireLive();
+        if (retired) {
+          batch.push(retired);
+        }
       }
+      if (event.type === "tool_result") {
+        this.settleLive(event.callId);
+      }
+    }
+    if (batch.length > 0) {
+      this.emit({ type: "replay", events: batch });
     }
   }
 
   /**
-   * Drops the oldest live message pi has *finished*, and says which one that
-   * was. Finished, not simply oldest: a step's calls stream after its message
-   * ends, so a message whose entry has already landed can still be the one
-   * collecting tool rows, and the turn can hold that shell in front of the
-   * step now streaming. Retiring by position there retires the wrong message
-   * — the one on screen — and leaves the streamed one to be painted a second
-   * time under its own durable copy.
+   * Retires the oldest live message pi has *finished*, and answers with the
+   * frame that names it. Finished, not simply oldest: a step's calls stream
+   * after its message ends, so a message whose entry has already landed can
+   * still be the one collecting tool rows, and the turn can hold that shell
+   * in front of the step now streaming. Retiring by position there retires
+   * the wrong message — the one on screen — and leaves the streamed one to be
+   * painted a second time under its own durable copy.
+   *
+   * The prose goes and the calls stay. A retired message that still holds
+   * calls keeps its place in the turn as a shell, because those calls have
+   * nowhere else to be: the durable message restates each of them without a
+   * result, and until pi writes the results down this is the only settled
+   * view of them there is.
    */
-  private retireLive(): void {
-    const retired = this.liveTurn.find((message) => message.ended);
+  private retireLive(): EphemeralEvent | undefined {
+    const retired = this.liveTurn.find(
+      (message) => message.ended && !message.retired
+    );
     if (!retired) {
+      return undefined;
+    }
+    retired.text = "";
+    retired.thinking = "";
+    retired.retired = true;
+    if (retired.tools.length === 0) {
+      this.liveTurn = this.liveTurn.filter((message) => message !== retired);
+    }
+    return { type: "message_retire", messageId: retired.messageId };
+  }
+
+  /**
+   * Drops the live copy of a call the log now answers for. A reattaching
+   * client is handed the durable tail *plus* whatever is still live, so a
+   * call kept past its own result would reach it twice.
+   */
+  private settleLive(callId: string): void {
+    for (const message of this.liveTurn) {
+      const at = message.tools.findIndex((tool) => tool.callId === callId);
+      if (at === -1) {
+        continue;
+      }
+      message.tools.splice(at, 1);
+      // A retired message is held for its calls alone, so the last of them to
+      // be written down takes the shell with it.
+      if (message.retired && message.tools.length === 0) {
+        this.liveTurn = this.liveTurn.filter((held) => held !== message);
+      }
       return;
     }
-    this.liveTurn = this.liveTurn.filter((message) => message !== retired);
-    this.emit({ type: "message_retire", messageId: retired.messageId });
   }
 
   private emit(event: ServerEvent): void {
