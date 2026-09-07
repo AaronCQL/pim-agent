@@ -397,8 +397,8 @@ export class WsGateway {
   /**
    * When this session's last *completed* turn ended, and — for an idle one —
    * where that answer is remembered from. Absent when there is no such turn
-   * to point at: an agent that has never answered, or one running the first
-   * turn this server has seen of it.
+   * to point at: an agent that has never answered, or one whose turn began
+   * before any listing had seen it idle.
    *
    * The file's answer is the last thing the agent wrote, which is where it
    * stopped only while nothing is running: mid-turn it is the message or
@@ -406,6 +406,20 @@ export class WsGateway {
    * list — and go unread — on every one of them. So a running session is
    * answered for out of what its file said while it was last idle, and the
    * file takes over again the moment the turn ends.
+   *
+   * Which makes that freeze best-effort, a listing being the only thing that
+   * fills it: a session attached and prompted before anyone listed has
+   * nothing remembered, and its row falls back to the file for the length of
+   * that turn. Harmless where the sidebar stands, and deliberately not
+   * bought with a read on every attach — a running row paints a spinner
+   * instead of an age, so the drifting number is never shown, and the unread
+   * mark reads the `undefined` this returns rather than the caller's
+   * fallback, so it stays down. What is left is a running row sorted higher
+   * than it has earned, which is where a running row is expected anyway.
+   *
+   * Seeding the map where the stream opens is what would close it, and what
+   * either of those two changes would need: an age beside a spinner, or an
+   * unread mark taken from the listed `settledAt` instead of from here.
    *
    * A session another process is driving reports no status and is always
    * answered for by its file, drifting while that process writes and correct
