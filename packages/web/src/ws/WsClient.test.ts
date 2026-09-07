@@ -131,6 +131,23 @@ function queuedOn(store: SessionStore): readonly string[] {
   ];
 }
 
+/**
+ * The rows this client is holding for the running turn: what the reader can
+ * still take back.
+ *
+ * Not the whole of `trailing()`, which also holds the message that opened the
+ * turn until its durable echo lands — an unqueued row, cleared by the server
+ * rather than by anything a steer does, and on its own schedule. Asserting on
+ * the bucket entire makes every test below race that echo for a row none of
+ * them are about.
+ */
+function heldBack(store: SessionStore): readonly string[] {
+  return store
+    .trailing()
+    .filter((one) => one.queued === true)
+    .map((one) => one.text);
+}
+
 test("a message typed into a running turn steers it", async () => {
   const store = await connect();
   const release = harness.holdTurn();
@@ -139,11 +156,9 @@ test("a message typed into a running turn steers it", async () => {
 
   await store.prompt("and mention the weather");
   flush();
-  // The message that opened the turn is already durable — pi wrote it when it
-  // accepted it — so the only row still waiting is the steer, drawn as
-  // said-but-unheard. The wire agrees: pi is holding it for the turn in
-  // flight rather than for the next one.
-  expect(store.trailing().map((one) => one.queued)).toEqual([true]);
+  // The steer is drawn as said-but-unheard the moment it is typed. The wire
+  // agrees: pi is holding it for the turn in flight rather than for the next.
+  expect(heldBack(store)).toEqual(["and mention the weather"]);
   await until(() => queuedOn(store).length === 1, "pi to queue the steer");
   expect(queuedOn(store)).toEqual(["and mention the weather"]);
 
@@ -156,9 +171,7 @@ test("a message typed into a running turn steers it", async () => {
   );
   flush();
   expect(queuedOn(store)).toEqual(["and mention the weather\n\nand the tide"]);
-  expect(store.trailing().map((one) => one.text)).toEqual([
-    "and mention the weather\n\nand the tide",
-  ]);
+  expect(heldBack(store)).toEqual(["and mention the weather\n\nand the tide"]);
 
   release();
   await until(
@@ -207,7 +220,9 @@ test("taking the queued message back leaves the turn running", async () => {
   expect(store.isBusy()).toBe(true);
   expect(queuedOn(store)).toEqual([]);
   flush();
-  expect(store.trailing()).toEqual([]);
+  // The steer is gone from the transcript too. The message that opened the
+  // turn is not: taking a steer back is not a reason to unpaint it.
+  expect(heldBack(store)).toEqual([]);
   release();
 });
 
