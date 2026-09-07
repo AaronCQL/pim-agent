@@ -34,6 +34,11 @@ test("the baseline outlives the process, so an unread session stays unread", asy
   const answeredAt = Date.now() + 1;
   expect(await first.isUnread("s1", answeredAt)).toBe(true);
 
+  // The baseline is written behind the load that took it, so the restart has
+  // to be given a file to find. Without this the second instance races that
+  // write, misses it, and takes a *fresh* baseline off the clock — which is
+  // the very thing the assertion below is here to rule out.
+  await first.flush();
   // A restart takes the baseline off disk rather than from the clock; taking
   // it from the clock would read every session that had gone unread.
   expect(await new ReadCursors(file).isUnread("s1", answeredAt)).toBe(true);

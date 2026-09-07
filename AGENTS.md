@@ -12,9 +12,9 @@ Plain layered directories under `packages/*` — no workspaces, no per-directory
 
 | Package | Contents |
 | --- | --- |
-| `packages/core` | Tools, schemas, `shared/`, `view/` (`ViewBlock`/`ToolView` + ANSI/Markdown painters), `session/` (`SessionHost`, `EventLog`, `SessionRegistry`), `picker/`, `attachments/`. Frontend-agnostic; depends on nothing else in `packages/`. |
+| `packages/core` | Tools, schemas, `shared/`, `view/` (`ViewBlock`/`ToolView` + ANSI/Markdown painters), `session/` (`SessionHost`, `EventLog`, `SessionRegistry`), `picker/`, `attachments/`, and the daemon `Supervisor` (systemd/launchd units, one per `--mode`). Frontend-agnostic; depends on nothing else in `packages/`. |
 | `packages/tui` | Terminal frontend: splash, autocomplete over `core/picker`, footer, themes. |
-| `packages/telegram` | Telegram frontend: grammy bot, chat-keyed sessions, daemon `Supervisor`. |
+| `packages/telegram` | Telegram frontend: grammy bot, chat-keyed sessions, its `Supervisor` unit descriptor. |
 | `packages/protocol` | Versioned wire types. Server and web **only** — never the TUI; nothing browser-specific. Shipped. |
 | `packages/server` | `WsGateway` (resume handshake, fanout, session/model catalogues), `SessionProjection` (JSONL → wire events), `SessionStream` (live state, git, context usage), probe CLI. Shipped as source. |
 | `packages/web` | Solid 2 browser client: `WsClient`, `SessionStore` (the only place an intent becomes a command), HTML `ViewBlock` painter, `Markdown`, `highlight` (lazy highlight.js, same engine and roles as the TUI). Ships built `dist/client`, not sources. |

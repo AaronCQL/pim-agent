@@ -1,4 +1,5 @@
 import type { PickerItem } from "#core/picker/PickerItem";
+import type { UpdateSkip } from "#core/shared/Updater";
 import type { NoticeSeverity, ToolView } from "#core/view/ViewBlock";
 import type { ProtocolVersion } from "./Protocol";
 
@@ -59,6 +60,59 @@ export type DurableEvent =
     };
 
 /**
+ * What the `reload` the operator asked for is doing.
+ *
+ * A `phase` rather than four event types because a client draws one thing
+ * with it — the state of the one run this server can have in flight — and a
+ * receiver that has to know which of four names to listen for is holding the
+ * union together itself.
+ */
+export type UpdateStateEvent =
+  /** A step of the run started, named as the updater names it. */
+  | {
+      readonly type: "update_state";
+      readonly phase: "step";
+      readonly label: string;
+    }
+  /**
+   * The update is done and this process is on its way out; the supervisor
+   * brings the next one up in its place. Carries where the version moved, so
+   * a client that reconnects can say what it came back to, and what the
+   * update declined to do — a skip is the difference between "done" and
+   * "done what it could", and the operator is the only one who can act on it.
+   */
+  | {
+      readonly type: "update_state";
+      readonly phase: "restarting";
+      readonly from: string;
+      readonly to: string;
+      readonly skipped: readonly UpdateSkip[];
+    }
+  /**
+   * The update is done and nothing is going to restart this process: it was
+   * started by hand rather than by a supervisor, so exiting would end it
+   * instead of replacing it. The new code is on disk and the old code is
+   * still the code answering — only the operator can close that gap.
+   */
+  | {
+      readonly type: "update_state";
+      readonly phase: "stranded";
+      readonly from: string;
+      readonly to: string;
+      readonly skipped: readonly UpdateSkip[];
+    }
+  /**
+   * A step failed and the run stopped there. Nothing restarts and nothing is
+   * lost: this server goes on serving the code it was already running, which
+   * is the version known to work.
+   */
+  | {
+      readonly type: "update_state";
+      readonly phase: "failed";
+      readonly error: string;
+    };
+
+/**
  * The live preview of the turn in flight, and the session state around it.
  * Deliberately **unsequenced**: none of it is persisted line by line, so none
  * of it can be replayed by ordinal. A reconnecting client is instead handed
@@ -82,6 +136,14 @@ export type EphemeralEvent =
       readonly cwd: string;
       /** Highest durable `seq` at attach time; replay follows immediately. */
       readonly head: number;
+      /**
+       * The pim and pi this server is running. Sent on the handshake because
+       * a process cannot change the code it is executing: these move when the
+       * server is replaced, so the frame that says a new server is here is
+       * the only place they can change.
+       */
+      readonly pimVersion: string;
+      readonly piVersion: string;
     }
   /**
    * A resume handed over as one frame instead of one frame per event. A
@@ -172,6 +234,13 @@ export type EphemeralEvent =
    * is: it is news precisely to the ones not attached to that session.
    */
   | { readonly type: "session_read"; readonly sessionId: string }
+  /**
+   * Sent to every connection, for the sharper form of the same reason: the
+   * restart it ends in drops every socket on this server, so a client that
+   * did not ask is the one most in need of being told why it is about to
+   * lose the one it has.
+   */
+  | UpdateStateEvent
   | {
       readonly type: "session_state";
       readonly cwd: string;

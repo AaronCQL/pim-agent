@@ -1,15 +1,16 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { Bot as Grammy } from "grammy";
 
+import { PimVersion } from "#core/shared/PimVersion";
 import { Commands } from "./Commands";
 import type { TelegramConfig } from "./Config";
 import { Message, type Prompt } from "./Message";
 import { Renderer, type TurnEndState } from "./Renderer";
 import { Session, type SessionId } from "./Session";
 import { SessionRegistry } from "./SessionRegistry";
-import { Supervisor } from "./Supervisor";
 import type { ScheduledTask } from "./TaskSchema";
 import { TaskScheduler } from "./TaskScheduler";
+import { UpdateConfirm } from "./UpdateConfirm";
 
 export class Bot {
   private readonly grammy: Grammy;
@@ -127,13 +128,13 @@ export class Bot {
   }
 
   private async processBootUpdateConfirm(): Promise<void> {
-    const entries = await Supervisor.readUpdateConfirm(this.config.configDir);
+    const entries = await UpdateConfirm.read(this.config.configDir);
     if (entries.length === 0) {
       return;
     }
     const [version, piVersion] = await Promise.all([
-      Supervisor.readVersion(),
-      Supervisor.readPiVersion(),
+      PimVersion.current(),
+      PimVersion.pi(),
     ]);
     const text = `✅ Pim Agent updated to v${version} (pi v${piVersion})!`;
     await Promise.all(
@@ -145,7 +146,7 @@ export class Bot {
           .catch((err) => console.warn(`[update-confirm] edit failed:`, err))
       )
     );
-    await Supervisor.clearUpdateConfirm(this.config.configDir);
+    await UpdateConfirm.clear(this.config.configDir);
   }
 
   private async handleTurn(

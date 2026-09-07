@@ -1,16 +1,23 @@
 import type { CommandDraft } from "#protocol/Command";
-import { PROTOCOL_VERSION } from "#protocol/Protocol";
+import { CLOSE_PROTOCOL_MISMATCH, PROTOCOL_VERSION } from "#protocol/Protocol";
 import {
   isDurableEvent,
   type ResponseEvent,
   type ServerEvent,
 } from "#protocol/ServerEvent";
 
+/**
+ * `outdated` is terminal and is the only one that is: the server has refused
+ * this client's protocol version, and it will refuse the next socket for the
+ * same reason. What fixes it is newer code in this tab, which is not
+ * something the transport can go and get.
+ */
 export type ConnectionStatus =
   | "connecting"
   | "open"
   | "reconnecting"
-  | "closed";
+  | "closed"
+  | "outdated";
 
 /** Which session the client wants; `sessionId` absent means "make me one". */
 export type AttachTarget = {
@@ -69,6 +76,7 @@ export class WsClient {
    * session's tail into the new session's cursor.
    */
   private settled = false;
+  private outdated = false;
   private state: ConnectionStatus = "closed";
 
   public constructor(options: WsClientOptions) {
@@ -149,8 +157,8 @@ export class WsClient {
     socket.addEventListener("message", (event) => {
       this.receive(String((event as MessageEvent).data));
     });
-    socket.addEventListener("close", () => {
-      this.onClose(socket);
+    socket.addEventListener("close", (event) => {
+      this.onClose(socket, (event as CloseEvent).code);
     });
     return new Promise<void>((resolve, reject) => {
       socket.addEventListener("open", () => {
@@ -177,7 +185,7 @@ export class WsClient {
     });
   }
 
-  private onClose(socket: WebSocket): void {
+  private onClose(socket: WebSocket, code: number): void {
     if (this.socket !== socket) {
       return;
     }
@@ -185,6 +193,15 @@ export class WsClient {
     this.rejectPending(new Error("socket closed"));
     if (this.disposed) {
       this.setStatus("closed");
+      return;
+    }
+    // Retrying a refusal is a spin: this server has already read the version
+    // it will read again. Reported and left there — what to do about a stale
+    // tab is the application's call, and this half of the client has no way
+    // to reload one anyway.
+    if (code === CLOSE_PROTOCOL_MISMATCH) {
+      this.outdated = true;
+      this.setStatus("outdated");
       return;
     }
     this.setStatus("reconnecting");
@@ -199,7 +216,7 @@ export class WsClient {
   }
 
   private scheduleRetry(): void {
-    if (this.retry !== undefined) {
+    if (this.retry !== undefined || this.outdated) {
       return;
     }
     const attempt = ++this.attempt;
@@ -255,7 +272,7 @@ export class WsClient {
     // Names the session it is about, so it is nobody's tail and cannot
     // disturb a cursor: it passes the gate below rather than waiting behind
     // an attach that may be for a different session entirely.
-    if (event.type === "session_activity") {
+    if (event.type === "session_activity" || event.type === "update_state") {
       this.options.onEvent(event);
       return;
     }

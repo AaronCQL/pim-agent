@@ -3,8 +3,9 @@
  *
  * Imported by **server and web only** — the TUI keeps its in-process
  * `createAgentSession()`, so nothing here may assume a
- * browser, a DOM, or a transport. These are types plus one constant; the only
- * value import is the version, so a bundler can tree-shake the rest away.
+ * browser, a DOM, or a transport. These are types plus two constants — the
+ * version and the close code that refuses it — so a bundler can tree-shake
+ * the rest away.
  */
 
 /**
@@ -12,6 +13,14 @@
  * it in the `attach` handshake; a server that does not recognise it refuses the
  * connection rather than mis-parsing a newer frame. Versioned from day one so
  * the first incompatible change is a rejection, not a silent field mismatch.
+ *
+ * 10 — a client can ask the machine for the latest code: `reload` updates this
+ * install and restarts it whether or not the update moved anything, because
+ * the operator is asking to run the new version rather than asking whether
+ * there is one. `update_state` reports that run to every connection, not
+ * only the one that asked, since the restart at the end of it takes them all
+ * down together; and `attached` names the pim and pi now running, which is
+ * what a client that comes back needs to say what it came back to.
  *
  * 9 — a listed session carries `settledAt`, when its agent last stopped, in
  * place of `modifiedAt`: the catalogue orders and ages its rows on the end
@@ -44,6 +53,14 @@
  * git branch; durable messages carry a `timestamp`; `list_models` answers
  * with the model catalogue and this model's thinking levels.
  */
-export const PROTOCOL_VERSION = 9;
+export const PROTOCOL_VERSION = 10;
 
 export type ProtocolVersion = typeof PROTOCOL_VERSION;
+
+/**
+ * How a server hangs up on a client speaking a version it does not. Lives with
+ * the version it is about: the refusal is half of what makes the handshake
+ * mean anything, and both sides need the number — one to send it, the other to
+ * tell it from a socket that merely dropped and will succeed on the retry.
+ */
+export const CLOSE_PROTOCOL_MISMATCH = 4001;

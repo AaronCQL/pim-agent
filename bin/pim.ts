@@ -9,6 +9,8 @@ import {
 } from "#core/extensions/CoreExtensions";
 import { ExtensionToggles } from "#core/shared/ExtensionToggles";
 import { PimVersion } from "#core/shared/PimVersion";
+import { Supervisor } from "#core/shared/Supervisor";
+import { Updater } from "#core/shared/Updater";
 import init from "#tui/extensions/_init/index";
 import commandPicker from "#tui/extensions/command-picker/index";
 import filePicker from "#tui/extensions/file-picker/index";
@@ -32,21 +34,37 @@ const extensionFactories: readonly PimInlineExtension[] = [
 ];
 
 async function runUpdate(force: boolean): Promise<number> {
-  const installed = await PimVersion.current();
-  const available = await PimVersion.latest({ timeoutMs: 10_000 });
-  if (available === undefined) {
-    console.error("Could not determine the latest pim version.");
+  const at = await Supervisor.detectInstall();
+  if (!force && at.kind === "prod") {
+    const [installed, available] = await Promise.all([
+      PimVersion.current(),
+      PimVersion.latest({ timeoutMs: 10_000 }),
+    ]);
+    if (available === undefined) {
+      console.error("Could not determine the latest pim version.");
+      return 1;
+    }
+    if (!PimVersion.isNewer(available, installed)) {
+      console.log(`pim is already up to date (v${installed})`);
+      return 0;
+    }
+  }
+  const outcome = await Updater.run({
+    onStep: (label) => console.log(`[update] ${label}`),
+  });
+  for (const skip of outcome.skipped) {
+    console.log(`[update] skipped ${skip.label}: ${skip.reason}`);
+  }
+  if (!outcome.ok) {
+    console.error(outcome.error);
     return 1;
   }
-  if (!force && !PimVersion.isNewer(available, installed)) {
-    console.log(`pim is already up to date (v${installed})`);
-    return 0;
-  }
-  const code = await PimVersion.install(available);
-  if (code === 0) {
-    console.log(`Updated pim from v${installed} to v${available}`);
-  }
-  return code;
+  console.log(
+    outcome.to === outcome.from
+      ? `pim is on v${outcome.to}`
+      : `Updated pim from v${outcome.from} to v${outcome.to}`
+  );
+  return 0;
 }
 
 const cliArgs = process.argv.slice(2);
@@ -97,22 +115,34 @@ const mode =
       ? cliArgs[modeIdx]!.split("=")[1]
       : cliArgs[modeIdx + 1]
     : undefined;
+// Writing a unit file must not load the frontend it describes, so every
+// daemon branch imports what it needs and nothing else.
+const daemonAction = cliArgs.includes("--install")
+  ? "install"
+  : cliArgs.includes("--uninstall")
+    ? "uninstall"
+    : undefined;
 if (mode === "telegram") {
-  if (cliArgs.includes("--install")) {
-    const { Supervisor } = await import("#telegram/Supervisor");
-    await Supervisor.install();
-    process.exit(0);
-  }
-  if (cliArgs.includes("--uninstall")) {
-    const { Supervisor } = await import("#telegram/Supervisor");
-    await Supervisor.uninstall();
+  if (daemonAction !== undefined) {
+    const [{ Supervisor }, { TelegramUnit }] = await Promise.all([
+      import("#core/shared/Supervisor"),
+      import("#telegram/TelegramUnit"),
+    ]);
+    await Supervisor[daemonAction](TelegramUnit);
     process.exit(0);
   }
   const { start } = await import("#telegram/index");
   await start(cliArgs);
   process.exit(0);
 }
-if (mode === "serve") {
+if (mode === "web") {
+  if (daemonAction !== undefined) {
+    const { WebUnit } = await import("#server/WebUnit");
+    await (daemonAction === "install"
+      ? WebUnit.install(cliArgs)
+      : WebUnit.uninstall());
+    process.exit(0);
+  }
   const { start } = await import("#server/serve");
   await start(cliArgs);
   process.exit(0);

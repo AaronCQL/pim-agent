@@ -263,6 +263,8 @@ test("a listed session with no title yet is named by its first message", async (
     sessionId: "bbbbbbbb-2222",
     cwd: "/srv/other",
     head: 0,
+    pimVersion: "1.2.3",
+    piVersion: "0.9.0",
   });
   store.ingest({
     seq: 1,
@@ -291,6 +293,8 @@ test("a running turn spins where the age would be", async () => {
     sessionId: "aaaaaaaa-1111",
     cwd: "/home/ada/dev/pim",
     head: 12,
+    pimVersion: "1.2.3",
+    piVersion: "0.9.0",
   });
   store.ingest({
     type: "session_state",
@@ -383,6 +387,8 @@ test("typing into a new chat leaves the rows around it standing", async () => {
     sessionId: "draft-1",
     cwd: "/home/ada/dev/pim",
     head: 0,
+    pimVersion: "1.2.3",
+    piVersion: "0.9.0",
   });
   store.ingest({
     type: "session_activity",
@@ -433,6 +439,8 @@ test("switching moves the highlight without rebuilding the list", async () => {
     sessionId: "bbbbbbbb-2222",
     cwd: "/srv/other",
     head: 0,
+    pimVersion: "1.2.3",
+    piVersion: "0.9.0",
   });
   flush();
   // The switch re-reads the listing, which answers with the same sessions.

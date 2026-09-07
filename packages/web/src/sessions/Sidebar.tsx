@@ -23,6 +23,9 @@ const CONNECTION_CLASSES: Record<ConnectionStatus, string> = {
   open: "text-emerald-400",
   reconnecting: "text-amber-400",
   closed: "text-rose-400",
+  // Not a fault of the connection and not repaired by waiting on one: this
+  // tab is the old thing in the room, so it greys out rather than alarms.
+  outdated: "text-slate-500",
 };
 
 /**
@@ -165,13 +168,37 @@ export function Sidebar(props: {
       ? undefined
       : relativeTime(row.listed.settledAt, now());
 
+  const restart = (): void => {
+    if (props.store.state.connection === "outdated") {
+      props.store.update.refresh();
+      return;
+    }
+    const busy = props.store.runningIds().length;
+    if (
+      busy > 0 &&
+      !window.confirm(
+        `Restarting will stop ${busy} running session${busy === 1 ? "" : "s"}. Update and restart anyway?`
+      )
+    ) {
+      return;
+    }
+    void props.store.reload(busy > 0);
+  };
+
   return (
     <div class="flex h-full flex-col bg-neutral-950">
       <div class="flex h-12 shrink-0 items-center justify-between gap-2 px-3">
         <div class="flex items-center gap-2">
           <h1 class="font-bold">PIM</h1>
-          <span class="rounded-full bg-neutral-850 px-2 py-0.5 text-xs text-neutral-350">
-            {`v${version}`}
+          <span
+            class="rounded-full bg-neutral-850 px-2 py-0.5 text-xs text-neutral-350"
+            title={
+              props.store.update.state.piVersion
+                ? `pi ${props.store.update.state.piVersion}`
+                : undefined
+            }
+          >
+            {`v${props.store.update.state.pimVersion ?? version}`}
           </span>
         </div>
         <button
@@ -263,9 +290,39 @@ export function Sidebar(props: {
           class={`i-griddy-icons:server size-4 ${CONNECTION_CLASSES[props.store.state.connection]}`}
           aria-hidden="true"
         />
-        <span class="truncate text-sm leading-none">
+        <span class="min-w-0 flex-1 truncate text-sm leading-none">
           {hostOf(props.store.client.httpUrl)}
         </span>
+        <button
+          type="button"
+          aria-label={
+            props.store.state.connection === "outdated"
+              ? "Reload page"
+              : "Update and restart"
+          }
+          title={
+            props.store.update.state.pending
+              ? props.store.update.state.label
+              : props.store.state.connection === "outdated"
+                ? "Reload page"
+                : "Update and restart"
+          }
+          disabled={
+            props.store.update.state.pending ||
+            !["open", "outdated"].includes(props.store.state.connection)
+          }
+          class="flex size-8 shrink-0 items-center justify-center rounded-lg hover:bg-neutral-850 hover:text-neutral-50 disabled:opacity-50"
+          onClick={restart}
+        >
+          <Show
+            when={props.store.update.state.pending}
+            fallback={
+              <span class="i-solar:restart-bold size-4" aria-hidden="true" />
+            }
+          >
+            <Spinner />
+          </Show>
+        </button>
       </div>
     </div>
   );

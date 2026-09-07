@@ -33,6 +33,8 @@ function attached(sessionId: string, head = 0): ServerEvent {
     sessionId,
     cwd: "/repo",
     head,
+    pimVersion: "1.2.3",
+    piVersion: "0.9.0",
   };
 }
 

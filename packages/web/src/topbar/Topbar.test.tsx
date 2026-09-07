@@ -17,6 +17,8 @@ function stocked(cwd: string, branch: string): SessionStore {
     sessionId: "s1",
     cwd,
     head: 0,
+    pimVersion: "1.2.3",
+    piVersion: "0.9.0",
   });
   store.ingest({
     type: "session_state",

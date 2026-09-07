@@ -5,7 +5,7 @@ const DEFAULT_PORT = "4319";
 /** Loopback only: the server has full host access and no authentication. */
 const DEFAULT_HOSTNAME = "127.0.0.1";
 
-type Cli = {
+export type Cli = {
   readonly port: string;
   readonly hostname: string;
   readonly cwd: string;
@@ -13,10 +13,10 @@ type Cli = {
 };
 
 /**
- * Tolerant on purpose: the same argv reaches here through `pim --mode serve`,
- * so unknown flags and the `serve` positional must not be fatal.
+ * Tolerant on purpose: the same argv reaches here through `pim --mode web`,
+ * so unknown flags and the mode positional must not be fatal.
  */
-function parseArgs(args: ReadonlyArray<string>): Cli {
+export function parseArgs(args: ReadonlyArray<string>): Cli {
   // PORT is honoured because a supervisor or container assigns it, but an
   // explicit `--port` always wins.
   let port = process.env["PORT"] ?? DEFAULT_PORT;
@@ -93,8 +93,4 @@ export async function start(args: ReadonlyArray<string>): Promise<void> {
       });
     }
   });
-}
-
-if (import.meta.main) {
-  await start(process.argv.slice(2));
 }

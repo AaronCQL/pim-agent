@@ -18,6 +18,7 @@ import {
   type AttachTarget,
   type ConnectionStatus,
 } from "../ws/WsClient";
+import { Reload } from "./Reload";
 
 export type LiveTool = {
   readonly callId: string;
@@ -187,6 +188,7 @@ export type SessionStoreOptions = {
   readonly backoffMs?: (attempt: number) => number;
   /** Picker debounce; 0 in tests. */
   readonly pickerDebounceMs?: number;
+  readonly reloadPage?: () => void;
 };
 
 const FILE_PICKER_LIMIT = 50;
@@ -212,6 +214,7 @@ const UNWRITTEN_KEY = "pim.unwritten";
  */
 export class SessionStore {
   public readonly client: WsClient;
+  public readonly update: Reload;
   /** The `@` picker, answered one query at a time by the server. */
   public readonly files: RemoteFilePickerSuggestionEngine;
   public readonly state: Store<SessionState>;
@@ -243,12 +246,16 @@ export class SessionStore {
   private claimed: string | undefined;
 
   public constructor(options: SessionStoreOptions) {
+    this.update = new Reload(options.url, options.reloadPage);
     const drafts = readDrafts();
     // An unwritten session has no file, so nothing but this browser remembers
     // it; resuming it is the whole reason the id was written down.
     const unwritten = readUnwritten();
-    const sessionId = options.sessionId ?? unwritten?.sessionId;
-    const cwd = options.cwd ?? unwritten?.cwd;
+    const sessionId =
+      options.sessionId ??
+      this.update.target?.sessionId ??
+      unwritten?.sessionId;
+    const cwd = options.cwd ?? this.update.target?.cwd ?? unwritten?.cwd;
     const [state, setState] = createStore<SessionState>({
       connection: "closed",
       sessionId: "",
@@ -295,6 +302,7 @@ export class SessionStore {
         this.ingest(event);
       },
       onStatus: (connection) => {
+        this.update.connection(connection);
         this.setState((draft) => {
           draft.connection = connection;
         });
@@ -324,6 +332,31 @@ export class SessionStore {
 
   public dispose(): void {
     this.client.close();
+    this.update.dispose();
+  }
+
+  public async reload(force = false): Promise<void> {
+    if (
+      !this.update.begin({
+        sessionId: this.state.sessionId,
+        cwd: this.state.cwd,
+      })
+    ) {
+      return;
+    }
+    try {
+      const response = await this.client.send({
+        type: "reload",
+        ...(force ? { force } : {}),
+      });
+      if (!response.success) {
+        this.update.rejected(
+          response.error ?? "The server refused the restart."
+        );
+      }
+    } catch (error) {
+      this.update.rejected((error as Error).message);
+    }
   }
 
   /**
@@ -835,6 +868,7 @@ export class SessionStore {
 
   /** The one entry point for a server frame; tests drive it directly. */
   public ingest(event: ServerEvent): void {
+    this.update.ingest(event);
     if (isDurableEvent(event)) {
       this.ingestDurable(event);
       return;

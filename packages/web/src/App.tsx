@@ -268,6 +268,42 @@ export function Shell(props: { readonly store: SessionStore }) {
           </div>
         </div>
       </div>
+      <Show
+        when={
+          props.store.update.state.pending || props.store.update.state.notice
+        }
+      >
+        <div
+          role="status"
+          class={{
+            "fixed right-3 bottom-3 z-50 flex max-w-sm items-start gap-3 rounded-lg border border-neutral-700 bg-neutral-850 p-3 text-sm shadow-lg": true,
+            "text-emerald-400":
+              props.store.update.state.notice?.tone === "success",
+            "text-amber-400":
+              props.store.update.state.notice?.tone === "warning",
+            "text-rose-400": props.store.update.state.notice?.tone === "error",
+          }}
+        >
+          <span>
+            {props.store.update.state.pending
+              ? props.store.update.state.label
+              : props.store.update.state.notice?.text}
+          </span>
+          <Show when={props.store.update.state.notice}>
+            <button
+              type="button"
+              aria-label="Dismiss notification"
+              class="flex size-5 shrink-0 items-center justify-center"
+              onClick={() => props.store.update.dismiss()}
+            >
+              <span
+                class="i-solar:close-circle-bold size-4"
+                aria-hidden="true"
+              />
+            </button>
+          </Show>
+        </div>
+      </Show>
     </main>
   );
 }

@@ -33,6 +33,11 @@ async function current(): Promise<string> {
   return (await self()).version;
 }
 
+/** The npm package this pim was published as, and so the one to reinstall. */
+async function name(): Promise<string> {
+  return (await self()).name;
+}
+
 /** Pi ships inside pim's install tree, so this is the pi a user actually runs. */
 async function pi(): Promise<string> {
   return (
@@ -47,11 +52,11 @@ async function pi(): Promise<string> {
 async function latest(
   options: LatestOptions = {}
 ): Promise<string | undefined> {
-  const { name } = await self();
+  const pkg = await self();
   const client = options.fetch ? ky.create({ fetch: options.fetch }) : ky;
   try {
     const release = await client(
-      `${REGISTRY}/${name.replace("/", "%2f")}/latest`,
+      `${REGISTRY}/${pkg.name.replace("/", "%2f")}/latest`,
       {
         timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         retry: 0,
@@ -90,16 +95,4 @@ function isNewer(candidate: string, installed: string): boolean {
   return installed.includes("-") && !candidate.includes("-");
 }
 
-/**
- * Pim requires Bun and documents `bun install -g`, so a reinstall through the
- * same command is the whole update: pi arrives as one of pim's dependencies.
- */
-async function install(version: string): Promise<number> {
-  const { name } = await self();
-  const proc = Bun.spawn(["bun", "install", "-g", `${name}@${version}`], {
-    stdio: ["inherit", "inherit", "inherit"],
-  });
-  return await proc.exited;
-}
-
-export const PimVersion = { current, pi, latest, isNewer, install };
+export const PimVersion = { current, name, pi, latest, isNewer };

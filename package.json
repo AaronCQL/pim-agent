@@ -46,7 +46,7 @@
   "scripts": {
     "dev": "bun link && pim",
     "prepack": "bun run build:web",
-    "serve": "bun packages/server/src/serve.ts",
+    "web": "bun bin/pim.ts --mode web",
     "probe": "bun packages/server/src/probe.ts",
     "test": "bun scripts/check.ts agent web pack",
     "check": "bun scripts/check.ts",

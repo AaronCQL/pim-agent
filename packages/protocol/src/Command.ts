@@ -86,7 +86,18 @@ export type Command =
    * it is on supports. Like `list_sessions` it answers without a session,
    * because the catalogue is a property of the machine, not of a conversation.
    */
-  | { readonly id: string; readonly type: "list_models" };
+  | { readonly id: string; readonly type: "list_models" }
+  /**
+   * Run the latest code: update this install and restart it, whether or not
+   * the update moved anything. Unconditional because the operator is asking
+   * to be on the new version, not asking whether there is one.
+   *
+   * Carries no session for the same reason `list_models` does not — it is a
+   * fact about the machine — and it takes every session on that machine down
+   * with it, which is why it is refused while any of them is mid-turn.
+   * `force` says to kill those turns anyway.
+   */
+  | { readonly id: string; readonly type: "reload"; readonly force?: boolean };
 
 export type CommandType = Command["type"];
 

@@ -10,8 +10,10 @@ import type { SessionDigest } from "#core/session/EventLog";
 import { ReadCursors } from "#core/session/ReadCursors";
 import type { SessionRegistry } from "#core/session/SessionRegistry";
 import type { SessionHost } from "#core/session/SessionHost";
+import { PimVersion } from "#core/shared/PimVersion";
+import type { UpdateOutcome } from "#core/shared/Updater";
 import type { Command } from "#protocol/Command";
-import { PROTOCOL_VERSION } from "#protocol/Protocol";
+import { CLOSE_PROTOCOL_MISMATCH, PROTOCOL_VERSION } from "#protocol/Protocol";
 import type {
   ModelView,
   ServerEvent,
@@ -19,12 +21,10 @@ import type {
   SessionSummaryView,
 } from "#protocol/ServerEvent";
 import { ClientConnection } from "./ClientConnection";
+import { Reloader } from "./Reloader";
 import { SessionStream } from "./SessionStream";
 import { StaticClient } from "./StaticClient";
 import { UploadEndpoint } from "./UploadEndpoint";
-
-/** Close code for a client speaking a protocol this server does not. */
-export const CLOSE_PROTOCOL_MISMATCH = 4001;
 
 export type WsGatewayDeps = {
   readonly registry: SessionRegistry;
@@ -41,6 +41,16 @@ export type WsGatewayDeps = {
   readonly readCursorsPath?: string;
   /** The built web client; defaults to the bundle shipped beside this package. */
   readonly clientDir?: string;
+  /**
+   * Runs the update a `reload` asks for, reporting each step as it starts.
+   * Defaults to the real one, which spawns installs against this install.
+   */
+  readonly update?: (onStep: (label: string) => void) => Promise<UpdateOutcome>;
+  /**
+   * Ends this process so the supervisor replaces it with the updated code.
+   * Defaults to restarting the sibling daemons and re-raising `SIGTERM`.
+   */
+  readonly shutdown?: () => Promise<void>;
 };
 
 /** What a command answered with: an error, rows, or neither. */
@@ -51,6 +61,12 @@ type Outcome = {
   readonly models?: readonly ModelView[];
   readonly thinkingLevels?: readonly string[];
   readonly restored?: readonly string[];
+  /**
+   * Work that must not run ahead of its own answer. Only `reload` has any:
+   * it ends with the socket gone, so a client told "yes" afterwards is a
+   * client never told at all.
+   */
+  readonly after?: () => void;
 };
 
 /** Enough rows to fill a switcher; the catalogue is read newest-first. */
@@ -110,6 +126,12 @@ export class WsGateway {
     ServerWebSocket<undefined>,
     ClientConnection
   >();
+  private readonly reloader: Reloader;
+  /**
+   * Read once and kept: a process cannot change the code it is executing, so
+   * a new version is a new process and this cannot go stale under a client.
+   */
+  private versionsRead: Promise<readonly [string, string]> | undefined;
   private server: Server<undefined> | undefined;
 
   public constructor(deps: WsGatewayDeps) {
@@ -121,6 +143,14 @@ export class WsGateway {
     );
     this.cursors = new ReadCursors(deps.readCursorsPath);
     this.client = new StaticClient(deps.clientDir);
+    this.reloader = new Reloader({
+      announce: (event) => {
+        this.broadcast(event);
+      },
+      update: deps.update,
+      shutdown: deps.shutdown,
+    });
+    this.versionsRead = undefined;
   }
 
   public get port(): number {
@@ -229,7 +259,10 @@ export class WsGateway {
       return;
     }
     try {
-      const { error, ...answer } = await this.dispatch(connection, command);
+      const { error, after, ...answer } = await this.dispatch(
+        connection,
+        command
+      );
       connection.send({
         type: "response",
         id: command.id,
@@ -237,6 +270,7 @@ export class WsGateway {
         ...(error === undefined ? {} : { error }),
         ...answer,
       });
+      after?.();
     } catch (err) {
       connection.send({
         type: "response",
@@ -254,8 +288,8 @@ export class WsGateway {
     if (command.type === "attach") {
       return await this.attach(connection, command);
     }
-    // The catalogue is what a client reads *before* it has a session, so it is
-    // the one command that answers without one.
+    // The catalogue is what a client reads *before* it has a session, so it
+    // answers without one.
     if (command.type === "list_sessions") {
       return { sessions: await this.listSessions(command) };
     }
@@ -270,6 +304,11 @@ export class WsGateway {
                 .supportedThinkingLevels
             : undefined) ?? [],
       };
+    }
+    // A fact about the machine, like the two above it: what a reload restarts
+    // is the server, so it is answered for a client attached to nothing on it.
+    if (command.type === "reload") {
+      return this.reload(command.force === true);
     }
     const stream = connection.sessionId
       ? this.streams.get(connection.sessionId)
@@ -326,18 +365,51 @@ export class WsGateway {
     command: Command & { readonly type: "attach" }
   ): Promise<Outcome> {
     const stream = await this.ensureStream(command.sessionId, command.cwd);
+    const [pimVersion, piVersion] = await this.versions();
     connection.send({
       type: "attached",
       protocolVersion: PROTOCOL_VERSION,
       sessionId: stream.sessionId,
       cwd: stream.host.cwd,
       head: await stream.refresh(),
+      pimVersion,
+      piVersion,
     });
     await connection.attach(stream, command.fromSeq);
     // Opening a session is reading it, and there is one mark for all of
     // them, so this is also where every other client's dot goes out.
     await this.markRead(stream.sessionId);
     return {};
+  }
+
+  /**
+   * Refused while any session this server holds open is mid-turn: the restart
+   * that ends a reload kills whatever those agents are doing, and a turn is
+   * not a thing a machine may take back on its own initiative. Only these
+   * sessions can be answered for — one a terminal is driving is another
+   * process, with nothing but a log file between them — and they are also the
+   * only ones a restart here would kill.
+   */
+  private reload(force: boolean): Outcome {
+    const busy = [...this.activity.entries()]
+      .filter(([, status]) => status !== "idle")
+      .map(([sessionId]) => sessionId);
+    if (!force && busy.length > 0) {
+      const many = busy.length > 1;
+      return {
+        error: `${many ? "sessions" : "session"} ${busy.join(", ")} ${many ? "are" : "is"} mid-turn; reloading would kill ${many ? "those turns" : "that turn"}. Send \`reload\` with \`force\` to do it anyway`,
+      };
+    }
+    return {
+      after: () => {
+        void this.reloader.start();
+      },
+    };
+  }
+
+  private versions(): Promise<readonly [string, string]> {
+    this.versionsRead ??= Promise.all([PimVersion.current(), PimVersion.pi()]);
+    return this.versionsRead;
   }
 
   private async listSessions(

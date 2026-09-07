@@ -7,6 +7,8 @@ import {
 } from "grammy";
 
 import { Paths } from "#core/shared/Paths";
+import { Supervisor } from "#core/shared/Supervisor";
+import { Updater } from "#core/shared/Updater";
 import {
   LOGS_MODES,
   THINKING_LEVELS,
@@ -23,8 +25,9 @@ import {
   type SessionId,
 } from "./Session";
 import { SessionRegistry } from "./SessionRegistry";
-import { Supervisor } from "./Supervisor";
+import { TelegramUnit } from "./TelegramUnit";
 import { TypingIndicator } from "./TypingIndicator";
+import { UpdateConfirm } from "./UpdateConfirm";
 
 const CB_CLEAR_CONFIRM = "clear-confirm";
 const CB_CLEAR_CANCEL = "clear-cancel";
@@ -538,13 +541,39 @@ export class Commands {
         link_preview_options: { is_disabled: true },
       }
     );
-    const result = await Supervisor.update();
-    if (!result.ok) {
-      await this.sendPlain(session.id, `⚠️ ${result.error}`);
+    const progress = async (text: string): Promise<void> => {
+      await this.api
+        .editMessageText(session.id.chatId, sent.message_id, text, {
+          link_preview_options: { is_disabled: true },
+        })
+        .catch((err: unknown) => console.warn(`[update] edit failed:`, err));
+    };
+    const outcome = await Updater.run({
+      onStep: (label) => progress(`🔄 ${label}...`),
+    });
+    if (!outcome.ok) {
+      await this.sendPlain(session.id, `⚠️ ${outcome.error}`);
       return;
     }
 
-    await Supervisor.appendUpdateConfirm(this.config.configDir, {
+    const moved =
+      outcome.to === outcome.from
+        ? `Already on v${outcome.to}`
+        : `Updated v${outcome.from} → v${outcome.to}`;
+    const notes = outcome.skipped.map(
+      (s) => `\nSkipped ${s.label}: ${s.reason}.`
+    );
+    // The other daemons run from the same tree this just replaced, so they go
+    // first; this one restarts by exiting, which has to be last.
+    await Supervisor.restartSiblings(TelegramUnit);
+    if (!Supervisor.isSupervised()) {
+      await progress(
+        `✅ ${moved}.${notes.join("")}\nNo supervisor is watching this process, so restart it yourself.`
+      );
+      return;
+    }
+
+    await UpdateConfirm.append(this.config.configDir, {
       chatId: session.id.chatId,
       threadId: session.id.threadId,
       messageId: sent.message_id,
