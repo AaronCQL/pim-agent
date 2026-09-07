@@ -235,3 +235,65 @@ test("a running turn spins where the age would be", async () => {
   // The mark stands in for the age rather than beside it.
   expect(row.textContent).not.toMatch(/\d+[smhd]/);
 });
+
+test("a turn keeps spinning on the row of the session left behind", async () => {
+  const { host, store } = paint();
+  await Bun.sleep(0);
+  flush();
+
+  // Nothing here is attached to that session: only the server can say that a
+  // conversation nobody is reading is still being written.
+  store.ingest({
+    type: "session_activity",
+    sessionId: "aaaaaaaa-1111",
+    status: "tool",
+  });
+  flush();
+
+  const rows = [...host.querySelectorAll("li")];
+  expect(rows[0]?.innerHTML).toContain("animate-spin");
+  // And only that row: every other session has its age to show.
+  expect(rows[1]?.innerHTML).not.toContain("animate-spin");
+  expect(rows[1]?.textContent).toMatch(/\d+[smhd]/);
+});
+
+test("the listing is re-read when a turn ends, so the age is since the reply", async () => {
+  const { host, store } = paint();
+  await Bun.sleep(0);
+  flush();
+
+  let listings = 0;
+  store.listSessions = async () => {
+    listings += 1;
+    // Written to just now, which is what a finished turn leaves behind.
+    return SESSIONS.map((session) =>
+      session.sessionId === "aaaaaaaa-1111"
+        ? { ...session, modifiedAt: Date.now() }
+        : session
+    );
+  };
+
+  store.ingest({
+    type: "session_activity",
+    sessionId: "aaaaaaaa-1111",
+    status: "thinking",
+  });
+  flush();
+  // A turn starting moves nothing a row draws: the spinner is the status, and
+  // a directory scan would answer with what is already on screen.
+  expect(listings).toBe(0);
+
+  store.ingest({
+    type: "session_activity",
+    sessionId: "aaaaaaaa-1111",
+    status: "idle",
+  });
+  flush();
+  await Bun.sleep(0);
+  flush();
+
+  expect(listings).toBe(1);
+  const row = host.querySelector("li")!;
+  expect(row.innerHTML).not.toContain("animate-spin");
+  expect(row.textContent).toContain("0s");
+});

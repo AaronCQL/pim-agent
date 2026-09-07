@@ -78,14 +78,30 @@ export function Sidebar(props: {
     clearInterval(clock);
   });
 
-  // Re-read on attach, on a switch, and when a turn *finishes*: a session only
-  // appears on disk once it has content, and its modified time — the sort key
-  // of this list — moves each time the agent writes to it. Nothing has changed
-  // when a turn starts, so that edge is not worth a directory scan.
+  // Re-read on attach, on a switch, when the socket comes back, and when
+  // *any* session's turn ends — the one being read or one left running behind
+  // a switch. A session only appears on disk once it has content, and its
+  // modified time, which is both the sort key here and the age on the row,
+  // moves every time the agent writes to it: the moment it stops moving is
+  // the moment that age starts meaning "since the last reply".
+  //
+  // Nothing a row draws changes when a turn *starts* — the spinner is read
+  // off the status — so that edge is not worth a directory scan. A socket
+  // coming back is, because the frame that would have stopped a spinner is
+  // exactly what a client that was away has missed.
   createEffect(
-    () => `${props.store.state.sessionId}:${props.store.isBusy()}`,
-    () => {
-      if (!props.store.isBusy()) {
+    () => ({
+      sessionId: props.store.state.sessionId,
+      connection: props.store.state.connection,
+      running: props.store.runningIds(),
+    }),
+    (state, before) => {
+      const stale =
+        before === undefined ||
+        before.sessionId !== state.sessionId ||
+        (state.connection === "open" && before.connection !== "open") ||
+        before.running.some((sessionId) => !state.running.includes(sessionId));
+      if (stale) {
         void props.store.listSessions().then(setSessions);
       }
     }
@@ -206,7 +222,7 @@ export function Sidebar(props: {
                         />
                       </Show>
                       <Switch>
-                        <Match when={running(props.store, session)}>
+                        <Match when={props.store.isRunning(session.sessionId)}>
                           <Spinner />
                         </Match>
                         <Match when={age(session)}>
@@ -237,13 +253,4 @@ export function Sidebar(props: {
 
 function hostOf(url: string): string {
   return URL.parse(url)?.host ?? url;
-}
-
-/**
- * Whether this row's agent is working. Only the attached session reports a
- * status to this browser, so a session the terminal is driving sits still
- * here until its next listing.
- */
-function running(store: SessionStore, row: Row): boolean {
-  return row.sessionId === store.state.sessionId && store.isBusy();
 }

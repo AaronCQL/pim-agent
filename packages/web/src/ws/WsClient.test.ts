@@ -393,6 +393,26 @@ test("switching sessions swaps the log and keeps the socket", async () => {
   expect(store.state.durable).toEqual(firstLog);
 });
 
+test("a turn is marked on the list of a client that is reading elsewhere", async () => {
+  const worker = await connect();
+  const sessionId = worker.state.sessionId;
+  await worker.prompt("say hello");
+  await idle(worker);
+
+  const watcher = await connect();
+  expect(watcher.state.sessionId).not.toBe(sessionId);
+  // Where a client that has just loaded learns about a session it has never
+  // been attached to: the catalogue, once.
+  await watcher.listSessions();
+  expect(watcher.isRunning(sessionId)).toBe(false);
+
+  const release = harness.holdTurn();
+  await worker.prompt("say hello again");
+  await until(() => watcher.isRunning(sessionId), "the other session to work");
+  release();
+  await until(() => !watcher.isRunning(sessionId), "the other session to stop");
+});
+
 test("an upload never puts a client-local path in the conversation", async () => {
   const store = await connect();
   const stored = await store.upload(

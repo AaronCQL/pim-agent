@@ -447,6 +447,53 @@ test("finishes a turn with zero clients attached", async () => {
   expect(durable(late).some((e) => e.type === "tool_result")).toBe(true);
 });
 
+test("says which sessions are working, to clients attached elsewhere", async () => {
+  const worker = await connect();
+  const sessionId = worker.sessionId!;
+  // Once around, so pi has written the session and the catalogue can answer
+  // for it: a client that arrives mid-turn reads the row, not the stream.
+  const first = worker.events.length;
+  await worker.prompt("say hello");
+  await idle(worker, first);
+
+  const watcher = await connect();
+  expect(watcher.sessionId).not.toBe(sessionId);
+
+  const release = holdTurn();
+  const mark = watcher.events.length;
+  await worker.prompt("say hello again");
+  const started = await watcher.waitFor(
+    (event) =>
+      event.type === "session_activity" && event.sessionId === sessionId,
+    { from: mark }
+  );
+  expect(started.type === "session_activity" && started.status).not.toBe(
+    "idle"
+  );
+
+  // The same answer for a client that arrives mid-turn, which has no frame to
+  // have missed and only the catalogue to go on.
+  const during = await watcher.listSessions();
+  expect(
+    during.find((row) => row.sessionId === sessionId)?.status
+  ).toBeDefined();
+
+  release();
+  await watcher.waitFor(
+    (event) =>
+      event.type === "session_activity" &&
+      event.sessionId === sessionId &&
+      event.status === "idle",
+    { from: mark }
+  );
+  // A session doing nothing is not marked at all: the row it draws is a row
+  // about a file, and a file is never working.
+  const after = await watcher.listSessions();
+  expect(
+    after.find((row) => row.sessionId === sessionId)?.status
+  ).toBeUndefined();
+});
+
 test("survives a restart with sessions resumable from disk", async () => {
   const probe = await connect();
   const sessionId = probe.sessionId!;

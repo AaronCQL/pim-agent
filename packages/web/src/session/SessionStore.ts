@@ -138,6 +138,12 @@ export type SessionState = {
   live: LiveMessage[];
   optimistic: OptimisticMessage[];
   /**
+   * What every session this browser has heard of is doing, attached or not.
+   * Written from three places that never disagree: the listing, the live
+   * `session_activity` frames, and the attached session's own state.
+   */
+  activity: Record<string, SessionStatus>;
+  /**
    * Attached to a session whose log has not arrived yet. Only ever true
    * between an `attached` naming a new session and the frame that replays it,
    * so the transcript is painted once, whole, rather than assembled on screen.
@@ -255,6 +261,7 @@ export class SessionStore {
       durable: [],
       live: [],
       optimistic: [],
+      activity: {},
       loading: false,
       stats: undefined,
       error: undefined,
@@ -336,6 +343,23 @@ export class SessionStore {
 
   public isBusy(): boolean {
     return this.state.agent !== "idle";
+  }
+
+  /**
+   * Whether that session's agent is working, for any session and not just the
+   * one being read. A session the server does not hold open reads as idle,
+   * which is also the honest answer for one a terminal is driving: those two
+   * processes share a log file and nothing else.
+   */
+  public isRunning(sessionId: string): boolean {
+    return (this.state.activity[sessionId] ?? "idle") !== "idle";
+  }
+
+  /** Every session heard to be working, sorted; a stable dependency. */
+  public runningIds(): readonly string[] {
+    return Object.keys(this.state.activity)
+      .filter((sessionId) => this.isRunning(sessionId))
+      .sort();
   }
 
   /**
@@ -473,6 +497,14 @@ export class SessionStore {
       .send({ type: "list_sessions", ...(cwd === undefined ? {} : { cwd }) })
       .catch(() => undefined);
     const sessions = response?.sessions ?? [];
+    // The listing is the one source that answers for a session no frame has
+    // mentioned yet — a turn this browser was not connected for, or one
+    // started before it loaded.
+    this.setState((draft) => {
+      for (const session of sessions) {
+        draft.activity[session.sessionId] = session.status ?? "idle";
+      }
+    });
     // Pi has written the session's first line, so the directory answers for
     // it now and the synthetic row would be a second copy of a real one.
     const unwritten = this.state.unwritten;
@@ -891,6 +923,11 @@ export class SessionStore {
       case "picker_invalidate":
         void this.files.refreshRelative();
         return;
+      case "session_activity":
+        this.setState((draft) => {
+          draft.activity[event.sessionId] = event.status;
+        });
+        return;
       case "session_state":
         this.setState((draft) => {
           // The last event of a replay, so this is where the log is complete
@@ -902,6 +939,10 @@ export class SessionStore {
           draft.thinking = event.thinking;
           draft.cost = event.cost;
           draft.agent = event.status;
+          // The attached session is announced like any other, but not on the
+          // attach itself: nothing transitioned, so this is where a session
+          // already mid-turn when it was opened gets its mark.
+          draft.activity[draft.sessionId] = event.status;
           draft.tps = event.tps;
           draft.contextPercent = event.contextPercent;
           draft.contextWindow = event.contextWindow;

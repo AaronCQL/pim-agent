@@ -151,6 +151,20 @@ export type EphemeralEvent =
       readonly cwd: string;
     }
   | { readonly type: "turn_end"; readonly stats: TurnStats }
+  /**
+   * A session's agent started or stopped working. Sent to every client, not
+   * just the ones attached to that session: a session list has a row per
+   * session and only this says that a row nobody is watching is working.
+   *
+   * Only the sessions this server holds open can be reported on. One a
+   * terminal is driving is another process with nothing but the log file
+   * between them, so it is never named here and reads as idle.
+   */
+  | {
+      readonly type: "session_activity";
+      readonly sessionId: string;
+      readonly status: SessionStatus;
+    }
   | {
       readonly type: "session_state";
       readonly cwd: string;
@@ -193,6 +207,13 @@ export type SessionSummaryView = {
   readonly title?: string;
   /** Highest durable `seq` on disk, so a client can tell read from unread. */
   readonly head: number;
+  /**
+   * What this session's agent is doing, for a list drawn without attaching
+   * to every row. Absent when it is doing nothing — which is also the answer
+   * for a session this server does not hold open, since only the process
+   * running the agent can know.
+   */
+  readonly status?: SessionStatus;
 };
 
 /** One model the server can be switched to, for the composer's model menu. */

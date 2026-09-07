@@ -252,6 +252,13 @@ export class WsClient {
       waiter?.resolve(event);
       return;
     }
+    // Names the session it is about, so it is nobody's tail and cannot
+    // disturb a cursor: it passes the gate below rather than waiting behind
+    // an attach that may be for a different session entirely.
+    if (event.type === "session_activity") {
+      this.options.onEvent(event);
+      return;
+    }
     if (event.type === "attached") {
       this.settled = true;
       this.target = { sessionId: event.sessionId, cwd: event.cwd };

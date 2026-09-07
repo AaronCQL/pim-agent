@@ -11,7 +11,11 @@ import type { SessionRegistry } from "#core/session/SessionRegistry";
 import type { SessionHost } from "#core/session/SessionHost";
 import type { Command } from "#protocol/Command";
 import { PROTOCOL_VERSION } from "#protocol/Protocol";
-import type { ModelView, SessionSummaryView } from "#protocol/ServerEvent";
+import type {
+  ModelView,
+  SessionStatus,
+  SessionSummaryView,
+} from "#protocol/ServerEvent";
 import { ClientConnection } from "./ClientConnection";
 import { SessionStream } from "./SessionStream";
 import { StaticClient } from "./StaticClient";
@@ -80,6 +84,12 @@ export class WsGateway {
    * listing is not read again.
    */
   private readonly digests = new Map<string, CachedDigest>();
+  /**
+   * The status each session was last announced as. Kept because a stream
+   * emits its state on every tool call and every message, and a client only
+   * needs the edges — a row starts spinning once and stops once.
+   */
+  private readonly activity = new Map<string, SessionStatus>();
   private readonly connections = new Map<
     ServerWebSocket<undefined>,
     ClientConnection
@@ -153,6 +163,7 @@ export class WsGateway {
       stream.dispose();
     }
     this.streams.clear();
+    this.activity.clear();
     for (const connection of this.connections.values()) {
       connection.close();
     }
@@ -316,6 +327,9 @@ export class WsGateway {
         .slice(0, command.limit ?? DEFAULT_SESSION_LIMIT)
         .map(async ({ sessionId, cwd, path, createdAt, modifiedAt }) => {
           const { title, head } = await this.digestOf(path, modifiedAt);
+          // Only a session this server holds open has an agent to answer for
+          // it; anything else on disk is a file, and a file is never working.
+          const status = this.streams.get(sessionId)?.host.status;
           return {
             sessionId,
             cwd,
@@ -323,9 +337,26 @@ export class WsGateway {
             modifiedAt,
             head,
             ...(title === undefined ? {} : { title }),
+            ...(status === undefined || status === "idle" ? {} : { status }),
           };
         })
     );
+  }
+
+  /**
+   * Says that a session's agent started or stopped working, to every client
+   * on the server. Every client, because the session it names is precisely
+   * the one they are *not* attached to: nothing else a client receives says
+   * anything about a session it is not reading.
+   */
+  private announce(sessionId: string, status: SessionStatus): void {
+    if (this.activity.get(sessionId) === status) {
+      return;
+    }
+    this.activity.set(sessionId, status);
+    for (const connection of this.connections.values()) {
+      connection.send({ type: "session_activity", sessionId, status });
+    }
   }
 
   private async digestOf(
@@ -389,6 +420,15 @@ export class WsGateway {
     }
     const stream = new SessionStream(id, host, path);
     stream.start(agent);
+    // The gateway listens to every stream it opens, not only to the ones with
+    // a client on them: a turn runs to the end with nobody attached, and the
+    // session list is drawn from every session at once.
+    this.activity.set(id, host.status);
+    stream.subscribe((event) => {
+      if (event.type === "session_state") {
+        this.announce(id, event.status);
+      }
+    });
     this.streams.set(id, stream);
     return stream;
   }
