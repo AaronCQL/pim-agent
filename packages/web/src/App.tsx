@@ -10,14 +10,14 @@ import { Composer } from "./input/Composer";
 import { SessionStore } from "./session/SessionStore";
 import { Sidebar } from "./sessions/Sidebar";
 import { Skeleton } from "./transcript/Skeleton";
+import { SubagentModal } from "./transcript/SubagentModal";
 import { Transcript } from "./transcript/Transcript";
 import { Topbar } from "./topbar/Topbar";
+import { createScrollAnchor, observeHeight } from "./ui/anchor";
 import { Drawer } from "./ui/Drawer";
 import { createMediaQuery, DESKTOP } from "./ui/media";
 
 const DEFAULT_PORT = 4319;
-/** How far off the end still counts as reading the end, in pixels. */
-const SLACK = 40;
 
 /** Same origin in production, because `pim-server` serves this bundle itself. */
 function gatewayUrl(): string {
@@ -56,12 +56,12 @@ export function App() {
  * The three regions: sidebar, topbar, and the transcript with the composer
  * floating over its foot.
  *
- * The client owns scroll anchoring, as it owns draft state and collapse — the
+ * Scroll anchoring is the client's, as draft state and collapse are — the
  * server has no opinion about any of it (see "Target Architecture": the client
- * is business-logic-free, not dumb). Anchoring is conditional on the reader
- * already being at the bottom, so scrolling up to read a tool result is not
- * yanked away by the next delta. On a phone it also re-runs when the software
- * keyboard resizes the visual viewport.
+ * is business-logic-free, not dumb). Here it hangs off three things the
+ * anchor cannot see for itself: the store growing, the composer changing
+ * height, and — on a phone — the software keyboard resizing the visual
+ * viewport.
  *
  * One `sidebar` signal drives both hosts of `Sidebar`: above `md` it collapses
  * the in-place column, below it opens the drawer. Which host is live is not
@@ -79,12 +79,7 @@ export function Shell(props: { readonly store: SessionStore }) {
       setSidebar(isDesktop);
     }
   );
-  let scroller!: HTMLDivElement;
-  let pinned = true;
-  // Where the transcript was last left, by the reader or by this component.
-  // A scroll event says a position changed, never who changed it, and the
-  // two are told apart by direction: only a reader moves the end away.
-  let anchor = 0;
+  const anchor = createScrollAnchor();
   // What the floating composer covers: its card, the pill row above it and
   // the padding around both. The transcript reserves this much padding plus
   // a blank row, so its last line clears the pills rather than scrolling
@@ -107,37 +102,19 @@ export function Shell(props: { readonly store: SessionStore }) {
     });
   };
 
-  // Every write to `scrollTop` goes through here, because the anchor has to
-  // move with it: the browser clamps the value it is given and reports the
-  // move one frame later, and an anchor left behind would make that late
-  // report look like a reader's gesture.
-  const scrollTo = (top: number): void => {
-    scroller.scrollTop = top;
-    anchor = scroller.scrollTop;
-  };
-
-  const stick = (): void => {
-    if (pinned && scroller) {
-      scrollTo(scroller.scrollHeight);
-    }
-  };
-
   // Re-pinning, for the two gestures that mean "I am reading the end again":
   // picking a session, which is a request to read it and a conversation is
   // read at its end — including the session already on screen, which the
   // store deliberately does not re-attach to — and sending a message, which
   // the reader expects to see land however far up they had scrolled.
-  const jump = (): void => {
-    pinned = true;
-    scrollTo(scroller.scrollHeight);
-  };
+  const jump = anchor.jump;
 
   createEffect(
     () =>
       props.store.state.durable.length +
       props.store.state.optimistic.length +
       props.store.liveSize(),
-    stick
+    anchor.stick
   );
 
   // The composer grows a line at a time as a draft is typed and collapses
@@ -148,18 +125,14 @@ export function Shell(props: { readonly store: SessionStore }) {
   createEffect(
     () => inset(),
     (height, previous) => {
-      if (pinned) {
-        stick();
-        return;
-      }
-      scrollTo(scroller.scrollTop + height - (previous ?? 0));
+      anchor.shift(height - (previous ?? 0));
     }
   );
 
   const viewport = globalThis.visualViewport;
-  viewport?.addEventListener("resize", stick);
+  viewport?.addEventListener("resize", anchor.stick);
   onCleanup(() => {
-    viewport?.removeEventListener("resize", stick);
+    viewport?.removeEventListener("resize", anchor.stick);
   });
 
   return (
@@ -201,33 +174,9 @@ export function Shell(props: { readonly store: SessionStore }) {
 
         <div class="relative min-h-0 flex-1">
           <div
-            ref={(element: HTMLDivElement) => {
-              scroller = element;
-            }}
+            ref={anchor.mount}
             class="h-full overflow-y-auto"
-            onScroll={() => {
-              const top = scroller.scrollTop;
-              const slack = scroller.scrollHeight - top - scroller.clientHeight;
-              // Slack alone cannot answer this. A row is taller than the
-              // flush that appended it — markdown parses, code blocks grow a
-              // copy button, images arrive — and a scroll event is delivered
-              // a frame after the position it reports was written, so the
-              // scroll this component itself wrote to reach the end is read
-              // back against a transcript that has since grown past it. Read
-              // as slack, that is indistinguishable from the reader having
-              // scrolled up, and unpinning there strands the transcript a
-              // screenful short of its end for good: the observer that would
-              // have caught the growth is now told to leave it alone.
-              //
-              // So the end is left only by moving away from it, which only a
-              // reader does, and reaching it re-pins however it was reached.
-              if (slack < SLACK) {
-                pinned = true;
-              } else if (top < anchor) {
-                pinned = false;
-              }
-              anchor = top;
-            }}
+            onScroll={anchor.onScroll}
           >
             <div
               // The same anchoring again, driven by the transcript's own
@@ -236,7 +185,7 @@ export function Shell(props: { readonly store: SessionStore }) {
               // images arrive — so a scroll written when the last event
               // landed stops short of the bottom by whatever grew after it.
               ref={(element: HTMLDivElement) => {
-                observeHeight(element, stick);
+                observeHeight(element, anchor.stick);
               }}
               class="mx-auto w-full max-w-3xl space-y-[--line] p-3 leading-[--line]"
               style={{ "padding-bottom": `calc(${inset()}px + var(--line))` }}
@@ -249,6 +198,9 @@ export function Shell(props: { readonly store: SessionStore }) {
                   trailing={props.store.trailing()}
                   live={props.store.state.live}
                   onEdit={recall}
+                  onOpenSubagent={(callId) => {
+                    void props.store.watch(callId);
+                  }}
                 />
               </Show>
             </div>
@@ -268,6 +220,8 @@ export function Shell(props: { readonly store: SessionStore }) {
           </div>
         </div>
       </div>
+      <SubagentModal store={props.store} />
+
       <Show
         when={
           props.store.update.state.pending || props.store.update.state.notice
@@ -306,28 +260,4 @@ export function Shell(props: { readonly store: SessionStore }) {
       </Show>
     </main>
   );
-}
-
-/**
- * An element's own height, reported as it changes.
- *
- * A `ResizeObserver` rather than a keystroke handler because the composer has
- * several ways to change height that are not typing — a wrapped model name,
- * an attachment row, the error line, a window resize — and a border-box
- * measurement catches every one of them at the moment layout settles.
- *
- * A DOM with no layout engine — the one the tests run in — reports zero
- * forever, which is the right answer there: nothing overlaps anything.
- */
-function observeHeight(
-  element: HTMLElement,
-  report: (height: number) => void
-): void {
-  const observer = new ResizeObserver(() => {
-    report(element.offsetHeight);
-  });
-  observer.observe(element);
-  onCleanup(() => {
-    observer.disconnect();
-  });
 }

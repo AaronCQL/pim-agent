@@ -1,10 +1,12 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Type } from "typebox";
 
 import { SessionRegistry } from "#core/session/SessionRegistry";
+import type { ToolDiff } from "#core/shared/DiffLines";
+import { SubagentLogs } from "#core/shared/SubagentLogs";
 import { Tools, type PimToolDefinition } from "#core/shared/Tools";
 import { WsGateway } from "#server/WsGateway";
 
@@ -54,6 +56,193 @@ function pingTool(): PimToolDefinition<typeof pingSchema, { echoed: string }> {
   };
 }
 
+/** The parent's call id for the delegated run, so a watch can name it. */
+export const SUBAGENT_CALL_ID = "call_sub";
+export const SUBAGENT_PROMPT = "find every call site of parseConfig";
+/** What the child says once it has finished looking. */
+export const SUBAGENT_ANSWER = "three of the nine are in tests";
+/** The line the child's own tool call changed, which is the diff's point. */
+export const CHILD_PATCH_LINE = "const port = 8080;";
+
+const subagentSchema = Type.Object({ prompt: Type.String() });
+const patchSchema = Type.Object({ path: Type.String() });
+
+const CHILD_PATH = "src/config.ts";
+
+const CHILD_DIFF: ToolDiff = {
+  path: CHILD_PATH,
+  hunks: [
+    {
+      oldStart: 1,
+      oldLines: 2,
+      newStart: 1,
+      newLines: 2,
+      lines: [
+        {
+          kind: "context",
+          oldLine: 1,
+          newLine: 1,
+          text: "export const app = {",
+        },
+        { kind: "removed", oldLine: 2, text: "const port = 80;" },
+        { kind: "added", newLine: 2, text: CHILD_PATCH_LINE },
+      ],
+    },
+  ],
+};
+
+/**
+ * A tool the child calls and the parent never does. Registered for its view
+ * alone: a watched transcript is projected in this process, so the diff a row
+ * opens onto is painted by the same factory a real tool would register.
+ */
+function patchTool(): PimToolDefinition<
+  typeof patchSchema,
+  { diff: ToolDiff }
+> {
+  return {
+    name: "patch",
+    label: "patch",
+    description: "edit a file",
+    parameters: patchSchema,
+    effect: { kind: "readOnly" },
+    execute: async (_id, params) => ({
+      content: [{ type: "text" as const, text: `patched ${params.path}` }],
+      details: { diff: CHILD_DIFF },
+    }),
+    toViewModel: ({ args, result }) => ({
+      label: "Patch",
+      title: [{ kind: "text", text: args?.path ?? "" }],
+      ...(result === undefined
+        ? {}
+        : {
+            body: [
+              {
+                kind: "diff" as const,
+                path: args?.path ?? "",
+                hunks: result.details.diff.hunks,
+              },
+            ],
+          }),
+    }),
+  };
+}
+
+/**
+ * A subagent, reduced to what a watch can see of one: a child session file
+ * written where the server derives it from, and a progress report per entry —
+ * which is the only signal the server gets that the child wrote anything.
+ */
+function subagentTool(
+  gate: () => Promise<void> | undefined
+): PimToolDefinition<typeof subagentSchema, { turns: number }> {
+  return {
+    name: "subagent",
+    label: "subagent",
+    description: "run a task in a subagent",
+    parameters: subagentSchema,
+    effect: { kind: "readOnly" },
+    execute: async (callId, params, _signal, onUpdate, ctx) => {
+      const log = await childLog(ctx.sessionManager.getSessionId(), callId);
+      await log.say("user", params.prompt);
+      onUpdate?.({
+        content: [{ type: "text" as const, text: "working" }],
+        details: { turns: 1 },
+      });
+      await gate();
+      await log.call("child_1", "patch", { path: CHILD_PATH });
+      await log.answered("child_1", "patch", `patched ${CHILD_PATH}`);
+      await log.say("assistant", SUBAGENT_ANSWER);
+      const result = {
+        content: [{ type: "text" as const, text: SUBAGENT_ANSWER }],
+        details: { turns: 2 },
+      };
+      onUpdate?.(result);
+      return result;
+    },
+    toViewModel: ({ args, result, isPartial }) => ({
+      label: "Subagent",
+      labelTone: isPartial ? "warning" : "accent",
+      title: [{ kind: "markdown", text: args?.prompt ?? "" }],
+      summary: [
+        {
+          kind: "spans",
+          spans: [
+            {
+              text: `patch ⬝ ${result?.details.turns ?? 1} turns`,
+              tone: isPartial ? "warning" : "muted",
+            },
+          ],
+        },
+      ],
+    }),
+  };
+}
+
+/**
+ * The child's session file, written by hand in pi's own JSONL: a real
+ * subagent's log is pi appending to it, and what a watch reads is the file,
+ * not the tool that filled it.
+ */
+async function childLog(
+  parentSessionId: string | undefined,
+  callId: string
+): Promise<{
+  readonly say: (role: string, text: string) => Promise<void>;
+  readonly call: (id: string, name: string, args: unknown) => Promise<void>;
+  readonly answered: (id: string, name: string, text: string) => Promise<void>;
+}> {
+  const path = await SubagentLogs.create(parentSessionId ?? "", callId);
+  if (path === null) {
+    throw new Error(`no child log for ${parentSessionId}/${callId}`);
+  }
+  const at = "2026-09-07T10:00:00.000Z";
+  let entries = 0;
+  const append = async (message: unknown): Promise<void> => {
+    entries += 1;
+    await appendFile(
+      path,
+      `${JSON.stringify({
+        type: "message",
+        id: `entry-${entries}`,
+        parentId: null,
+        timestamp: at,
+        message,
+      })}\n`
+    );
+  };
+  await Bun.write(
+    path,
+    `${JSON.stringify({
+      type: "session",
+      version: 3,
+      id: `${parentSessionId}-${callId}`,
+      timestamp: at,
+      cwd: "/repo",
+    })}\n`
+  );
+  return {
+    say: (role, text) => append({ role, content: [{ type: "text", text }] }),
+    call: (id, name, args) =>
+      append({
+        role: "assistant",
+        content: [
+          { type: "text", text: "Patching it." },
+          { type: "toolCall", id, name, arguments: args },
+        ],
+      }),
+    answered: (id, name, text) =>
+      append({
+        role: "toolResult",
+        toolCallId: id,
+        toolName: name,
+        isError: false,
+        content: [{ type: "text", text }],
+        details: { diff: CHILD_DIFF },
+      }),
+  };
+}
+
 function chunk(delta: Record<string, unknown>, finish?: string): string {
   return `data: ${JSON.stringify({
     id: "1",
@@ -70,6 +259,24 @@ type ChatBody = {
     readonly content?: unknown;
   }[];
 };
+
+/** Which tool the prompt is asking for, if it is asking for one. */
+function requestedTool(
+  prompt: string
+):
+  | { readonly callId: string; readonly name: string; readonly args: unknown }
+  | undefined {
+  if (prompt.includes("delegate")) {
+    return {
+      callId: SUBAGENT_CALL_ID,
+      name: "subagent",
+      args: { prompt: SUBAGENT_PROMPT },
+    };
+  }
+  return prompt.includes("tool")
+    ? { callId: "call_1", name: "ping", args: { text: "hi" } }
+    : undefined;
+}
 
 function lastUserText(body: ChatBody): string {
   for (let index = body.messages.length - 1; index >= 0; index -= 1) {
@@ -103,6 +310,7 @@ export class GatewayHarness {
   public gateway!: WsGateway;
   private modelServer: ReturnType<typeof Bun.serve> | undefined;
   private previousAgentDir: string | undefined;
+  private previousPimHome: string | undefined;
   private agentDir = "";
   private port = 0;
   /** Held open by a test that wants the turn to still be in flight. */
@@ -133,6 +341,10 @@ export class GatewayHarness {
     await mkdir(join(this.agentDir, "extensions"), { recursive: true });
     this.previousAgentDir = process.env.PI_CODING_AGENT_DIR;
     process.env.PI_CODING_AGENT_DIR = this.agentDir;
+    // A subagent's log is derived under this root, so a test run must never
+    // write into the developer's own ~/.pim/subagents.
+    this.previousPimHome = process.env.PIM_HOME_DIR;
+    process.env.PIM_HOME_DIR = join(this.tmp, "pim");
     this.startModelServer();
     await Bun.write(
       join(this.agentDir, "models.json"),
@@ -150,7 +362,12 @@ export class GatewayHarness {
     this.registry = new SessionRegistry({
       defaults: { cwd: this.tmp, model: "test/echo" },
       agentDir: this.agentDir,
-      customTools: () => [Tools.wrap(pingTool()) as unknown as ToolDefinition],
+      customTools: () =>
+        [
+          Tools.wrap(pingTool()),
+          Tools.wrap(subagentTool(() => this.gate)),
+          Tools.wrap(patchTool()),
+        ] as unknown as ToolDefinition[],
     });
     await this.registry.init();
     this.startGateway();
@@ -184,10 +401,15 @@ export class GatewayHarness {
     await this.registry.disposeAll();
     await this.modelServer?.stop(true);
     this.modelServer = undefined;
-    if (this.previousAgentDir === undefined) {
-      delete process.env.PI_CODING_AGENT_DIR;
-    } else {
-      process.env.PI_CODING_AGENT_DIR = this.previousAgentDir;
+    for (const [name, previous] of [
+      ["PI_CODING_AGENT_DIR", this.previousAgentDir],
+      ["PIM_HOME_DIR", this.previousPimHome],
+    ] as const) {
+      if (previous === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = previous;
+      }
     }
     await rm(this.tmp, { recursive: true, force: true });
   }
@@ -203,10 +425,7 @@ export class GatewayHarness {
         const body = (await req.json()) as ChatBody;
         const prompt = lastUserText(body);
         const answered = body.messages.at(-1)?.role === "tool";
-        const tool =
-          !answered && prompt.includes("tool")
-            ? { name: "ping", args: { text: "hi" } }
-            : undefined;
+        const tool = answered ? undefined : requestedTool(prompt);
         const gate = this.gate;
         const stream = new ReadableStream<Uint8Array>({
           async start(controller) {
@@ -225,7 +444,7 @@ export class GatewayHarness {
                   tool_calls: [
                     {
                       index: 0,
-                      id: "call_1",
+                      id: tool.callId,
                       type: "function",
                       function: {
                         name: tool.name,

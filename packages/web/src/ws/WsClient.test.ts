@@ -274,11 +274,16 @@ test("a finished step goes durable while the next one is still live", async () =
   expect(step?.type === "message" && step.text.trim()).toBe(TOOL_PROSE);
   expect(step?.type === "message" && step.thinking?.trim()).toBe(REASONING);
   expect(step?.type === "message" && step.toolCalls?.length).toBe(1);
-  expect(store.state.live).toHaveLength(1);
-  // The call is settled from the durable row and the live one alike: the
-  // client does not wait for pi to append the result before the row stops
-  // spinning.
-  expect(liveTools(store)).toEqual([]);
+  // Prose, rather than the bucket's length: a retired step whose result is
+  // drained in the same batch as its own durable copy leaves an empty shell
+  // behind — one that draws no row and goes when the turn settles. What must
+  // never happen is the finished step's words being in both places at once.
+  expect(
+    store.state.live.filter((message) => message.text !== "")
+  ).toHaveLength(1);
+  // The call stopped spinning on the frame that ended it: the client does not
+  // wait for pi to append the result before the row settles.
+  expect(liveTools(store).some((tool) => tool.isPartial)).toBe(false);
 
   release();
   await idle(store);

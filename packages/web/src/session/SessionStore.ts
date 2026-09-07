@@ -7,10 +7,12 @@ import type { AttachmentRef, CommandDraft } from "#protocol/Command";
 import type {
   AttachmentView,
   DurableEvent,
+  EphemeralEvent,
   ModelView,
   ServerEvent,
   SessionStatus,
   SessionSummaryView,
+  StreamEvent,
   TurnStats,
 } from "#protocol/ServerEvent";
 import { isDurableEvent } from "#protocol/ServerEvent";
@@ -51,6 +53,18 @@ export type LiveMessage = {
    * there is — and the only place an update to one still running can land.
    */
   retired: boolean;
+};
+
+/**
+ * The one subagent this browser is reading: the child's own log as far as it
+ * has been sent, and its turn in flight. The same two halves the session has,
+ * because a child's transcript is a transcript — and separate from them,
+ * because nothing a child said belongs in the conversation that spawned it.
+ */
+export type SubagentTranscript = {
+  readonly callId: string;
+  events: DurableEvent[];
+  live: LiveMessage[];
 };
 
 /** What the composer's two chips choose from; one query answers both. */
@@ -202,6 +216,12 @@ export type SessionState = {
   openings: Record<string, string>;
   /** The one session with no file yet, if this browser is holding one. */
   unwritten: Unwritten | undefined;
+  /**
+   * The subagent being read over the conversation, if one is. At most one,
+   * ever: a subagent cannot spawn a subagent, so nothing can be read on top
+   * of this.
+   */
+  subagent: SubagentTranscript | undefined;
 };
 
 export type SessionStoreOptions = {
@@ -307,6 +327,7 @@ export class SessionStore {
       attachments: {},
       openings: {},
       unwritten,
+      subagent: undefined,
     });
     this.drafts = drafts;
     // Nothing to attach to means the server is about to make a session, and
@@ -534,6 +555,61 @@ export class SessionStore {
       this.dropQueued();
     }
     return restored.join("\n\n");
+  }
+
+  /**
+   * Read one subagent's transcript, live if it is still running. Read-only in
+   * the strong sense: it reaches no agent, and the child's events arrive
+   * enveloped, so nothing drawn from them can land in the conversation.
+   */
+  public async watch(callId: string): Promise<void> {
+    this.setState((draft) => {
+      draft.subagent = { callId, events: [], live: [] };
+    });
+    await this.sendWatch(callId, 0);
+  }
+
+  /**
+   * Let the child go. The server drops a watch on socket close and on an
+   * attach elsewhere, but a modal closed on a live connection is neither, and
+   * a watch left behind one is a projection growing for nobody.
+   */
+  public unwatch(): void {
+    const watched = this.state.subagent;
+    if (!watched) {
+      return;
+    }
+    this.setState((draft) => {
+      draft.subagent = undefined;
+    });
+    // Whether or not the server still holds one: closing a modal over a
+    // connection that has since dropped is not a failure anyone need hear.
+    void this.client
+      .send({ type: "unwatch_subagent", callId: watched.callId })
+      .catch(() => undefined);
+  }
+
+  private async sendWatch(callId: string, fromSeq: number): Promise<void> {
+    try {
+      const response = await this.client.send({
+        type: "watch_subagent",
+        sessionId: this.state.sessionId,
+        callId,
+        fromSeq,
+      });
+      if (!response.success) {
+        throw new Error(response.error ?? "the server refused the watch");
+      }
+    } catch (error) {
+      // A child that cannot be read is not a modal onto a blank sheet: the
+      // reader is put back where they were and told why, as for any refusal.
+      this.setState((draft) => {
+        if (draft.subagent?.callId === callId) {
+          draft.subagent = undefined;
+        }
+        draft.error = (error as Error).message;
+      });
+    }
   }
 
   public async pickFiles(
@@ -965,7 +1041,8 @@ export class SessionStore {
           this.ingest(inner);
         }
         return;
-      case "attached":
+      case "attached": {
+        const previous = this.state.sessionId;
         this.setState((draft) => {
           // A different session means a different log, so the ordinals this
           // client holds mean nothing; the same one means resume, and the
@@ -996,64 +1073,31 @@ export class SessionStore {
           this.putDraft(event.sessionId, this.claimed);
           this.claimed = undefined;
         }
+        this.rewatch(previous, event.sessionId);
         return;
+      }
       case "message_start":
-        this.setState((draft) => {
-          liveMessage(draft.live, event.messageId);
-        });
-        return;
       case "message_retire":
-        this.setState((draft) => {
-          // The durable copy of this message arrived in the same frame, so
-          // dropping its prose here is a swap, not a gap. Its calls are not
-          // superseded with it — each of them leaves separately, on the
-          // durable result that answers for it.
-          draft.live = draft.live.flatMap((message) => {
-            if (message.messageId !== event.messageId) {
-              return [message];
-            }
-            return message.tools.length === 0
-              ? []
-              : [{ ...message, text: "", thinking: "", retired: true }];
-          });
-        });
-        return;
       case "text_delta":
-        this.setState((draft) => {
-          const message = liveMessage(draft.live, event.messageId);
-          message.text += event.delta;
-        });
-        return;
       case "thinking_delta":
-        this.setState((draft) => {
-          const message = liveMessage(draft.live, event.messageId);
-          message.thinking += event.delta;
-        });
-        return;
       case "tool_call":
+      case "tool_update":
+      case "tool_end":
         this.setState((draft) => {
-          // Onto the message being streamed: pi calls tools from the step it
-          // just wrote, and that is the order the transcript draws them in.
-          const message = liveMessage(draft.live, event.messageId);
-          if (message.tools.every((tool) => tool.callId !== event.callId)) {
-            message.tools.push({
-              callId: event.callId,
-              name: event.name,
-              view: event.view,
-              isError: false,
-              isPartial: true,
-            });
-          }
+          applyLive(draft, event);
         });
         return;
-      case "tool_update":
-        this.patchTool(event.callId, { view: event.view });
-        return;
-      case "tool_end":
-        this.patchTool(event.callId, {
-          view: event.view,
-          isError: event.isError,
-          isPartial: false,
+      case "subagent_events":
+        this.setState((draft) => {
+          const watched = draft.subagent;
+          // An envelope for a watch this client has already dropped: the
+          // server was still sending when the modal closed.
+          if (watched?.callId !== event.callId) {
+            return;
+          }
+          for (const inner of event.events) {
+            applyChild(watched, this.resolveAttachments(inner));
+          }
         });
         return;
       case "picker_invalidate":
@@ -1115,16 +1159,7 @@ export class SessionStore {
   }
 
   private ingestDurable(event: DurableEvent): void {
-    const resolved =
-      event.type === "message" && event.attachments
-        ? {
-            ...event,
-            attachments: event.attachments.map((file) => ({
-              ...file,
-              url: this.absolute(file.url),
-            })),
-          }
-        : event;
+    const resolved = this.resolveAttachments(event);
     this.setState((draft) => {
       draft.durable.push(resolved);
       if (event.type === "message" && event.role === "user") {
@@ -1139,35 +1174,50 @@ export class SessionStore {
         );
       }
       if (event.type === "tool_result") {
-        for (const message of draft.live) {
-          message.tools = message.tools.filter(
-            (tool) => tool.callId !== event.callId
-          );
-        }
-        // A retired message is kept for its calls alone, so the last result
-        // to be written is what takes the shell with it.
-        draft.live = draft.live.filter(
-          (message) => !message.retired || message.tools.length > 0
-        );
+        settleLiveTool(draft, event.callId);
       }
     });
   }
 
-  /** Rewrites one live call wherever in the turn it was made. */
-  private patchTool(
-    callId: string,
-    patch: Partial<Omit<LiveTool, "callId" | "name">>
-  ): void {
-    this.setState((draft) => {
-      for (const message of draft.live) {
-        const at = message.tools.findIndex((tool) => tool.callId === callId);
-        const existing = message.tools[at];
-        if (existing) {
-          message.tools[at] = { ...existing, ...patch };
-          return;
-        }
-      }
-    });
+  /**
+   * The files a message carried, where this browser can fetch them. Server
+   * frames carry server-relative paths, and a child's message is served by
+   * the same gateway the session's is.
+   */
+  private resolveAttachments<TEvent extends StreamEvent>(
+    event: TEvent
+  ): TEvent {
+    if (event.type !== "message" || !event.attachments) {
+      return event;
+    }
+    return {
+      ...event,
+      attachments: event.attachments.map((file) => ({
+        ...file,
+        url: this.absolute(file.url),
+      })),
+    };
+  }
+
+  /**
+   * A watch does not survive the socket that asked for it, and does not
+   * follow a reader to another session. So a modal still open over a session
+   * that has just re-attached asks again, from the child's first entry —
+   * ordinals already painted are dropped on the way back in — and one over a
+   * session being left closes with it.
+   */
+  private rewatch(previous: string, sessionId: string): void {
+    const watched = this.state.subagent;
+    if (!watched) {
+      return;
+    }
+    if (previous !== sessionId) {
+      this.setState((draft) => {
+        draft.subagent = undefined;
+      });
+      return;
+    }
+    void this.sendWatch(watched.callId, 0);
   }
 
   /**
@@ -1216,6 +1266,125 @@ function liveMessage(live: LiveMessage[], messageId: string): LiveMessage {
   };
   live.push(message);
   return message;
+}
+
+/**
+ * The bucket a turn in flight is held in — the session's, or a watched
+ * subagent's. Taken as a whole rather than as its array because dropping a
+ * message from one is a write to the field: a store draft is patched, and a
+ * splice through the patch is not the same edit as the array it replaces.
+ */
+type LiveHolder = { live: LiveMessage[] };
+
+/**
+ * One event of a turn in flight, folded into the bucket holding it. Shared by
+ * the session and by a watched subagent, because a child's turn is a turn:
+ * what differs between them is which bucket it lands in, and nothing else.
+ */
+function applyLive(target: LiveHolder, event: EphemeralEvent): void {
+  switch (event.type) {
+    case "message_start":
+      liveMessage(target.live, event.messageId);
+      return;
+    case "text_delta":
+      liveMessage(target.live, event.messageId).text += event.delta;
+      return;
+    case "thinking_delta":
+      liveMessage(target.live, event.messageId).thinking += event.delta;
+      return;
+    case "tool_call": {
+      // Onto the message being streamed: pi calls tools from the step it just
+      // wrote, and that is the order the transcript draws them in.
+      const message = liveMessage(target.live, event.messageId);
+      if (message.tools.every((tool) => tool.callId !== event.callId)) {
+        message.tools.push({
+          callId: event.callId,
+          name: event.name,
+          view: event.view,
+          isError: false,
+          isPartial: true,
+        });
+      }
+      return;
+    }
+    case "tool_update":
+      patchLiveTool(target.live, event.callId, { view: event.view });
+      return;
+    case "tool_end":
+      patchLiveTool(target.live, event.callId, {
+        view: event.view,
+        isError: event.isError,
+        isPartial: false,
+      });
+      return;
+    case "message_retire":
+      // The durable copy of this message arrived in the same frame, so
+      // dropping its prose here is a swap, not a gap. Its calls are not
+      // superseded with it — each of them leaves separately, on the durable
+      // result that answers for it.
+      target.live = target.live.flatMap((message) => {
+        if (message.messageId !== event.messageId) {
+          return [message];
+        }
+        return message.tools.length === 0
+          ? []
+          : [{ ...message, text: "", thinking: "", retired: true }];
+      });
+      return;
+    default:
+      return;
+  }
+}
+
+/** Rewrites one live call wherever in the turn it was made. */
+function patchLiveTool(
+  live: LiveMessage[],
+  callId: string,
+  patch: Partial<Omit<LiveTool, "callId" | "name">>
+): void {
+  for (const message of live) {
+    const at = message.tools.findIndex((tool) => tool.callId === callId);
+    const existing = message.tools[at];
+    if (existing) {
+      message.tools[at] = { ...existing, ...patch };
+      return;
+    }
+  }
+}
+
+/** The call has been written down, so the live view of it is superseded. */
+function settleLiveTool(target: LiveHolder, callId: string): void {
+  for (const message of target.live) {
+    message.tools = message.tools.filter((tool) => tool.callId !== callId);
+  }
+  // A retired message is kept for its calls alone, so the last result to be
+  // written is what takes the shell with it.
+  target.live = target.live.filter(
+    (message) => !message.retired || message.tools.length > 0
+  );
+}
+
+/**
+ * One event of a child's log, folded into the modal reading it. Applied here
+ * rather than through `ingest` for the reason the envelope exists at all: a
+ * child's messages carry ordinals of their own, and taken for the session's
+ * they would land in the conversation.
+ */
+function applyChild(target: SubagentTranscript, event: StreamEvent): void {
+  if (!isDurableEvent(event)) {
+    applyLive(target, event);
+    return;
+  }
+  // A watch cannot be resumed across a reconnect, so a re-opened one starts
+  // at the child's first entry; the child's own ordinals say which of those
+  // this modal has already painted.
+  if (event.seq <= (target.events.at(-1)?.seq ?? 0)) {
+    return;
+  }
+  target.events.push(event);
+  if (event.type === "tool_result") {
+    settleLiveTool(target, event.callId);
+  }
 }
 
 function readDrafts(): Record<string, string> {

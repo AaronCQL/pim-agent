@@ -17,6 +17,9 @@ import {
   type ToolRow,
 } from "./rows";
 
+/** The tool whose rows open a transcript instead of a body. */
+const SUBAGENT = "subagent";
+
 type RowOf<TKind extends Row["kind"]> = Extract<Row, { kind: TKind }>;
 
 type RowMap = {
@@ -50,6 +53,12 @@ export function Transcript(props: {
    * that offers this is drawing that one.
    */
   readonly onEdit?: () => void;
+  /**
+   * Read a subagent's own transcript. Absent inside the modal that answers
+   * it, which is how depth stays at one: a subagent cannot spawn a subagent,
+   * so nothing in a child's transcript may offer to open another.
+   */
+  readonly onOpenSubagent?: (callId: string) => void;
 }) {
   const durable = createMemo(() => buildRows(props.events));
   const rows = createMemo(() =>
@@ -63,7 +72,9 @@ export function Transcript(props: {
     message: (message) => (
       <MessageBubble row={message.row} onEdit={props.onEdit} />
     ),
-    tool: ToolRowView,
+    tool: (tool) => (
+      <ToolRowView row={tool.row} onOpenSubagent={props.onOpenSubagent} />
+    ),
     notice: NoticeRowView,
   };
 
@@ -228,14 +239,36 @@ function Card(props: { readonly row: MessageRow }) {
   );
 }
 
-function ToolRowView(props: { readonly row: ToolRow }) {
+/**
+ * A tool row, and — for the one tool whose output is a conversation — the way
+ * into it. A subagent's run is a session of its own, far too much to hang off
+ * a disclosure inside a column, so the row offers to open it rather than to
+ * expand it.
+ */
+function ToolRowView(props: {
+  readonly row: ToolRow;
+  readonly onOpenSubagent?: (callId: string) => void;
+}) {
   return (
-    <ToolCards
-      view={props.row.view}
-      name={props.row.name}
-      isError={props.row.isError}
-      isPartial={props.row.isPartial}
-    />
+    <>
+      <ToolCards
+        view={props.row.view}
+        name={props.row.name}
+        isError={props.row.isError}
+        isPartial={props.row.isPartial}
+      />
+      <Show
+        when={props.row.name === SUBAGENT && props.onOpenSubagent !== undefined}
+      >
+        <button
+          type="button"
+          class="pl-2ch text-left text-sm text-indigo-300 hover:text-indigo-200"
+          onClick={() => props.onOpenSubagent?.(props.row.id)}
+        >
+          Open transcript
+        </button>
+      </Show>
+    </>
   );
 }
 
