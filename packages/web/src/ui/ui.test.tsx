@@ -286,6 +286,39 @@ describe("platform wrappers", () => {
     expect(style).toContain("max-height: 288px");
   });
 
+  // The composer's pickers read as part of the card they complete, so they
+  // may not grow past it however long a description is.
+  test("a matched panel is pinned to the trigger's width, not the viewport's", () => {
+    const host = mountPoint();
+    const trigger = document.createElement("div");
+    trigger.getBoundingClientRect = () =>
+      ({
+        left: 20,
+        top: 300,
+        right: 320,
+        bottom: 340,
+        width: 300,
+        height: 40,
+      }) as DOMRect;
+    host.append(trigger);
+    window.innerWidth = 1000;
+    window.innerHeight = 800;
+
+    render(
+      () => (
+        <Popover open anchor={() => trigger} match>
+          rows
+        </Popover>
+      ),
+      host
+    );
+    flush();
+
+    const style = host.querySelector("[popover]")!.getAttribute("style")!;
+    expect(style).toContain("min-width: 300px");
+    expect(style).toContain("max-width: 300px");
+  });
+
   test("the disclosure caret is the only glyph, and it can carry state", () => {
     const host = mountPoint();
     render(

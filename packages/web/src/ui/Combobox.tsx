@@ -113,6 +113,8 @@ export function Combobox(props: {
   readonly onSelect: (index: number) => void;
   readonly onActivate: (index: number) => void;
   readonly anchor?: () => HTMLElement | undefined;
+  /** Hold the list to the anchor's width; see `Popover`. */
+  readonly match?: boolean;
   readonly emptyLabel?: string;
 }) {
   let list!: HTMLUListElement;
@@ -133,6 +135,7 @@ export function Combobox(props: {
     <Popover
       open={props.open}
       {...(props.anchor === undefined ? {} : { anchor: props.anchor })}
+      match={props.match ?? false}
       class="z-50 flex rounded-lg bg-neutral-850 p-1 text-sm ring-1 ring-neutral-700"
     >
       {/* The scroller is inside the panel, not the panel itself: the panel's
@@ -170,7 +173,11 @@ export function Combobox(props: {
                 props.onSelect(index());
               }}
             >
-              <span class="shrink-0">{item.label}</span>
+              {/* The label holds its width and the description gives way
+                  first, so what is being completed stays readable; the cap is
+                  the last resort for a label that is itself wider than the
+                  row. */}
+              <span class="max-w-full shrink-0 truncate">{item.label}</span>
               <Show when={item.description}>
                 {(description) => (
                   <span class="min-w-0 truncate text-neutral-500">

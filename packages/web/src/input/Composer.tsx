@@ -522,6 +522,7 @@ export function Composer(props: {
       <Combobox
         open={open()}
         anchor={() => card}
+        match
         items={items()}
         activeIndex={navigation.activeIndex()}
         onActivate={navigation.setActiveIndex}

@@ -35,6 +35,16 @@ export function Popover(props: {
   readonly open: boolean;
   /** The element the panel is placed over — the chip, or the composer card. */
   readonly anchor?: () => HTMLElement | undefined;
+  /**
+   * Cap the panel at the trigger's width instead of the room left on screen.
+   * A chip wants the opposite — a two-word trigger cannot say how wide a list
+   * of model names is — but a panel over the composer card is reading as part
+   * of the card, and a completion list wider than the box it completes is a
+   * second, disagreeing edge down the middle of the page. Paired with the
+   * `min-width` below it pins the panel to exactly the trigger's width, which
+   * leaves the rows to truncate.
+   */
+  readonly match?: boolean;
   readonly class?: string;
   readonly children: Element;
 }) {
@@ -71,7 +81,7 @@ export function Popover(props: {
       left: `${left}px`,
       bottom: `${window.innerHeight - rect.top + GAP}px`,
       "min-width": `${rect.width}px`,
-      "max-width": `${window.innerWidth - EDGE - left}px`,
+      "max-width": `${props.match ? rect.width : window.innerWidth - EDGE - left}px`,
       "max-height": `${Math.max(rect.top - EDGE - GAP, 0)}px`,
       margin: "0",
     });
