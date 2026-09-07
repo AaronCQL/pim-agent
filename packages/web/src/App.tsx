@@ -276,7 +276,7 @@ export function Shell(props: { readonly store: SessionStore }) {
         <div
           role="status"
           class={{
-            "fixed right-3 bottom-3 z-50 flex max-w-sm items-start gap-3 rounded-lg border border-neutral-700 bg-neutral-850 p-3 text-sm shadow-lg": true,
+            "fixed right-3 bottom-3 z-50 flex max-w-sm items-start gap-3 rounded-lg bg-neutral-850 p-3 text-sm shadow-lg ring-1 ring-neutral-700": true,
             "text-emerald-400":
               props.store.update.state.notice?.tone === "success",
             "text-amber-400":

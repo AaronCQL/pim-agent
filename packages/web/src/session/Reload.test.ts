@@ -18,6 +18,7 @@ import { SessionStore } from "./SessionStore";
 
 const URL = "ws://127.0.0.1:4319";
 const KEY = `pim.reload:${URL}`;
+const DISMISS_MS = 10_000;
 const TARGET = { sessionId: "s1", cwd: "/repo" };
 const ATTACHED: ServerEvent = {
   type: "attached",
@@ -46,7 +47,7 @@ afterEach(() => {
   mock.restore();
 });
 
-test("intent survives one page reload, preserves the session, and toasts the running versions once", () => {
+test("intent survives one page reload, preserves the session, and toasts the running versions once until it self-dismisses", () => {
   const navigate = mock(() => {});
   const update = new Reload(URL, navigate);
   expect(update.begin(TARGET)).toBe(true);
@@ -79,7 +80,9 @@ test("intent survives one page reload, preserves the session, and toasts the run
     text: "Restarted with pim 1.2.3.",
   });
   expect(sessionStorage.getItem(KEY)).toBeNull();
-  fresh.update.dismiss();
+  jest.advanceTimersByTime(DISMISS_MS);
+  flush();
+  expect(fresh.update.state.notice).toBeUndefined();
   fresh.ingest(ATTACHED);
   flush();
   expect(fresh.update.state.notice).toBeUndefined();
@@ -166,23 +169,28 @@ test("an unsupervised server asks for a manual restart and reports skips", () =>
   update.ingest({
     ...RESTARTING,
     phase: "stranded",
-    skipped: [{ label: "git pull", reason: "dirty tree" }],
+    // A note cannot soften this one: the restart itself is still owed.
+    skipped: [{ label: "git pull", reason: "dirty tree", blocking: false }],
   });
   flush();
   expect(update.state.pending).toBe(false);
+  expect(update.state.notice?.tone).toBe("warning");
   expect(update.state.notice?.text).toContain("Restart it manually");
   expect(update.state.notice?.text).toContain("Skipped git pull: dirty tree");
+  jest.advanceTimersByTime(DISMISS_MS);
+  flush();
+  expect(update.state.notice?.text).toContain("Restart it manually");
   expect(sessionStorage.getItem(KEY)).toBeNull();
   expect(navigate).not.toHaveBeenCalled();
 });
 
-test("skips survive navigation and success reports the handshake, not the promised version", () => {
+test("a note survives navigation and stays a success reporting the handshake, not the promised version", () => {
   const update = new Reload(URL, () => {});
   update.begin(TARGET);
   update.ingest({
     ...RESTARTING,
     to: "9.9.9",
-    skipped: [{ label: "git pull", reason: "dirty tree" }],
+    skipped: [{ label: "git pull", reason: "dirty tree", blocking: false }],
   });
   update.connection("reconnecting");
   update.connection("open");
@@ -190,10 +198,36 @@ test("skips survive navigation and success reports the handshake, not the promis
   const fresh = new Reload(URL);
   fresh.ingest(ATTACHED);
   flush();
-  expect(fresh.state.notice?.tone).toBe("warning");
+  expect(fresh.state.notice?.tone).toBe("success");
   expect(fresh.state.notice?.text).toContain("pim 1.2.3");
   expect(fresh.state.notice?.text).not.toContain("9.9.9");
   expect(fresh.state.notice?.text).toContain("Skipped git pull: dirty tree");
+  jest.advanceTimersByTime(DISMISS_MS);
+  flush();
+  expect(fresh.state.notice).toBeUndefined();
+});
+
+test("a blocking skip warns and stays, because the update did less than it was asked", () => {
+  const update = new Reload(URL, () => {});
+  update.begin(TARGET);
+  update.ingest({
+    ...RESTARTING,
+    to: "1.2.2",
+    skipped: [
+      { label: "install", reason: "the registry was silent", blocking: true },
+    ],
+  });
+  update.connection("reconnecting");
+  update.connection("open");
+  update.dispose();
+  const fresh = new Reload(URL);
+  fresh.ingest(ATTACHED);
+  jest.advanceTimersByTime(DISMISS_MS);
+  flush();
+  expect(fresh.state.notice?.tone).toBe("warning");
+  expect(fresh.state.notice?.text).toContain(
+    "Skipped install: the registry was silent"
+  );
 });
 
 test("timeout clears intent, stops navigation, and is not extended by steps or page reloads", () => {

@@ -11,7 +11,11 @@ import { WsGateway } from "./WsGateway";
 
 const STEP = "bun install";
 const SKIPPED = [
-  { label: "git pull", reason: "the working tree has uncommitted changes" },
+  {
+    label: "git pull",
+    reason: "the working tree has uncommitted changes",
+    blocking: false,
+  },
 ] as const;
 const UPDATED: UpdateOutcome = {
   ok: true,

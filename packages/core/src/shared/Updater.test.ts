@@ -54,7 +54,7 @@ describe("plan for a dev checkout", () => {
     expect(skipped).toEqual([]);
   });
 
-  test("skips the pull on a dirty tree, and says why", () => {
+  test("skips the pull on a dirty tree, says why, and owes the operator nothing", () => {
     const { steps, skipped } = Updater.plan(facts({ cleanTree: false }));
 
     expect(argv(steps)).toEqual([
@@ -62,7 +62,11 @@ describe("plan for a dev checkout", () => {
       ["bun", "run", "build:web", "--", "--outDir", "dist/staging"],
     ]);
     expect(skipped).toEqual([
-      { label: "git pull", reason: "the working tree has uncommitted changes" },
+      {
+        label: "git pull",
+        reason: "the working tree has uncommitted changes",
+        blocking: false,
+      },
     ]);
   });
 
@@ -93,12 +97,16 @@ describe("plan for a prod install", () => {
     expect(argv(steps)).toEqual([["bun", "install", "-g", "@scope/pim@0.1.0"]]);
   });
 
-  test("skips the install when the registry did not answer", () => {
+  test("skips the install when the registry did not answer, and marks the miss blocking", () => {
     const { steps, skipped } = Updater.plan(facts({ at: prod }));
 
     expect(steps).toEqual([]);
     expect(skipped).toEqual([
-      { label: "install", reason: "the npm registry could not be reached" },
+      {
+        label: "install",
+        reason: "the npm registry could not be reached",
+        blocking: true,
+      },
     ]);
   });
 });

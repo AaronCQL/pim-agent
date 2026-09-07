@@ -13,6 +13,8 @@ type Intent = {
   readonly phase: "updating" | "restarting" | "loaded";
   readonly target: AttachTarget;
   readonly skipped: string;
+  /** Whether any skip left the operator something to do; see `UpdateSkip`. */
+  readonly blocking: boolean;
 };
 
 type State = {
@@ -24,6 +26,7 @@ type State = {
 };
 
 const TIMEOUT_MS = 180_000;
+const DISMISS_MS = 10_000;
 const TIMEOUT_NOTICE: ReloadNotice = {
   tone: "warning",
   text: "Restart timed out. The server may still be updating; check it before trying again.",
@@ -38,6 +41,7 @@ export class Reload {
   private readonly reloadPage: () => void;
   private intent: Intent | undefined;
   private timer: ReturnType<typeof setTimeout> | undefined;
+  private dismissTimer: ReturnType<typeof setTimeout> | undefined;
   private disconnected: boolean;
   private navigating: boolean;
 
@@ -77,6 +81,7 @@ export class Reload {
       phase: "updating",
       target,
       skipped: "",
+      blocking: false,
     };
     this.disconnected = false;
     this.persist();
@@ -135,9 +140,9 @@ export class Reload {
         state.piVersion = event.piVersion;
       });
       if (this.intent?.phase === "loaded") {
-        const skipped = this.intent.skipped;
+        const { skipped, blocking } = this.intent;
         this.finish({
-          tone: skipped ? "warning" : "success",
+          tone: blocking ? "warning" : "success",
           text: `Restarted with pim ${event.pimVersion}.${skipped}`,
         });
       }
@@ -159,6 +164,7 @@ export class Reload {
             ...this.intent,
             phase: "restarting",
             skipped: skips(event),
+            blocking: event.skipped.some((skip) => skip.blocking),
           };
           this.persist();
         }
@@ -192,6 +198,8 @@ export class Reload {
   }
 
   public dismiss(): void {
+    clearTimeout(this.dismissTimer);
+    this.dismissTimer = undefined;
     this.setState((state) => {
       state.notice = undefined;
     });
@@ -199,7 +207,9 @@ export class Reload {
 
   public dispose(): void {
     clearTimeout(this.timer);
+    clearTimeout(this.dismissTimer);
     this.timer = undefined;
+    this.dismissTimer = undefined;
   }
 
   private progress(label: string): void {
@@ -226,6 +236,11 @@ export class Reload {
       state.label = "";
       state.notice = notice;
     });
+    // Only a success is purely informational; a warning or an error names the
+    // manual step still owed, so it stays until the reader dismisses it.
+    if (notice.tone === "success") {
+      this.dismissTimer = setTimeout(() => this.dismiss(), DISMISS_MS);
+    }
   }
 
   private persist(): void {
@@ -257,7 +272,10 @@ function readIntent(key: string): Intent | undefined {
         typeof saved.target.sessionId === "string") &&
       (saved.target.cwd === undefined || typeof saved.target.cwd === "string")
     ) {
-      return saved;
+      // The bundle that wrote this one may predate `blocking` — the update to
+      // this very build is that case — so an absent flag reads as a note
+      // rather than discarding the toast the operator is waiting for.
+      return { ...saved, blocking: saved.blocking === true };
     }
   } catch {
     // A stale or unavailable storage entry must not prevent opening a chat.

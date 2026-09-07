@@ -23,7 +23,17 @@ export type UpdateStep =
     }
   | { readonly label: string; readonly act: () => Promise<void> };
 
-export type UpdateSkip = { readonly label: string; readonly reason: string };
+/**
+ * Work the plan declined to do. `blocking` is the difference between the two
+ * kinds a reader has to tell apart: a note leaves nothing owed — the run did
+ * everything that was asked of it — while a blocking skip means it did less,
+ * and only the operator can close the gap.
+ */
+export type UpdateSkip = {
+  readonly label: string;
+  readonly reason: string;
+  readonly blocking: boolean;
+};
 
 export type UpdatePlan = {
   readonly steps: ReadonlyArray<UpdateStep>;
@@ -95,10 +105,12 @@ function plan(facts: UpdateFacts): UpdatePlan {
     } else {
       // An operator editing the checkout asked for their own edits to take
       // effect. Pulling under uncommitted work — never mind stashing it — is
-      // worse than doing less, so the pull is dropped and reported.
+      // worse than doing less, so the pull is dropped and reported. Nothing is
+      // owed afterwards: loading those edits was the request.
       skipped.push({
         label: "git pull",
         reason: "the working tree has uncommitted changes",
+        blocking: false,
       });
     }
     steps.push({
@@ -124,6 +136,7 @@ function plan(facts: UpdateFacts): UpdatePlan {
     skipped.push({
       label: "install",
       reason: "the npm registry could not be reached",
+      blocking: true,
     });
   } else {
     // The exact version, never `@latest`: a tag cannot be reported truthfully.
