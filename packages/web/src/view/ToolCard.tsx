@@ -82,7 +82,7 @@ export function ToolCard(props: {
           caret={caretClass(props.isPartial === true, error())}
           spine={error() ? "bg-rose-400" : "bg-neutral-750"}
         >
-          <div class="text-neutral-400">
+          <div class="opacity-60">
             <Body blocks={body()} />
           </div>
         </Collapsible>

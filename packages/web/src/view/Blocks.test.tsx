@@ -293,6 +293,11 @@ describe("ToolCard", () => {
     expect(paintTool(view).querySelector("details")?.open).toBe(false);
   });
 
+  test("expanded output inherits its colour and is uniformly muted", () => {
+    const body = paintTool(view).querySelector("details > div > div");
+    expect(body?.className).toBe("opacity-60");
+  });
+
   // A row is at full strength when *it* is open, never because something
   // inside it is; the child combinator is what says so, and a diff body — the
   // one payload that used to nest disclosures — now holds none at all.

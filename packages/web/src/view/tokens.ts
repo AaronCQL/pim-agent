@@ -32,9 +32,8 @@ export const FRAME_CLASSES = {
  * the same hue its send button and unread dot use.
  */
 export const TONE_CLASSES = {
-  // Inherit: prose reads at the transcript's colour, the same blocks inside a
-  // tool body read at the dimmer colour that body sets. A literal neutral-200
-  // here would win over both.
+  // Inherit: prose reads at the transcript's colour, including inside a tool
+  // body. A literal neutral-200 here would win over both.
   default: "",
   muted: "text-neutral-400",
   dim: "text-neutral-500",
