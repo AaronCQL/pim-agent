@@ -122,7 +122,16 @@ test("the optimistic echo is replaced by the durable user message", async () => 
   expect(users[0]?.type === "message" && users[0].text).toBe("say hello");
 });
 
-/** What pi is holding for the turn, straight off the session behind the wire. */
+/**
+ * What pi is holding for the turn, straight off the session behind the wire.
+ *
+ * Only ever stable while the turn is parked mid stream, which is why the
+ * tests that read it open with a prompt that asks for no tool. pi hands this
+ * queue to the turn at a turn boundary and a tool result is one, so a steer
+ * queued across a tool call can be observed here and then delivered a moment
+ * later — leaving nothing to take back, and failing whichever assertion came
+ * second.
+ */
 function queuedOn(store: SessionStore): readonly string[] {
   const agent = harness.registry.peek(store.state.sessionId)?.agentSession;
   return [
@@ -151,7 +160,7 @@ function heldBack(store: SessionStore): readonly string[] {
 test("a message typed into a running turn steers it", async () => {
   const store = await connect();
   const release = harness.holdTurn();
-  await store.prompt("use a tool please");
+  await store.prompt("hold this turn open");
   await until(() => store.isBusy(), "the turn to start");
 
   await store.prompt("and mention the weather");
@@ -187,7 +196,7 @@ test("a message typed into a running turn steers it", async () => {
 test("stopping hands the queued message back to the box it came from", async () => {
   const store = await connect();
   const release = harness.holdTurn();
-  await store.prompt("use a tool please");
+  await store.prompt("hold this turn open");
   await until(() => store.isBusy(), "the turn to start");
   await store.prompt("never mind");
   await until(() => queuedOn(store).length === 1, "pi to queue the steer");
@@ -207,7 +216,7 @@ test("stopping hands the queued message back to the box it came from", async () 
 test("taking the queued message back leaves the turn running", async () => {
   const store = await connect();
   const release = harness.holdTurn();
-  await store.prompt("use a tool please");
+  await store.prompt("hold this turn open");
   await until(() => store.isBusy(), "the turn to start");
   await store.prompt("on second thoughts");
   await until(() => queuedOn(store).length === 1, "pi to queue the steer");

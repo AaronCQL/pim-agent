@@ -625,7 +625,16 @@ describe("the composer, against a real gateway", () => {
     );
   }
 
-  /** A turn held open with a message waiting behind it, and the box painted. */
+  /**
+   * A turn held open with a message waiting behind it, and the box painted.
+   *
+   * The prompt must not ask for a tool. pi hands its steering queue to the
+   * turn at a turn boundary, and a tool result is one — so a message queued
+   * while the tool ran would be delivered rather than held, and there would
+   * be nothing left for these tests to take back. Parked on the gate mid
+   * stream there is no next boundary until `release`, so what is queued
+   * stays queued.
+   */
   async function withQueued(waiting: string): Promise<{
     readonly host: HTMLElement;
     readonly input: HTMLTextAreaElement;
@@ -633,7 +642,7 @@ describe("the composer, against a real gateway", () => {
   }> {
     const host = paint(store);
     const release = harness.holdTurn();
-    await store.prompt("use a tool please");
+    await store.prompt("hold this turn open");
     await until(() => store.isBusy(), "the turn to start");
     await store.prompt(waiting);
     // The card above is painted on the gateway's ack, which means it took the
