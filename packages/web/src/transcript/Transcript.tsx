@@ -8,6 +8,7 @@ import type { LiveMessage, PendingMessage } from "../session/SessionStore";
 import { Attachments } from "../view/Attachments";
 import { ToolCards } from "../view/ToolCard";
 import { NOTICE_CLASSES } from "../view/tokens";
+import { SubagentCard } from "./SubagentCard";
 import {
   buildRows,
   extendRows,
@@ -240,35 +241,33 @@ function Card(props: { readonly row: MessageRow }) {
 }
 
 /**
- * A tool row, and — for the one tool whose output is a conversation — the way
- * into it. A subagent's run is a session of its own, far too much to hang off
- * a disclosure inside a column, so the row offers to open it rather than to
- * expand it.
+ * A tool row — except for the one tool whose output is a conversation, which
+ * gets a card instead. A subagent's run is a session of its own, far too much
+ * to hang off a disclosure inside a column, so its row is a button that opens
+ * it rather than a disclosure that expands it; the two share no chrome, which
+ * is why they are two components and not one with a flag.
  */
 function ToolRowView(props: {
   readonly row: ToolRow;
   readonly onOpenSubagent?: (callId: string) => void;
 }) {
   return (
-    <>
-      <ToolCards
-        view={props.row.view}
-        name={props.row.name}
-        isError={props.row.isError}
-        isPartial={props.row.isPartial}
+    <Show
+      when={props.row.name === SUBAGENT && props.onOpenSubagent !== undefined}
+      fallback={
+        <ToolCards
+          view={props.row.view}
+          name={props.row.name}
+          isError={props.row.isError}
+          isPartial={props.row.isPartial}
+        />
+      }
+    >
+      <SubagentCard
+        row={props.row}
+        onOpen={(callId) => props.onOpenSubagent?.(callId)}
       />
-      <Show
-        when={props.row.name === SUBAGENT && props.onOpenSubagent !== undefined}
-      >
-        <button
-          type="button"
-          class="pl-2ch text-left text-sm text-indigo-300 hover:text-indigo-200"
-          onClick={() => props.onOpenSubagent?.(props.row.id)}
-        >
-          Open transcript
-        </button>
-      </Show>
-    </>
+    </Show>
   );
 }
 

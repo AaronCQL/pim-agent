@@ -62,11 +62,11 @@ function modal(host: HTMLElement): HTMLDialogElement {
   )!;
 }
 
-/** The row's way in, which Phase 4 replaces with the card itself. */
+/** The way in: the run's own card, which is the whole of the affordance. */
 function opener(host: HTMLElement): HTMLButtonElement | null {
   return (
-    [...host.querySelectorAll("button")].find(
-      (button) => button.textContent === "Open transcript"
+    [...host.querySelectorAll("button")].find((button) =>
+      button.textContent?.startsWith("Subagent")
     ) ?? null
   );
 }

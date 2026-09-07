@@ -58,6 +58,10 @@ function pingTool(): PimToolDefinition<typeof pingSchema, { echoed: string }> {
 
 /** The parent's call id for the delegated run, so a watch can name it. */
 export const SUBAGENT_CALL_ID = "call_sub";
+/** The same, for the delegation that throws instead of answering. */
+export const SUBAGENT_FAIL_CALL_ID = "call_sub_bad";
+/** What the failing run throws, which is all the parent keeps of it. */
+export const SUBAGENT_FAILURE = "child hit its step limit";
 export const SUBAGENT_PROMPT = "find every call site of parseConfig";
 /** What the child says once it has finished looking. */
 export const SUBAGENT_ANSWER = "three of the nine are in tests";
@@ -150,6 +154,12 @@ function subagentTool(
         details: { turns: 1 },
       });
       await gate();
+      // A failure is thrown rather than returned, which is what makes it a
+      // failure: pi keeps the message and drops the details, and the child log
+      // written on the way down is what keeps the run readable at all.
+      if (callId === SUBAGENT_FAIL_CALL_ID) {
+        throw new Error(SUBAGENT_FAILURE);
+      }
       await log.call("child_1", "patch", { path: CHILD_PATH });
       await log.answered("child_1", "patch", `patched ${CHILD_PATH}`);
       await log.say("assistant", SUBAGENT_ANSWER);
@@ -268,7 +278,9 @@ function requestedTool(
   | undefined {
   if (prompt.includes("delegate")) {
     return {
-      callId: SUBAGENT_CALL_ID,
+      callId: prompt.includes("badly")
+        ? SUBAGENT_FAIL_CALL_ID
+        : SUBAGENT_CALL_ID,
       name: "subagent",
       args: { prompt: SUBAGENT_PROMPT },
     };
