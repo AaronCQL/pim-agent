@@ -82,6 +82,13 @@ function chunk(delta: Record<string, unknown>, finish?: string): string {
 /** Set by a test to hold the prose turn open until it says otherwise. */
 let gate: Promise<void> | undefined;
 
+/**
+ * Set by a test to make the provider refuse every call, the way a rate limit
+ * or a dead key does. Not on the retryable list, so pi answers with the dead
+ * turn immediately rather than backing off three times first.
+ */
+let refusal: string | undefined;
+
 function holdTurn(): () => void {
   let release!: () => void;
   gate = new Promise<void>((resolve) => {
@@ -106,6 +113,9 @@ function startModelServer(): void {
     fetch(req) {
       if (!new URL(req.url).pathname.endsWith("/chat/completions")) {
         return new Response("not found", { status: 404 });
+      }
+      if (refusal !== undefined) {
+        return new Response(refusal, { status: 400 });
       }
       const isToolTurn = requests++ % 2 === 0;
       const stream = new ReadableStream<Uint8Array>({
@@ -291,6 +301,7 @@ afterEach(async () => {
     probe.close();
   }
   probes = [];
+  refusal = undefined;
   await gateway.stop();
   await registry.disposeAll();
   await modelServer?.stop(true);
@@ -348,6 +359,32 @@ test("never forwards raw tool content to a client", async () => {
   const dump = probe.events.map((e) => JSON.stringify(e)).join("\n");
   expect(dump).not.toContain(TOOL_OUTPUT);
   expect(dump).not.toContain('"content"');
+});
+
+/**
+ * A provider that refuses ends the turn without a word of prose. Pi writes
+ * the dead assistant message down like any other, so the client hears why
+ * from the log — which is what makes it survive a reload, unlike a live
+ * frame — rather than watching the agent stop for no stated reason. A rate
+ * limit reads the same way; it is only refused here in words pi does not
+ * retry, so the test costs no backoff.
+ */
+test("says why a turn the provider refused stopped", async () => {
+  refusal = "invalid_request_error: this key cannot use that model";
+  const probe = await connect();
+  const mark = probe.events.length;
+  await probe.prompt("say hello");
+  await idle(probe, mark);
+
+  const dead = durable(probe).find(
+    (event) => event.type === "message" && event.role === "assistant"
+  );
+  expect(dead?.type === "message" && dead.error).toContain(refusal);
+
+  // On the log and not only on the wire: a client attaching afterwards is
+  // told the same thing by the replay.
+  const later = await connect({ sessionId: probe.sessionId!, fromSeq: 0 });
+  expect(durable(later)).toEqual(durable(probe));
 });
 
 test("loses nothing when a probe dies mid-turn and resumes by seq", async () => {

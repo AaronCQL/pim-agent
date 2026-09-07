@@ -9,7 +9,6 @@ import { EventLog } from "#core/session/EventLog";
 import type { SessionDigest } from "#core/session/EventLog";
 import { ReadCursors } from "#core/session/ReadCursors";
 import type { SessionRegistry } from "#core/session/SessionRegistry";
-import type { SessionHost } from "#core/session/SessionHost";
 import { PimVersion } from "#core/shared/PimVersion";
 import type { UpdateOutcome } from "#core/shared/Updater";
 import type { Command } from "#protocol/Command";
@@ -653,7 +652,7 @@ export class WsGateway {
     );
     const { lines, images } = toAttachmentPrompt(taken);
     const text = [command.text, ...lines].filter(Boolean).join("\n\n").trim();
-    this.prompt(stream.host, text, images);
+    this.prompt(stream, text, images);
   }
 
   /**
@@ -668,14 +667,28 @@ export class WsGateway {
    * separately queued messages would need identities on the wire, and pi has
    * no way to remove one of them anyway. It costs the images of a message
    * already queued, which pi gives back as text alone; the words survive.
+   *
+   * Which is why a turn that dies is announced rather than returned: the
+   * response it would have failed is long since sent. A model that answers
+   * with an error is a line in the log and reaches the client that way; what
+   * is broadcast here is the turn that never got that far — a refused key, a
+   * model that does not resolve — and would otherwise stop in silence.
    */
   private prompt(
-    host: SessionHost,
+    stream: SessionStream,
     text: string,
     images: readonly ImageContent[] = []
   ): void {
     const attached = images.length === 0 ? {} : { images: [...images] };
+    const host = stream.host;
     const agent = host.agentSession;
+    const failed = (err: unknown, what: string): void => {
+      console.error(`[gateway] ${what} failed:`, err);
+      stream.push({
+        type: "error",
+        message: (err as Error).message || String(err),
+      });
+    };
     if (agent && host.isStreaming) {
       const queued = [...host.takeBack(), text].join("\n\n");
       void agent
@@ -685,7 +698,7 @@ export class WsGateway {
           ...attached,
         })
         .catch((err: unknown) => {
-          console.error(`[gateway] steer failed:`, err);
+          failed(err, "steer");
         });
       return;
     }
@@ -694,7 +707,7 @@ export class WsGateway {
         await session.prompt(text, { source: "rpc", ...attached });
       })
       .catch((err: unknown) => {
-        console.error(`[gateway] turn failed:`, err);
+        failed(err, "turn");
       });
   }
 }

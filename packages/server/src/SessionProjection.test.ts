@@ -52,6 +52,13 @@ async function logOf(
   return new SessionProjection(path, () => "/");
 }
 
+/** A log holding an assistant message pi could not finish. */
+async function deadTurn(
+  message: Record<string, unknown>
+): Promise<SessionProjection> {
+  return logOf({ role: "assistant", content: [], usage: {}, ...message });
+}
+
 test("projects a persisted session into durable events, one per line", async () => {
   const events = await projection().drain();
 
@@ -107,6 +114,44 @@ test("an unwritten session file projects nothing", async () => {
 
   expect(await p.drain()).toEqual([]);
   expect(p.head).toBe(0);
+});
+
+test("a turn the model killed carries why on the message it died on", async () => {
+  const events = await (
+    await deadTurn({
+      stopReason: "error",
+      errorMessage: "rate_limit_error: too many requests",
+      content: [{ type: "text", text: "Let me check" }],
+    })
+  ).drain();
+
+  expect(events).toEqual([
+    {
+      seq: 1,
+      type: "message",
+      messageId: "entry-0",
+      role: "assistant",
+      text: "Let me check",
+      timestamp: Date.parse("2026-08-01T10:17:47.104Z"),
+      error: "rate_limit_error: too many requests",
+    },
+  ]);
+});
+
+test("a failure the provider did not explain still says one happened", async () => {
+  const events = await (await deadTurn({ stopReason: "error" })).drain();
+
+  expect(events[0]?.type === "message" && events[0].error).toBe(
+    "The model call failed."
+  );
+});
+
+test("an abort is not an error: cancelling is not a failure", async () => {
+  const events = await (
+    await deadTurn({ stopReason: "aborted", errorMessage: "Aborted" })
+  ).drain();
+
+  expect(events[0]?.type === "message" && events[0].error).toBeUndefined();
 });
 
 test("a failed call carries why, not a view of the result it never got", async () => {

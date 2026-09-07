@@ -113,6 +113,14 @@ export class SessionProjection {
           });
         }
         const thinking = MessageText.textOf(message.content, "thinking");
+        // A dead turn is a line in the log like any other: pi appends the
+        // assistant message it could not finish, so the client hears why the
+        // agent stopped from the projection rather than from a live frame no
+        // reload could replay.
+        const error =
+          message.stopReason === "error"
+            ? (message.errorMessage ?? "The model call failed.")
+            : undefined;
         return {
           seq,
           type: "message",
@@ -122,6 +130,7 @@ export class SessionProjection {
           timestamp,
           ...(thinking ? { thinking } : {}),
           ...(toolCalls.length > 0 ? { toolCalls } : {}),
+          ...(error === undefined ? {} : { error }),
         };
       }
       case "toolResult": {

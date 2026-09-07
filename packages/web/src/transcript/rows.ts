@@ -77,6 +77,18 @@ function append(
           ...(thinking === "" ? {} : { thinking }),
         });
       }
+      // Under whatever the message managed to say, because that is where it
+      // stopped saying it. Its own row rather than a mark on the message's:
+      // a rate limit usually kills a message before a word of it streams, and
+      // the row that would carry the mark is one this build never draws.
+      if (event.error !== undefined) {
+        rows.push({
+          kind: "notice",
+          id: `${event.messageId}-error`,
+          severity: "error",
+          text: event.error,
+        });
+      }
       for (const call of event.toolCalls ?? []) {
         upsertTool(rows, toolIndex, {
           kind: "tool",

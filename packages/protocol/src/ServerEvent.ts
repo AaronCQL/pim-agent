@@ -42,6 +42,19 @@ export type DurableEvent =
       /** When pi appended the entry, in epoch ms. */
       readonly timestamp: number;
       readonly thinking?: string;
+      /**
+       * The model call this message stands for failed — a rate limit, an
+       * overload, a key the provider refused — and this is what it said.
+       *
+       * Carried on the message rather than sent as a notice of its own
+       * because the failure *is* that line of the log: pi writes the dead
+       * assistant message down like any other, and one line may only produce
+       * one durable event if `seq` is to stay the cursor a client resumes on.
+       * Only ever set on an assistant message, which is the only kind a model
+       * call produces; the prose is whatever streamed before it died, and is
+       * usually empty.
+       */
+      readonly error?: string;
       readonly toolCalls?: readonly ToolCallView[];
     }
   | {

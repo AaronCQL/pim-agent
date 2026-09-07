@@ -60,6 +60,52 @@ describe("rows", () => {
     expect(rows.map((row) => row.kind)).toEqual(["tool"]);
   });
 
+  test("a turn the model killed says so where it died", () => {
+    const rows = toRows([
+      {
+        seq: 1,
+        type: "message",
+        messageId: "m",
+        role: "assistant",
+        text: "Let me check",
+        timestamp: 0,
+        error: "rate_limit_error: too many requests",
+      },
+    ]);
+
+    expect(rows).toEqual([
+      {
+        kind: "message",
+        id: "m",
+        role: "assistant",
+        text: "Let me check",
+        timestamp: 0,
+      },
+      {
+        kind: "notice",
+        id: "m-error",
+        severity: "error",
+        text: "rate_limit_error: too many requests",
+      },
+    ]);
+  });
+
+  test("a failure with nothing streamed before it is still a row", () => {
+    const rows = toRows([
+      {
+        seq: 1,
+        type: "message",
+        messageId: "m",
+        role: "assistant",
+        text: "",
+        timestamp: 0,
+        error: "overloaded_error",
+      },
+    ]);
+
+    expect(rows.map((row) => row.kind)).toEqual(["notice"]);
+  });
+
   test("reasoning is trimmed, and whitespace alone is no reasoning at all", () => {
     const message = (thinking: string): DurableEvent => ({
       seq: 1,
