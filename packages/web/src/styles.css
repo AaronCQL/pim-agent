@@ -164,16 +164,45 @@ button {
   text-underline-offset: 2px;
 }
 
+/* The terminal's box, in the terminal's geometry: a rule is a character cell
+   with a hairline through its middle. A vertical rule is `│` — one column
+   wide, so 1.5ch of air sits between it and the text on either side — and a
+   horizontal rule is `─`: a whole --line row of its own, hairline across the
+   middle, which is why every row is separated rather than only the header.
+   `collapse` is what makes a rule shared between two cells instead of two
+   abutting ones, and the 0.5px trims below are that shared hairline's halves
+   given back out of the padding, so text keeps landing on whole character
+   columns and whole rows. `max-content` keeps a narrow table as wide as its
+   columns rather than a full-width scroller. */
 .pim-markdown table {
   display: block;
+  width: max-content;
+  max-width: 100%;
   overflow-x: auto;
+  border: 1px solid rgb(64 64 64);
   border-collapse: collapse;
 }
 .pim-markdown th,
 .pim-markdown td {
-  border: 1px solid rgb(64 64 64);
-  padding: 0 0.5rem;
+  padding: calc(var(--line) / 2 - 0.5px) calc(1.5ch - 0.5px);
+  border-right: 1px solid rgb(64 64 64);
+  border-bottom: 1px solid rgb(64 64 64);
   text-align: left;
+  vertical-align: top;
+}
+/* The frame draws the right and bottom edges, so the cells on those edges do
+   not. The last row also gives back the frame's own second hairline, which is
+   the one pixel that would otherwise leave the table a hair over a whole
+   number of rows tall and every block below it off the grid. A table whose
+   `thead` is its last child is one still streaming its first row, or one that
+   never had a body: either way its header is the bottom edge. */
+.pim-markdown tr > :last-child {
+  border-right: none;
+}
+.pim-markdown tbody tr:last-child > *,
+.pim-markdown thead:last-child tr > * {
+  padding-bottom: calc(var(--line) / 2 - 1.5px);
+  border-bottom: none;
 }
 
 .pim-markdown blockquote {
