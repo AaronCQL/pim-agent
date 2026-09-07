@@ -6,16 +6,16 @@
 [![license](https://img.shields.io/npm/l/pim-agent?style=flat-square)](./LICENSE)
 [![Bun](https://img.shields.io/badge/runtime-Bun-black?logo=bun&style=flat-square)](https://bun.com)
 
-_**Pi IMproved. Another shitty harness, but Bun-native.**_
+_**Pim is to Pi what Vim is to Vi.**_
 
-A Bun-native **distribution of [Pi](https://pi.dev/)** — what Ubuntu is to Linux, or LazyVim to Neovim: Pi itself, plus web access, subagents, revamped core tools, ANSI-compatible themes, fzf-style completions, and Telegram and web frontends. Not a fork and not a reimplementation: Pi ships _inside_ Pim, and everything you already know about Pi still applies. Preliminary score of [37.8% on Terminal-Bench 2.0](#terminal-bench-20) with locally hosted Qwen3.6-35B, rivalling Claude Code + Sonnet 4.5.
+An opinionated distro of [Pi](https://pi.dev/): built-in web access, subagents, revamped core tools, ANSI-compatible themes, fzf-style completions, alternate frontends (Web & Telegram), and compatible with other Pi extensions. Preliminary score of [37.8% on Terminal-Bench 2.0](#terminal-bench-20) with locally hosted Qwen3.6-35B, rivalling Claude Code + Sonnet 4.5.
 
 - [Quick Start](#quick-start)
-  - [Enabling/Disabling Extensions](#enablingdisabling-extensions)
+  - [Toggling Features](#toggling-features)
   - [API Keys (Optional)](#api-keys-optional)
   - [Recommended Pi Settings (Optional)](#recommended-pi-settings-optional)
 - [Why Pim?](#why-pim)
-  - [Nothing About Pi Changes](#nothing-about-pi-changes)
+  - [Pi Core](#pi-core)
   - [Lean System Prompt](#lean-system-prompt)
   - [Model-Aware Tools](#model-aware-tools)
   - [Terminal-Bench 2.0](#terminal-bench-20)
@@ -33,36 +33,29 @@ A Bun-native **distribution of [Pi](https://pi.dev/)** — what Ubuntu is to Lin
 
 ## Quick Start
 
-One command. Pim brings its own Pi, so [Bun](https://bun.com/docs/installation) is the only prerequisite (_or ask your agent to install it for you_):
+Ensure that you have [Bun](https://bun.com/docs/installation) already installed:
 
 ```sh
+# Install pim:
 bun install -g pim-agent
 
+# Launch pim:
 pim
+
+# Update pim (pi comes along with it):
+pim update
 ```
 
-That's it — there is no `pi install` step and nothing is written to your Pi settings. For all things related to Pi, refer to [Pi's comprehensive docs](https://pi.dev/docs/latest); they apply verbatim.
+### Toggling Features
 
-> [!IMPORTANT]
-> **Use `pim` instead of `pi`.** The `pim` command is a drop-in replacement that [runs Pi under Bun](./bin/pim.ts), enabling Bun-specific APIs. `pim --version` prints both versions — Pim's, and the Pi it bundles.
-
-Update the same way you installed:
-
-```sh
-bun install -g pim-agent@latest
-```
-
-### Enabling/Disabling Extensions
-
-Pim ships a collection of extensions which are all enabled by default. To disable specific ones that don't suit your needs, run `/extensions` in the TUI to pick from the list, or `/extensions <name>` to toggle one directly. Changes are saved to `~/.pim/settings.json` and take effect on the **next launch**.
-
-Some Pim extensions can be toggled live within the TUI as well: `/powerline` for the Git-aware powerline footer, `/tps` for inference speed reporting.
+Pim ships a collection of features, nearly all enabled by default. To enable or disable specific features, run `/pim` in the TUI and toggle from the list. The changes apply to the running session immediately.
 
 ### API Keys (Optional)
 
-Pim's web tools use [Exa](https://exa.ai) for searching the web and [Jina](https://jina.ai/reader/) for fetching websites as Markdown. These tools still work without API keys, but are subject to the following rate limits (as of May 2026):
+`web_search` tries [Exa](https://exa.ai) → [Firecrawl](https://www.firecrawl.dev/) → DuckDuckGo (via [Jina](https://jina.ai/reader/) reader), and `web_fetch` uses Jina with a `Bun.WebView` fallback. These tools still work without API keys, but are subject to the following keyless rate limits (as of Sept 2026):
 
 - Exa - 1,000 requests per month
+- Firecrawl - daily limit per IP
 - Jina - 20 requests per minute
 
 For heavier usage, add API keys to `~/.pim/settings.json`:
@@ -72,16 +65,19 @@ For heavier usage, add API keys to `~/.pim/settings.json`:
   "exa": {
     "apiKey": "api_key_here"
   },
+  "firecrawl": {
+    "apiKey": "api_key_here"
+  },
   "jina": {
     "apiKey": "api_key_here"
   }
 }
 ```
 
-Environment variables override `settings.json` when present:
+Environment variables take precedence over `settings.json` when set:
 
 ```sh
-EXA_API_KEY='api_key_here' JINA_API_KEY='api_key_here' pim
+EXA_API_KEY='api_key_here' FIRECRAWL_API_KEY='api_key_here' JINA_API_KEY='api_key_here' pim
 ```
 
 ### Recommended Pi Settings (Optional)
@@ -102,19 +98,17 @@ Add the following settings to your `~/.pi/agent/settings.json` for the best expe
 
 Pim's philosophy is **opinionated but minimal**. Its goal is to improve the out-of-the-box experience for both users and agents, without sacrificing composability with other Pi extensions.
 
-### Nothing About Pi Changes
+### Pi Core
 
-Pim is a distribution, not a fork. Everything Pi does, it keeps doing:
+Think of Pim as an opinionated distro of Pi (like what Ubuntu is to Linux). Pim uses Pi in its core, and everything Pi does, it continues to do:
 
 - **Every Pi extension still works.** Pim registers its own extensions in-process, so third-party extensions from your Pi settings load right alongside them, exactly as before.
-- **Pi's CLI, sessions and config are unchanged.** Same flags, same `~/.pi` settings, same session files — Pim reads and writes none of them differently, and its own settings live separately in `~/.pim/settings.json`.
-- **Your vanilla `pi` keeps working.** Pim never registers itself with Pi and never touches your Pi settings, so `pi` and `pim` coexist on the same machine. Coexistence, not enforcement.
-
-The trade-off is release cadence: Pim pins the exact Pi it was tested against and ships it as a dependency, so a new Pi release does not reach you until Pim's pin moves. That is a deliberate choice — it is what makes the install one command and the combination actually tested — but a stale pin is a user-visible defect, and keeping it current is on us. [File an issue](https://github.com/AaronCQL/pim-agent/issues) if Pim is lagging a Pi release you need; if you need a Pi newer than the pin today, plain `pi` is still right there.
+- **Pi's CLI, sessions and config are unchanged.** Only Pim's own settings live separately in `~/.pim/settings.json`.
+- **Your vanilla `pi` keeps working.** Pim never registers itself with Pi and never touches your Pi settings, so `pi` and `pim` can both be used on the same machine.
 
 ### Lean System Prompt
 
-Pim's system prompt is just **~3K tokens** despite exposing 10+ tools, far leaner than alternatives like OpenCode (~10K) or Hermes (~16K).
+Pim's system prompt is just **~3K tokens** despite exposing 10+ tools, far leaner than alternatives like OpenCode (~10K), Hermes (~16K), or Claude Code (~30K).
 
 This is achieved by having tool descriptions focus on _how_ to use each tool instead of prescribing _when_, since models already appear to internally encode when tools are needed, and prompting them to call tools can [suppress both necessary and unnecessary calls](https://arxiv.org/abs/2605.09252).
 
@@ -168,9 +162,9 @@ _Note 4_: see the [`benchmarks/terminal_bench_2`](./benchmarks/terminal_bench_2/
 
 ## Agent Tools
 
-Pim revamps Pi's default tools (`bash`, `read`, `write`, `edit`) so they produce consistent behaviour and output, cross-reference each other where useful, and render uniformly in the TUI. It also adds:
+Pim revamps Pi's default tools (`bash`, `read`, `write`, `edit`) so they produce consistent behaviour and output, cross-reference each other where useful, and render uniformly in your UIs. It also adds:
 
-- **`apply_patch`** - V4A patch editing, dynamically exposed instead of `edit` for OpenAI models
+- **`apply_patch`** - V4A patch editing, dynamically exposed instead of `edit` for OpenAI and select Claude models
 - **`glob`** - file enumeration by glob pattern, sorted newest-first, respects `.gitignore`
 - **`grep`** - regex search across files with context lines, multiline matching, respects `.gitignore`
 - **`web_search`** - search the web via [Exa](https://exa.ai) with ranked results and snippets
@@ -184,28 +178,13 @@ Pim also ships with quality of life improvements for the TUI:
 
 - **ANSI-compatible themes** - `pim-light` and `pim-dark` themes which adapt to your terminal's colour scheme
 - **fzf-style autocomplete** - `@path` file picker and `/command` picker with fuzzy search
-- **Git-aware powerline footer** - cwd, git branch and states, context usage, model and session cost (toggle with `/powerline`)
-- **TPS reporting** - per-cycle decode/prefill rate, TTFT, and cache read tokens (toggle with `/tps`)
+- **Git-aware powerline footer** - cwd, git branch and states, context usage, model and session cost (run `/pim` to disable)
+- **TPS reporting** - per-cycle decode/prefill rate, TTFT, and cache read tokens (disabled by default; run `/pim` to enable)
 - **Concise tool UI** - minimal one-liner title across all tool calls, `Ctrl+O` to toggle full details
 
 ## Web UI
 
-Pim ships a browser client for the same agent, served straight from your machine:
-
-```sh
-# Serves the web UI and its WebSocket gateway on http://127.0.0.1:4319
-pim --mode serve
-
-# Pick a port and interface (PORT is honoured too; --port wins)
-pim --mode serve --port 8080 --hostname 0.0.0.0
-```
-
-Sessions are shared with the TUI — the web client reads and writes the same Pi session files, so you can start a task in the terminal and pick it up in a browser tab. Files, `@path` completions and skills are resolved on the **server**, i.e. on the machine the agent actually works on.
-
-> [!CAUTION]
-> The gateway has no authentication yet. It binds to loopback by default; only put it on a wider interface behind something that does the authenticating for you (a tunnel, a reverse proxy, or a private network like Tailscale).
-
-The prebuilt client is included in the npm package. Installing straight from a git URL skips the build and leaves you without it — npm is the supported path.
+<!-- TODO -->
 
 ## Telegram Bot
 
