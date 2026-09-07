@@ -291,13 +291,9 @@ describe("runSubagent", () => {
       });
     });
 
-    const result = await runSubagent(
-      "say hi",
-      ctx,
-      undefined,
-      undefined,
-      async () => fake
-    );
+    const result = await runSubagent("say hi", ctx, {
+      createSession: async () => fake,
+    });
 
     expect(result.content).toEqual([{ type: "text", text: "hello" }]);
     expect(result.details.fullOutput).toBe("hello");
@@ -312,13 +308,9 @@ describe("runSubagent", () => {
       session.emit({ type: "message_end", message: assistant([]) });
     });
 
-    const result = await runSubagent(
-      "empty",
-      ctx,
-      undefined,
-      undefined,
-      async () => fake
-    );
+    const result = await runSubagent("empty", ctx, {
+      createSession: async () => fake,
+    });
 
     expect(
       result.content[0]?.type === "text" ? result.content[0].text : ""
@@ -338,7 +330,7 @@ describe("runSubagent", () => {
     });
 
     await expect(
-      runSubagent("fail", ctx, undefined, undefined, async () => fake)
+      runSubagent("fail", ctx, { createSession: async () => fake })
     ).rejects.toThrow(
       "Subagent failed: error. Error: provider exploded.\nPartial output before failure:\npartial"
     );
@@ -350,7 +342,10 @@ describe("runSubagent", () => {
     const fake = new FakeSession(async () => {});
 
     await expect(
-      runSubagent("abort", ctx, controller.signal, undefined, async () => fake)
+      runSubagent("abort", ctx, {
+        signal: controller.signal,
+        createSession: async () => fake,
+      })
     ).rejects.toThrow("Subagent failed: subagent aborted before start");
 
     expect(fake.promptCalls).toBe(0);
@@ -372,13 +367,10 @@ describe("runSubagent", () => {
         })
     );
     const controller = new AbortController();
-    const promise = runSubagent(
-      "long",
-      ctx,
-      controller.signal,
-      undefined,
-      async () => fake
-    );
+    const promise = runSubagent("long", ctx, {
+      signal: controller.signal,
+      createSession: async () => fake,
+    });
 
     await Promise.resolve();
     controller.abort();
@@ -392,11 +384,11 @@ describe("runSubagent", () => {
   test("nested subagent calls are rejected by the async-local recursion ban", async () => {
     const outer = new FakeSession(async () => {
       const inner = new FakeSession(async () => {});
-      await runSubagent("inner", ctx, undefined, undefined, async () => inner);
+      await runSubagent("inner", ctx, { createSession: async () => inner });
     });
 
     await expect(
-      runSubagent("outer", ctx, undefined, undefined, async () => outer)
+      runSubagent("outer", ctx, { createSession: async () => outer })
     ).rejects.toThrow("subagents cannot call subagent tool");
   });
 });

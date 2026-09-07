@@ -16,6 +16,7 @@ import type {
   TextContent,
   Usage,
 } from "@earendil-works/pi-ai";
+import { SubagentLogs } from "../../shared/SubagentLogs";
 import { formatTopLine } from "./render";
 
 export const PER_TASK_OUTPUT_CAP = 32 * 1024;
@@ -56,6 +57,12 @@ export type SubagentEntry =
     };
 
 export type SubagentSnapshot = {
+  /**
+   * The child's own session id, for a human reading a log. Nothing may resolve
+   * the child's transcript through it: a failed run persists no details at
+   * all, so its log is found by deriving the path from the call id instead.
+   */
+  readonly sessionId: string | undefined;
   readonly entries: readonly SubagentEntry[];
   readonly usage: SubagentUsage;
   readonly activeToolNames: readonly string[];
@@ -79,6 +86,7 @@ export type SubagentDetails = SubagentSnapshot & {
 };
 
 export type SubagentSession = {
+  readonly sessionId?: string;
   readonly subscribe: (
     listener: (event: AgentSessionEvent) => void
   ) => () => void;
@@ -87,10 +95,22 @@ export type SubagentSession = {
   readonly dispose: () => void;
 };
 
+export type SubagentSessionSpec = {
+  readonly activeToolNames?: readonly string[];
+  /** The parent's tool call id, which names the child's log on disk. */
+  readonly callId?: string;
+};
+
 export type CreateSubagentSession = (
   parentCtx: ExtensionContext,
-  activeToolNames: readonly string[] | undefined
+  spec: SubagentSessionSpec
 ) => Promise<SubagentSession>;
+
+export type SubagentRun = SubagentSessionSpec & {
+  readonly signal?: AbortSignal;
+  readonly onUpdate?: AgentToolUpdateCallback<SubagentDetails>;
+  readonly createSession?: CreateSubagentSession;
+};
 
 export function childToolNames(
   activeToolNames: readonly string[]
@@ -113,7 +133,7 @@ function answerOf(entries: readonly SubagentEntry[]): string {
 
 export async function createSdkSubagentSession(
   parentCtx: ExtensionContext,
-  activeToolNames: readonly string[] | undefined
+  spec: SubagentSessionSpec = {}
 ): Promise<SubagentSession> {
   const loader = new DefaultResourceLoader({
     cwd: parentCtx.cwd,
@@ -125,22 +145,48 @@ export async function createSdkSubagentSession(
     cwd: parentCtx.cwd,
     agentDir: getAgentDir(),
     model: parentCtx.model,
-    sessionManager: SessionManager.inMemory(parentCtx.cwd),
+    sessionManager: await childSessionManager(parentCtx, spec.callId),
     resourceLoader: loader,
-    tools: activeToolNames ? [...childToolNames(activeToolNames)] : undefined,
+    tools: spec.activeToolNames
+      ? [...childToolNames(spec.activeToolNames)]
+      : undefined,
   });
 
   return session;
 }
 
+/**
+ * The child writes to a path a reader can derive from the parent session id
+ * and the call id alone, which is why the file is opened rather than created:
+ * `SessionManager.create` names the file itself, while `open` on a path that
+ * does not exist yet is how pi is told one. Losing the log costs the run
+ * nothing — the child then works in memory, as it always did.
+ */
+async function childSessionManager(
+  parentCtx: ExtensionContext,
+  callId: string | undefined
+): Promise<SessionManager> {
+  const path = callId
+    ? await SubagentLogs.create(parentCtx.sessionManager.getSessionId(), callId)
+    : null;
+  return path === null
+    ? SessionManager.inMemory(parentCtx.cwd)
+    : SessionManager.open(path, undefined, parentCtx.cwd);
+}
+
 export async function runSubagent(
   prompt: string,
   parentCtx: ExtensionContext,
-  signal?: AbortSignal,
-  onUpdate?: AgentToolUpdateCallback<SubagentDetails>,
-  createSession: CreateSubagentSession = createSdkSubagentSession,
-  activeToolNames?: readonly string[]
+  run: SubagentRun = {}
 ): Promise<AgentToolResult<SubagentDetails>> {
+  const {
+    signal,
+    onUpdate,
+    createSession = createSdkSubagentSession,
+    activeToolNames,
+    callId,
+  } = run;
+
   if (inSubagent.getStore()) {
     throw new Error("subagents cannot call subagent tool");
   }
@@ -169,7 +215,8 @@ export async function runSubagent(
     };
 
     try {
-      session = await createSession(parentCtx, activeToolNames);
+      session = await createSession(parentCtx, { activeToolNames, callId });
+      capture.noteSessionId(session.sessionId);
       session.subscribe((event) => capture.handle(event));
       signal?.addEventListener("abort", onAbort, { once: true });
       if (signal?.aborted) {
@@ -226,6 +273,7 @@ export class SubagentEventCapture {
   private stopReason: string | undefined;
   private errorMessage: string | undefined;
   private model: string | undefined;
+  private sessionId: string | undefined;
 
   public constructor(
     private readonly onUpdate?: AgentToolUpdateCallback<SubagentDetails>,
@@ -275,6 +323,10 @@ export class SubagentEventCapture {
     }
   }
 
+  public noteSessionId(sessionId: string | undefined): void {
+    this.sessionId = sessionId;
+  }
+
   public markAborted(): void {
     this.stopReason = "aborted";
     this.emitUpdate();
@@ -288,6 +340,7 @@ export class SubagentEventCapture {
   /** A message still streaming reads as the entry it is about to become. */
   public snapshot(): SubagentSnapshot {
     return {
+      sessionId: this.sessionId,
       entries:
         this.pendingText === ""
           ? [...this.entries]

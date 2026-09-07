@@ -17,6 +17,7 @@ const stubTheme = {
 } as unknown as Theme;
 
 const baseDetails: SubagentDetails = {
+  sessionId: "0199f0d2-4a7c-7a11-9a3e-1f6c0a5d2b40",
   returnedOutput: "body",
   fullOutput: "body",
   outputTruncated: false,
