@@ -463,8 +463,8 @@ test("a new chat is the browser's alone until pi writes its first line", async (
   expect(store.unwrittenSummary()).toEqual({
     sessionId: first,
     cwd: harness.tmp,
-    title: "say hello",
   });
+  expect(store.localTitle(first)).toBe("say hello");
 
   // Asking for a new chat while holding one is a request to go back to it.
   await store.newSession(harness.tmp);
@@ -478,8 +478,8 @@ test("a new chat is the browser's alone until pi writes its first line", async (
   expect(store.unwrittenSummary()).toEqual({
     sessionId: first,
     cwd: harness.tmp,
-    title: "say hello",
   });
+  expect(store.localTitle(first)).toBe("say hello");
   await idle(store);
 
   const listed = await store.listSessions();
@@ -488,6 +488,11 @@ test("a new chat is the browser's alone until pi writes its first line", async (
   // A second row for a session the listing has would be the same
   // conversation twice.
   expect(store.unwrittenSummary()).toBeUndefined();
+  // And it is still named by its opening message: the listing answers for it
+  // now, but the name does not flicker back to an id while pi is mid-turn.
+  expect(listed.find((row) => row.sessionId === first)?.title).toBe(
+    "say hello"
+  );
 
   // A conversation, so a new chat is a new session now.
   await store.newSession(harness.tmp);

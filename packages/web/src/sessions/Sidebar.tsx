@@ -34,7 +34,6 @@ const CONNECTION_CLASSES: Record<ConnectionStatus, string> = {
 type Row = {
   readonly sessionId: string;
   readonly cwd: string;
-  readonly title: string | undefined;
   readonly listed: SessionSummaryView | undefined;
 };
 
@@ -119,7 +118,6 @@ export function Sidebar(props: {
     const listed = sessions().map((session) => ({
       sessionId: session.sessionId,
       cwd: session.cwd,
-      title: session.title,
       listed: session,
     }));
     const held = props.store.unwrittenSummary();
@@ -128,6 +126,15 @@ export function Sidebar(props: {
     }
     return [{ ...held, listed: undefined }, ...listed];
   });
+
+  // The listing names a session by its opening message, and the store names
+  // the one whose log is not on disk yet — a new chat, or a session pi has
+  // only just started writing. Read per row rather than in the memo so a
+  // keystroke does not rebuild the list.
+  const title = (row: Row): string =>
+    row.listed?.title ??
+    props.store.localTitle(row.sessionId) ??
+    row.sessionId.slice(0, 8);
 
   const go = (run: () => Promise<void>): void => {
     props.onNavigate?.();
@@ -187,12 +194,10 @@ export function Sidebar(props: {
                   }}
                 >
                   <div class="flex items-center justify-between gap-2">
-                    {/* A session is named by its opening message — the
-                        unwritten one by the message it is about to send. One
-                        with neither has only its id. */}
-                    <div class="truncate font-semibold">
-                      {session.title ?? session.sessionId.slice(0, 8)}
-                    </div>
+                    {/* A session is named by its opening message — one that
+                        has not been sent by the message about to open it. A
+                        session with neither has only its id. */}
+                    <div class="truncate font-semibold">{title(session)}</div>
                     <Show
                       when={
                         session.listed && props.store.isUnread(session.listed)

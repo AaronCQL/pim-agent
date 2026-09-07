@@ -560,8 +560,8 @@ describe("drafts", () => {
     expect(target.unwrittenSummary()).toEqual({
       sessionId: "d1",
       cwd: "/repo",
-      title: "rework the sidebar",
     });
+    expect(target.localTitle("d1")).toBe("rework the sidebar");
 
     // And the row goes with the message that drew it.
     target.setDraftText("");
@@ -590,8 +590,28 @@ describe("drafts", () => {
     expect(target.unwrittenSummary()).toEqual({
       sessionId: "d1",
       cwd: "/repo",
-      title: "say hello",
     });
+    expect(target.localTitle("d1")).toBe("say hello");
+  });
+
+  test("the opening message outranks anything typed after it", async () => {
+    held("d1");
+    const target = store();
+    target.client.send = async () => ({
+      type: "response",
+      id: "1",
+      success: true,
+    });
+    feed(target, attached("d1"));
+
+    await target.prompt("say hello");
+    flush();
+    // The next message being typed is not a rename: the session was named
+    // the moment it was opened, and it keeps that name.
+    target.setDraftText("and then say goodbye");
+    flush();
+
+    expect(target.localTitle("d1")).toBe("say hello");
   });
 
   test("the row stops being drawn once the directory can answer for it", async () => {
@@ -643,7 +663,7 @@ describe("drafts", () => {
     expect(target.unwrittenSummary()).toEqual({
       sessionId: "fresh",
       cwd: "/repo",
-      title: "still typed",
     });
+    expect(target.localTitle("fresh")).toBe("still typed");
   });
 });

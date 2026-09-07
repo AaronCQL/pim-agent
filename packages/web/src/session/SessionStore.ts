@@ -103,13 +103,12 @@ export type Unwritten = {
 
 /**
  * The unwritten session as the sidebar paints it: one row the listing has no
- * answer for. Titled like any other row — by the message the conversation
- * opens with — which here is the one still sitting in the composer.
+ * answer for. Untitled here like every other row, because a row is named by
+ * `localTitle` whichever source drew it.
  */
 export type UnwrittenSummary = {
   readonly sessionId: string;
   readonly cwd: string;
-  readonly title: string | undefined;
 };
 
 /**
@@ -518,10 +517,8 @@ export class SessionStore {
   }
 
   /**
-   * The row the server's listing cannot produce. Titled by the unsent
-   * message while there is one, and by the message that was sent once the
-   * turn is running — the same rule the listing itself uses, applied to a
-   * session whose first line has not reached disk yet.
+   * The row the server's listing cannot produce, for a session whose first
+   * line has not reached disk yet.
    *
    * A new chat nobody has typed into yet gets no row at all: an empty
    * composer is not a conversation, and a row for it would be the sidebar
@@ -532,16 +529,30 @@ export class SessionStore {
     if (!unwritten) {
       return undefined;
     }
-    const written = this.openingText(unwritten);
-    const typed = this.draftText(unwritten.sessionId).trim();
-    if (typed === "" && written === undefined && !unwritten.sent) {
+    if (!unwritten.sent && this.localTitle(unwritten.sessionId) === undefined) {
       return undefined;
     }
-    return {
-      sessionId: unwritten.sessionId,
-      cwd: unwritten.cwd,
-      title: typed || written,
-    };
+    return { sessionId: unwritten.sessionId, cwd: unwritten.cwd };
+  }
+
+  /**
+   * What a session is called when the listing has no name for it: a session
+   * is its opening message, and one that has not been sent yet is the message
+   * about to open it. Never the other way round — a second message being
+   * typed into a conversation does not rename it.
+   *
+   * The same rule the listing uses, which is why the two agree the moment pi
+   * writes the log: what this covers is the gap before it does, where the row
+   * would otherwise fall back to an id it already had a name for.
+   *
+   * Only the attached session's opening message is readable here; one left
+   * behind by a switch has nothing but what was typed into it.
+   */
+  public localTitle(sessionId: string): string | undefined {
+    const opening =
+      sessionId === this.state.sessionId ? this.firstUserText() : undefined;
+    const title = opening?.trim() || this.draftText(sessionId).trim();
+    return title === "" ? undefined : title;
   }
 
   /** The unsent message typed into a session; empty when there is none. */

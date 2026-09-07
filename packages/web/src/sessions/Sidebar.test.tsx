@@ -207,6 +207,36 @@ test("the unwritten row gives way to the real one, never doubles it", async () =
   expect(rows[0]?.textContent).toContain("Modernise the string building");
 });
 
+test("a listed session with no title yet is named by its first message", async () => {
+  const { host, store } = paint();
+  await Bun.sleep(0);
+  flush();
+
+  // The listing has the session and no name for it: pi writes the log while
+  // the turn runs, and the digest behind the title is a scan of the file the
+  // turn is still growing. The row has the message in hand either way.
+  store.ingest({
+    type: "attached",
+    protocolVersion: PROTOCOL_VERSION,
+    sessionId: "bbbbbbbb-2222",
+    cwd: "/srv/other",
+    head: 0,
+  });
+  store.ingest({
+    seq: 1,
+    type: "message",
+    messageId: "m1",
+    role: "user",
+    text: "run the tests",
+    timestamp: 0,
+  });
+  flush();
+
+  const rows = [...host.querySelectorAll("li")];
+  expect(rows[1]?.textContent).toContain("run the tests");
+  expect(rows[1]?.textContent).not.toContain("bbbbbbbb");
+});
+
 test("a running turn spins where the age would be", async () => {
   const { host, store } = paint();
   await Bun.sleep(0);
