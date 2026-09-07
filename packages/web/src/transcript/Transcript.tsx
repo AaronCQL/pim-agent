@@ -116,7 +116,7 @@ const COLUMN = "flex max-w-[85%] min-w-0 flex-col items-end";
  * bubble at all — it is prose on the line grid, and copying it is the job of
  * the buttons on the payloads inside it.
  *
- * A queued message is drawn as the same card, faded, and the card is a
+ * A queued message is drawn as the same card, recessed, and the card is a
  * button: it is a thing this reader has said that the agent has not heard
  * yet, so it is still theirs to take back. The whole card is the target
  * rather than a control tucked into a corner of it, because on a phone the
@@ -166,7 +166,7 @@ function MessageBubble(props: {
           <button
             type="button"
             aria-label="Edit queued message"
-            class={`${COLUMN} cursor-pointer text-left opacity-60 hover:opacity-100`}
+            class={`group ${COLUMN} text-left`}
             onClick={() => props.onEdit?.()}
           >
             <Card row={props.row} />
@@ -185,10 +185,22 @@ function MessageBubble(props: {
 function Card(props: { readonly row: MessageRow }) {
   return (
     <>
-      <div class="min-w-0 whitespace-pre-wrap break-words rounded-lg bg-neutral-850 px-4 py-3">
+      {/* Queued sits a step darker than a message that has landed, and rises
+          to the landed fill under the cursor. The fill is what says "not yet",
+          not a fade: dimming the whole card takes the text down with it, and
+          the one card here that is worth re-reading is the one still editable. */}
+      <div
+        class={`min-w-0 whitespace-pre-wrap break-words rounded-lg px-4 py-3 ${
+          props.row.queued
+            ? "bg-neutral-900 group-hover:bg-neutral-850"
+            : "bg-neutral-850"
+        }`}
+      >
         {props.row.text}
       </div>
-      <div class="text-sm text-neutral-500">
+      <div
+        class={`text-sm ${props.row.queued ? "text-neutral-400" : "text-neutral-500"}`}
+      >
         {props.row.queued
           ? "Queued. Click to edit."
           : clockTime(props.row.timestamp)}

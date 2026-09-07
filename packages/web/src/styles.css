@@ -69,6 +69,14 @@ body,
   height: 100%;
 }
 
+/* Every clickable in the UI is a real <button>, and every one of them wants
+   the same cursor — so it is a base style rather than a utility copied onto
+   each new one and forgotten on the one after that. Wind4's reset leaves
+   buttons at `cursor: default`. */
+button {
+  cursor: pointer;
+}
+
 /* Markdown is written into the DOM by streaming-markdown, so its elements
    never carry utility classes and have to be styled by tag. Everything below
    keeps them on the --line grid: no size jumps, no fractional margins, and
