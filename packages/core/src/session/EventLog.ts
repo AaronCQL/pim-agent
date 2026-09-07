@@ -7,6 +7,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { parseSessionEntries } from "@earendil-works/pi-coding-agent";
 
+import { Attachments } from "../attachments/Attachments";
 import { MessageText } from "./MessageText";
 
 /**
@@ -340,7 +341,13 @@ function firstUserMessage(probe: string): string | undefined {
     if (entry?.type !== "message" || entry.message.role !== "user") {
       continue;
     }
-    const text = MessageText.textOf(entry.message.content).trim();
+    // A session opened by dropping in a photo is named after the photo: the
+    // marker the model was told about is a server path, and a list of those
+    // is a list of rows nobody can tell apart.
+    const said = Attachments.parse(MessageText.textOf(entry.message.content));
+    const text =
+      said.text.trim() ||
+      said.files.map((file) => Attachments.nameOf(file.path)).join(", ");
     if (text !== "") {
       return text.length > TITLE_LIMIT
         ? `${text.slice(0, TITLE_LIMIT).trimEnd()}…`

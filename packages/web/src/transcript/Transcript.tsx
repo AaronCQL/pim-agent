@@ -5,6 +5,7 @@ import type { DurableEvent } from "#protocol/ServerEvent";
 import { clockTime } from "../format";
 import { Markdown } from "../markdown/Markdown";
 import type { LiveMessage, PendingMessage } from "../session/SessionStore";
+import { Attachments } from "../view/Attachments";
 import { ToolCards } from "../view/ToolCard";
 import { NOTICE_CLASSES } from "../view/tokens";
 import {
@@ -155,6 +156,20 @@ function MessageBubble(props: {
       }
     >
       <article class="flex flex-col items-end">
+        {/* Above the card and outside it, in both senses. Above, because the
+            picture is what the message is about and the sentence under it is
+            the caption. Outside, because a queued card is itself a button and
+            a thumbnail is another: nesting them would make opening the
+            picture also take the message back out of the queue. */}
+        <Show when={props.row.attachments}>
+          {(files) => (
+            <div class="mb-1.5">
+              <Attachments
+                files={files().map((file) => ({ ...file, key: file.url }))}
+              />
+            </div>
+          )}
+        </Show>
         <Show
           when={props.row.queued}
           fallback={
@@ -188,16 +203,20 @@ function Card(props: { readonly row: MessageRow }) {
       {/* Queued sits a step darker than a message that has landed, and rises
           to the landed fill under the cursor. The fill is what says "not yet",
           not a fade: dimming the whole card takes the text down with it, and
-          the one card here that is worth re-reading is the one still editable. */}
-      <div
-        class={`min-w-0 whitespace-pre-wrap break-words rounded-lg px-4 py-3 ${
-          props.row.queued
-            ? "bg-neutral-900 group-hover:bg-neutral-850"
-            : "bg-neutral-850"
-        }`}
-      >
-        {props.row.text}
-      </div>
+          the one card here that is worth re-reading is the one still editable.
+          A message of nothing but files draws no bubble at all: an empty one
+          under a photo is a speech bubble with nothing said in it. */}
+      <Show when={props.row.text !== ""}>
+        <div
+          class={`min-w-0 whitespace-pre-wrap break-words rounded-lg px-4 py-3 ${
+            props.row.queued
+              ? "bg-neutral-900 group-hover:bg-neutral-850"
+              : "bg-neutral-850"
+          }`}
+        >
+          {props.row.text}
+        </div>
+      </Show>
       <div
         class={`text-sm ${props.row.queued ? "text-neutral-400" : "text-neutral-500"}`}
       >

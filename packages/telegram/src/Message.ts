@@ -5,8 +5,8 @@ import { extname, join } from "node:path";
 import {
   AttachmentStore,
   type StoredAttachment,
-  toAttachmentPrompt,
 } from "#core/attachments/AttachmentStore";
+import { Attachments } from "#core/attachments/Attachments";
 import type { SessionId } from "./Session";
 
 type FileRef = {
@@ -35,7 +35,7 @@ async function toPrompt(
   const text = ("text" in message ? message.text : undefined) ?? "";
   const caption = ("caption" in message ? message.caption : undefined) ?? "";
   const files = await download(ctx, token, configDir, sessionId);
-  const { lines: attachments, images } = toAttachmentPrompt(files);
+  const { lines: attachments, images } = Attachments.render(files);
 
   const body = (text || caption || "").trim();
   if (!body && images.length === 0 && attachments.length === 0) {

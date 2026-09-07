@@ -183,13 +183,51 @@ test("an uploaded non-image reaches the agent as a server path", async () => {
   await probe.promptWith("read this", [{ id: uploaded.id }]);
   await idle(probe, mark);
 
+  // The model is told a path, because a path is the only handle a tool can
+  // take; the client is told a file, because a path is the one thing a
+  // reader can do nothing with.
+  expect(modelRequests.join("\n")).toContain(uploaded.path);
   const user = probe.events.find(
     (event) => event.type === "message" && event.role === "user"
   );
-  expect(user?.type === "message" && user.text).toBe(
-    `read this\n\n[Attachment: ${uploaded.path}]`
-  );
+  expect(user?.type === "message" && user.text).toBe("read this");
+  expect(user?.type === "message" && user.attachments).toEqual([
+    { name: "notes.txt", url: uploaded.url, isImage: false },
+  ]);
   expect(await Bun.file(uploaded.path).text()).toBe("client side notes\n");
+});
+
+test("the bytes can be fetched back at the url the client was given", async () => {
+  const probe = await connect();
+  const uploaded = await probe.upload(join(clientDir, CLIENT_FILE));
+
+  const response = await fetch(
+    `http://127.0.0.1:${gateway.port}${uploaded.url}`
+  );
+
+  expect(response.status).toBe(200);
+  expect(new Uint8Array(await response.arrayBuffer())).toEqual(
+    Uint8Array.from(PNG)
+  );
+  expect(response.headers.get("cache-control")).toContain("immutable");
+});
+
+test("a crafted attachment url cannot climb out of its session", async () => {
+  const probe = await connect();
+  await probe.upload(join(clientDir, "notes.txt"));
+  const secret = join(attachmentsRoot, "secret.txt");
+  await Bun.write(secret, "not yours\n");
+
+  for (const suffix of [
+    `${probe.sessionId}/..%2Fsecret.txt`,
+    `..%2F..%2Fetc%2Fpasswd/secret.txt`,
+    `${probe.sessionId}/notes.txt/extra`,
+  ]) {
+    const response = await fetch(
+      `http://127.0.0.1:${gateway.port}/attachment/${suffix}`
+    );
+    expect(`${suffix}: ${response.status}`).toEndWith(": 404");
+  }
 });
 
 // The dev client is served from another port, so its upload is cross-origin
@@ -228,10 +266,11 @@ test("no client-local path ever enters the conversation", async () => {
   ]);
   await idle(probe, mark);
 
+  // The name the reader gave the bytes is kept — it is the label they will
+  // be shown a week later — but nothing about where they were kept is: the
+  // client's directory is never sent, never stored, and never derivable.
   const seen = await history(probe);
   expect(seen).not.toContain(clientDir);
-  expect(seen).not.toContain(CLIENT_FILE);
-  expect(seen).not.toContain("notes.txt");
   expect(seen).toContain(document.path);
 });
 

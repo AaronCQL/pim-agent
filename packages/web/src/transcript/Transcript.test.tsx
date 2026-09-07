@@ -145,6 +145,86 @@ describe("row grouping", () => {
   });
 });
 
+describe("painting", () => {
+  const photo = (text: string): DurableEvent => ({
+    seq: 1,
+    type: "message",
+    messageId: "m",
+    role: "user",
+    text,
+    timestamp: 0,
+    attachments: [
+      {
+        name: "shot.png",
+        url: "http://gateway/attachment/s1/shot-1.png",
+        isImage: true,
+      },
+    ],
+  });
+
+  test("a file on a message is the picture, not the path it was stored at", () => {
+    const host = replay([photo("what is this?")]);
+    const thumbnail = host.querySelector("img")!;
+
+    expect(thumbnail.getAttribute("src")).toBe(
+      "http://gateway/attachment/s1/shot-1.png"
+    );
+    expect(thumbnail.getAttribute("alt")).toBe("shot.png");
+    expect(host.textContent).toContain("what is this?");
+    expect(host.textContent).not.toContain("attachment/s1");
+  });
+
+  test("clicking the thumbnail opens it at the size of the window", () => {
+    const host = replay([photo("what is this?")]);
+    host
+      .querySelector<HTMLButtonElement>("[aria-label='View shot.png']")!
+      .click();
+    flush();
+
+    const shown = host.querySelector("dialog")!;
+    expect(shown.open).toBe(true);
+    expect(shown.querySelector("img")?.getAttribute("src")).toBe(
+      "http://gateway/attachment/s1/shot-1.png"
+    );
+  });
+
+  // Said with no words at all, which is most of how a screenshot is sent.
+  test("a message that is only a picture draws no empty bubble", () => {
+    const host = replay([photo("")]);
+
+    expect(host.querySelectorAll("img")).toHaveLength(1);
+    expect(host.querySelector(".bg-neutral-850")).toBeNull();
+  });
+
+  // Telegram keeps its uploads under a root this server does not publish, so
+  // the bytes are a 404 and a broken glyph is not an answer.
+  test("a picture the server cannot serve falls back to its name", () => {
+    const host = replay([photo("look")]);
+    host.querySelector("img")!.dispatchEvent(new Event("error"));
+    flush();
+
+    expect(host.querySelector("img")).toBeNull();
+    expect(host.querySelector("a")?.textContent).toBe("shot.png");
+  });
+
+  test("a dead turn is rose text where the answer would have been", () => {
+    const host = replay([
+      {
+        seq: 1,
+        type: "message",
+        messageId: "m",
+        role: "assistant",
+        text: "",
+        timestamp: 0,
+        error: "rate_limit_error: too many requests",
+      },
+    ]);
+    const notice = host.querySelector("p.text-rose-400");
+
+    expect(notice?.textContent).toBe("rate_limit_error: too many requests");
+  });
+});
+
 describe("static replay of a real session", () => {
   test("renders every durable event without a live connection", () => {
     const host = replay();

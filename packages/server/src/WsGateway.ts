@@ -3,7 +3,7 @@ import type { Server, ServerWebSocket } from "bun";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 
-import { toAttachmentPrompt } from "#core/attachments/AttachmentStore";
+import { Attachments } from "#core/attachments/Attachments";
 import type { PickerItem } from "#core/picker/PickerItem";
 import { EventLog } from "#core/session/EventLog";
 import type { SessionDigest } from "#core/session/EventLog";
@@ -23,7 +23,7 @@ import { ClientConnection } from "./ClientConnection";
 import { Reloader } from "./Reloader";
 import { SessionStream } from "./SessionStream";
 import { StaticClient } from "./StaticClient";
-import { UploadEndpoint } from "./UploadEndpoint";
+import { AttachmentEndpoint } from "./AttachmentEndpoint";
 
 export type WsGatewayDeps = {
   readonly registry: SessionRegistry;
@@ -34,7 +34,7 @@ export type WsGatewayDeps = {
   readonly hostname?: string;
   /** 0 asks the OS for a free port; read it back from `port`. */
   readonly port?: number;
-  /** Where `POST /upload` materialises bytes; defaults to `~/.pim/attachments`. */
+  /** Where uploaded bytes are kept; defaults to `~/.pim/attachments`. */
   readonly attachmentsRoot?: string;
   /** Where the read cursors live; defaults to `~/.pim/read.json`. */
   readonly readCursorsPath?: string;
@@ -93,7 +93,7 @@ export class WsGateway {
   private readonly registry: SessionRegistry;
   private readonly hostname: string;
   private readonly requestedPort: number;
-  private readonly uploads: UploadEndpoint;
+  private readonly uploads: AttachmentEndpoint;
   /**
    * Which sessions have been read, shared by every client: the mark is a
    * property of the machine, so it is kept beside the sessions rather than
@@ -137,7 +137,7 @@ export class WsGateway {
     this.registry = deps.registry;
     this.hostname = deps.hostname ?? "127.0.0.1";
     this.requestedPort = deps.port ?? DEFAULT_PORT;
-    this.uploads = new UploadEndpoint(
+    this.uploads = new AttachmentEndpoint(
       deps.attachmentsRoot === undefined ? {} : { root: deps.attachmentsRoot }
     );
     this.cursors = new ReadCursors(deps.readCursorsPath);
@@ -177,7 +177,7 @@ export class WsGateway {
         if (pathname === "/health") {
           return Response.json({ ok: true, protocolVersion: PROTOCOL_VERSION });
         }
-        if (pathname === "/upload") {
+        if (AttachmentEndpoint.owns(pathname)) {
           return this.uploads.handle(req);
         }
         // Upgrade is tried first so the socket keeps answering on every path,
@@ -650,7 +650,7 @@ export class WsGateway {
       stream.sessionId,
       (command.attachments ?? []).map((ref) => ref.id)
     );
-    const { lines, images } = toAttachmentPrompt(taken);
+    const { lines, images } = Attachments.render(taken);
     const text = [command.text, ...lines].filter(Boolean).join("\n\n").trim();
     this.prompt(stream, text, images);
   }

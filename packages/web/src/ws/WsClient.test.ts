@@ -422,23 +422,36 @@ test("a turn is marked on the list of a client that is reading elsewhere", async
   await until(() => !watcher.isRunning(sessionId), "the other session to stop");
 });
 
-test("an upload never puts a client-local path in the conversation", async () => {
+test("an upload reaches the transcript as a file, not as a path", async () => {
   const store = await connect();
-  const stored = await store.upload(
+  const stored = await store.attachFile(
     new File(["hello"], "notes.txt", { type: "text/plain" })
   );
 
-  expect(stored.path.startsWith(harness.tmp)).toBe(false);
-  expect(stored.id).toBeString();
-  await store.prompt("look at this", [stored]);
+  expect(stored.url).toStartWith("http");
+  expect(store.attachmentsOf(store.state.sessionId)).toEqual([stored]);
+  await store.prompt("look at this");
   await until(
     () => store.state.durable.some((event) => event.type === "message"),
     "the durable user message"
   );
 
-  const dump = JSON.stringify(store.state.durable);
-  expect(dump).toContain(stored.path);
-  expect(dump).not.toContain("notes.txt\u0000");
+  const said = store.state.durable.find(
+    (event) => event.type === "message" && event.role === "user"
+  );
+  // The marker the agent was told about is the server's path to the bytes,
+  // and neither half of it belongs on screen.
+  expect(said?.type === "message" && said.text).toBe("look at this");
+  expect(said?.type === "message" && said.attachments).toEqual([
+    { name: "notes.txt", url: stored.url, isImage: false },
+  ]);
+  expect(JSON.stringify(store.state.durable)).not.toContain(harness.tmp);
+  // The row is empty once it is sent: the server is holding those bytes for
+  // a message that has gone.
+  expect(store.attachmentsOf(store.state.sessionId)).toEqual([]);
+
+  const fetched = await fetch(stored.url);
+  expect(await fetched.text()).toBe("hello");
 });
 
 test("the model catalogue is asked for once and switching it lands on state", async () => {

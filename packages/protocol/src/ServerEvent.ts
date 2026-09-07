@@ -24,6 +24,23 @@ export type ToolCallView = {
 };
 
 /**
+ * A file a user message carried, as the client draws it.
+ *
+ * The bytes live on the server and are fetched over HTTP rather than sent
+ * down the socket: a conversation of photos would otherwise be replayed in
+ * full on every attach, and the browser's own image cache is better at this
+ * than any framing we could invent. `url` is server-relative for the same
+ * reason the session's path is absent — where the server is reachable is the
+ * client's own business, and it is the one holding the connection.
+ */
+export type AttachmentView = {
+  /** What to call it on screen; never a path. */
+  readonly name: string;
+  readonly url: string;
+  readonly isImage: boolean;
+};
+
+/**
  * Events projected from pi's session JSONL. `seq` **is** the physical line
  * ordinal of the entry they came from, unmodified, so a client resumes by asking for `seq > n`. One line produces at most one durable
  * event, which is what makes that cursor exact: a client that has processed
@@ -43,6 +60,13 @@ export type DurableEvent =
       readonly timestamp: number;
       readonly thinking?: string;
       /**
+       * Files this message came with, taken back out of the text that
+       * carried them. Only ever set on a user message, and a message may be
+       * nothing but these — a photo said on its own has no words at all.
+       */
+      readonly attachments?: readonly AttachmentView[];
+      readonly toolCalls?: readonly ToolCallView[];
+      /**
        * The model call this message stands for failed — a rate limit, an
        * overload, a key the provider refused — and this is what it said.
        *
@@ -55,7 +79,6 @@ export type DurableEvent =
        * usually empty.
        */
       readonly error?: string;
-      readonly toolCalls?: readonly ToolCallView[];
     }
   | {
       readonly seq: number;

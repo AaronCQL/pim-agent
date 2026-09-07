@@ -30,6 +30,8 @@ export type ProbeOptions = {
 export type UploadedFile = {
   readonly id: string;
   readonly path: string;
+  /** Where the bytes can be read back, relative to the server's origin. */
+  readonly url: string;
   readonly mimeType: string;
   readonly isImage: boolean;
 };

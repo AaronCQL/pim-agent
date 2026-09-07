@@ -1,15 +1,12 @@
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, Show } from "solid-js";
 
 import type { PickerItem } from "#core/picker/PickerItem";
 import { Format, type ContextFill } from "#core/shared/Format";
-import type {
-  ModelCatalogue,
-  SessionStore,
-  UploadedAttachment,
-} from "../session/SessionStore";
+import type { ModelCatalogue, SessionStore } from "../session/SessionStore";
 import { Combobox, createComboboxNavigation } from "../ui/Combobox";
 import { createMediaQuery, KEYBOARD } from "../ui/media";
 import { Menu } from "../ui/Menu";
+import { Attachments, type AttachmentTile } from "../view/Attachments";
 import { ClankChip } from "./ClankChip";
 import { activeToken, applyCompletion, tokenKey } from "./token";
 
@@ -87,9 +84,13 @@ export function Composer(props: {
   // re-opens it without a second gesture.
   const [dismissed, setDismissed] = createSignal("");
   const [failed, setFailed] = createSignal("");
-  const [attachments, setAttachments] = createSignal<
-    readonly UploadedAttachment[]
-  >([]);
+  /**
+   * Uploads still in flight, drawn from the browser's own copy of the bytes.
+   * A photo is on screen the instant it is dropped rather than a round trip
+   * later — the wait is the upload, and hiding it until it finishes makes a
+   * dropped file look like a file that was refused.
+   */
+  const [uploading, setUploading] = createSignal<readonly AttachmentTile[]>([]);
   const [dropping, setDropping] = createSignal(false);
   const keyboard = createMediaQuery(KEYBOARD);
   const [catalogue, setCatalogue] = createSignal<ModelCatalogue>({
@@ -97,10 +98,12 @@ export function Composer(props: {
     thinkingLevels: [],
   });
   let input!: HTMLTextAreaElement;
+  let chooser!: HTMLInputElement;
   // The picker is placed over the whole card, not the textarea: the card is
   // what the reader sees the completion belonging to.
   let card!: HTMLDivElement;
   let generation = 0;
+  let previews = 0;
 
   /**
    * Every write to the message goes through here: the store mirrors it as
@@ -116,6 +119,28 @@ export function Composer(props: {
   const token = createMemo(() => activeToken(text(), caret()));
   const key = createMemo(() => tokenKey(token()));
   const open = createMemo(() => key() !== "" && dismissed() !== key());
+  /**
+   * What the row above the box shows: the session's uploaded files, each
+   * removable, and after them whatever is still on its way up.
+   */
+  const attachments = createMemo(() =>
+    props.store.attachmentsOf(props.store.state.sessionId)
+  );
+  const tiles = createMemo<readonly AttachmentTile[]>(() => {
+    const sessionId = props.store.state.sessionId;
+    return [
+      ...attachments().map((file) => ({
+        key: file.id,
+        name: file.name,
+        url: file.url,
+        isImage: file.isImage,
+        onRemove: () => {
+          props.store.detachFile(sessionId, file.id);
+        },
+      })),
+      ...uploading(),
+    ];
+  });
   /**
    * The composer has one button, and this is which one it is. Stop only when
    * there is nothing to send — a turn running and an empty box — because a
@@ -172,9 +197,12 @@ export function Composer(props: {
    * the sidebar row it names. The textarea is uncontrolled, so the swap is
    * written into the element like every other write to it.
    *
-   * Attachments do not come along. They were uploaded against the session
-   * being left, and the ids the server answered with mean nothing to
-   * another one.
+   * Attachments swap with it and for the same reason: they were uploaded
+   * against the session being left, and the server is still holding them
+   * under it, so they are waiting where they were dropped when the reader
+   * comes back. Only the uploads still in flight are dropped here — the tile
+   * is this browser's preview of bytes that will land in the session they
+   * were meant for either way.
    */
   createEffect(
     () => props.store.state.sessionId,
@@ -184,7 +212,7 @@ export function Composer(props: {
       setCaret(held.length);
       setItems([]);
       setDismissed("");
-      setAttachments([]);
+      setUploading([]);
       input.value = held;
     }
   );
@@ -245,15 +273,37 @@ export function Composer(props: {
     setCaret(input.selectionStart ?? input.value.length);
   }
 
+  /**
+   * Every way bytes get in ends here — drop, paste, and the button. All of
+   * them at once rather than one after another: a five-photo drop over a
+   * home connection is five uploads, and doing them in turn makes the last
+   * one wait for four it has nothing to do with.
+   */
   async function absorb(files: readonly File[]): Promise<void> {
     setFailed("");
-    for (const file of files) {
-      try {
-        const stored = await props.store.upload(file);
-        setAttachments((current) => [...current, stored]);
-      } catch (err) {
-        setFailed(`${file.name}: ${(err as Error).message}`);
-      }
+    await Promise.all(files.map((file) => hoist(file)));
+  }
+
+  async function hoist(file: File): Promise<void> {
+    const key = `uploading:${++previews}`;
+    const preview = URL.createObjectURL(file);
+    setUploading((current) => [
+      ...current,
+      {
+        key,
+        name: file.name,
+        url: preview,
+        isImage: file.type.startsWith("image/"),
+        uploading: true,
+      },
+    ]);
+    try {
+      await props.store.attachFile(file);
+    } catch (err) {
+      setFailed(`${file.name}: ${(err as Error).message}`);
+    } finally {
+      setUploading((current) => current.filter((one) => one.key !== key));
+      URL.revokeObjectURL(preview);
     }
   }
 
@@ -263,8 +313,7 @@ export function Composer(props: {
    */
   async function submit(): Promise<void> {
     const draft = text();
-    const attached = attachments();
-    if (draft.trim() === "" && attached.length === 0) {
+    if (draft.trim() === "" && attachments().length === 0) {
       return;
     }
     setText("");
@@ -272,13 +321,12 @@ export function Composer(props: {
     // message is handed to it, and it is the store that decides what the row
     // is called from there on.
     setCaret(0);
-    setAttachments([]);
     setItems([]);
     input.value = "";
     // Before the await, so the optimistic message the store appends is
     // already anchored by the time it paints.
     props.onSend();
-    await props.store.prompt(draft, attached);
+    await props.store.prompt(draft);
   }
 
   /**
@@ -378,31 +426,7 @@ export function Composer(props: {
           void absorb([...(event.dataTransfer?.files ?? [])]);
         }}
       >
-        <Show when={attachments().length > 0}>
-          <ul class="flex flex-wrap gap-1.5 text-sm">
-            <For each={attachments()}>
-              {(attachment) => (
-                <li class="flex items-center gap-1 rounded-full bg-neutral-900 px-2.5 py-1 text-neutral-350">
-                  <span
-                    class={`size-4 shrink-0 ${attachment.isImage ? "i-griddy-icons:image" : "i-griddy-icons:attachment"}`}
-                    aria-hidden="true"
-                  />
-                  <span class="max-w-40 truncate">{attachment.label}</span>
-                  <button
-                    type="button"
-                    aria-label={`Remove ${attachment.label}`}
-                    class="i-griddy-icons:close size-4 hover:text-neutral-50"
-                    onClick={() => {
-                      setAttachments((current) =>
-                        current.filter((one) => one.id !== attachment.id)
-                      );
-                    }}
-                  />
-                </li>
-              )}
-            </For>
-          </ul>
-        </Show>
+        <Attachments files={tiles()} compact />
 
         <textarea
           ref={(element: HTMLTextAreaElement) => {
@@ -451,6 +475,43 @@ export function Composer(props: {
             phone the model name is the first thing that would push the send
             button off the card. */}
         <div class="flex flex-wrap items-end gap-2">
+          {/* Dropping and pasting were the only ways in, and neither is
+              visible: a phone has no drag and a first-time reader has no
+              reason to try. The input is the control — the button only
+              reaches it — so the file dialogue is the platform's own. */}
+          <input
+            ref={(element: HTMLInputElement) => {
+              chooser = element;
+            }}
+            type="file"
+            multiple
+            class="hidden"
+            aria-hidden="true"
+            tabindex={-1}
+            onChange={(event: Event) => {
+              const picked = [
+                ...((event.target as HTMLInputElement).files ?? []),
+              ];
+              // Cleared so choosing the same file twice is two events; the
+              // input keeps its value otherwise and the second pick is silent.
+              chooser.value = "";
+              void absorb(picked);
+            }}
+          />
+          <button
+            type="button"
+            aria-label="Attach files"
+            title="Attach files"
+            // Sized and coloured as a `Menu` chip with no label, because
+            // that is what it is: one of the row's controls, not the send.
+            class="flex size-8 shrink-0 items-center justify-center rounded-full bg-neutral-900 text-neutral-350 ring-neutral-600 hover:text-neutral-100 hover:ring-1"
+            onMouseDown={keepFocus}
+            onClick={() => {
+              chooser.click();
+            }}
+          >
+            <span class="i-griddy-icons:attachment size-4" aria-hidden="true" />
+          </button>
           <Show when={props.store.state.model}>
             {(model) => (
               <Menu

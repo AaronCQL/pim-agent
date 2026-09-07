@@ -4,10 +4,16 @@ import type {
 } from "@earendil-works/pi-agent-core";
 import type { FileEntry } from "@earendil-works/pi-coding-agent";
 
+import { Attachments } from "#core/attachments/Attachments";
 import { EventLog, type LoggedEntry } from "#core/session/EventLog";
 import { MessageText } from "#core/session/MessageText";
 import { Tools } from "#core/shared/Tools";
-import type { DurableEvent, ToolCallView } from "#protocol/ServerEvent";
+import type {
+  AttachmentView,
+  DurableEvent,
+  ToolCallView,
+} from "#protocol/ServerEvent";
+import { attachmentUrl } from "./AttachmentEndpoint";
 
 type PendingCall = {
   readonly name: string;
@@ -85,15 +91,29 @@ export class SessionProjection {
     // "Clanked for" reading survive a reload because of it.
     const timestamp = Date.parse(entry.timestamp);
     switch (message.role) {
-      case "user":
+      case "user": {
+        // The files are pulled back out of the words: what the agent was told
+        // is a marker line naming a server path, and a reader has no use for
+        // either half of that. What is left is what was actually said, which
+        // for a photo sent on its own is nothing at all.
+        const said = Attachments.parse(MessageText.textOf(message.content));
+        const attachments: readonly AttachmentView[] = said.files.map(
+          (file) => ({
+            name: Attachments.nameOf(file.path),
+            url: attachmentUrl(file.path),
+            isImage: file.isImage,
+          })
+        );
         return {
           seq,
           type: "message",
           messageId: entry.id,
           role: "user",
-          text: MessageText.textOf(message.content),
+          text: said.text,
           timestamp,
+          ...(attachments.length === 0 ? {} : { attachments }),
         };
+      }
       case "assistant": {
         const toolCalls: ToolCallView[] = [];
         for (const part of message.content) {

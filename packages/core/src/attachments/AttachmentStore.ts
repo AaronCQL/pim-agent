@@ -1,4 +1,3 @@
-import type { PromptOptions } from "@earendil-works/pi-coding-agent";
 import { mkdir } from "node:fs/promises";
 import { basename, extname, resolve, sep } from "node:path";
 
@@ -22,12 +21,6 @@ export type AttachmentInput = {
   readonly stem?: string;
   /** Extension to fall back on when `name` carries none. */
   readonly ext?: string;
-};
-
-export type AttachmentPrompt = {
-  /** One line per file, appended to the prompt text. */
-  readonly lines: readonly string[];
-  readonly images: NonNullable<PromptOptions["images"]>;
 };
 
 /** Above this, an image is referenced by path instead of inlined. */
@@ -74,27 +67,16 @@ export class AttachmentStore {
   private scopeDir(scope: string): string {
     return contain(this.root, safeName(scope));
   }
-}
 
-/** What the prompt says about a set of stored files, and nothing more. */
-export function toAttachmentPrompt(
-  files: readonly StoredAttachment[]
-): AttachmentPrompt {
-  const lines: string[] = [];
-  const images: NonNullable<PromptOptions["images"]> = [];
-  for (const file of files) {
-    if (file.imageBase64) {
-      images.push({
-        type: "image",
-        data: file.imageBase64,
-        mimeType: file.mimeType,
-      });
-      lines.push(`[Image attachment: ${file.path}]`);
-      continue;
-    }
-    lines.push(`[Attachment: ${file.path}]`);
+  /**
+   * Where `store` put — or would have put — this id. The reverse of an
+   * upload, and the only way back to the bytes: an id off the wire is
+   * sanitised exactly as it was on the way in, so a crafted one can name a
+   * file that does not exist but never one outside its scope.
+   */
+  public locate(scope: string, id: string): string {
+    return contain(this.scopeDir(scope), safeName(id));
   }
-  return { lines, images };
 }
 
 function extensionOf(input: AttachmentInput): string {

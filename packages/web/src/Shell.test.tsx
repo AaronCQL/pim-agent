@@ -65,6 +65,28 @@ function offline(): SessionStore {
 }
 
 /**
+ * One upload, answered the way the gateway answers it. The store is offline
+ * here — a socket it cannot open — but an upload is plain HTTP and goes out
+ * whether or not the socket is up, so it is the fetch that has to be told
+ * what the server would have said.
+ */
+async function attach(store: SessionStore, name: string): Promise<void> {
+  const real = globalThis.fetch;
+  const sessionId = store.state.sessionId;
+  globalThis.fetch = (async () =>
+    Response.json({
+      id: `${sessionId}-${name}`,
+      url: `/attachment/${sessionId}/${name}`,
+      isImage: true,
+    })) as unknown as typeof fetch;
+  try {
+    await store.attachFile(new File(["x"], name, { type: "image/png" }));
+  } finally {
+    globalThis.fetch = real;
+  }
+}
+
+/**
  * The transcript's scroller, with a layout happy-dom will not compute: a page
  * of viewport over a body of content whose height the caller can grow, which
  * is what a row taller than the flush that appended it looks like from here.
@@ -390,6 +412,64 @@ describe("the shell, painted from events alone", () => {
     flush();
     expect(input.value).toBe("half a thought");
     expect(store.draftText("s2")).toBe("and something else");
+  });
+
+  test("the files in the box belong to the session, like the words do", async () => {
+    const store = offline();
+    const host = paint(store);
+    store.ingest(attached("s1"));
+    flush();
+    await attach(store, "shot.png");
+    flush();
+    expect(host.querySelector("img[alt='shot.png']")).not.toBeNull();
+
+    // Away, where it is another session's business and not on screen...
+    store.ingest(attached("s2"));
+    flush();
+    expect(host.querySelector("img[alt='shot.png']")).toBeNull();
+
+    // ...and back, to the picture still waiting to be sent. The server is
+    // holding those bytes under this session, so the id still names them.
+    store.ingest(attached("s1"));
+    flush();
+    expect(host.querySelector("img[alt='shot.png']")).not.toBeNull();
+  });
+
+  test("a file can be taken back off the message before it is sent", async () => {
+    const store = offline();
+    const host = paint(store);
+    store.ingest(attached("s1"));
+    flush();
+    await attach(store, "shot.png");
+    flush();
+
+    host
+      .querySelector<HTMLButtonElement>("[aria-label='Remove shot.png']")!
+      .click();
+    flush();
+
+    expect(host.querySelector("img[alt='shot.png']")).toBeNull();
+    expect(store.attachmentsOf("s1")).toEqual([]);
+  });
+
+  // Drop and paste are the only other ways in, and neither is visible: a
+  // phone cannot drag and nobody guesses at a gesture.
+  test("the attach button reaches the file dialogue", () => {
+    const store = offline();
+    const host = paint(store);
+    store.ingest(attached("s1"));
+    flush();
+    const chooser = host.querySelector<HTMLInputElement>("input[type=file]")!;
+    let opened = 0;
+    chooser.click = () => {
+      opened += 1;
+    };
+
+    host
+      .querySelector<HTMLButtonElement>("[aria-label='Attach files']")!
+      .click();
+
+    expect(opened).toBe(1);
   });
 
   test("Enter sends where Shift+Enter exists to type the newline", () => {

@@ -5,6 +5,7 @@ import { RemoteFilePickerSuggestionEngine } from "#core/picker/RemoteFilePickerS
 import type { ToolView } from "#core/view/ViewBlock";
 import type { AttachmentRef, CommandDraft } from "#protocol/Command";
 import type {
+  AttachmentView,
   DurableEvent,
   ModelView,
   ServerEvent,
@@ -58,14 +59,17 @@ export type ModelCatalogue = {
   readonly thinkingLevels: readonly string[];
 };
 
-/** What `POST /upload` answered with. Every path here is the server's. */
+/**
+ * A file the server is holding for the next message. `id` is what a prompt
+ * refers to it by; `url` is where the bytes can be looked at, already
+ * resolved against the server this store is talking to.
+ */
 export type UploadedAttachment = {
   readonly id: string;
-  readonly path: string;
-  readonly mimeType: string;
+  readonly url: string;
   readonly isImage: boolean;
-  /** The client's own name for the bytes, kept for the chip and nothing else. */
-  readonly label: string;
+  /** The client's own name for the bytes, which is the one worth showing. */
+  readonly name: string;
 };
 
 /**
@@ -77,6 +81,8 @@ export type UploadedAttachment = {
 export type PendingMessage = {
   readonly id: string;
   readonly text: string;
+  /** The files sent with it, so the row is not a caption with nothing above it. */
+  readonly attachments?: readonly AttachmentView[];
   /**
    * When it was said, which is the closest thing to a stamp there is until
    * the durable event that supersedes it arrives with pi's own.
@@ -90,6 +96,7 @@ export type PendingMessage = {
 type OptimisticMessage = {
   id: string;
   text: string;
+  attachments?: readonly AttachmentView[];
   timestamp: number;
   queued?: boolean;
 };
@@ -173,6 +180,13 @@ export type SessionState = {
    * what is in it and leaves the other message where it was written.
    */
   drafts: Record<string, string>;
+  /**
+   * The files uploaded for a message not yet sent, per session, for the same
+   * reason and by the same rule as `drafts`. Kept in memory alone: the
+   * server holds the bytes against ids it forgets when it restarts, so an id
+   * that outlived a reload would name nothing.
+   */
+  attachments: Record<string, readonly UploadedAttachment[]>;
   /**
    * The message a session was opened with, per session, kept only until the
    * listing can say it too. A session is named by its opening message, and
@@ -290,6 +304,7 @@ export class SessionStore {
       error: undefined,
       unread: {},
       drafts: { ...drafts },
+      attachments: {},
       openings: {},
       unwritten,
     });
@@ -417,14 +432,16 @@ export class SessionStore {
    * merges on its side too, so one waiting message is one row here and one
    * user message there.
    */
-  public async prompt(
-    text: string,
-    attachments: readonly UploadedAttachment[] = []
-  ): Promise<void> {
+  public async prompt(text: string): Promise<void> {
     const trimmed = text.trim();
+    const sessionId = this.state.sessionId;
+    const attachments = this.attachmentsOf(sessionId);
     if (trimmed === "" && attachments.length === 0) {
       return;
     }
+    const carried: readonly AttachmentView[] = attachments.map(
+      ({ name, url, isImage }) => ({ name, url, isImage })
+    );
     const busy = this.isBusy();
     // Decided inside the write rather than from `state`, which settles on its
     // own schedule: two messages typed into the same tick must still find
@@ -446,11 +463,13 @@ export class SessionStore {
         id = growing.id;
         previous = growing.text;
         growing.text = `${growing.text}\n\n${trimmed}`;
+        growing.attachments = [...(growing.attachments ?? []), ...carried];
       } else {
         id = `optimistic:${++this.optimisticId}`;
         draft.optimistic.push({
           id,
           text: trimmed,
+          ...(carried.length === 0 ? {} : { attachments: carried }),
           // Nothing has been written yet, so the only honest stamp is the
           // moment it was said; the durable echo carries pi's own.
           timestamp: Date.now(),
@@ -469,7 +488,7 @@ export class SessionStore {
     try {
       const response = await this.client.send({
         type: "user_message",
-        sessionId: this.state.sessionId,
+        sessionId,
         text: trimmed,
         ...(refs.length === 0 ? {} : { attachments: refs }),
       });
@@ -628,6 +647,69 @@ export class SessionStore {
   }
 
   /**
+   * The files waiting to go with a session's unsent message. Held per
+   * session for the same reason the words are: the composer is one box that
+   * every session borrows, and a photo dropped into one conversation is not
+   * a photo dropped into the next one the reader opens.
+   */
+  public attachmentsOf(sessionId: string): readonly UploadedAttachment[] {
+    return this.state.attachments[sessionId] ?? [];
+  }
+
+  /**
+   * Moves bytes into the server's world and files them under the session
+   * they were meant for — which is read once, here, so a switch mid-upload
+   * lands them where they were dropped rather than where the reader has got
+   * to since. The `File` the browser handed us never leaves this method, and
+   * its client-local path was never available to begin with.
+   */
+  public async attachFile(file: File): Promise<UploadedAttachment> {
+    const sessionId = this.state.sessionId;
+    const form = new FormData();
+    form.append("file", file, file.name);
+    const response = await fetch(
+      `${this.client.httpUrl}/upload?session=${encodeURIComponent(sessionId)}`,
+      { method: "POST", body: form }
+    );
+    const body = (await response.json()) as {
+      readonly id: string;
+      readonly url: string;
+      readonly isImage: boolean;
+      readonly error?: string;
+    };
+    if (!response.ok) {
+      throw new Error(body.error ?? `upload failed: ${response.status}`);
+    }
+    const uploaded: UploadedAttachment = {
+      id: body.id,
+      url: this.absolute(body.url),
+      isImage: body.isImage,
+      name: file.name,
+    };
+    this.setState((draft) => {
+      draft.attachments[sessionId] = [
+        ...(draft.attachments[sessionId] ?? []),
+        uploaded,
+      ];
+    });
+    return uploaded;
+  }
+
+  /** Takes one back off the unsent message. The bytes stay on the server. */
+  public detachFile(sessionId: string, id: string): void {
+    this.setState((draft) => {
+      const kept = (draft.attachments[sessionId] ?? []).filter(
+        (one) => one.id !== id
+      );
+      if (kept.length === 0) {
+        delete draft.attachments[sessionId];
+      } else {
+        draft.attachments[sessionId] = kept;
+      }
+    });
+  }
+
+  /**
    * Mirrors the composer's unsent message onto the session it is being typed
    * into. Which session that is, is the store's answer and not the box's:
    * the composer is one box shared by every session.
@@ -665,6 +747,10 @@ export class SessionStore {
    */
   private spendDraft(): void {
     this.putDraft(this.state.sessionId, "");
+    const sessionId = this.state.sessionId;
+    this.setState((draft) => {
+      delete draft.attachments[sessionId];
+    });
     const unwritten = this.state.unwritten;
     if (unwritten && unwritten.sessionId === this.state.sessionId) {
       this.setUnwritten({ ...unwritten, sent: true });
@@ -855,24 +941,13 @@ export class SessionStore {
   }
 
   /**
-   * Moves bytes into the server's world and answers with the server's own id
-   * for them. The `File` the browser handed us never leaves this method, and
-   * its client-local path was never available to begin with.
+   * A URL the server sent, as this browser can actually fetch it. Server
+   * frames carry server-relative paths — where this server is reachable is
+   * the client's business, and in development the page is served by vite on
+   * a different port than the gateway holding the socket.
    */
-  public async upload(file: File): Promise<UploadedAttachment> {
-    const form = new FormData();
-    form.append("file", file, file.name);
-    const response = await fetch(
-      `${this.client.httpUrl}/upload?session=${encodeURIComponent(this.state.sessionId)}`,
-      { method: "POST", body: form }
-    );
-    const body = (await response.json()) as UploadedAttachment & {
-      readonly error?: string;
-    };
-    if (!response.ok) {
-      throw new Error(body.error ?? `upload failed: ${response.status}`);
-    }
-    return { ...body, label: file.name };
+  private absolute(url: string): string {
+    return url.startsWith("/") ? `${this.client.httpUrl}${url}` : url;
   }
 
   /** The one entry point for a server frame; tests drive it directly. */
@@ -1040,8 +1115,18 @@ export class SessionStore {
   }
 
   private ingestDurable(event: DurableEvent): void {
+    const resolved =
+      event.type === "message" && event.attachments
+        ? {
+            ...event,
+            attachments: event.attachments.map((file) => ({
+              ...file,
+              url: this.absolute(file.url),
+            })),
+          }
+        : event;
     this.setState((draft) => {
-      draft.durable.push(event);
+      draft.durable.push(resolved);
       if (event.type === "message" && event.role === "user") {
         // Splicing a store draft in place is not safe across a batch of
         // events — the write is a patch, and it can be applied against a
@@ -1148,10 +1233,19 @@ function openingMessage(
 ): string | undefined {
   for (const event of durable) {
     if (event.type === "message" && event.role === "user") {
-      return event.text;
+      return event.text || namesOf(event.attachments);
     }
   }
-  return optimistic[0]?.text;
+  const first = optimistic[0];
+  return first && (first.text || namesOf(first.attachments));
+}
+
+/**
+ * What to call a message that is only files, which is how the server names
+ * one too: a row reading "Untitled" says less than the photo it stands for.
+ */
+function namesOf(attachments: readonly AttachmentView[] | undefined): string {
+  return (attachments ?? []).map((file) => file.name).join(", ");
 }
 
 /** Anything storage has none of, or has nonsense in, reads as empty. */

@@ -1,5 +1,5 @@
 import type { ToolView } from "#core/view/ViewBlock";
-import type { DurableEvent } from "#protocol/ServerEvent";
+import type { AttachmentView, DurableEvent } from "#protocol/ServerEvent";
 import type { LiveMessage, PendingMessage } from "../session/SessionStore";
 
 export type MessageRow = {
@@ -9,6 +9,8 @@ export type MessageRow = {
   readonly text: string;
   /** When pi wrote the message, in epoch ms. */
   readonly timestamp: number;
+  /** Files the message carried; only ever on a user row. */
+  readonly attachments?: readonly AttachmentView[];
   readonly thinking?: string;
   /**
    * Still streaming, which is true of live rows and of nothing else. The
@@ -67,13 +69,17 @@ function append(
       // reasoning with a newline or two, and untrimmed those are blank lines
       // between the thinking and the prose it introduces.
       const thinking = event.thinking?.trim() ?? "";
-      if (event.text !== "" || thinking !== "") {
+      // A message of nothing but a photo has no text at all, and is still a
+      // message: the row is the picture.
+      const attachments = event.attachments ?? [];
+      if (event.text !== "" || thinking !== "" || attachments.length > 0) {
         rows.push({
           kind: "message",
           id: event.messageId,
           role: event.role,
           text: event.text,
           timestamp: event.timestamp,
+          ...(attachments.length === 0 ? {} : { attachments }),
           ...(thinking === "" ? {} : { thinking }),
         });
       }
@@ -204,6 +210,9 @@ function pushPending(rows: Row[], pending: PendingMessage): void {
     role: "user",
     text: pending.text,
     timestamp: pending.timestamp,
+    ...(pending.attachments === undefined
+      ? {}
+      : { attachments: pending.attachments }),
     ...(pending.queued ? { queued: true } : {}),
   });
 }
