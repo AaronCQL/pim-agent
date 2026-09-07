@@ -4,6 +4,7 @@ import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
 import {
   applyOutputCap,
   childToolNames,
+  childLoaderOptions,
   runSubagent,
   SubagentEventCapture,
   type SubagentDetails,
@@ -111,6 +112,20 @@ describe("childToolNames", () => {
       "read",
       "bash",
     ]);
+  });
+});
+
+describe("childLoaderOptions", () => {
+  test("gives the child pim's own roster, not pi's built-ins alone", () => {
+    const names = childLoaderOptions("/work").extensionFactories.map(
+      (entry) => entry.name
+    );
+
+    // The allowlist names tools by their registered name, so a child built
+    // without the roster would resolve `glob` or `web_search` to nothing.
+    expect(names).toContain("glob");
+    expect(names).toContain("web-search");
+    expect(names).toContain("apply-patch");
   });
 });
 

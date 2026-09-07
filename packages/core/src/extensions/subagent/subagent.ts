@@ -4,6 +4,7 @@ import type {
   AgentToolResult,
   AgentToolUpdateCallback,
   ExtensionContext,
+  InlineExtension,
 } from "@earendil-works/pi-coding-agent";
 import {
   createAgentSession,
@@ -17,6 +18,7 @@ import type {
   Usage,
 } from "@earendil-works/pi-ai";
 import { SubagentLogs } from "../../shared/SubagentLogs";
+import { CoreExtensions } from "../CoreExtensions";
 import { formatTopLine } from "./render";
 
 export const PER_TASK_OUTPUT_CAP = 32 * 1024;
@@ -131,14 +133,28 @@ function answerOf(entries: readonly SubagentEntry[]): string {
   return entries.findLast((entry) => entry.kind === "text")?.text ?? "";
 }
 
+/**
+ * The child builds its own session, so it inherits none of the parent's
+ * registrations: without the roster it would see pi's built-in tools alone
+ * and silently lose every pim tool the `tools` allowlist goes on to name.
+ */
+export function childLoaderOptions(cwd: string): {
+  readonly cwd: string;
+  readonly agentDir: string;
+  readonly extensionFactories: InlineExtension[];
+} {
+  return {
+    cwd,
+    agentDir: getAgentDir(),
+    extensionFactories: CoreExtensions.gated(),
+  };
+}
+
 export async function createSdkSubagentSession(
   parentCtx: ExtensionContext,
   spec: SubagentSessionSpec = {}
 ): Promise<SubagentSession> {
-  const loader = new DefaultResourceLoader({
-    cwd: parentCtx.cwd,
-    agentDir: getAgentDir(),
-  });
+  const loader = new DefaultResourceLoader(childLoaderOptions(parentCtx.cwd));
   await loader.reload();
 
   const { session } = await createAgentSession({
