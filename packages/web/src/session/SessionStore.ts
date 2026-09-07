@@ -1352,16 +1352,25 @@ function patchLiveTool(
   }
 }
 
-/** The call has been written down, so the live view of it is superseded. */
+/**
+ * The call has been written down, so the live view of it is superseded.
+ *
+ * A new bucket rather than an edit inside the one that is there: this runs
+ * off a durable event, so the `message_retire` that superseded the message
+ * holding the call can be an earlier event of the same batch — and a write
+ * through a message that batch has already replaced is a patch on the path
+ * it sat at, applied after the assignment that drops it. The message comes
+ * back as a shell with nothing in it.
+ */
 function settleLiveTool(target: LiveHolder, callId: string): void {
-  for (const message of target.live) {
-    message.tools = message.tools.filter((tool) => tool.callId !== callId);
-  }
-  // A retired message is kept for its calls alone, so the last result to be
-  // written is what takes the shell with it.
-  target.live = target.live.filter(
-    (message) => !message.retired || message.tools.length > 0
-  );
+  target.live = target.live
+    .map((message) => ({
+      ...message,
+      tools: message.tools.filter((tool) => tool.callId !== callId),
+    }))
+    // A retired message is kept for its calls alone, so the last result to be
+    // written is what takes the shell with it.
+    .filter((message) => !message.retired || message.tools.length > 0);
 }
 
 /**

@@ -28,9 +28,8 @@ let probes: ProbeClient[] = [];
 
 /** Which session the tool writes its child log under; set once a probe has one. */
 let parentSessionId = "";
-/** Held by a test that wants to watch the child while it is still running. */
-let release: (() => void) | undefined;
-let held: Promise<void> | undefined;
+/** The two points the tool parks at, while a test is holding it there. */
+let parked: Parked | undefined;
 
 const spawnSchema = Type.Object({ task: Type.String() });
 
@@ -55,13 +54,16 @@ function spawnTool(): PimToolDefinition<
         content: [{ type: "text", text: "working" }],
         details: { entries: 1 },
       });
-      await held;
+      await parked?.answering.shut;
       await writeChild(callId, "assistant", CHILD_ANSWER);
       const result = {
         content: [{ type: "text" as const, text: CHILD_ANSWER }],
         details: { entries: 2 },
       };
+      // Reported before the park below, so the answer is on the wire while
+      // the call is still open — which is the whole of what a live watch is.
       onUpdate?.(result);
+      await parked?.settling.shut;
       return result;
     },
   };
@@ -198,16 +200,41 @@ function idle(probe: ProbeClient, from: number): Promise<ServerEvent> {
   );
 }
 
-/** Holds the tool open so a test can watch a child that is still running. */
-function holdChild(): () => void {
-  held = new Promise<void>((resolve) => {
-    release = resolve;
+type Gate = { readonly shut: Promise<void>; readonly open: () => void };
+
+type Parked = {
+  /** Waited on before the child writes its answer down. */
+  readonly answering: Gate;
+  /** Waited on after the parent has reported that answer, before it returns. */
+  readonly settling: Gate;
+};
+
+type Held = {
+  /** Lets the child answer and the parent report it, the call still open. */
+  readonly answer: () => void;
+  /** Lets the call return, which is what settles the parent's row. */
+  readonly settle: () => void;
+};
+
+function gate(): Gate {
+  let open!: () => void;
+  const shut = new Promise<void>((resolve) => {
+    open = resolve;
   });
-  return () => {
-    held = undefined;
-    release?.();
-    release = undefined;
-  };
+  return { shut, open };
+}
+
+/**
+ * Parks the tool either side of the child's answer, so a test can watch a run
+ * that is still open at both of them. Two parks and not one: what a live
+ * drain has to be told apart from is the drain that happens when the call
+ * settles, and the only frame that cannot be that one is a frame the client
+ * already has while the call is still running.
+ */
+function holdChild(): Held {
+  const held: Parked = { answering: gate(), settling: gate() };
+  parked = held;
+  return { answer: held.answering.open, settle: held.settling.open };
 }
 
 beforeEach(async () => {
@@ -249,9 +276,11 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  release?.();
-  release = undefined;
-  held = undefined;
+  // A tool still parked would hold the turn, and the session cannot be
+  // disposed while one is running.
+  parked?.answering.open();
+  parked?.settling.open();
+  parked = undefined;
   for (const probe of probes) {
     probe.close();
   }
@@ -275,7 +304,7 @@ afterEach(async () => {
 
 test("watches a running child, and keeps it out of the parent transcript", async () => {
   const probe = await connect();
-  const finish = holdChild();
+  const held = holdChild();
   const mark = probe.events.length;
   await probe.prompt("delegate this");
   await probe.waitFor((event) => event.type === "tool_update", { from: mark });
@@ -286,31 +315,30 @@ test("watches a running child, and keeps it out of the parent transcript", async
   expect(seqsOf(watched(probe)[0] ?? [])).toEqual([2]);
   expect(textsOf(watched(probe)[0] ?? [])).toEqual([TASK]);
 
-  finish();
+  held.answer();
   await probe.waitFor(
     (event) =>
       event.type === "subagent_events" &&
       textsOf(event.events).includes(CHILD_ANSWER),
     { from: mark }
   );
+
+  // Live: the child's answer is in the reader's hands while the parent's call
+  // is still open, so the envelope cannot have come from a drain of a settled
+  // log — there is no result for that call to have been drained beside.
+  expect(seqsOf(watched(probe)[1] ?? [])).toEqual([3]);
+  expect(
+    probe.events.some(
+      (event) => event.type === "tool_result" && event.callId === CALL_ID
+    )
+  ).toBe(false);
+
+  held.settle();
   await idle(probe, mark);
 
-  // Live: the child's answer arrived in its own envelope while the call was
-  // still running, not folded into the replay of a settled log. The parent's
-  // own `tool_result` is what proves it — the envelope is ahead of it, so it
-  // cannot have been a drain that waited for the call to be written down.
+  // And settling adds nothing: everything the child wrote was sent as it was
+  // written, so the end of the call has nothing left to hand over.
   expect(watched(probe)).toHaveLength(2);
-  expect(seqsOf(watched(probe)[1] ?? [])).toEqual([3]);
-  const answered = probe.events.findIndex(
-    (event) =>
-      event.type === "subagent_events" &&
-      textsOf(event.events).includes(CHILD_ANSWER)
-  );
-  const written = probe.events.findIndex(
-    (event) => event.type === "tool_result" && event.callId === CALL_ID
-  );
-  expect(answered).toBeGreaterThan(-1);
-  expect(written).toBeGreaterThan(answered);
   // The parent's transcript never holds the child's words, whatever they are.
   expect(
     probe.events
@@ -333,14 +361,15 @@ test("resumes a watch from `fromSeq` rather than replaying it", async () => {
 
 test("stops sending a child's events once it is unwatched", async () => {
   const probe = await connect();
-  const finish = holdChild();
+  const held = holdChild();
   const mark = probe.events.length;
   await probe.prompt("delegate this");
   await probe.waitFor((event) => event.type === "tool_update", { from: mark });
   await probe.watchSubagent(CALL_ID);
 
   expect((await probe.unwatchSubagent(CALL_ID)).success).toBe(true);
-  finish();
+  held.answer();
+  held.settle();
   // The turn ending is the control: everything the child wrote is on disk and
   // every frame about it has been sent by the time the session goes idle.
   await idle(probe, mark);

@@ -331,6 +331,59 @@ describe("the in-flight bucket", () => {
   });
 
   /**
+   * The same handoff with pi one read slower: it appends the step and the
+   * result of the call that step made close enough together that one drain
+   * carries both, so the entry, the retire it causes and the result all land
+   * in a single batch — one task, applied against each other rather than
+   * against the state the task began in.
+   */
+  test("a step written, retired and answered in one batch leaves nothing live", () => {
+    const target = store();
+    feed(
+      target,
+      attached("s1"),
+      { type: "message_start", role: "assistant", messageId: "live-1" },
+      { type: "text_delta", messageId: "live-1", delta: "Let me look." },
+      {
+        type: "tool_call",
+        callId: "c1",
+        name: "read",
+        messageId: "live-1",
+        view: VIEW,
+      },
+      { type: "tool_end", callId: "c1", view: VIEW, isError: false }
+    );
+
+    feed(
+      target,
+      {
+        seq: 7,
+        type: "message",
+        messageId: "m1",
+        role: "assistant",
+        text: "Let me look.",
+        timestamp: 0,
+        toolCalls: [{ callId: "c1", name: "read", view: VIEW }],
+      },
+      { type: "message_retire", messageId: "live-1" },
+      {
+        seq: 8,
+        type: "tool_result",
+        callId: "c1",
+        name: "read",
+        view: VIEW,
+        isError: false,
+      }
+    );
+
+    // The shell the retire left is taken by the result in the same breath:
+    // one that survived would draw no row, and would sit in the bucket until
+    // the turn settled.
+    expect(target.state.live).toEqual([]);
+    expect(rows(target).map((row) => row.id)).toEqual(["m1", "c1"]);
+  });
+
+  /**
    * Pi closes a message before it runs the calls that message asked for, so a
    * call can start against a message whose entry is already being read: its
    * updates arrive after the retire, and a bucket that dropped the call has
