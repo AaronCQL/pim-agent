@@ -69,11 +69,10 @@ export type DurableEvent =
  *
  * A turn is **many** assistant messages, not one: pi writes an entry per model
  * call, and it writes them long after they streamed. So the bucket is a list
- * in arrival order, keyed by `messageId`, and a durable `message` with
- * `role: "assistant"` retires its oldest entry rather than the whole bucket —
- * dropping it wholesale is what loses the prose of every step but the last.
- * Live `tool_call` events re-appear inside a durable message's `toolCalls`;
- * dedupe on `callId`.
+ * in arrival order, keyed by `messageId`, and `message_retire` names the one
+ * entry a durable message has just superseded — dropping the bucket wholesale
+ * is what loses the prose of every step but the last. Live `tool_call` events
+ * re-appear inside a durable message's `toolCalls`; dedupe on `callId`.
  */
 export type EphemeralEvent =
   | {
@@ -97,6 +96,15 @@ export type EphemeralEvent =
       readonly role: "assistant";
       readonly messageId: string;
     }
+  /**
+   * The live message with this id is now a line in the log, and the durable
+   * `message` that says so was sent immediately before it. Named rather than
+   * counted because the two are not in step: a step's calls run *after* pi
+   * closes its message, so the bucket can grow between a message ending and
+   * its entry being written, and "the oldest live message" is by then some
+   * other step's.
+   */
+  | { readonly type: "message_retire"; readonly messageId: string }
   | {
       readonly type: "text_delta";
       readonly messageId: string;
@@ -209,6 +217,12 @@ export type ResponseEvent = {
   readonly models?: readonly ModelView[];
   /** What the *current* model supports, on the same answer. */
   readonly thinkingLevels?: readonly string[];
+  /**
+   * For `cancel` and `dequeue`: the messages pi was still holding for the
+   * turn. They were never said, so the client that asked owns them from here
+   * — the TUI puts them back in its editor, and so does the web.
+   */
+  readonly restored?: readonly string[];
 };
 
 export type ServerEvent = DurableEvent | EphemeralEvent | ResponseEvent;

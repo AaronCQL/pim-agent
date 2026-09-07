@@ -55,6 +55,16 @@ export type SessionCompactResult = {
   readonly activeMessages: number;
 };
 
+/**
+ * What a `cancel` did. `cancelled` is false when there was no turn to stop;
+ * `restored` is what pi was still holding for the one there was, which the
+ * caller owns from here.
+ */
+export type CancelResult = {
+  readonly cancelled: boolean;
+  readonly restored: readonly string[];
+};
+
 export type SessionHostDeps = {
   /** Prefix for this host's log lines; also the registry key in practice. */
   readonly label: string;
@@ -249,12 +259,37 @@ export class SessionHost {
     return this.enqueue(work);
   }
 
-  public async cancel(): Promise<boolean> {
+  /**
+   * Stop the turn in flight and hand back whatever it was still holding.
+   *
+   * The queue is emptied *before* the abort, the way pi's own interactive
+   * mode does it: a message queued for a turn that is being killed is a
+   * message that will never be said, and leaving it in pi would deliver it to
+   * whatever turn came next.
+   */
+  public async cancel(): Promise<CancelResult> {
     if (!this.cached || !this.cached.isStreaming) {
-      return false;
+      return { cancelled: false, restored: [] };
     }
+    const restored = this.takeBack();
     await this.cached.abort();
-    return true;
+    return { cancelled: true, restored };
+  }
+
+  /**
+   * Take back every message queued behind the turn in flight, leaving the
+   * turn running. Both of pi's queues, because this host is shared: nothing
+   * here queues a follow-up, but a TUI on the same session can.
+   *
+   * Not serialized through the turn queue — the turn holding that queue is
+   * exactly the one whose messages are being reclaimed.
+   */
+  public takeBack(): readonly string[] {
+    if (!this.cached || !this.cached.isStreaming) {
+      return [];
+    }
+    const { steering, followUp } = this.cached.clearQueue();
+    return [...steering, ...followUp];
   }
 
   public clear(): Promise<void> {

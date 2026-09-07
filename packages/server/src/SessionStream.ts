@@ -38,6 +38,13 @@ type LiveMessage = {
   readonly messageId: string;
   text: string;
   thinking: string;
+  /**
+   * Pi has closed the message, so the next durable assistant entry to be
+   * written is its own. Its calls still stream after this — they run once
+   * the message they were asked in is finished — which is why the message
+   * stays in the turn until the entry lands rather than leaving at the end.
+   */
+  ended: boolean;
   readonly tools: LiveTool[];
 };
 
@@ -355,6 +362,30 @@ export class SessionStream {
       case "entry_appended":
         void this.flushDurable();
         return;
+      /**
+       * Pi persists the message as this event settles, so what a client is
+       * shown catches up here rather than at the end of the run. It matters
+       * for a *user* message above all: a steer only becomes durable when pi
+       * delivers it, and until that line is on the wire the client has no way
+       * to tell "still queued" from "already said" — its own row would sit
+       * there claiming to be queued while the agent answers it.
+       *
+       * The read is not awaited: pi appends the entry synchronously *after*
+       * this listener returns, and the first `await` inside the flush is what
+       * puts the read behind that write.
+       */
+      case "message_end": {
+        if (event.message.role === "assistant") {
+          // The newest live message is the one pi just closed: a step opens
+          // with `message_start` and nothing opens another until the next.
+          const open = this.liveTurn.at(-1);
+          if (open) {
+            open.ended = true;
+          }
+        }
+        void this.flushDurable();
+        return;
+      }
       case "turn_end": {
         const usage =
           event.message.role === "assistant" ? event.message.usage : undefined;
@@ -398,6 +429,7 @@ export class SessionStream {
       messageId: `${this.sessionId}:live:${this.liveMessageId}`,
       text: "",
       thinking: "",
+      ended: false,
       tools: [],
     };
     this.liveTurn.push(message);
@@ -425,7 +457,32 @@ export class SessionStream {
   private async flushDurable(): Promise<void> {
     for (const event of await this.projection.drain()) {
       this.emit(event);
+      // The step that was streamed is now a line in the log, and the two must
+      // never both be on the wire: a client that reattaches is handed the
+      // durable tail *plus* whatever is still live, so a live message kept
+      // after its own durable twin would paint the same prose twice.
+      if (event.type === "message" && event.role === "assistant") {
+        this.retireLive();
+      }
     }
+  }
+
+  /**
+   * Drops the oldest live message pi has *finished*, and says which one that
+   * was. Finished, not simply oldest: a step's calls stream after its message
+   * ends, so a message whose entry has already landed can still be the one
+   * collecting tool rows, and the turn can hold that shell in front of the
+   * step now streaming. Retiring by position there retires the wrong message
+   * — the one on screen — and leaves the streamed one to be painted a second
+   * time under its own durable copy.
+   */
+  private retireLive(): void {
+    const retired = this.liveTurn.find((message) => message.ended);
+    if (!retired) {
+      return;
+    }
+    this.liveTurn = this.liveTurn.filter((message) => message !== retired);
+    this.emit({ type: "message_retire", messageId: retired.messageId });
   }
 
   private emit(event: ServerEvent): void {

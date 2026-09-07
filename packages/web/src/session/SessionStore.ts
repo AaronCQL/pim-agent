@@ -3,7 +3,7 @@ import { createStore, type Store, type StoreSetter } from "solid-js";
 import type { PickerItem } from "#core/picker/PickerItem";
 import { RemoteFilePickerSuggestionEngine } from "#core/picker/RemoteFilePickerSuggestionEngine";
 import type { ToolView } from "#core/view/ViewBlock";
-import type { AttachmentRef } from "#protocol/Command";
+import type { AttachmentRef, CommandDraft } from "#protocol/Command";
 import type {
   DurableEvent,
   ModelView,
@@ -58,9 +58,30 @@ export type UploadedAttachment = {
   readonly label: string;
 };
 
+/**
+ * A message this client has said and the server has not echoed back yet. Not
+ * a `DurableEvent` pretending to be one: it has no ordinal, its stamp is a
+ * guess, and — unlike anything the log can hold — it may still be sitting in
+ * pi's queue rather than in the conversation, which is what `queued` names.
+ */
+export type PendingMessage = {
+  readonly id: string;
+  readonly text: string;
+  /**
+   * When it was said, which is the closest thing to a stamp there is until
+   * the durable event that supersedes it arrives with pi's own.
+   */
+  readonly timestamp: number;
+  /** Said into a running turn, so pi holds it; absent when it began one. */
+  readonly queued?: boolean;
+};
+
+/** The same message, as the store holds it: grown in place by a second send. */
 type OptimisticMessage = {
   id: string;
   text: string;
+  timestamp: number;
+  queued?: boolean;
 };
 
 /**
@@ -296,18 +317,8 @@ export class SessionStore {
    * echoed back. The live turn is separate — `state.live` — because a
    * streaming message is not a durable one with a flag on it.
    */
-  public trailing(): readonly DurableEvent[] {
-    // Nothing has been written yet, so the only honest stamp is "now"; the
-    // durable event that supersedes this one carries pi's own.
-    const timestamp = Date.now();
-    return this.state.optimistic.map((pending) => ({
-      seq: 0,
-      type: "message",
-      messageId: pending.id,
-      role: "user",
-      text: pending.text,
-      timestamp,
-    }));
+  public trailing(): readonly PendingMessage[] {
+    return this.state.optimistic;
   }
 
   /**
@@ -327,6 +338,12 @@ export class SessionStore {
     return this.state.agent !== "idle";
   }
 
+  /**
+   * Says the message. Into a running turn it steers, and it joins whatever
+   * that turn is already holding rather than queueing behind it: the server
+   * merges on its side too, so one waiting message is one row here and one
+   * user message there.
+   */
   public async prompt(
     text: string,
     attachments: readonly UploadedAttachment[] = []
@@ -335,9 +352,33 @@ export class SessionStore {
     if (trimmed === "" && attachments.length === 0) {
       return;
     }
-    const id = `optimistic:${++this.optimisticId}`;
+    const busy = this.isBusy();
+    // Decided inside the write rather than from `state`, which settles on its
+    // own schedule: two messages typed into the same tick must still find
+    // each other, and only the draft is guaranteed to have the first one.
+    let id = "";
+    let previous: string | undefined;
     this.setState((draft) => {
-      draft.optimistic.push({ id, text: trimmed });
+      const growing = busy
+        ? draft.optimistic.find((pending) => pending.queued)
+        : undefined;
+      if (growing) {
+        // The same join the server makes of the same two messages, so the
+        // durable echo that lands later reads as what was on screen.
+        id = growing.id;
+        previous = growing.text;
+        growing.text = `${growing.text}\n\n${trimmed}`;
+      } else {
+        id = `optimistic:${++this.optimisticId}`;
+        draft.optimistic.push({
+          id,
+          text: trimmed,
+          // Nothing has been written yet, so the only honest stamp is the
+          // moment it was said; the durable echo carries pi's own.
+          timestamp: Date.now(),
+          ...(busy ? { queued: true } : {}),
+        });
+      }
       draft.error = undefined;
     });
     this.spendDraft();
@@ -355,17 +396,44 @@ export class SessionStore {
         throw new Error(response.error ?? "the server refused the message");
       }
     } catch (err) {
-      this.dropOptimistic(id);
+      // The refused message leaves the row it was added to; a row it *grew*
+      // still stands for what pi is holding, so it shrinks back instead.
+      this.rollback(id, previous);
       this.setState((draft) => {
         draft.error = (err as Error).message;
       });
     }
   }
 
-  public async cancel(): Promise<void> {
-    await this.client
-      .send({ type: "cancel", sessionId: this.state.sessionId })
-      .catch(() => undefined);
+  /**
+   * Stop the turn, and answer with what died queued behind it — never said,
+   * so its row comes off the transcript here and the composer puts the text
+   * back in the box the way the TUI puts it back in its editor.
+   */
+  public cancel(): Promise<string> {
+    return this.reclaim({ type: "cancel", sessionId: this.state.sessionId });
+  }
+
+  /**
+   * Take the waiting message back to edit it, leaving the turn running. The
+   * whole of it: it is one message on both sides of the wire, however many
+   * times the reader added to it.
+   */
+  public dequeue(): Promise<string> {
+    return this.reclaim({ type: "dequeue", sessionId: this.state.sessionId });
+  }
+
+  /**
+   * The half `cancel` and `dequeue` share: whatever pi hands back was never
+   * said, so its row goes and the text becomes the caller's.
+   */
+  private async reclaim(draft: CommandDraft): Promise<string> {
+    const response = await this.client.send(draft).catch(() => undefined);
+    const restored = response?.restored ?? [];
+    if (restored.length > 0) {
+      this.dropQueued();
+    }
+    return restored.join("\n\n");
   }
 
   public async pickFiles(
@@ -773,6 +841,15 @@ export class SessionStore {
           liveMessage(draft.live, event.messageId);
         });
         return;
+      case "message_retire":
+        this.setState((draft) => {
+          // The durable copy of this message arrived on the frame before, so
+          // dropping it here is a swap, not a gap.
+          draft.live = draft.live.filter(
+            (message) => message.messageId !== event.messageId
+          );
+        });
+        return;
       case "text_delta":
         this.setState((draft) => {
           const message = liveMessage(draft.live, event.messageId);
@@ -858,12 +935,6 @@ export class SessionStore {
   private ingestDurable(event: DurableEvent): void {
     this.setState((draft) => {
       draft.durable.push(event);
-      if (event.type === "message" && event.role === "assistant") {
-        // One durable message retires one live one, oldest first: they are
-        // written in the order they streamed, and the rest of the turn is
-        // still only live.
-        draft.live = draft.live.slice(1);
-      }
       if (event.type === "message" && event.role === "user") {
         // Splicing a store draft in place is not safe across a batch of
         // events — the write is a patch, and it can be applied against a
@@ -903,11 +974,29 @@ export class SessionStore {
     });
   }
 
-  private dropOptimistic(id: string): void {
+  /**
+   * Undoes a send the server refused: the row goes if this send made it, and
+   * shrinks back to `previous` if the send only added to one.
+   */
+  private rollback(id: string, previous: string | undefined): void {
     this.setState((draft) => {
-      draft.optimistic = draft.optimistic.filter(
-        (pending) => pending.id !== id
-      );
+      if (previous === undefined) {
+        draft.optimistic = draft.optimistic.filter(
+          (pending) => pending.id !== id
+        );
+        return;
+      }
+      const grown = draft.optimistic.find((pending) => pending.id === id);
+      if (grown) {
+        grown.text = previous;
+      }
+    });
+  }
+
+  /** Retires the row for the message pi handed back rather than said. */
+  private dropQueued(): void {
+    this.setState((draft) => {
+      draft.optimistic = draft.optimistic.filter((pending) => !pending.queued);
     });
   }
 }

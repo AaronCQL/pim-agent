@@ -12,15 +12,17 @@ const USAGE = `pim probe — CLI client for pim-server, dumps every frame as JSO
   --session <uuid>         attach to an existing session (default: create one)
   --cwd <path>             cwd for a session this probe creates
   --from-seq <n>           resume from this durable seq (default 0)
-  --prompt <text>          send a user message once attached
+  --prompt <text>          send a user message once attached; sent into a turn
+                           already running it steers that turn
   --pick-files <query>     ask the server to complete an @ path, print the rows
   --pick-commands <query>  ask the server for matching skills and commands
   --list-sessions          print pi's session catalogue and exit
   --list-models            print the models this server can switch to
   --upload <path>          transfer a local file to the server, attach it to
                            --prompt (repeatable)
-  --steer <text>           steer the turn in flight instead of prompting
   --cancel                 cancel the current turn
+  --dequeue                take back what the turn in flight is holding,
+                           without stopping it
   --wait                   keep streaming after the turn ends (Ctrl-C to stop)
   --quiet                  print only durable events
   --protocol-version <n>   override the handshake version (to test rejection)
@@ -38,8 +40,8 @@ const { values } = parseArgs({
     "list-sessions": { type: "boolean", default: false },
     "list-models": { type: "boolean", default: false },
     upload: { type: "string", multiple: true },
-    steer: { type: "string" },
     cancel: { type: "boolean", default: false },
+    dequeue: { type: "boolean", default: false },
     wait: { type: "boolean", default: false },
     quiet: { type: "boolean", default: false },
     "protocol-version": { type: "string" },
@@ -119,18 +121,18 @@ if (values.cancel) {
   });
   process.stderr.write(`cancel: ${JSON.stringify(response)}\n`);
 }
-if (values.steer !== undefined) {
-  await probe.send({
-    type: "steer",
+if (values.dequeue) {
+  const response = await probe.send({
+    type: "dequeue",
     sessionId: probe.sessionId ?? "",
-    text: values.steer,
   });
+  process.stderr.write(`dequeue: ${JSON.stringify(response)}\n`);
 }
 if (values.prompt !== undefined) {
   await probe.promptWith(values.prompt, uploaded);
 }
 
-if (values.prompt !== undefined || values.steer !== undefined) {
+if (values.prompt !== undefined) {
   await probe.waitFor(
     (event) => event.type === "session_state" && event.status === "idle",
     { timeoutMs: 10 * 60_000, from: mark }

@@ -131,6 +131,7 @@ describe("the shell, painted from events alone", () => {
       text: "## Done\n",
       timestamp: 0,
     });
+    store.ingest({ type: "message_retire", messageId: "live-1" });
     flush();
     expect(host.querySelectorAll(".pim-markdown h2")).toHaveLength(1);
   });
@@ -452,6 +453,44 @@ describe("the shell, painted from events alone", () => {
     expect(input.value).toBe("");
   });
 
+  test("the one button is stop on an empty box and steer on a typed one", () => {
+    softKeyboard();
+    const store = offline();
+    const host = paint(store);
+    store.ingest(attached());
+    store.ingest({
+      type: "session_state",
+      cwd: "/repo",
+      model: "sonnet",
+      thinking: "medium",
+      cost: 0,
+      status: "tool",
+    });
+    flush();
+
+    // Nothing to send, so the running turn is the only thing the button can
+    // mean — and it is one button, never a destructive one beside it.
+    expect(host.querySelector('[aria-label="Stop"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Steer"]')).toBeNull();
+
+    const input = host.querySelector("textarea")!;
+    type(input, "actually, use the other file");
+    flush();
+    // A phone's only way to say anything is this button, so typing takes it
+    // back from stop; otherwise steering would be keyboard-only.
+    expect(host.querySelector('[aria-label="Stop"]')).toBeNull();
+    const steer = host.querySelector<HTMLButtonElement>(
+      '[aria-label="Steer"]'
+    )!;
+    steer.click();
+    flush();
+    expect(input.value).toBe("");
+    expect(store.state.optimistic.map((one) => one.queued)).toEqual([true]);
+    expect(host.textContent).toContain("Queued. Click to edit.");
+    // The box is empty again, so the button goes back to being the turn's.
+    expect(host.querySelector('[aria-label="Stop"]')).not.toBeNull();
+  });
+
   test("sending re-pins the transcript to its end", () => {
     const store = offline();
     const host = paint(store);
@@ -577,6 +616,68 @@ describe("the composer, against a real gateway", () => {
     // Flat, most recent first, cwd on every row — no grouping by directory.
     expect(list().textContent).toContain(harness.tmp);
     expect(list().querySelectorAll("li").length).toBeGreaterThan(0);
+  });
+
+  /** Everything this client has said and not yet had heard, as one string. */
+  function queuedCard(host: HTMLElement): HTMLButtonElement | null {
+    return host.querySelector<HTMLButtonElement>(
+      '[aria-label="Edit queued message"]'
+    );
+  }
+
+  /** A turn held open with a message waiting behind it, and the box painted. */
+  async function withQueued(waiting: string): Promise<{
+    readonly host: HTMLElement;
+    readonly input: HTMLTextAreaElement;
+    readonly release: () => void;
+  }> {
+    const host = paint(store);
+    const release = harness.holdTurn();
+    await store.prompt("use a tool please");
+    await until(() => store.isBusy(), "the turn to start");
+    await store.prompt(waiting);
+    flush();
+    return { host, input: host.querySelector("textarea")!, release };
+  }
+
+  test("a queued card goes back in the box when it is clicked", async () => {
+    const { host, input, release } = await withQueued("and the weather");
+    try {
+      expect(queuedCard(host)?.textContent).toContain("and the weather");
+
+      queuedCard(host)!.click();
+      await until(
+        () => input.value === "and the weather",
+        "the message to come back to the box"
+      );
+      flush();
+      // It is being edited now, so it is no longer waiting to be said — and
+      // the turn it was waiting behind is still running.
+      expect(queuedCard(host)).toBeNull();
+      expect(store.isBusy()).toBe(true);
+    } finally {
+      release();
+    }
+  });
+
+  test("Escape stops the turn and hands the queue back, box or no box", async () => {
+    const { host, input, release } = await withQueued("and the weather");
+    try {
+      type(input, "one more thing");
+      // A typed box no longer hides the stop: the turn is what Escape means,
+      // and what pi was holding lands above what was being written.
+      press(input, "Escape");
+      await until(
+        () => input.value.startsWith("and the weather"),
+        "the queue to come back to the box"
+      );
+      expect(input.value).toBe("and the weather\n\none more thing");
+      flush();
+      expect(queuedCard(host)).toBeNull();
+      await until(() => !store.isBusy(), "the turn to stop");
+    } finally {
+      release();
+    }
   });
 });
 

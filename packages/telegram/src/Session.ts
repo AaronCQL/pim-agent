@@ -154,8 +154,8 @@ export class Session {
     return this.host.run(work, opts);
   }
 
-  public cancel(): Promise<boolean> {
-    return this.host.cancel();
+  public async cancel(): Promise<boolean> {
+    return (await this.host.cancel()).cancelled;
   }
 
   public clear(): Promise<void> {

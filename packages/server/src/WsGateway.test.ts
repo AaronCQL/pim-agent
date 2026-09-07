@@ -10,6 +10,7 @@ import { Tools, type PimToolDefinition } from "#core/shared/Tools";
 import {
   isDurableEvent,
   type DurableEvent,
+  type ResponseEvent,
   type ServerEvent,
 } from "#protocol/ServerEvent";
 import { ProbeClient } from "./ProbeClient";
@@ -190,6 +191,24 @@ function idle(probe: ProbeClient, from: number): Promise<ServerEvent> {
   );
 }
 
+/** Polls, because a prompt is accepted long before pi has queued it. */
+async function until(ready: () => boolean, what: string): Promise<void> {
+  const deadline = Date.now() + 20_000;
+  while (!ready()) {
+    if (Date.now() > deadline) {
+      throw new Error(`timed out waiting for ${what}`);
+    }
+    await Bun.sleep(1);
+  }
+}
+
+/** The texts of the durable user messages, in the order pi wrote them. */
+function saidBy(probe: ProbeClient): readonly string[] {
+  return durable(probe)
+    .filter((event) => event.type === "message" && event.role === "user")
+    .map((event) => (event.type === "message" ? event.text : ""));
+}
+
 beforeEach(async () => {
   startModelServer();
   tmp = await mkdtemp(join(tmpdir(), "pim-gateway-test-"));
@@ -359,22 +378,29 @@ test("hands a reconnecting client every step of the in-flight turn", async () =>
     (e) => e.type === "text_delta" && REPLY.startsWith(e.delta.trim()),
     { from: mark }
   );
+  // The step that finished is a line in the log already, result and all —
+  // pi wrote it when it ended, and the client is told then rather than when
+  // the run settles.
+  await first.waitFor((e) => e.type === "tool_result", { from: mark });
+  const step = durable(first).find(
+    (e) => e.type === "message" && e.role === "assistant"
+  );
+  expect(step?.type === "message" && step.toolCalls?.length).toBe(1);
   first.kill();
 
   const second = await connect({ sessionId, fromSeq: first.seq });
-  // One `message_start` per step the turn has taken, each carrying at most
-  // one coalesced delta: the deltas themselves were never persisted, so this
-  // is the only shape they can come back in.
+  // Only the step still streaming comes back live, and it carries at most one
+  // coalesced delta: the deltas themselves were never persisted, so this is
+  // the only shape they can come back in.
   const starts = second.events.filter((e) => e.type === "message_start");
   const deltas = second.events.filter((e) => e.type === "text_delta");
   expect(new Set(starts.map((e) => e.messageId)).size).toBe(starts.length);
   expect(deltas.length).toBeLessThanOrEqual(starts.length);
   expect(REPLY).toStartWith(deltas.at(-1)!.delta.trim());
-  // A call that finished while nobody was attached comes back finished, not
-  // as a row that spins until pi gets round to writing the result down.
-  const call = second.events.find((e) => e.type === "tool_call");
-  expect(starts.map((e) => e.messageId)).toContain(call!.messageId);
-  expect(second.events.some((e) => e.type === "tool_end")).toBe(true);
+  // And the finished step is not sent twice: the client read it from the log
+  // before it died, so what comes back is the turn's remainder, not a live
+  // copy of a row it already has.
+  expect(second.events.some((e) => e.type === "tool_call")).toBe(false);
 
   release();
   await idle(second, second.events.length);
@@ -567,4 +593,85 @@ test("refuses commands before an attach", async () => {
     error: "not attached: send `attach` first",
   });
   socket.close();
+});
+
+/**
+ * Two messages said into the same running turn are one steer, not two turns
+ * apart. One entry, not two: the gateway merges so that a client has one
+ * thing to take back, which is what makes a queued message editable.
+ */
+test("a message said into a running turn steers it, merged into one", async () => {
+  const probe = await connect();
+  const release = holdTurn();
+  const mark = probe.events.length;
+  try {
+    await probe.prompt("say hello");
+    await probe.waitFor((event) => event.type === "text_delta", { from: mark });
+    const agent = registry.peek(probe.sessionId!)!.agentSession!;
+
+    await probe.prompt("steer me");
+    await until(() => agent.pendingMessageCount === 1, "the queued steer");
+    await probe.prompt("and then this");
+    await until(
+      () => agent.getSteeringMessages()[0]?.includes("and then this") === true,
+      "the second message to join the first"
+    );
+    expect(agent.pendingMessageCount).toBe(1);
+    expect(agent.getSteeringMessages()).toEqual(["steer me\n\nand then this"]);
+  } finally {
+    release();
+  }
+
+  // Delivered as one user message, in the turn it was said into.
+  await until(
+    () => saidBy(probe).length === 2,
+    "the queued message to be delivered"
+  );
+  expect(saidBy(probe)).toEqual(["say hello", "steer me\n\nand then this"]);
+});
+
+/**
+ * A turn held open with one message waiting behind it, reclaimed by the
+ * command under test and then let go.
+ */
+async function reclaim(
+  type: "cancel" | "dequeue"
+): Promise<{ probe: ProbeClient; mark: number; response: ResponseEvent }> {
+  const probe = await connect();
+  const release = holdTurn();
+  const mark = probe.events.length;
+  try {
+    await probe.prompt("say hello");
+    await probe.waitFor((e) => e.type === "text_delta", { from: mark });
+    const agent = registry.peek(probe.sessionId!)!.agentSession!;
+    await probe.prompt("steer me");
+    await until(() => agent.pendingMessageCount === 1, "the queued steer");
+
+    const response = await probe.send({ type, sessionId: probe.sessionId! });
+    return { probe, mark, response };
+  } finally {
+    release();
+  }
+}
+
+test("cancelling hands back what the turn was still holding", async () => {
+  const { probe, mark, response } = await reclaim("cancel");
+
+  expect(response.success).toBe(true);
+  expect(response.restored).toEqual(["steer me"]);
+  await idle(probe, mark);
+  // Never said, so never written: a message queued behind a turn that was
+  // killed belongs back in the client's box, not in the conversation.
+  expect(saidBy(probe)).toEqual(["say hello"]);
+});
+
+test("taking the queued message back leaves the turn running", async () => {
+  const { probe, mark, response } = await reclaim("dequeue");
+
+  expect(response.success).toBe(true);
+  expect(response.restored).toEqual(["steer me"]);
+  // The turn ran to its own end, and said only what it was told before the
+  // reader thought better of the rest.
+  await idle(probe, mark);
+  expect(saidBy(probe)).toEqual(["say hello"]);
 });

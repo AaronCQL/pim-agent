@@ -90,6 +90,22 @@ export function Shell(props: { readonly store: SessionStore }) {
   // a blank row, so its last line clears the pills rather than scrolling
   // under them.
   const [inset, setInset] = createSignal(0);
+  // What the transcript handed back to the composer. An object rather than
+  // the string, so taking back the same words twice is two recalls.
+  const [recalled, setRecalled] = createSignal<{ text: string }>();
+
+  /**
+   * A queued card was clicked: pi gives the message up, the row goes with it,
+   * and the words land in the box to be said differently. The turn keeps
+   * running — this is an edit, not a stop.
+   */
+  const recall = (): void => {
+    void props.store.dequeue().then((text) => {
+      if (text !== "") {
+        setRecalled({ text });
+      }
+    });
+  };
 
   // Every write to `scrollTop` goes through here, because the anchor has to
   // move with it: the browser clamps the value it is given and reports the
@@ -232,6 +248,7 @@ export function Shell(props: { readonly store: SessionStore }) {
                   events={props.store.state.durable}
                   trailing={props.store.trailing()}
                   live={props.store.state.live}
+                  onEdit={recall}
                 />
               </Show>
             </div>
@@ -247,7 +264,7 @@ export function Shell(props: { readonly store: SessionStore }) {
             // reader is dragging it.
             class="pointer-events-none absolute right-[--scrollbar] bottom-0 left-0 flex justify-center bg-neutral-925 px-3 pt-10 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
           >
-            <Composer store={props.store} onSend={jump} />
+            <Composer store={props.store} onSend={jump} recalled={recalled()} />
           </div>
         </div>
       </div>

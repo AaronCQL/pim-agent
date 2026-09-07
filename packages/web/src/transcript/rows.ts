@@ -1,6 +1,6 @@
 import type { ToolView } from "#core/view/ViewBlock";
 import type { DurableEvent } from "#protocol/ServerEvent";
-import type { LiveMessage } from "../session/SessionStore";
+import type { LiveMessage, PendingMessage } from "../session/SessionStore";
 
 export type MessageRow = {
   readonly kind: "message";
@@ -16,6 +16,11 @@ export type MessageRow = {
    * would repaint the whole message.
    */
   readonly streaming?: boolean;
+  /**
+   * Said, accepted, and not delivered yet: the agent is mid-turn and pi is
+   * holding this until it can hear it. Only ever set on a user row.
+   */
+  readonly queued?: boolean;
 };
 
 export type ToolRow = {
@@ -174,16 +179,35 @@ export function buildRows(events: readonly DurableEvent[]): RowBuild {
   return { rows, toolIndex };
 }
 
+/** One unacknowledged message of this client's, as the row that draws it. */
+function pushPending(rows: Row[], pending: PendingMessage): void {
+  rows.push({
+    kind: "message",
+    id: pending.id,
+    role: "user",
+    text: pending.text,
+    timestamp: pending.timestamp,
+    ...(pending.queued ? { queued: true } : {}),
+  });
+}
+
 /**
  * Continues a build with this client's unacknowledged messages and the live
  * turn, copying it first so the base — a memo of the whole durable log — is
  * never mutated. The copy is shallow, which is the point: on a text delta the
  * durable row objects keep their identity, and only the trailing rows are
  * rebuilt.
+ *
+ * Where a pending message goes says what it did. One that *started* the turn
+ * precedes it, as the log will once it lands. One that was queued into a turn
+ * already running waits below it — under the prose still being written and
+ * the calls still running — because that is the work it has not interrupted
+ * yet, and it only moves above the next step when pi accepts it and the
+ * durable echo puts it in its real place.
  */
 export function extendRows(
   base: RowBuild,
-  trailing: readonly DurableEvent[],
+  trailing: readonly PendingMessage[],
   live: readonly LiveMessage[] = []
 ): readonly Row[] {
   if (trailing.length === 0 && live.length === 0) {
@@ -191,16 +215,23 @@ export function extendRows(
   }
   const rows = [...base.rows];
   const toolIndex = new Map(base.toolIndex);
-  for (const event of trailing) {
-    append(rows, toolIndex, event);
+  for (const pending of trailing) {
+    if (!pending.queued) {
+      pushPending(rows, pending);
+    }
   }
   appendLive(rows, toolIndex, live);
+  for (const pending of trailing) {
+    if (pending.queued) {
+      pushPending(rows, pending);
+    }
+  }
   return rows;
 }
 
 export function toRows(
   events: readonly DurableEvent[],
-  trailing: readonly DurableEvent[] = [],
+  trailing: readonly PendingMessage[] = [],
   live: readonly LiveMessage[] = []
 ): readonly Row[] {
   return extendRows(buildRows(events), trailing, live);

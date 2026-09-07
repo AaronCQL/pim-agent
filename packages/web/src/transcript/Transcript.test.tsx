@@ -136,8 +136,9 @@ describe("static replay of a real session", () => {
   test("a user turn is a card and an assistant turn is bare prose", () => {
     const [first] = [...replay().querySelectorAll("article")];
 
-    expect(first?.textContent).toContain("Modernise the string building");
-    expect(first?.querySelector("div")?.className).toContain("bg-neutral-850");
+    expect(first?.querySelector("div.bg-neutral-850")?.textContent).toContain(
+      "Modernise the string building"
+    );
     // The wall clock beneath the card, in the reader's own timezone.
     const stamp = events.find((event) => event.type === "message")?.timestamp;
     expect(first?.textContent).toContain(clockTime(stamp ?? 0));
@@ -151,5 +152,41 @@ describe("static replay of a real session", () => {
     expect(host.querySelector(".pim-markdown pre code")?.textContent) //
       .toContain("export function greet");
     expect(host.textContent).not.toContain("## Done");
+  });
+
+  /**
+   * The one row a reader can still act on: it has no time to show, because
+   * it has not happened yet, and clicking it is how it is taken back.
+   */
+  test("a queued message is a button that says so, and it calls back", () => {
+    const host = mountPoint();
+    let edits = 0;
+    render(
+      () => (
+        <Transcript
+          events={[]}
+          trailing={[
+            {
+              id: "o1",
+              text: "wait, the other file",
+              timestamp: 0,
+              queued: true,
+            },
+          ]}
+          onEdit={() => {
+            edits += 1;
+          }}
+        />
+      ),
+      host
+    );
+    flush();
+
+    const card = host.querySelector("button")!;
+    expect(card.textContent).toContain("wait, the other file");
+    expect(card.textContent).toContain("Queued. Click to edit.");
+
+    card.click();
+    expect(edits).toBe(1);
   });
 });

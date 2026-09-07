@@ -25,6 +25,11 @@ export type Command =
       readonly cwd?: string;
       readonly fromSeq: number;
     }
+  /**
+   * Says the message. Sent into a turn already running it steers that turn:
+   * it reaches the agent after the tool calls in flight and before the next
+   * model call, rather than waiting for the whole turn to end.
+   */
   | {
       readonly id: string;
       readonly type: "user_message";
@@ -32,13 +37,18 @@ export type Command =
       readonly text: string;
       readonly attachments?: readonly AttachmentRef[];
     }
+  | { readonly id: string; readonly type: "cancel"; readonly sessionId: string }
+  /**
+   * Take back what the turn in flight is still holding, without stopping it.
+   * The messages come back on `restored`, and the client that asked owns them
+   * from there — this is a reader reclaiming something said but not yet
+   * heard, in order to say it differently.
+   */
   | {
       readonly id: string;
-      readonly type: "steer";
+      readonly type: "dequeue";
       readonly sessionId: string;
-      readonly text: string;
     }
-  | { readonly id: string; readonly type: "cancel"; readonly sessionId: string }
   | {
       readonly id: string;
       readonly type: "pick_files";

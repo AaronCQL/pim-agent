@@ -21,7 +21,7 @@ function feed(target: SessionStore, ...events: readonly ServerEvent[]): void {
   flush();
 }
 
-/** Rows exactly as the transcript builds them: durable, echo, then live. */
+/** Rows exactly as the transcript builds them: durable, echo, live, queued. */
 function rows(target: SessionStore) {
   return toRows(target.state.durable, target.trailing(), target.state.live);
 }
@@ -60,14 +60,18 @@ describe("the in-flight bucket", () => {
       },
     ]);
 
-    feed(target, {
-      seq: 7,
-      type: "message",
-      messageId: "m1",
-      role: "assistant",
-      text: "Hello",
-      timestamp: 0,
-    });
+    feed(
+      target,
+      {
+        seq: 7,
+        type: "message",
+        messageId: "m1",
+        role: "assistant",
+        text: "Hello",
+        timestamp: 0,
+      },
+      { type: "message_retire", messageId: "live-1" }
+    );
 
     expect(target.state.live).toEqual([]);
     expect(rows(target).map((row) => row.id)).toEqual(["m1"]);
@@ -117,7 +121,7 @@ describe("the in-flight bucket", () => {
     ]);
   });
 
-  test("the durable log retires the live turn a message at a time", () => {
+  test("the durable log retires the live message it names, and only that one", () => {
     const target = store();
     feed(
       target,
@@ -133,7 +137,8 @@ describe("the in-flight bucket", () => {
         role: "assistant",
         text: "one",
         timestamp: 0,
-      }
+      },
+      { type: "message_retire", messageId: "live-1" }
     );
 
     // The step pi has written is durable; the one it has not is still live,
@@ -152,6 +157,45 @@ describe("the in-flight bucket", () => {
     });
 
     expect(target.state.live).toEqual([]);
+  });
+
+  /**
+   * The server names the step it has written, because the two halves of the
+   * turn are not in step: a step's calls stream after its message ends, so
+   * the bucket can grow past the message whose entry has just landed.
+   */
+  test("retires by name, not by age, when the bucket has run ahead", () => {
+    const target = store();
+    feed(
+      target,
+      attached("s1"),
+      { type: "message_start", role: "assistant", messageId: "live-1" },
+      { type: "text_delta", messageId: "live-1", delta: "one" },
+      {
+        seq: 5,
+        type: "message",
+        messageId: "m1",
+        role: "assistant",
+        text: "one",
+        timestamp: 0,
+      },
+      { type: "message_retire", messageId: "live-1" },
+      // A shell for the call the written step asked for, then the next step.
+      { type: "message_start", role: "assistant", messageId: "live-2" },
+      { type: "message_start", role: "assistant", messageId: "live-3" },
+      { type: "text_delta", messageId: "live-3", delta: "three" },
+      {
+        seq: 6,
+        type: "message",
+        messageId: "m2",
+        role: "assistant",
+        text: "three",
+        timestamp: 0,
+      },
+      { type: "message_retire", messageId: "live-3" }
+    );
+
+    expect(rows(target).map((row) => row.id)).toEqual(["m1", "m2"]);
   });
 
   test("a live tool merges onto the durable call and the result wins", () => {
@@ -259,6 +303,54 @@ describe("the optimistic echo", () => {
 
     expect(target.state.optimistic).toEqual([]);
     expect(rows(target)).toHaveLength(1);
+  });
+
+  test("one queued into a running turn waits below it", () => {
+    const target = store();
+    feed(
+      target,
+      attached("s1"),
+      {
+        type: "session_state",
+        cwd: "/repo",
+        model: "sonnet",
+        thinking: "medium",
+        cost: 0,
+        status: "tool",
+      },
+      { type: "message_start", role: "assistant", messageId: "live-1" },
+      { type: "text_delta", messageId: "live-1", delta: "working on it" }
+    );
+    void target.prompt("actually, use the other file");
+    flush();
+
+    // Under the prose still being written, not above it: the agent has not
+    // heard this yet, so it cannot be drawn as the thing that came first.
+    expect(
+      rows(target).map((row) => (row.kind === "message" ? row.text : row.kind))
+    ).toEqual(["working on it", "actually, use the other file"]);
+  });
+
+  test("a second message into the same turn joins the first, one card", () => {
+    const target = store();
+    feed(target, attached("s1"), {
+      type: "session_state",
+      cwd: "/repo",
+      model: "sonnet",
+      thinking: "medium",
+      cost: 0,
+      status: "tool",
+    });
+    void target.prompt("use the other file");
+    void target.prompt("and mention the tide");
+    flush();
+
+    // Pi is holding one message, so the transcript shows one card and the
+    // reader has one thing to click if they want it back.
+    expect(target.state.optimistic).toHaveLength(1);
+    expect(
+      rows(target).map((row) => row.kind === "message" && row.text)
+    ).toEqual(["use the other file\n\nand mention the tide"]);
   });
 });
 

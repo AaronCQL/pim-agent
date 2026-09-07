@@ -13,6 +13,13 @@
  * connection rather than mis-parsing a newer frame. Versioned from day one so
  * the first incompatible change is a rejection, not a silent field mismatch.
  *
+ * 7 — a `user_message` sent into a running turn steers it, so the `steer`
+ * command is gone and a steer can carry attachments; `cancel` answers with
+ * the queued messages it took back, and `dequeue` takes them back without
+ * stopping the turn. Durable messages arrive as pi writes them rather than
+ * at the end of the run, and `message_retire` names the live message each
+ * one supersedes.
+ *
  * 6 — `session_state` reports the git tree as a `dirtyCount` rather than a
  * `dirty` flag, and carries `ahead` / `behind`.
  *
@@ -25,6 +32,6 @@
  * git branch; durable messages carry a `timestamp`; `list_models` answers
  * with the model catalogue and this model's thinking levels.
  */
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 7;
 
 export type ProtocolVersion = typeof PROTOCOL_VERSION;

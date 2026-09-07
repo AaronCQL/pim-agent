@@ -42,6 +42,7 @@ type Outcome = {
   readonly sessions?: readonly SessionSummaryView[];
   readonly models?: readonly ModelView[];
   readonly thinkingLevels?: readonly string[];
+  readonly restored?: readonly string[];
 };
 
 /** Enough rows to fill a switcher; the catalogue is read newest-first. */
@@ -249,11 +250,12 @@ export class WsGateway {
       case "user_message":
         this.promptWithAttachments(stream, command);
         return {};
-      case "steer":
-        this.prompt(host, command.text, "steer");
-        return {};
-      case "cancel":
-        return (await host.cancel()) ? {} : { error: "nothing to cancel" };
+      case "cancel": {
+        const { cancelled, restored } = await host.cancel();
+        return cancelled ? { restored } : { error: "nothing to cancel" };
+      }
+      case "dequeue":
+        return { restored: host.takeBack() };
       case "set_cwd": {
         const result = await host.setCwd(command.value);
         stream.push(stream.sessionState());
@@ -406,27 +408,39 @@ export class WsGateway {
     );
     const { lines, images } = toAttachmentPrompt(taken);
     const text = [command.text, ...lines].filter(Boolean).join("\n\n").trim();
-    this.prompt(stream.host, text, "followUp", images);
+    this.prompt(stream.host, text, images);
   }
 
   /**
    * Turns are fire-and-forget: the response says the prompt was accepted, not
    * that the agent finished. Waiting would tie the turn to the connection,
    * which is exactly what this architecture exists to avoid.
+   *
+   * Said into a turn already running, the message steers it — and it is
+   * *merged* with whatever that turn was already holding, so pi is never
+   * queueing more than one message at a time. That is what lets a client
+   * take the queue back as a single thing, to edit or to abandon: two
+   * separately queued messages would need identities on the wire, and pi has
+   * no way to remove one of them anyway. It costs the images of a message
+   * already queued, which pi gives back as text alone; the words survive.
    */
   private prompt(
     host: SessionHost,
     text: string,
-    streamingBehavior: "steer" | "followUp",
     images: readonly ImageContent[] = []
   ): void {
     const attached = images.length === 0 ? {} : { images: [...images] };
     const agent = host.agentSession;
     if (agent && host.isStreaming) {
+      const queued = [...host.takeBack(), text].join("\n\n");
       void agent
-        .prompt(text, { streamingBehavior, source: "rpc", ...attached })
+        .prompt(queued, {
+          streamingBehavior: "steer",
+          source: "rpc",
+          ...attached,
+        })
         .catch((err: unknown) => {
-          console.error(`[gateway] ${streamingBehavior} failed:`, err);
+          console.error(`[gateway] steer failed:`, err);
         });
       return;
     }

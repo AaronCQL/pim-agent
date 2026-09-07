@@ -108,9 +108,7 @@ test("the optimistic echo is replaced by the durable user message", async () => 
   // the echo at the instant the user would.
   flush();
   expect(store.state.optimistic.map((one) => one.text)).toEqual(["say hello"]);
-  expect(
-    store.trailing().filter((event) => event.type === "message")
-  ).toHaveLength(1);
+  expect(store.trailing()).toHaveLength(1);
   await sent;
 
   await until(
@@ -124,33 +122,139 @@ test("the optimistic echo is replaced by the durable user message", async () => 
   expect(users[0]?.type === "message" && users[0].text).toBe("say hello");
 });
 
-test("in-flight tool rows merge with the durable ones on callId", async () => {
-  const store = await connect();
-  await store.prompt("use a tool please");
-  await until(() => liveTools(store).length > 0, "a live tool call");
+/** What pi is holding for the turn, straight off the session behind the wire. */
+function queuedOn(store: SessionStore): readonly string[] {
+  const agent = harness.registry.peek(store.state.sessionId)?.agentSession;
+  return [
+    ...(agent?.getSteeringMessages() ?? []),
+    ...(agent?.getFollowUpMessages() ?? []),
+  ];
+}
 
-  const calls = toRows(store.state.durable, store.trailing(), store.state.live)
-    .filter((row) => row.kind === "tool")
-    .map((row) => row.id);
-  expect(new Set(calls).size).toBe(calls.length);
-
-  await idle(store);
-  expect(store.state.live).toEqual([]);
-});
-
-test("holds every step of a live turn, with its reasoning and its calls", async () => {
+test("a message typed into a running turn steers it", async () => {
   const store = await connect();
   const release = harness.holdTurn();
   await store.prompt("use a tool please");
-  await until(() => store.state.live.length === 2, "the second step");
+  await until(() => store.isBusy(), "the turn to start");
 
-  const [first, second] = store.state.live;
-  expect(first?.thinking.trim()).toBe(REASONING);
-  expect(first?.text.trim()).toBe(TOOL_PROSE);
-  // The call hangs off the step that made it, and it is settled: the client
-  // does not wait for pi to append the result before the row stops spinning.
-  expect(first?.tools.map((tool) => tool.isPartial)).toEqual([false]);
-  expect(second?.text.length).toBeGreaterThan(0);
+  await store.prompt("and mention the weather");
+  flush();
+  // The message that opened the turn is already durable — pi wrote it when it
+  // accepted it — so the only row still waiting is the steer, drawn as
+  // said-but-unheard. The wire agrees: pi is holding it for the turn in
+  // flight rather than for the next one.
+  expect(store.trailing().map((one) => one.queued)).toEqual([true]);
+  await until(() => queuedOn(store).length === 1, "pi to queue the steer");
+  expect(queuedOn(store)).toEqual(["and mention the weather"]);
+
+  // A second one does not queue behind the first: both sides join them into
+  // the one message the reader can still take back whole.
+  await store.prompt("and the tide");
+  await until(
+    () => queuedOn(store)[0]?.includes("tide") === true,
+    "the second message to join the first"
+  );
+  flush();
+  expect(queuedOn(store)).toEqual(["and mention the weather\n\nand the tide"]);
+  expect(store.trailing().map((one) => one.text)).toEqual([
+    "and mention the weather\n\nand the tide",
+  ]);
+
+  release();
+  await until(
+    () =>
+      store.state.durable.filter(
+        (event) => event.type === "message" && event.role === "user"
+      ).length === 2,
+    "both messages to reach the log"
+  );
+  expect(store.state.optimistic).toEqual([]);
+});
+
+test("stopping hands the queued message back to the box it came from", async () => {
+  const store = await connect();
+  const release = harness.holdTurn();
+  await store.prompt("use a tool please");
+  await until(() => store.isBusy(), "the turn to start");
+  await store.prompt("never mind");
+  await until(() => queuedOn(store).length === 1, "pi to queue the steer");
+
+  const restored = await store.cancel();
+  release();
+
+  expect(restored).toBe("never mind");
+  flush();
+  // It was never said, so it leaves the transcript rather than sitting there
+  // forever waiting for an echo that is never coming.
+  expect(store.state.optimistic.map((one) => one.text)).not.toContain(
+    "never mind"
+  );
+});
+
+test("taking the queued message back leaves the turn running", async () => {
+  const store = await connect();
+  const release = harness.holdTurn();
+  await store.prompt("use a tool please");
+  await until(() => store.isBusy(), "the turn to start");
+  await store.prompt("on second thoughts");
+  await until(() => queuedOn(store).length === 1, "pi to queue the steer");
+
+  const restored = await store.dequeue();
+
+  expect(restored).toBe("on second thoughts");
+  // Unlike a stop: the reader is editing what they said, not calling the
+  // agent off the work it is doing.
+  expect(store.isBusy()).toBe(true);
+  expect(queuedOn(store)).toEqual([]);
+  flush();
+  expect(store.trailing()).toEqual([]);
+  release();
+});
+
+/** The ids of every tool row the transcript would draw, live and durable. */
+function toolRows(store: SessionStore): readonly string[] {
+  return toRows(store.state.durable, store.trailing(), store.state.live)
+    .filter((row) => row.kind === "tool")
+    .map((row) => row.id);
+}
+
+test("in-flight tool rows merge with the durable ones on callId", async () => {
+  const store = await connect();
+  await store.prompt("use a tool please");
+  // A call is sighted three times — as the step's `toolCalls`, as its own
+  // `tool_result`, and in the live bucket while it runs — and any two of
+  // those may be on screen at once.
+  await until(() => toolRows(store).length > 0, "a tool row");
+  expect(new Set(toolRows(store)).size).toBe(toolRows(store).length);
+
+  await idle(store);
+  expect(store.state.live).toEqual([]);
+  expect(toolRows(store)).toHaveLength(1);
+});
+
+test("a finished step goes durable while the next one is still live", async () => {
+  const store = await connect();
+  const release = harness.holdTurn();
+  await store.prompt("use a tool please");
+  await until(
+    () => liveText(store).trim() === REPLY.split(" ")[0],
+    "the second step to start streaming"
+  );
+
+  // Pi wrote the tool step the moment it ended, so it is a durable row and
+  // not a live one: only the step still being streamed is in the bucket, or
+  // the transcript would hold both and draw the prose twice.
+  const [step] = store.state.durable.filter(
+    (event) => event.type === "message" && event.role === "assistant"
+  );
+  expect(step?.type === "message" && step.text.trim()).toBe(TOOL_PROSE);
+  expect(step?.type === "message" && step.thinking?.trim()).toBe(REASONING);
+  expect(step?.type === "message" && step.toolCalls?.length).toBe(1);
+  expect(store.state.live).toHaveLength(1);
+  // The call is settled from the durable row and the live one alike: the
+  // client does not wait for pi to append the result before the row stops
+  // spinning.
+  expect(liveTools(store)).toEqual([]);
 
   release();
   await idle(store);

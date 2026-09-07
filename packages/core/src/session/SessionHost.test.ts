@@ -237,13 +237,13 @@ test("aborts a running turn", async () => {
 
   await requestSeen;
   await until(() => host.isStreaming, "the turn to start streaming");
-  expect(await host.cancel()).toBe(true);
+  expect(await host.cancel()).toEqual({ cancelled: true, restored: [] });
   release();
   await turn;
 
   expect(host.isStreaming).toBe(false);
   expect(host.status).toBe("idle");
-  expect(await host.cancel()).toBe(false);
+  expect(await host.cancel()).toEqual({ cancelled: false, restored: [] });
 });
 
 test("rejects a cwd that is not a directory", async () => {

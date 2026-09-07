@@ -71,6 +71,13 @@ export function Composer(props: {
   readonly store: SessionStore;
   /** Sending is a claim on the end of the transcript; the shell scrolls to it. */
   readonly onSend: () => void;
+  /**
+   * A message taken back out of pi's queue elsewhere on the page — the
+   * transcript's own card is the other way to reach it — to be edited here.
+   * A new object each time, so recalling the same words twice is two events
+   * and not one.
+   */
+  readonly recalled?: { readonly text: string };
 }) {
   const [text, setText] = createSignal("");
   const [caret, setCaret] = createSignal(0);
@@ -109,6 +116,17 @@ export function Composer(props: {
   const token = createMemo(() => activeToken(text(), caret()));
   const key = createMemo(() => tokenKey(token()));
   const open = createMemo(() => key() !== "" && dismissed() !== key());
+  /**
+   * The composer has one button, and this is which one it is. Stop only when
+   * there is nothing to send — a turn running and an empty box — because a
+   * message written into a running turn steers it, so anything typed or
+   * attached is a send even mid-turn. Escape is the other way to stop, and
+   * it does not wait for the box to be empty.
+   */
+  const stops = createMemo(
+    () =>
+      props.store.isBusy() && text().trim() === "" && attachments().length === 0
+  );
   // One memo, not a percentage read three times: a fill of 0 is a reading,
   // and an object keeps it from being mistaken for "no reading yet".
   const fill = createMemo(() => {
@@ -135,6 +153,15 @@ export function Composer(props: {
     () => key(),
     (current) => {
       void refine(current);
+    }
+  );
+
+  createEffect(
+    () => props.recalled,
+    (held) => {
+      if (held) {
+        reclaim(held.text);
+      }
     }
   );
 
@@ -230,6 +257,10 @@ export function Composer(props: {
     }
   }
 
+  /**
+   * Says the message. Into a running turn that is a steer, which is the
+   * store's business and not the box's: from here it is the same send.
+   */
   async function submit(): Promise<void> {
     const draft = text();
     const attached = attachments();
@@ -248,6 +279,33 @@ export function Composer(props: {
     // already anchored by the time it paints.
     props.onSend();
     await props.store.prompt(draft, attached);
+  }
+
+  /**
+   * Stopping takes back whatever pi was still holding for the turn, which
+   * belongs in the box it was typed into rather than on the floor — the TUI
+   * restores it to its editor on the same gesture.
+   */
+  async function stop(): Promise<void> {
+    reclaim(await props.store.cancel());
+  }
+
+  /**
+   * Puts a message pi handed back into the box and takes focus, however it
+   * was reclaimed — stopping the turn, or clicking its card. Joined the way
+   * the queue itself joins, so what comes back reads exactly as the card
+   * that was holding it, with anything typed meanwhile after it: where
+   * sending would have put it.
+   */
+  function reclaim(restored: string): void {
+    if (restored === "") {
+      return;
+    }
+    const next = [restored, text()].filter((part) => part.trim()).join("\n\n");
+    edit(next);
+    setCaret(next.length);
+    input.value = next;
+    input.focus();
   }
 
   /**
@@ -371,6 +429,13 @@ export function Composer(props: {
             if (navigation.onKeyDown(event)) {
               return;
             }
+            // Nothing left to dismiss, so Escape means the turn — whatever
+            // is in the box. What pi was holding for it comes back here.
+            if (event.key === "Escape" && props.store.isBusy()) {
+              event.preventDefault();
+              void stop();
+              return;
+            }
             if (
               event.key === "Enter" &&
               !event.isComposing &&
@@ -419,34 +484,38 @@ export function Composer(props: {
 
           <div class="flex-1" />
 
-          <Show
-            when={props.store.isBusy()}
-            fallback={
-              <button
-                type="button"
-                aria-label="Send"
-                class="flex items-center justify-center rounded-full bg-indigo-500 p-2 text-indigo-50 ring-indigo-300 hover:ring-1 active:bg-indigo-500/80"
-                onMouseDown={keepFocus}
-                onClick={() => {
-                  void submit();
-                }}
-              >
-                <span class="i-griddy-icons:send-alt-02-filled size-5" />
-              </button>
+          {/* One button in one place, whatever the session is doing: a second
+              circle beside it would be a destructive action a thumb's width
+              from the one it is aiming at, and would move the target the
+              moment a turn started. Steering is still sending, so it is still
+              the send icon; only an empty box mid-turn turns it into stop. */}
+          <button
+            type="button"
+            aria-label={
+              stops() ? "Stop" : props.store.isBusy() ? "Steer" : "Send"
             }
+            class={`flex items-center justify-center rounded-full p-2 hover:ring-1 ${
+              stops()
+                ? "bg-rose-500 text-rose-50 ring-rose-300 active:bg-rose-500/80"
+                : "bg-indigo-500 text-indigo-50 ring-indigo-300 active:bg-indigo-500/80"
+            }`}
+            onMouseDown={keepFocus}
+            onClick={() => {
+              if (stops()) {
+                void stop();
+                return;
+              }
+              void submit();
+            }}
           >
-            <button
-              type="button"
-              aria-label="Stop"
-              class="flex items-center justify-center rounded-full bg-rose-500 p-2 text-rose-50 ring-rose-300 hover:ring-1 active:bg-rose-500/80"
-              onMouseDown={keepFocus}
-              onClick={() => {
-                void props.store.cancel();
-              }}
-            >
-              <span class="i-griddy-icons:stop-filled size-5" />
-            </button>
-          </Show>
+            <span
+              class={`size-5 ${
+                stops()
+                  ? "i-griddy-icons:stop-filled"
+                  : "i-griddy-icons:send-alt-02-filled"
+              }`}
+            />
+          </button>
         </div>
       </div>
 
