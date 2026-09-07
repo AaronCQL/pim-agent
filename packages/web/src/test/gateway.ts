@@ -112,6 +112,21 @@ export class GatewayHarness {
     return this.gateway.url;
   }
 
+  /**
+   * How many messages pi is actually holding behind the turn in flight.
+   *
+   * `user_message` is acked when the gateway accepts it, not when the agent
+   * has queued it — deliberately, since a turn has to outlive the connection
+   * that asked for it. So the row a client paints on that ack is optimistic
+   * and says nothing about pi, and a test that means to reclaim the queue has
+   * to wait for this instead.
+   */
+  public pending(sessionId: string): number {
+    return (
+      this.registry.peek(sessionId)?.agentSession?.pendingMessageCount ?? 0
+    );
+  }
+
   public async start(): Promise<void> {
     this.tmp = await mkdtemp(join(tmpdir(), "pim-web-test-"));
     this.agentDir = join(this.tmp, "agent");
@@ -241,11 +256,18 @@ export class GatewayHarness {
   }
 }
 
-/** Polls until `test` holds; the store is a reactive object, not an emitter. */
+/**
+ * Polls until `test` holds; the store is a reactive object, not an emitter.
+ *
+ * The default has to stay under bun's own 5s per-test timeout, or the runner
+ * kills the test first and the verdict is a bare "timed out after 5000ms"
+ * with no clue which wait hung — which is exactly the diagnostic this label
+ * exists to give.
+ */
 export async function until(
   test: () => boolean,
   label: string,
-  timeoutMs = 20_000
+  timeoutMs = 4_000
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!test()) {

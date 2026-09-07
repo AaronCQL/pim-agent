@@ -614,6 +614,56 @@ describe("drafts", () => {
     expect(target.localTitle("d1")).toBe("say hello");
   });
 
+  test("the name survives leaving the session it belongs to", async () => {
+    held("d1");
+    const target = store();
+    target.client.send = async () => ({
+      type: "response",
+      id: "1",
+      success: true,
+    });
+    feed(target, attached("d1"));
+
+    await target.prompt("say hello");
+    flush();
+    // Away before the turn is done, which is where the transcript stops
+    // answering: it holds the session being read, and that is now another
+    // one. The name was this browser's to remember and it remembered it.
+    feed(target, attached("d2"));
+
+    expect(target.localTitle("d1")).toBe("say hello");
+  });
+
+  test("the remembered name is dropped once the listing carries it", async () => {
+    held("d1");
+    const target = store();
+    target.client.send = async () => ({
+      type: "response",
+      id: "1",
+      success: true,
+      sessions: [
+        {
+          sessionId: "d1",
+          cwd: "/repo",
+          createdAt: 0,
+          modifiedAt: 5,
+          head: 2,
+          title: "say hello",
+        },
+      ],
+    });
+    feed(target, attached("d1"));
+    await target.prompt("say hello");
+    flush();
+
+    await target.listSessions();
+    flush();
+
+    // Nothing left to cover, so nothing kept: the gap this fills is between
+    // sending a message and the listing having read it, and it has.
+    expect(target.state.openings).toEqual({});
+  });
+
   test("the row stops being drawn once the directory can answer for it", async () => {
     held("d1", { d1: "typed" });
     const target = store();

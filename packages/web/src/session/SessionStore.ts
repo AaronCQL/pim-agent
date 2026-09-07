@@ -158,6 +158,19 @@ export type SessionState = {
    * what is in it and leaves the other message where it was written.
    */
   drafts: Record<string, string>;
+  /**
+   * The message a session was opened with, per session, kept only until the
+   * listing can say it too. A session is named by its opening message, and
+   * between sending one and pi's log being scanned for it there is a window
+   * where nothing else in this browser knows what it was: the transcript
+   * answers for the attached session alone, so switching away mid-turn would
+   * otherwise drop the row back to an id it already had a name for.
+   *
+   * In memory rather than in `localStorage`: it is worth a keystroke to keep
+   * a name from flickering, not a synchronous disk write, and a reload is
+   * slow enough that the listing has the answer by the time it lands.
+   */
+  openings: Record<string, string>;
   /** The one session with no file yet, if this browser is holding one. */
   unwritten: Unwritten | undefined;
 };
@@ -266,6 +279,7 @@ export class SessionStore {
       error: undefined,
       seen: { ...seen },
       drafts: { ...drafts },
+      openings: {},
       unwritten,
     });
     this.seen = seen;
@@ -382,6 +396,11 @@ export class SessionStore {
     let id = "";
     let previous: string | undefined;
     this.setState((draft) => {
+      // Decided in here for the same reason as `id`: what opens a session is
+      // a question about the message *before* this one, and only the write
+      // sees them in order.
+      const opens =
+        openingMessage(draft.durable, draft.optimistic) === undefined;
       const growing = busy
         ? draft.optimistic.find((pending) => pending.queued)
         : undefined;
@@ -401,6 +420,9 @@ export class SessionStore {
           timestamp: Date.now(),
           ...(busy ? { queued: true } : {}),
         });
+      }
+      if (opens) {
+        draft.openings[draft.sessionId] = trimmed;
       }
       draft.error = undefined;
     });
@@ -502,6 +524,12 @@ export class SessionStore {
     this.setState((draft) => {
       for (const session of sessions) {
         draft.activity[session.sessionId] = session.status ?? "idle";
+        // The listing can name it now, so the copy held for the gap has
+        // nothing left to cover: dropping it here is what keeps this from
+        // growing one entry per session this browser has ever written to.
+        if (session.title !== undefined) {
+          delete draft.openings[session.sessionId];
+        }
       }
     });
     // Pi has written the session's first line, so the directory answers for
@@ -544,13 +572,15 @@ export class SessionStore {
    * The same rule the listing uses, which is why the two agree the moment pi
    * writes the log: what this covers is the gap before it does, where the row
    * would otherwise fall back to an id it already had a name for.
-   *
-   * Only the attached session's opening message is readable here; one left
-   * behind by a switch has nothing but what was typed into it.
    */
   public localTitle(sessionId: string): string | undefined {
     const opening =
-      sessionId === this.state.sessionId ? this.firstUserText() : undefined;
+      sessionId === this.state.sessionId
+        ? this.firstUserText()
+        : // A session left behind by a switch has no transcript here, so what
+          // it was opened with is only known if this browser is what opened
+          // it — which, for the whole of the gap this covers, it is.
+          this.state.openings[sessionId];
     const title = opening?.trim() || this.draftText(sessionId).trim();
     return title === "" ? undefined : title;
   }
@@ -628,12 +658,7 @@ export class SessionStore {
   }
 
   private firstUserText(): string | undefined {
-    for (const event of this.state.durable) {
-      if (event.type === "message" && event.role === "user") {
-        return event.text;
-      }
-    }
-    return this.state.optimistic[0]?.text;
+    return openingMessage(this.state.durable, this.state.optimistic);
   }
 
   /**
@@ -1079,6 +1104,23 @@ function readSeen(): Record<string, number> {
 
 function readDrafts(): Record<string, string> {
   return readRecord<string>(DRAFTS_KEY);
+}
+
+/**
+ * The message a session opens with: the first one written, and before it is
+ * written the first one said. One rule, because a name that changed when the
+ * echo landed would be two.
+ */
+function openingMessage(
+  durable: readonly DurableEvent[],
+  optimistic: readonly OptimisticMessage[]
+): string | undefined {
+  for (const event of durable) {
+    if (event.type === "message" && event.role === "user") {
+      return event.text;
+    }
+  }
+  return optimistic[0]?.text;
 }
 
 /** Anything storage has none of, or has nonsense in, reads as empty. */

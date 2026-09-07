@@ -636,6 +636,14 @@ describe("the composer, against a real gateway", () => {
     await store.prompt("use a tool please");
     await until(() => store.isBusy(), "the turn to start");
     await store.prompt(waiting);
+    // The card above is painted on the gateway's ack, which means it took the
+    // message — not that pi is holding it yet. Reclaiming it reads pi's queue,
+    // so a test that clicks the card the moment it appears can beat the
+    // message into that queue and get nothing back.
+    await until(
+      () => harness.pending(store.state.sessionId) === 1,
+      "pi to be holding the queued message"
+    );
     flush();
     return { host, input: host.querySelector("textarea")!, release };
   }

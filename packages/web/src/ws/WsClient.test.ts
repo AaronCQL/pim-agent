@@ -499,3 +499,24 @@ test("a new chat is the browser's alone until pi writes its first line", async (
   await until(() => store.state.sessionId !== first, "a second session");
   expect(store.state.unwritten?.sessionId).toBe(store.state.sessionId);
 });
+
+test("a session sent to and left keeps its name against the real listing", async () => {
+  const store = await connect();
+  const first = store.state.sessionId;
+
+  await store.prompt("say hello");
+  flush();
+  // Straight into another chat, without waiting for the reply. Everything
+  // that could name the first session is now somewhere else: the transcript
+  // holds the session being read, the unwritten record holds the new one,
+  // and pi has not been given long enough to have a log worth scanning.
+  await store.newSession(harness.tmp);
+  await until(() => store.state.sessionId !== first, "a second session");
+  flush();
+
+  const listed = await store.listSessions();
+  flush();
+  // Exactly what the sidebar paints, in the order it asks the questions.
+  const row = listed.find((entry) => entry.sessionId === first);
+  expect(row?.title ?? store.localTitle(first)).toBe("say hello");
+});
