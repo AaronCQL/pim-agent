@@ -57,4 +57,6 @@ Never write:
 
 **Print nothing on success.** `bun scripts/check.ts` is the gate — lint, format, typecheck, and the `agent`, `web` and `pack` suites — and a green run is silent, so everything on screen is a failure or a file that was rewritten. Run it after every change. Narrow it by task and forward flags to the suites: `bun scripts/check.ts agent --changed`, `bun scripts/check.ts web -t Sidebar`.
 
+**A rewrite is a failure in CI.** `lint` and `format` repair what they can locally, on the assumption that whoever ran them can commit the result. Under `CI` there is no such person, so they only report: `format` names the files it would have rewritten and `lint` drops `--fix`, and either one exits non-zero. Fix it the same way you would any other red check — `bun run check`, then commit what it changed.
+
 That contract only holds if the tests hold it too. A `console.log` left in a passing test is printed on every run of it forever; if a log line is worth keeping, assert on it with `spyOn(console, …)` instead, and if a number is only interesting when it regresses, print it only when it does.

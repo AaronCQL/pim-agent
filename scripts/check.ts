@@ -16,11 +16,19 @@
  * less than its seconds there is `ciOnly` and has to be named to run. CI names
  * them; see `.github/workflows/ci.yml`.
  *
+ * Under `CI` the two rewriting tasks stop rewriting: nobody is there to commit
+ * a repaired file, and the fix dies with the runner, so a green job would be
+ * the only trace that the tree was ever wrong. There they report and fail
+ * instead, which is the same information at the only time it can be acted on.
+ *
  * A task that passes prints nothing: on a green run the exit code is the whole
  * report. The exceptions are the two things worth tokens — a task that failed,
  * and a file that got rewritten.
  */
 import { resolve } from "node:path";
+
+/** Set by every CI provider worth the name, and by GitHub Actions. */
+const CI = Bun.env.CI !== undefined && Bun.env.CI !== "false";
 
 type Task = {
   readonly name: string;
@@ -57,7 +65,9 @@ const TASKS: readonly Task[] = [
     name: "lint",
     // Without `--max-warnings=0` oxlint exits 0 on warnings, so a chain of
     // these stays green while printing complaints nobody has to act on.
-    argv: ["oxlint", ".", "--fix", "--max-warnings=0"],
+    // Without `--fix` it reports the same problems and exits non-zero, which
+    // is what CI wants: a diagnostic it can print, not a repair it discards.
+    argv: ["oxlint", ".", ...(CI ? [] : ["--fix"]), "--max-warnings=0"],
     mutates: true,
   },
   {
@@ -225,7 +235,8 @@ async function run(task: Task, forwarded: readonly string[]): Promise<boolean> {
 
 /**
  * Name the damage, then repair it — and say what got repaired, since a file
- * rewritten under an agent's feet is worth its tokens.
+ * rewritten under an agent's feet is worth its tokens. Under `CI` the second
+ * phase is skipped and the naming alone is the verdict.
  */
 async function runTwoPhase(
   task: Task,
@@ -248,6 +259,17 @@ async function runTwoPhase(
     return true;
   }
 
+  const count = files.split("\n").length;
+  const plural = `file${count === 1 ? "" : "s"}`;
+  if (CI) {
+    report(
+      `${task.name} would rewrite ${String(count)} ${plural} — run \`bun run check\` and commit the result`,
+      files,
+      task.name
+    );
+    return false;
+  }
+
   const fixed = await spawn(task.argv);
   if (fixed.exitCode !== 0) {
     report(
@@ -258,12 +280,7 @@ async function runTwoPhase(
     return false;
   }
 
-  const count = files.split("\n").length;
-  report(
-    `${task.name} rewrote ${String(count)} file${count === 1 ? "" : "s"}`,
-    files,
-    task.name
-  );
+  report(`${task.name} rewrote ${String(count)} ${plural}`, files, task.name);
   return true;
 }
 
