@@ -64,6 +64,11 @@ test("marking is forward-only and survives a restart", async () => {
 
 test("reading a session settles it against a later answer", async () => {
   const cursors = new ReadCursors(file);
+  // The baseline is taken off the clock inside the load, so the load has to
+  // settle before the clock is read here. Reading it first only asks for an
+  // answer later than a baseline that does not exist yet, and loses the tie
+  // whenever the load happens to span a millisecond.
+  await cursors.isUnread("any", BEFORE);
   const answeredAt = Date.now() + 1;
   expect(await cursors.isUnread("s1", answeredAt)).toBe(true);
 
