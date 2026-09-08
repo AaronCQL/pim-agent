@@ -1,26 +1,20 @@
-import { Errors } from "../../../shared/Errors";
 import { Json } from "../../../shared/Json";
-import ky, { HTTPError, TimeoutError, type KyInstance } from "ky";
+import { createKy, type HttpFetch } from "../../../shared/Http";
+import type { KyInstance } from "ky";
 import {
+  mapProviderError,
   normalizeSnippet,
-  parseRetryAfterMs,
-  ProviderQuotaError,
   ProviderSearchError,
   type ProviderSearchInput,
   type SearchProvider,
   type SearchResult,
 } from "./SearchProvider";
 
-type DuckDuckGoFetch = (
-  input: Parameters<typeof fetch>[0],
-  init?: Parameters<typeof fetch>[1]
-) => ReturnType<typeof fetch>;
-
 export type DuckDuckGoProviderOptions = {
   readonly readerEndpoint?: string;
   readonly searchEndpoint?: string;
   readonly apiKey?: string;
-  readonly fetch?: DuckDuckGoFetch;
+  readonly fetch?: HttpFetch;
   readonly timeoutMs?: number;
 };
 
@@ -60,11 +54,7 @@ export class DuckDuckGoProvider implements SearchProvider {
         ? {}
         : { Authorization: `Bearer ${options.apiKey}` }),
     };
-    this.ky = ky.create(
-      options.fetch === undefined
-        ? {}
-        : { fetch: options.fetch as typeof fetch }
-    );
+    this.ky = createKy(options.fetch);
   }
 
   public async search(
@@ -91,38 +81,16 @@ export class DuckDuckGoProvider implements SearchProvider {
   }
 
   private toProviderError(error: unknown, signal?: AbortSignal): unknown {
-    if (signal?.aborted || Errors.isAbort(error)) {
-      return error;
-    }
-
-    if (error instanceof HTTPError) {
-      const { status, headers } = error.response;
-
-      if (status === 429 || status === 402) {
-        return new ProviderQuotaError(
-          this.name,
-          "Jina reader rejected the request: free tier limit reached.",
-          parseRetryAfterMs(headers.get("retry-after"))
-        );
-      }
-
-      return new ProviderSearchError(
-        this.name,
-        `DuckDuckGo lookup failed with HTTP ${status}.`
-      );
-    }
-
-    if (error instanceof TimeoutError) {
-      return new ProviderSearchError(
-        this.name,
-        `DuckDuckGo lookup timed out after ${this.timeoutMs}ms.`
-      );
-    }
-
-    return new ProviderSearchError(
-      this.name,
-      `DuckDuckGo lookup failed: ${Errors.describe(error)}`
-    );
+    return mapProviderError({
+      provider: this.name,
+      subject: "DuckDuckGo lookup",
+      error,
+      ...(signal === undefined ? {} : { signal }),
+      timeoutMs: this.timeoutMs,
+      quotaStatuses: [429, 402],
+      quotaMessage:
+        "Jina reader rejected the request: free tier limit reached.",
+    });
   }
 
   private readContent(body: string): string {

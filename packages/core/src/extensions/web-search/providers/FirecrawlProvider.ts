@@ -1,25 +1,19 @@
-import { Errors } from "../../../shared/Errors";
 import { Json } from "../../../shared/Json";
-import ky, { HTTPError, TimeoutError, type KyInstance } from "ky";
+import { createKy, type HttpFetch } from "../../../shared/Http";
+import type { KyInstance } from "ky";
 import {
+  mapProviderError,
   normalizeSnippet,
-  parseRetryAfterMs,
-  ProviderQuotaError,
   ProviderSearchError,
   type ProviderSearchInput,
   type SearchProvider,
   type SearchResult,
 } from "./SearchProvider";
 
-type FirecrawlFetch = (
-  input: Parameters<typeof fetch>[0],
-  init?: Parameters<typeof fetch>[1]
-) => ReturnType<typeof fetch>;
-
 export type FirecrawlProviderOptions = {
   readonly endpoint?: string;
   readonly apiKey?: string;
-  readonly fetch?: FirecrawlFetch;
+  readonly fetch?: HttpFetch;
   readonly timeoutMs?: number;
 };
 
@@ -47,11 +41,7 @@ export class FirecrawlProvider implements SearchProvider {
       options.apiKey === undefined || options.apiKey.length === 0
         ? {}
         : { Authorization: `Bearer ${options.apiKey}` };
-    this.ky = ky.create(
-      options.fetch === undefined
-        ? {}
-        : { fetch: options.fetch as typeof fetch }
-    );
+    this.ky = createKy(options.fetch);
   }
 
   public async search(
@@ -73,54 +63,26 @@ export class FirecrawlProvider implements SearchProvider {
         ...(input.signal === undefined ? {} : { signal: input.signal }),
       });
     } catch (error) {
-      throw await this.toProviderError(error, input.signal);
+      throw this.toProviderError(error, input.signal);
     }
 
     return this.parse(await response.text());
   }
 
-  private async toProviderError(
-    error: unknown,
-    signal?: AbortSignal
-  ): Promise<unknown> {
-    if (signal?.aborted || Errors.isAbort(error)) {
-      return error;
-    }
-
-    if (error instanceof HTTPError) {
-      const { status, headers } = error.response;
-
-      if (status === 429) {
-        // Firecrawl meters a rolling 24h window, not a calendar day, and
-        // reports the remainder in the body rather than a Retry-After header.
-        const retryAfterMs =
-          readRetryAfterMs(error.data) ??
-          parseRetryAfterMs(headers.get("retry-after"));
-
-        return new ProviderQuotaError(
-          this.name,
-          "Firecrawl rejected the request: keyless daily limit reached.",
-          retryAfterMs
-        );
-      }
-
-      return new ProviderSearchError(
-        this.name,
-        `Firecrawl request failed with HTTP ${status}.`
-      );
-    }
-
-    if (error instanceof TimeoutError) {
-      return new ProviderSearchError(
-        this.name,
-        `Firecrawl request timed out after ${this.timeoutMs}ms.`
-      );
-    }
-
-    return new ProviderSearchError(
-      this.name,
-      `Firecrawl request failed: ${Errors.describe(error)}`
-    );
+  private toProviderError(error: unknown, signal?: AbortSignal): unknown {
+    return mapProviderError({
+      provider: this.name,
+      subject: "Firecrawl request",
+      error,
+      ...(signal === undefined ? {} : { signal }),
+      timeoutMs: this.timeoutMs,
+      quotaStatuses: [429],
+      quotaMessage:
+        "Firecrawl rejected the request: keyless daily limit reached.",
+      // Firecrawl meters a rolling 24h window, not a calendar day, and
+      // reports the remainder in the body rather than a Retry-After header.
+      readRetryAfterMs,
+    });
   }
 
   private parse(body: string): readonly SearchResult[] {

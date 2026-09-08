@@ -1,3 +1,6 @@
+import { HTTPError, TimeoutError } from "ky";
+import { Errors } from "../../../shared/Errors";
+
 export type SearchResult = {
   readonly title: string;
   readonly url: string;
@@ -71,4 +74,53 @@ export function parseRetryAfterMs(value: string | null): number | undefined {
   const date = Date.parse(value);
 
   return Number.isNaN(date) ? undefined : Math.max(0, date - Date.now());
+}
+
+export type ProviderErrorInput = {
+  readonly provider: string;
+  readonly subject: string;
+  readonly error: unknown;
+  readonly signal?: AbortSignal;
+  readonly timeoutMs: number;
+  readonly quotaStatuses: readonly number[];
+  readonly quotaMessage: string;
+  readonly readRetryAfterMs?: (data: unknown) => number | undefined;
+};
+
+export function mapProviderError(input: ProviderErrorInput): unknown {
+  const { provider, subject, error } = input;
+
+  if (input.signal?.aborted || Errors.isAbort(error)) {
+    return error;
+  }
+
+  if (error instanceof HTTPError) {
+    const { status, headers } = error.response;
+
+    if (input.quotaStatuses.includes(status)) {
+      return new ProviderQuotaError(
+        provider,
+        input.quotaMessage,
+        input.readRetryAfterMs?.(error.data) ??
+          parseRetryAfterMs(headers.get("retry-after"))
+      );
+    }
+
+    return new ProviderSearchError(
+      provider,
+      `${subject} failed with HTTP ${status}.`
+    );
+  }
+
+  if (error instanceof TimeoutError) {
+    return new ProviderSearchError(
+      provider,
+      `${subject} timed out after ${input.timeoutMs}ms.`
+    );
+  }
+
+  return new ProviderSearchError(
+    provider,
+    `${subject} failed: ${Errors.describe(error)}`
+  );
 }

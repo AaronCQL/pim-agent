@@ -1,12 +1,10 @@
 import { Errors } from "./Errors";
+import { createKy, type HttpFetch } from "./Http";
 import { Json } from "./Json";
-import ky, { HTTPError, type KyInstance } from "ky";
+import { HTTPError, type KyInstance } from "ky";
 import type { RateLimiter } from "./RateLimiter";
 
-export type McpFetch = (
-  input: Parameters<typeof fetch>[0],
-  init?: Parameters<typeof fetch>[1]
-) => ReturnType<typeof fetch>;
+export type McpFetch = HttpFetch;
 
 export type McpClientOptions = {
   readonly endpoint: string;
@@ -57,11 +55,7 @@ export class McpClient {
     this.clientName = options.clientName ?? "pim-agent";
     this.clientVersion = options.clientVersion ?? "0.0.0";
     this.rateLimiter = options.rateLimiter;
-    this.ky = ky.create(
-      options.fetch === undefined
-        ? {}
-        : { fetch: options.fetch as typeof fetch }
-    );
+    this.ky = createKy(options.fetch);
   }
 
   public async callTool(input: CallToolInput): Promise<unknown> {

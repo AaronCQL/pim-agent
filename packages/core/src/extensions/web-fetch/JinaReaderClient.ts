@@ -1,17 +1,13 @@
 import { Errors } from "../../shared/Errors";
+import { createKy, type HttpFetch } from "../../shared/Http";
 import { Json } from "../../shared/Json";
-import ky, { HTTPError, TimeoutError, type KyInstance } from "ky";
+import { HTTPError, TimeoutError, type KyInstance } from "ky";
 import type { WebFetchPage } from "./fetch";
-
-type JinaReaderFetch = (
-  input: Parameters<typeof fetch>[0],
-  init?: Parameters<typeof fetch>[1]
-) => ReturnType<typeof fetch>;
 
 type JinaReaderClientOptions = {
   readonly endpoint?: string;
   readonly apiKey?: string;
-  readonly fetch?: JinaReaderFetch;
+  readonly fetch?: HttpFetch;
   readonly timeoutMs?: number;
 };
 
@@ -39,11 +35,7 @@ export class JinaReaderClient {
     this.endpoint = normalizeEndpoint(options.endpoint ?? "https://r.jina.ai");
     this.headers = buildHeaders(options.apiKey);
     this.timeoutMs = options.timeoutMs ?? defaultTimeoutMs;
-    this.ky = ky.create(
-      options.fetch === undefined
-        ? {}
-        : { fetch: options.fetch as typeof fetch }
-    );
+    this.ky = createKy(options.fetch);
   }
 
   public async fetchUrl(input: JinaReaderFetchInput): Promise<WebFetchPage> {
