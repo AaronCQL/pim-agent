@@ -3,8 +3,9 @@ import { defineConfig, presetIcons, presetWind4 } from "unocss";
 /**
  * Icons come from `preset-icons`, one pack only: `griddy-icons`. Every icon
  * class is written literally in a template — the `ToolIcon` lookup table is
- * gone, because a tool row on the web leads with the caret and nothing else —
- * so there is no `safelist` to keep in sync.
+ * gone, because a tool row on the web leads with one mark that says whether
+ * it opens, never with a glyph for what it is — so there is no `safelist` to
+ * keep in sync.
  *
  * The type ramp and the font stack are the mockup's, verbatim. The root stays
  * at the browser default (16px) so rem spacing, radii and containers keep

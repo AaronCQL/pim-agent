@@ -14,6 +14,25 @@ export type AttachmentTile = AttachmentView & {
 };
 
 /**
+ * How much room a tile gets, and what it owes the reader:
+ *
+ * - `grid` and `compact` are *inputs* — a row of things a message is carrying,
+ *   above a textarea or above a bubble — so they are cropped squares that
+ *   tile evenly and stay out of the way of the words.
+ * - `delivery` is the agent's own output, the thing the row exists to hand
+ *   over. It gets the width it can use, keeps its aspect ratio because a
+ *   cropped chart is a broken one, and offers a download without asking for
+ *   the lightbox first.
+ */
+export type TileVariant = "grid" | "compact" | "delivery";
+
+const IMAGE_CLASSES: Record<TileVariant, string> = {
+  grid: "size-32 object-cover sm:size-40",
+  compact: "size-16 object-cover",
+  delivery: "max-h-80 max-w-full object-contain",
+};
+
+/**
  * The files on a message, in the two shapes a file comes in: a picture, shown
  * as one, and everything else as a chip that downloads.
  *
@@ -25,8 +44,8 @@ export type AttachmentTile = AttachmentView & {
  */
 export function Attachments(props: {
   readonly files: readonly AttachmentTile[];
-  /** The composer's row, which sits above a textarea and must stay small. */
-  readonly compact?: boolean;
+  /** Defaults to `grid`. */
+  readonly variant?: TileVariant;
 }) {
   return (
     <Show when={props.files.length > 0}>
@@ -35,7 +54,7 @@ export function Attachments(props: {
             whether the picture failed to load — while the row around it is
             rebuilt by an upload finishing beside it. */}
         <For each={props.files} keyed={(file: AttachmentTile) => file.key}>
-          {(file) => <Tile file={file()} compact={props.compact === true} />}
+          {(file) => <Tile file={file()} variant={props.variant ?? "grid"} />}
         </For>
       </ul>
     </Show>
@@ -44,7 +63,7 @@ export function Attachments(props: {
 
 function Tile(props: {
   readonly file: AttachmentTile;
-  readonly compact: boolean;
+  readonly variant: TileVariant;
 }) {
   const [viewing, setViewing] = createSignal(false);
   // A file stored by another frontend lives under a root this server does not
@@ -69,14 +88,28 @@ function Tile(props: {
             src={props.file.url}
             alt={props.file.name}
             loading="lazy"
-            class={`block object-cover ${
-              props.compact ? "size-16" : "size-32 sm:size-40"
-            } ${props.file.uploading ? "opacity-50" : ""}`}
+            class={`block ${IMAGE_CLASSES[props.variant]} ${
+              props.file.uploading ? "opacity-50" : ""
+            }`}
             onError={() => {
               setBroken(true);
             }}
           />
         </button>
+      </Show>
+
+      {/* A delivered picture is meant to be kept, and the lightbox is a look
+          rather than a copy. Over the corner for the same reason `onRemove`
+          is: beside it, the control would move the row every time. */}
+      <Show when={props.variant === "delivery" && shows()}>
+        <a
+          href={props.file.url}
+          download={props.file.name}
+          aria-label={`Download ${props.file.name}`}
+          class="absolute right-1.5 top-1.5 flex items-center justify-center rounded-full bg-neutral-950/80 p-1.5 text-neutral-350 ring-1 ring-neutral-700 hover:text-neutral-50"
+        >
+          <span class="i-griddy-icons:download size-4" aria-hidden="true" />
+        </a>
       </Show>
 
       <Show when={props.file.uploading}>
@@ -119,6 +152,11 @@ function Tile(props: {
  * on the server and the browser already knows how to save a file, so the
  * whole behaviour is an `href` — and it is the same URL the thumbnail would
  * have used.
+ *
+ * The glyph is the download arrow, not a clip: a clip says "there is a file
+ * here", which the name beside it already said, whereas a click on this chip
+ * only ever ends in the browser saving the file. It is the same mark a
+ * delivered *picture* offers over its corner, for the same act.
  */
 function Chip(props: { readonly file: AttachmentTile }) {
   return (
@@ -130,7 +168,7 @@ function Chip(props: { readonly file: AttachmentTile }) {
       class="flex items-center gap-1.5 rounded-full bg-neutral-900 px-2.5 py-1 text-sm text-neutral-350 ring-1 ring-neutral-750 hover:text-neutral-50"
     >
       <span
-        class="i-griddy-icons:attachment size-4 shrink-0"
+        class="i-griddy-icons:download size-4 shrink-0"
         aria-hidden="true"
       />
       <span class="max-w-40 truncate">{props.file.name}</span>

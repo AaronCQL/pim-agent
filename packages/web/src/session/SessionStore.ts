@@ -4,7 +4,7 @@ import type { PickerItem } from "#core/picker/PickerItem";
 import { rankCommands } from "#core/picker/commandRanker";
 import { RemoteFilePickerSuggestionEngine } from "#core/picker/RemoteFilePickerSuggestionEngine";
 import type { DirectoryListing } from "#core/shared/Directories";
-import type { ToolView } from "#core/view/ViewBlock";
+import type { ToolView, ViewBlock } from "#core/view/ViewBlock";
 import type { AttachmentRef, CommandDraft } from "#protocol/Command";
 import type {
   AttachmentView,
@@ -1171,8 +1171,15 @@ export class SessionStore {
     return url.startsWith("/") ? `${this.client.httpUrl}${url}` : url;
   }
 
+  /** `absolute` as a value, for the block walk to carry. */
+  private readonly toAbsolute = (url: string): string => this.absolute(url);
+
   /** The one entry point for a server frame; tests drive it directly. */
-  public ingest(event: ServerEvent): void {
+  public ingest(frame: ServerEvent): void {
+    // Every URL a frame carries becomes fetchable here, once, before anything
+    // reads it: the alternative is a base URL threaded down to the painters
+    // through every layer of the transcript.
+    const event = this.resolveUrls(frame);
     this.update.ingest(event);
     if (isDurableEvent(event)) {
       this.ingestDurable(event);
@@ -1247,7 +1254,7 @@ export class SessionStore {
             return;
           }
           for (const inner of event.events) {
-            applyChild(watched, this.resolveAttachments(inner));
+            applyChild(watched, this.resolveUrls(inner));
           }
         });
         return;
@@ -1311,9 +1318,8 @@ export class SessionStore {
   }
 
   private ingestDurable(event: DurableEvent): void {
-    const resolved = this.resolveAttachments(event);
     this.setState((draft) => {
-      draft.durable.push(resolved);
+      draft.durable.push(event);
       if (event.type === "message" && event.role === "user") {
         // Splicing a store draft in place is not safe across a batch of
         // events — the write is a patch, and it can be applied against a
@@ -1332,23 +1338,45 @@ export class SessionStore {
   }
 
   /**
-   * The files a message carried, where this browser can fetch them. Server
-   * frames carry server-relative paths, and a child's message is served by
-   * the same gateway the session's is.
+   * A frame's files, where this browser can fetch them: what a message
+   * carried, and what a tool sent back — a `send_file` view holds the same
+   * kind of URL, and a durable message holds the views of the calls it made.
+   * Server frames carry server-relative paths, and a child's events are
+   * served by the same gateway the session's are.
    */
-  private resolveAttachments<TEvent extends StreamEvent>(
-    event: TEvent
-  ): TEvent {
-    if (event.type !== "message" || !event.attachments) {
-      return event;
+  private resolveUrls<TEvent extends ServerEvent>(event: TEvent): TEvent {
+    switch (event.type) {
+      case "message":
+        if (event.attachments === undefined && event.toolCalls === undefined) {
+          return event;
+        }
+        return {
+          ...event,
+          ...(event.attachments === undefined
+            ? {}
+            : {
+                attachments: event.attachments.map((file) => ({
+                  ...file,
+                  url: this.absolute(file.url),
+                })),
+              }),
+          ...(event.toolCalls === undefined
+            ? {}
+            : {
+                toolCalls: event.toolCalls.map((call) => ({
+                  ...call,
+                  view: resolveViewUrls(call.view, this.toAbsolute),
+                })),
+              }),
+        };
+      case "tool_call":
+      case "tool_update":
+      case "tool_end":
+      case "tool_result":
+        return { ...event, view: resolveViewUrls(event.view, this.toAbsolute) };
+      default:
+        return event;
     }
-    return {
-      ...event,
-      attachments: event.attachments.map((file) => ({
-        ...file,
-        url: this.absolute(file.url),
-      })),
-    };
   }
 
   /**
@@ -1576,6 +1604,41 @@ function openingMessage(
  */
 function namesOf(attachments: readonly AttachmentView[] | undefined): string {
   return (attachments ?? []).map((file) => file.name).join(", ");
+}
+
+/**
+ * A tool view with every `attachment` block's URL made absolute.
+ *
+ * Rebuilt rather than patched, and with no attempt to hand back the same
+ * arrays when nothing changed: the view was parsed out of a JSON frame
+ * moments ago and is already nobody's reference, so preserving identity
+ * would save a handful of pointer copies and buy no reconciliation.
+ */
+function resolveViewUrls(
+  view: ToolView,
+  absolute: (url: string) => string
+): ToolView {
+  const walk = (blocks: readonly ViewBlock[]): readonly ViewBlock[] =>
+    blocks.map((block) => {
+      switch (block.kind) {
+        case "attachment":
+          return { ...block, url: absolute(block.url) };
+        // The containers, so a block nested in one is not quietly skipped.
+        case "section":
+          return { ...block, content: walk(block.content) };
+        case "list":
+          return { ...block, items: walk(block.items) };
+        default:
+          return block;
+      }
+    });
+
+  return {
+    ...view,
+    title: walk(view.title),
+    ...(view.summary === undefined ? {} : { summary: walk(view.summary) }),
+    ...(view.body === undefined ? {} : { body: walk(view.body) }),
+  };
 }
 
 /** Anything storage has none of, or has nonsense in, reads as empty. */

@@ -101,6 +101,14 @@ const SAMPLES = {
   },
   kv: { kind: "kv", pairs: [["exit", "127"]] },
   link: { kind: "link", href: "https://example.com", label: "docs" },
+  attachment: {
+    kind: "attachment",
+    name: "revenue.png",
+    // Absolute, as it is by the time a painter sees one: the store resolves
+    // every URL on the way in.
+    url: "http://gateway/attachment/s1/revenue-1.png",
+    isImage: true,
+  },
   notice: { kind: "notice", severity: "error", text: "boom" },
 } as const satisfies {
   [K in ViewBlock["kind"]]: Extract<ViewBlock, { kind: K }>;
@@ -135,6 +143,43 @@ describe("ViewBlock HTML painter", () => {
     const html = paint([SAMPLES.list]);
     expect(html).toContain("<ol");
     expect(html).toContain("nested");
+  });
+
+  // A delivered file is the one block that is not a description of what the
+  // agent did: it is the thing itself, drawn as the tile an inbound
+  // attachment gets.
+  test("an image attachment paints a picture and a way to keep it", () => {
+    const host = mountPoint();
+    render(() => <Blocks blocks={[SAMPLES.attachment]} />, host);
+    flush();
+
+    const image = host.querySelector("img");
+    expect(image?.getAttribute("src")).toBe(SAMPLES.attachment.url);
+    expect(image?.getAttribute("alt")).toBe("revenue.png");
+    const download = host.querySelector("a[download]");
+    expect(download?.getAttribute("href")).toBe(SAMPLES.attachment.url);
+    expect(download?.getAttribute("download")).toBe("revenue.png");
+  });
+
+  test("a non-image attachment paints the chip that downloads it", () => {
+    const host = mountPoint();
+    render(
+      () => (
+        <Blocks
+          blocks={[
+            { ...SAMPLES.attachment, name: "report.pdf", isImage: false },
+          ]}
+        />
+      ),
+      host
+    );
+    flush();
+
+    expect(host.querySelector("img")).toBeNull();
+    expect(host.querySelector("a[download]")?.getAttribute("download")).toBe(
+      "report.pdf"
+    );
+    expect(host.textContent).toContain("report.pdf");
   });
 
   test("a section paints its label and recurses into its content", () => {
@@ -342,6 +387,53 @@ describe("ToolCard", () => {
     expect(host.textContent).toContain("+2");
   });
 
+  /**
+   * Every other row recedes until it is asked for, because a transcript is a
+   * list of what happened. A delivery is not what happened — it is the answer
+   * — so the row holds full strength instead of waiting to be hovered.
+   */
+  test("a row that delivered a file does not recede", () => {
+    const delivered: ToolView = {
+      label: "Send File",
+      title: [SAMPLES.file],
+      summary: [SAMPLES.attachment],
+    };
+    const host = paintTool(delivered);
+    expect(host.querySelector("article")?.className).not.toContain(
+      "opacity-80"
+    );
+    expect(host.querySelector("img")).not.toBeNull();
+
+    // And the rule is the block's, not the tool's: the same row without one.
+    const plain = paintTool({ ...delivered, summary: [SAMPLES.spans] });
+    expect(plain.querySelector("article")?.className).toContain("opacity-80");
+  });
+
+  /**
+   * A delivery is the row's output, not a line in its head — so it hangs
+   * below the disclosure rather than inside its `<summary>`, where a click
+   * anywhere toggles the row. Reaching for the picture opens the picture.
+   */
+  test("a delivery hangs outside the disclosure it was made in", () => {
+    const host = paintTool({
+      label: "Send File",
+      title: [SAMPLES.file],
+      summary: [SAMPLES.attachment],
+      body: [SAMPLES.code],
+    });
+    const details = host.querySelector("details")!;
+    expect(details.querySelector("img")).toBeNull();
+
+    host
+      .querySelector("img")!
+      .closest("button")!
+      .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    flush();
+
+    expect(details.open).toBe(false);
+    expect(host.querySelector("dialog")).not.toBeNull();
+  });
+
   // The caret is not the only mark that carries state. A row that wraps or is
   // open hangs a rule the whole way down, so the rule reads what the caret
   // reads: amber in flight, rose once it has failed, and a quiet neutral —
@@ -385,8 +477,37 @@ describe("ToolCard", () => {
       true
     );
     expect(host.querySelector("details")).toBeNull();
-    // It keeps the caret, in amber, so the row keeps its shape while it waits.
+    // It keeps a mark, in amber, so the row keeps its shape while it waits.
     expect(host.innerHTML).toContain("bg-amber-400");
+  });
+
+  /**
+   * The one mark a row draws is a promise about what reaching for it does.
+   * A caret over a row that opens nothing is a promise nothing keeps, and an
+   * empty gutter makes the reader click to find out — so the square says
+   * "this is all of it" in the caret's own column, as `▪` does in the TUI.
+   *
+   * And it is the *only* mark either way: `view.icon` is `edit` here and
+   * paints nothing, because a row's glyph says what it does next, never what
+   * kind of tool it was.
+   */
+  test("the caret is for rows that open, the square for rows that do not", () => {
+    const glyphs = (host: HTMLElement) =>
+      host.innerHTML.match(/i-griddy-icons:[\w-]+/g) ?? [];
+
+    expect(glyphs(paintTool(view))).toEqual([
+      "i-griddy-icons:chevron-right-small-filled",
+    ]);
+    for (const bodiless of [
+      { title: [SAMPLES.file] },
+      { title: [SAMPLES.file], summary: [SAMPLES.attachment] },
+    ] satisfies readonly ToolView[]) {
+      // The delivery draws a download of its own, below; the gutter is the
+      // first mark in the row and the only one that answers for it.
+      const marks = glyphs(paintTool(bodiless));
+      expect(marks[0]).toBe("i-griddy-icons:square-rounded-filled");
+      expect(marks).not.toContain("i-griddy-icons:chevron-right-small-filled");
+    }
   });
 
   test("a row with nothing to open does not brighten on hover", () => {
@@ -399,13 +520,8 @@ describe("ToolCard", () => {
     );
   });
 
-  test("labelTone tints the label, and no glyph is painted", () => {
-    const html = paintTool(view).innerHTML;
-    expect(html).toContain("text-indigo-300");
-    // The caret is the only icon a row draws, and it carries state, not identity.
-    expect(html.match(/i-griddy-icons:[\w-]+/g)).toEqual([
-      "i-griddy-icons:chevron-right-small-filled",
-    ]);
+  test("labelTone tints the label", () => {
+    expect(paintTool(view).innerHTML).toContain("text-indigo-300");
   });
 
   test("the label falls back to the tool name the wire carried", () => {

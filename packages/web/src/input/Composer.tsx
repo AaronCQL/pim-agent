@@ -426,7 +426,7 @@ export function Composer(props: {
           void absorb([...(event.dataTransfer?.files ?? [])]);
         }}
       >
-        <Attachments files={tiles()} compact />
+        <Attachments files={tiles()} variant="compact" />
 
         <textarea
           ref={(element: HTMLTextAreaElement) => {

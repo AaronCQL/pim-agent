@@ -313,6 +313,18 @@ function paintLink(block: BlockOf<"link">, mode: Mode): readonly string[] {
 }
 
 /**
+ * The name, unlinked. `url` is relative to the web gateway, which is not the
+ * server this chat is served by — a link here would resolve against Telegram
+ * and 404, and a file this surface delivered arrived as a document anyway.
+ */
+function paintAttachment(
+  block: BlockOf<"attachment">,
+  mode: Mode
+): readonly string[] {
+  return [escapeIn(block.name, mode)];
+}
+
+/**
  * Markdown source is escaped, not re-rendered: which markdown dialect the
  * surface speaks is the surface's business, and re-rendering here would emit
  * block tags into slots that only accept inline ones.
@@ -340,6 +352,7 @@ const PAINTERS: PainterMap = {
   list: paintList,
   kv: paintKv,
   link: paintLink,
+  attachment: paintAttachment,
   notice: paintNotice,
 };
 

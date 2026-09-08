@@ -85,7 +85,7 @@ export class Session {
       isolatedSessionPath: () =>
         this.sessionPath("isolated-sessions", `-${stamp()}`),
       systemInstruction: () => this.getSystemInstruction(),
-      customTools: (cwd) => [
+      customTools: ({ cwd }) => [
         Tools.wrap(
           SendFileTool.build({ api: deps.api, sessionId: deps.id, cwd })
         ),

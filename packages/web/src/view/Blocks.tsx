@@ -8,6 +8,7 @@ import { Painting } from "#core/view/Painting";
 import type { DiffHunk, Span, ViewBlock } from "#core/view/ViewBlock";
 import { Markdown } from "../markdown/Markdown";
 import { CopyButton } from "../ui/CopyButton";
+import { Attachments } from "./Attachments";
 import { Highlight, type Token } from "./highlight";
 import {
   DIFF_EMPHASIS_CLASSES,
@@ -422,6 +423,27 @@ function NoticeBlock(props: { readonly block: BlockOf<"notice"> }) {
   );
 }
 
+/**
+ * A file the agent sent. The one block that is not a description of what the
+ * agent did but a thing handed to the reader, so it is drawn as the file
+ * itself — the same tile an inbound attachment gets, at delivery size.
+ */
+function AttachmentBlock(props: { readonly block: BlockOf<"attachment"> }) {
+  return (
+    <Attachments
+      variant="delivery"
+      files={[
+        {
+          key: props.block.url,
+          name: props.block.name,
+          url: props.block.url,
+          isImage: props.block.isImage,
+        },
+      ]}
+    />
+  );
+}
+
 const PAINTERS: PainterMap = {
   text: TextBlock,
   markdown: MarkdownBlock,
@@ -433,5 +455,6 @@ const PAINTERS: PainterMap = {
   list: ListBlock,
   kv: KvBlock,
   link: LinkBlock,
+  attachment: AttachmentBlock,
   notice: NoticeBlock,
 };

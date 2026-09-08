@@ -1,48 +1,90 @@
 import type { Element } from "solid-js";
 
 /**
- * The disclosure glyph on its own, for the one row that has to draw it without
- * a disclosure behind it: a call still in flight, which is shaped like every
- * other tool row but has nothing to open yet.
+ * The gutter mark of a row that opens onto something. Inside a `<details>`
+ * it turns; on the subagent row, which opens a dialog rather than a payload,
+ * it stays still — but in both cases the promise it makes is the same, and it
+ * is the only mark that makes it.
+ */
+export function Caret(props: { readonly class?: string }) {
+  return (
+    <Glyph
+      icon="i-griddy-icons:chevron-right-small-filled"
+      class={`scale-175 ${props.class ?? "bg-neutral-300"}`}
+    />
+  );
+}
+
+/**
+ * The gutter mark of a row that opens onto nothing: a call with no payload
+ * behind it, whether because it has none, because it has not run yet, or
+ * because what it produced — a delivered file — is already on the page.
  *
- * The caret does not sit *in* the row's text, it sits in the `2ch` gutter the
- * row is indented by — so it is positioned rather than flowed, and its host
- * only has to be `relative` and padded. That is what keeps a wrapped title out
- * of the label's shadow: the text has one left edge, on every line, whether
- * the label is `Bash` or `apply_patch`, exactly as in the terminal, where the
- * marker and the `│` share one three-column gutter.
+ * It is the TUI's `▪` in the TUI's position, and it is here for the TUI's
+ * reason: a caret on such a row is a promise nothing keeps, and a bare gutter
+ * makes the reader test the row to find out. The two marks share one column
+ * and one line, so a transcript can be scanned down its left edge for the
+ * rows worth opening.
+ */
+export function Marker(props: { readonly class?: string }) {
+  return (
+    <Glyph
+      icon="i-griddy-icons:square-rounded-filled"
+      // Down, where the caret is scaled up: the chevron is a small mark drawn
+      // inside its own box and this one nearly fills it, so at a shared size
+      // the square would outweigh the caret it has to sit in a column with.
+      class={`scale-75 ${props.class ?? "bg-neutral-300"}`}
+    />
+  );
+}
+
+/**
+ * What every gutter mark has in common.
+ *
+ * It does not sit *in* the row's text, it sits in the `2ch` gutter the row is
+ * indented by — so it is positioned rather than flowed, and its host only has
+ * to be `relative` and padded. That is what keeps a wrapped title out of the
+ * label's shadow: the text has one left edge, on every line, whether the label
+ * is `Bash` or `apply_patch`, exactly as in the terminal, where the marker and
+ * the `│` share one three-column gutter.
  *
  * The glyph is 1ch tall in a `--line` tall row, so it centres itself with
  * margins and hangs from the top of the row rather than being centred in it:
  * a wrapped title — a multi-line shell command — is several lines tall, and
- * the caret belongs beside the *first* of them.
+ * the mark belongs beside the *first* of them.
  */
-export function Caret(props: { readonly class?: string }) {
+function Glyph(props: { readonly icon: string; readonly class: string }) {
   return (
     <span
-      class={`i-griddy-icons:chevron-right-small-filled absolute left-0 top-0 my-[calc((var(--line)-1ch)/2)] size-1ch scale-175 ${props.class ?? "bg-neutral-300"}`}
+      class={`${props.icon} absolute left-0 top-0 my-[calc((var(--line)-1ch)/2)] size-1ch ${props.class}`}
       aria-hidden="true"
     />
   );
 }
 
 /**
- * The rule under the caret, and the second way to work the disclosure.
+ * The rule under the gutter mark, and — inside a `<summary>` — the second way
+ * to work the disclosure.
  *
  * It is a `2ch` wide handle with a hairline drawn down the caret's column, not
  * a hairline that happens to be clickable: 1.5px is not a hit target, and the
  * gutter is empty anyway. Being inside `<summary>`, the click that opens and
  * closes the row is the platform's own — there is no handler here, and none of
- * the keyboard behaviour is re-implemented.
+ * the keyboard behaviour is re-implemented. `grip` is what says it is that
+ * handle: a row that hangs a delivery off the same rule discloses nothing, and
+ * a pointer cursor over it would offer a click that does nothing.
  *
  * The rule is `bg-current` so one colour class tints it and its hover state
  * together, and the handle is `aria-hidden`: it is a second grip on the
  * control the summary already is, not a control of its own.
  */
-function Spine(props: { readonly class?: string }) {
+export function Spine(props: {
+  readonly class?: string;
+  readonly grip?: boolean;
+}) {
   return (
     <span
-      class={`absolute bottom-0 left-0 top-[--line] w-2ch cursor-pointer ${props.class ?? "text-neutral-750 group-hover:text-neutral-500"}`}
+      class={`absolute bottom-0 left-0 top-[--line] w-2ch ${props.grip === true ? "cursor-pointer" : ""} ${props.class ?? "text-neutral-750 group-hover:text-neutral-500"}`}
       aria-hidden="true"
     >
       <span class="absolute inset-y-0 left-[calc(0.5ch-0.75px)] w-1.5px bg-current" />
@@ -111,7 +153,7 @@ export function Collapsible(props: {
         <Caret
           class={`transition-transform group-open:rotate-90 ${props.caret ?? "bg-neutral-300"}`}
         />
-        <Spine class={props.spine} />
+        <Spine class={props.spine} grip />
         {props.summary}
       </summary>
       <div class="min-w-0">{props.children}</div>

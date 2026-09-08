@@ -80,9 +80,24 @@ export type SessionHostDeps = {
   readonly mainSessionPath?: () => string;
   readonly isolatedSessionPath?: () => string;
   readonly systemInstruction?: () => Promise<string | undefined>;
-  readonly customTools?: (cwd: string) => readonly ToolDefinition[];
+  readonly customTools?: (
+    context: CustomToolContext
+  ) => readonly ToolDefinition[];
   /** Runs after the agent is disposed, before the session file is forgotten. */
   readonly onRetire?: (sessionPath: string) => Promise<void>;
+};
+
+/** What a frontend's own tools are built against. */
+export type CustomToolContext = {
+  /** Where this session's tools resolve relative paths. */
+  readonly cwd: string;
+  /**
+   * Pi's session uuid, read at call time rather than passed by value: tools
+   * are built *with* the agent, and pi only assigns the id once it exists.
+   * Undefined until then, which no tool can observe — a tool cannot run
+   * before the session it belongs to.
+   */
+  readonly sessionId: () => string | undefined;
 };
 
 type ModelResolveResult =
@@ -545,7 +560,12 @@ export class SessionHost {
       sessionManager,
       model,
       thinkingLevel: this.currentSettings.thinkingLevel,
-      customTools: [...(this.deps.customTools?.(cwd) ?? [])],
+      customTools: [
+        ...(this.deps.customTools?.({
+          cwd,
+          sessionId: () => this.sessionId,
+        }) ?? []),
+      ],
     });
 
     // Emits session_start, which extensions (e.g. MCP adapters) rely on to

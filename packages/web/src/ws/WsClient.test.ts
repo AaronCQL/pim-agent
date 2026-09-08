@@ -261,9 +261,17 @@ test("a finished step goes durable while the next one is still live", async () =
   const store = await connect();
   const release = harness.holdTurn();
   await store.prompt("use a tool please");
+  // Two arrivals, and they come by different routes: the next step streams
+  // out of the agent in-process, while the step that ended and the result
+  // that closed it reach the client through pi's JSONL. The file lags the
+  // stream under load, so waiting on the prose alone would read the bucket a
+  // beat before the finished step had left it — and the whole point of the
+  // test is what is in the bucket once both have landed.
   await until(
-    () => liveText(store).trim() === REPLY.split(" ")[0],
-    "the second step to start streaming"
+    () =>
+      liveText(store).trim() !== "" &&
+      store.state.durable.some((event) => event.type === "tool_result"),
+    "the second step to stream, and the first to be written"
   );
 
   // Pi wrote the tool step the moment it ended, so it is a durable row and

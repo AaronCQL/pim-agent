@@ -20,6 +20,11 @@ const IMMUTABLE = "public, max-age=31536000, immutable";
 
 const PREFIX = "/attachment/";
 
+/** Where stored bytes live when nothing says otherwise. */
+export function defaultAttachmentsRoot(): string {
+  return join(Paths.pimHomeDir(), "attachments");
+}
+
 /**
  * A WebSocket is exempt from the same-origin policy; this endpoint is not, and
  * in development the client is served by vite on its own port — so its upload
@@ -67,9 +72,7 @@ export class AttachmentEndpoint {
   private readonly bySession = new Map<string, Map<string, StoredAttachment>>();
 
   public constructor(deps: AttachmentEndpointDeps = {}) {
-    this.store = new AttachmentStore(
-      deps.root ?? join(Paths.pimHomeDir(), "attachments")
-    );
+    this.store = new AttachmentStore(deps.root ?? defaultAttachmentsRoot());
     this.maxBytes = deps.maxBytes ?? DEFAULT_MAX_BYTES;
   }
 

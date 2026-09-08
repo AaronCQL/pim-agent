@@ -3,6 +3,7 @@ import "../test/dom";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { flush } from "solid-js";
 
+import type { ToolView } from "#core/view/ViewBlock";
 import { PROTOCOL_VERSION } from "#protocol/Protocol";
 import type { ServerEvent } from "#protocol/ServerEvent";
 import { toRows, type ToolRow } from "../transcript/rows";
@@ -735,6 +736,67 @@ describe("unread", () => {
 
   test("a session no listing has mentioned yet is read", () => {
     expect(store().isUnread("unheard-of")).toBe(false);
+  });
+});
+
+/**
+ * Server frames carry server-relative URLs — where the server is reachable is
+ * the client's own business, and in development the page comes from vite on
+ * another port. Resolving them on the way in is what keeps a base URL out of
+ * the painters.
+ */
+describe("stored files", () => {
+  const view: ToolView = {
+    title: [{ kind: "file", path: "/tmp/revenue.png" }],
+    summary: [
+      {
+        kind: "attachment",
+        name: "revenue.png",
+        url: "/attachment/s1/revenue-1.png",
+        isImage: true,
+      },
+    ],
+  };
+  const url = "http://127.0.0.1:1/attachment/s1/revenue-1.png";
+
+  test("a delivered file is fetchable by the time a painter sees it", () => {
+    const target = store();
+    feed(target, attached("s1"), {
+      seq: 1,
+      type: "tool_result",
+      callId: "c1",
+      name: "send_file",
+      isError: false,
+      view,
+    });
+
+    const block = toolRow(target, "c1")?.view.summary?.[0];
+    expect(block).toEqual({
+      kind: "attachment",
+      name: "revenue.png",
+      url,
+      isImage: true,
+    });
+  });
+
+  // The same view arrives twice — live on `tool_end`, then again inside the
+  // durable message that recorded the call — and both are painted.
+  test("so is one carried on a message's own tool calls", () => {
+    const target = store();
+    feed(target, attached("s1"), {
+      seq: 2,
+      type: "message",
+      messageId: "m1",
+      role: "assistant",
+      text: "there it is",
+      timestamp: 1,
+      toolCalls: [{ callId: "c1", name: "send_file", view }],
+    });
+
+    const durable = target.state.durable.at(-1);
+    const carried =
+      durable?.type === "message" ? durable.toolCalls?.[0]?.view : undefined;
+    expect(carried?.summary?.[0]).toMatchObject({ url });
   });
 });
 

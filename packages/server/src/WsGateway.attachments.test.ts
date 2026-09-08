@@ -3,12 +3,28 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+
+import { AttachmentStore } from "#core/attachments/AttachmentStore";
 import { SessionRegistry } from "#core/session/SessionRegistry";
+import { Tools } from "#core/shared/Tools";
 import { isDurableEvent } from "#protocol/ServerEvent";
 import { ProbeClient } from "./ProbeClient";
+import { SendFileTool } from "./SendFileTool";
 import { WsGateway } from "./WsGateway";
 
 const REPLY = "got it";
+/**
+ * What `serve.ts` tells every session it hosts, verbatim. Copied rather than
+ * imported because it is a fact about the deployment and not about any one
+ * tool: `serve.ts` says where the user is, and `send_file` is one of the
+ * things that follow from the answer being "a browser".
+ */
+const BROWSER_INSTRUCTION =
+  "The user is interacting with you via a web browser.";
+/** What makes the model reach for `send_file` instead of just talking. */
+const ASK_TO_SEND = "send the chart";
+const CHART = "chart.png";
 /** A one-pixel PNG, small enough to inline. */
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
@@ -47,13 +63,36 @@ function startModelServer(): void {
       if (!new URL(req.url).pathname.endsWith("/chat/completions")) {
         return new Response("not found", { status: 404 });
       }
-      modelRequests.push(await req.text());
+      const body = await req.text();
+      modelRequests.push(body);
+      // The ask is still in the history on the second request, so the
+      // tool's own answer is what says the call has already been made.
+      const sending = body.includes(ASK_TO_SEND) && !body.includes("Sent ");
       const stream = new ReadableStream<Uint8Array>({
         start(controller) {
           const encode = (s: string) => controller.enqueue(Buffer.from(s));
           encode(chunk({ role: "assistant", content: "" }));
-          encode(chunk({ content: REPLY }));
-          encode(chunk({}, "stop"));
+          if (sending) {
+            encode(
+              chunk({
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: "call_1",
+                    type: "function",
+                    function: {
+                      name: "send_file",
+                      arguments: JSON.stringify({ path: CHART }),
+                    },
+                  },
+                ],
+              })
+            );
+            encode(chunk({}, "tool_calls"));
+          } else {
+            encode(chunk({ content: REPLY }));
+            encode(chunk({}, "stop"));
+          }
           encode("data: [DONE]\n\n");
           controller.close();
         },
@@ -103,6 +142,7 @@ beforeEach(async () => {
   await mkdir(join(agentDir, "extensions"), { recursive: true });
   await Bun.write(join(clientDir, CLIENT_FILE), PNG);
   await Bun.write(join(clientDir, "notes.txt"), "client side notes\n");
+  await Bun.write(join(cwd, CHART), PNG);
   previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = agentDir;
   await Bun.write(
@@ -128,6 +168,19 @@ beforeEach(async () => {
   registry = new SessionRegistry({
     defaults: { cwd, model: "test/echo" },
     agentDir,
+    // As `serve.ts` wires it: the tool writes into the same root the endpoint
+    // answers for, which is what makes a delivery fetchable at all, under the
+    // one sentence that tells the model where its user is.
+    customTools: ({ cwd: sessionCwd, sessionId }) => [
+      Tools.wrap(
+        SendFileTool.build({
+          store: new AttachmentStore(attachmentsRoot),
+          cwd: sessionCwd,
+          sessionId,
+        })
+      ) as unknown as ToolDefinition,
+    ],
+    systemInstruction: async () => BROWSER_INSTRUCTION,
   });
   await registry.init();
   gateway = new WsGateway({
@@ -323,4 +376,57 @@ test("rejects an upload with no session and a traversing filename", async () => 
   const body = (await traversal.json()) as { readonly path: string };
   expect(traversal.status).toBe(200);
   expect(dirname(body.path)).toBe(join(attachmentsRoot, probe.sessionId!));
+});
+
+/**
+ * The other direction: a file the *agent* hands over. It travels as a stored
+ * copy behind a URL, exactly as an upload does — the browser has no
+ * filesystem to be handed a path to, and the transcript that references the
+ * delivery outlives whatever the agent does to the original next.
+ */
+test("a file the agent sent is delivered as bytes the browser can fetch", async () => {
+  const probe = await connect();
+  const mark = probe.events.length;
+  await probe.prompt(ASK_TO_SEND);
+  await idle(probe, mark);
+
+  const result = probe.events.find(
+    (event) => event.type === "tool_result" && event.name === "send_file"
+  );
+  expect(result?.type === "tool_result" && result.isError).toBe(false);
+  const block =
+    result?.type === "tool_result" ? result.view.summary?.[0] : undefined;
+  expect(block).toEqual({
+    kind: "attachment",
+    name: CHART,
+    url: expect.stringMatching(/^\/attachment\/[^/]+\/chart-\d+\.png$/),
+    isImage: true,
+  });
+
+  // A model that does not know where its user is has no reason to hand a file
+  // over rather than say where it wrote one — and on a terminal it would be
+  // right. The instruction is what makes the tool worth reaching for, so it
+  // has to be in the prompt the model actually answered.
+  expect(modelRequests.join("\n")).toContain(BROWSER_INSTRUCTION);
+
+  const url = block?.kind === "attachment" ? block.url : "";
+  const response = await fetch(`http://127.0.0.1:${gateway.port}${url}`);
+  expect(response.status).toBe(200);
+  expect(new Uint8Array(await response.arrayBuffer())).toEqual(
+    Uint8Array.from(PNG)
+  );
+});
+
+// The agent's own filesystem is as private from the browser as the browser's
+// is from the agent. The name survives; the directory it was in does not.
+test("no agent-local path ever reaches the client", async () => {
+  const probe = await connect();
+  const mark = probe.events.length;
+  await probe.prompt(ASK_TO_SEND);
+  await idle(probe, mark);
+
+  const wire = JSON.stringify(probe.events);
+  expect(wire).toContain(CHART);
+  expect(wire).not.toContain(join(cwd, CHART));
+  expect(wire).not.toContain(attachmentsRoot);
 });

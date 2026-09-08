@@ -234,6 +234,19 @@ describe("MarkdownPainter kv, link and notice", () => {
     ]);
   });
 
+  // Unlinked, unlike a `link`: the URL is relative to the web gateway, which
+  // is not the server this chat is served by.
+  test("names an attachment without linking it", () => {
+    expect(
+      paint({
+        kind: "attachment",
+        name: "a&b.png",
+        url: "/attachment/s1/a-1.png",
+        isImage: true,
+      })
+    ).toEqual(["a&amp;b.png"]);
+  });
+
   test("prefixes a notice by severity", () => {
     expect(paint({ kind: "notice", text: "fyi", severity: "info" })).toEqual([
       "fyi",

@@ -22,6 +22,7 @@ const FRAMES = {
   list: "flow",
   kv: "flow",
   link: "flow",
+  attachment: "flow",
   notice: "flow",
 } as const satisfies Record<ViewBlock["kind"], BlockFrame>;
 

@@ -11,7 +11,11 @@ import { join } from "node:path";
 
 import { Directories } from "../shared/Directories";
 import { EventLog } from "./EventLog";
-import { SessionHost, type HostSettings } from "./SessionHost";
+import {
+  SessionHost,
+  type CustomToolContext,
+  type HostSettings,
+} from "./SessionHost";
 
 const LRU_CAP = 16;
 
@@ -41,7 +45,11 @@ export type SessionRegistryDeps = {
    */
   readonly agentDir?: string;
   readonly capacity?: number;
-  readonly customTools?: (cwd: string) => readonly ToolDefinition[];
+  readonly customTools?: (
+    context: CustomToolContext
+  ) => readonly ToolDefinition[];
+  /** Appended to every session's system prompt; see `SessionHostDeps`. */
+  readonly systemInstruction?: () => Promise<string | undefined>;
 };
 
 export type SessionCreateOptions = {
@@ -216,6 +224,9 @@ export class SessionRegistry {
       // Pi's JSONL is the only store; nothing here needs a second one.
       persistSettings: async () => {},
       customTools: this.deps.customTools,
+      ...(this.deps.systemInstruction === undefined
+        ? {}
+        : { systemInstruction: this.deps.systemInstruction }),
     });
   }
 

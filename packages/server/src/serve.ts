@@ -1,4 +1,10 @@
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+
+import { AttachmentStore } from "#core/attachments/AttachmentStore";
 import { SessionRegistry } from "#core/session/SessionRegistry";
+import { Tools } from "#core/shared/Tools";
+import { defaultAttachmentsRoot } from "./AttachmentEndpoint";
+import { SendFileTool } from "./SendFileTool";
 import { WsGateway } from "./WsGateway";
 
 const DEFAULT_PORT = "4319";
@@ -67,13 +73,28 @@ export async function start(args: ReadonlyArray<string>): Promise<void> {
     throw new Error(`--port must be a port number, got "${values.port}"`);
   }
 
-  const registry = new SessionRegistry({ defaults: { cwd: values.cwd } });
+  // One root, both directions: what a browser uploads and what the agent
+  // sends back are the same kind of stored file, answered by the same route.
+  const attachmentsRoot = defaultAttachmentsRoot();
+  const store = new AttachmentStore(attachmentsRoot);
+
+  const registry = new SessionRegistry({
+    defaults: { cwd: values.cwd },
+    customTools: ({ cwd, sessionId }) => [
+      Tools.wrap(
+        SendFileTool.build({ store, cwd, sessionId })
+      ) as ToolDefinition,
+    ],
+    systemInstruction: async () =>
+      "The user is interacting with you via a web browser.",
+  });
   await registry.init();
 
   const gateway = new WsGateway({
     registry,
     hostname: values.hostname,
     port,
+    attachmentsRoot,
     ...(values.clientDir === undefined ? {} : { clientDir: values.clientDir }),
   });
   gateway.start();

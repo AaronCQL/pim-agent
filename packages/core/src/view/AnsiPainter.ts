@@ -219,6 +219,19 @@ function paintLink(block: BlockOf<"link">, theme: Theme): readonly string[] {
 }
 
 /**
+ * The name and nothing else. The URL is relative to a server this terminal is
+ * not talking to, and the bytes it points at are a copy of a file that was
+ * already on this machine — so the delivery is news, and the address of it is
+ * not.
+ */
+function paintAttachment(
+  block: BlockOf<"attachment">,
+  theme: Theme
+): readonly string[] {
+  return [`${theme.fg("muted", "sent")} ${block.name}`];
+}
+
+/**
  * The width-free fallback: a body defers markdown to the caller (see
  * `paintBody`), so this only runs where there is no width to wrap at, and the
  * source text is the closest honest rendering.
@@ -246,6 +259,7 @@ const PAINTERS: PainterMap = {
   list: paintList,
   kv: paintKv,
   link: paintLink,
+  attachment: paintAttachment,
   notice: paintNotice,
 };
 

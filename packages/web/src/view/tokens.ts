@@ -111,8 +111,10 @@ export function toneClass(tone: Tone | undefined): string {
 }
 
 /**
- * The caret a tool row hangs off: neutral, amber while the call is still in
- * flight — the `warning` tone's own tint — and rose once it has failed.
+ * The mark a tool row hangs off — the caret when there is something behind it
+ * and the square when there is not, since which of the two it is says nothing
+ * about how the call went: neutral, amber while it is still in flight — the
+ * `warning` tone's own tint — and rose once it has failed.
  */
 export function caretClass(isPartial: boolean, isError: boolean): string {
   if (isPartial) {

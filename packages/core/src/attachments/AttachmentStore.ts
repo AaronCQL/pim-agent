@@ -1,13 +1,17 @@
 import { mkdir } from "node:fs/promises";
 import { basename, extname, resolve, sep } from "node:path";
 
-/** A file that now lives on the machine the agent runs on. */
-export type StoredAttachment = {
+/** A file the store has taken a copy of, under a name it chose. */
+export type StoredFile = {
   /** Names the file within its scope; what a client sends back on a prompt. */
   readonly id: string;
   /** Absolute path on the server. The only path the agent is ever told. */
   readonly path: string;
   readonly mimeType: string;
+};
+
+/** A file that now lives on the machine the agent runs on. */
+export type StoredAttachment = StoredFile & {
   /** Present only for images small enough to inline into the prompt. */
   readonly imageBase64: string | undefined;
 };
@@ -43,13 +47,11 @@ export class AttachmentStore {
     scope: string,
     input: AttachmentInput
   ): Promise<StoredAttachment> {
-    const dir = this.scopeDir(scope);
-    await mkdir(dir, { recursive: true });
-
-    const id = safeName(
-      `${input.stem ?? Bun.randomUUIDv7()}-${Date.now()}${extensionOf(input)}`
+    const { id, path } = await this.place(
+      scope,
+      input.stem,
+      extensionOf(input)
     );
-    const path = contain(dir, id);
     await Bun.write(path, input.bytes);
 
     const isImage = input.mimeType.startsWith("image/");
@@ -62,6 +64,41 @@ export class AttachmentStore {
           ? Buffer.from(input.bytes).toString("base64")
           : undefined,
     };
+  }
+
+  /**
+   * The other direction: a file already on the agent's disk, copied in so it
+   * can be *served*. The copy is the point — the store's names are stamped
+   * and immutable, and the endpoint answers for them without ever being told
+   * a path, so a delivered file cannot change or vanish under the transcript
+   * that references it, and nothing outside this root is ever reachable.
+   *
+   * No `imageBase64`: that exists to inline an inbound image into a prompt,
+   * and the agent is the sender here.
+   */
+  public async storeFile(scope: string, source: string): Promise<StoredFile> {
+    const file = Bun.file(source);
+    const name = basename(source);
+    const ext = extname(name);
+    // `basename(name, ext)` rather than a regex, so a dotfile keeps the only
+    // name it has: `extname(".bashrc")` is empty, and stripping a trailing
+    // dotted run would leave nothing to call it.
+    const { id, path } = await this.place(scope, basename(name, ext), ext);
+    // `Bun.write` streams a `BunFile` source rather than buffering it.
+    await Bun.write(path, file);
+    return { id, path, mimeType: file.type || "application/octet-stream" };
+  }
+
+  /** The name this store would give a file, and the directory it goes in. */
+  private async place(
+    scope: string,
+    stem: string | undefined,
+    ext: string
+  ): Promise<{ readonly id: string; readonly path: string }> {
+    const dir = this.scopeDir(scope);
+    await mkdir(dir, { recursive: true });
+    const id = safeName(`${stem || Bun.randomUUIDv7()}-${Date.now()}${ext}`);
+    return { id, path: contain(dir, id) };
   }
 
   private scopeDir(scope: string): string {

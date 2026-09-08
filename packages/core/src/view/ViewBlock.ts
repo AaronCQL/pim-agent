@@ -108,6 +108,24 @@ export type ViewBlock =
       readonly pairs: ReadonlyArray<readonly [string, string]>;
     }
   | { readonly kind: "link"; readonly href: string; readonly label: string }
+  /**
+   * A file the agent handed to whoever is reading, already stored somewhere
+   * the reader's client can fetch it from.
+   *
+   * Distinct from `file`, which names a path *on the agent's machine* — that
+   * is a subject, this is a delivery. `url` is server-relative for the same
+   * reason `AttachmentView`'s is: where the server is reachable is the
+   * client's own business. A surface that cannot fetch it — a terminal, a
+   * chat on another host — draws the name, which is the whole of what it can
+   * honestly say.
+   */
+  | {
+      readonly kind: "attachment";
+      /** What to call it on screen; never a path. */
+      readonly name: string;
+      readonly url: string;
+      readonly isImage: boolean;
+    }
   | {
       readonly kind: "notice";
       readonly text: string;

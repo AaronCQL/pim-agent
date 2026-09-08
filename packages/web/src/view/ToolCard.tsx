@@ -2,7 +2,7 @@ import { createMemo, For, Show } from "solid-js";
 
 import type { Tone, ToolView, ViewBlock } from "#core/view/ViewBlock";
 import { Markdown } from "../markdown/Markdown";
-import { Caret, Collapsible } from "../ui/Collapsible";
+import { Collapsible, Marker, Spine } from "../ui/Collapsible";
 import { Blocks, Body } from "./Blocks";
 import { caretClass, spineClass, toneClass } from "./tokens";
 
@@ -10,9 +10,11 @@ import { caretClass, spineClass, toneClass } from "./tokens";
  * One tool row. The mockup supplies the shape; the TUI supplies the semantics,
  * and this is where the two meet:
  *
- * - There is **no glyph**. The caret is the only icon a row draws, and it also
- *   carries state the way the TUI's `▪` marker does — dim while partial, rose
- *   on error — so `view.icon` goes unpainted on the web.
+ * - There is **no glyph** for what a tool *is*: `view.icon` goes unpainted on
+ *   the web. A row draws exactly one mark, and it says what the row will do
+ *   if it is reached for — a caret when there is a payload behind it, the
+ *   TUI's square when there is not — while carrying state in its colour the
+ *   way the TUI's `▪` does: amber while partial, rose on error.
  * - `label` is what the row is called (`ToolRow.name` only when the view omits
  *   it), then a muted `":"` and the `title` blocks as one run of text that
  *   wraps to the row's own `2ch` gutter rather than being cut off or indented
@@ -33,7 +35,14 @@ import { caretClass, spineClass, toneClass } from "./tokens";
  *   run state.
  * - `summary` renders in every state — streaming, collapsed, expanded — so it
  *   rides in the `<summary>` alongside the head rather than in the payload,
- *   which is also the order `BodyRenderer` draws the two in.
+ *   which is also the order `BodyRenderer` draws the two in. With one
+ *   exception: a file the row *delivered* is not a status line about the row
+ *   but the thing it handed over, so an `attachment` block hangs below the
+ *   disclosure instead of inside its head — a click on a picture must open
+ *   the picture, not the payload behind it — and it holds the row at full
+ *   strength for the same reason a diff body does. A row whose delivery is
+ *   all it has still hangs off a mark and a rule, like every row around it —
+ *   the square, since the file it is threaded to is already in view.
  * - `body` is expand-only, and **every** row starts closed — a failure and a
  *   diff included, exactly as in the TUI. A transcript you scroll on a phone
  *   is a list of what happened; what a row
@@ -41,11 +50,11 @@ import { caretClass, spineClass, toneClass } from "./tokens";
  *   still running gets the same affordance as a settled one as soon as it has
  *   anything in it: output that only becomes readable once the tool returns is
  *   output you cannot watch. Blank blocks do not count — an argument-only view
- *   would otherwise open onto nothing. A call with nothing in it yet still
- *   draws the caret, in amber, so the row keeps its shape and its text keeps
- *   its column while it waits — but nothing brightens it and nothing points
- *   at it, because there is nothing behind it to reach. A failed call draws
- *   the same bodiless caret in rose: a call that did not happen must never
+ *   would otherwise open onto nothing. A call with nothing in it yet draws
+ *   the square instead, in amber, so the row keeps its shape and its text
+ *   keeps its column while it waits — and nothing brightens it and nothing
+ *   points at it, because there is nothing behind it to reach. A failed call
+ *   draws that same square in rose: a call that did not happen must never
  *   render identically to one that did, whatever its view left out.
  * - An opened error shows its output whole and untruncated: a failure is read
  *   to be acted on, and the tail of a stack trace is not an aside.
@@ -78,15 +87,39 @@ export function ToolCard(props: {
     props.view.labelTone ??
     (error() ? "error" : props.isPartial === true ? "warning" : undefined);
 
+  /**
+   * A summary splits in two. Most of it is a status line — muted, and part of
+   * the row's clickable head. A delivered file is neither: it is the thing
+   * the row handed over, so it reads at full strength and sits *outside* the
+   * disclosure, where a click on it opens the picture and not the payload.
+   *
+   * Keyed off the block rather than the tool name, as `dimmed()` is.
+   */
+  const summary = createMemo(() => {
+    const blocks = props.view.summary ?? [];
+    return {
+      status: blocks.filter((block) => block.kind !== "attachment"),
+      delivered: blocks.filter((block) => block.kind === "attachment"),
+    };
+  });
+
+  /**
+   * A delivery with no payload behind it: the row draws no disclosure, so the
+   * rule under its square is its own to hang. When there *is* a body the
+   * disclosure already owns the gutter — it draws its own, in the state's
+   * hues — and a second rule down the same column would only double the first.
+   */
+  const hanging = () => summary().delivered.length > 0 && body().length === 0;
+
   // The whole visible face of the row: what it is called and what it is
   // doing. Both branches below draw it, and only one of them ever runs, so
   // this is a call rather than a shared node.
   const head = () => (
     <>
       <Head view={props.view} name={props.name} tone={tone()} />
-      <Show when={(props.view.summary?.length ?? 0) > 0}>
+      <Show when={summary().status.length > 0}>
         <div class="text-neutral-400">
-          <Body blocks={props.view.summary ?? []} />
+          <Body blocks={summary().status} />
         </div>
       </Show>
     </>
@@ -103,7 +136,7 @@ export function ToolCard(props: {
     // A row with no body brightens for nobody: hover that leads to nothing is
     // a promise the row cannot keep.
     <article
-      class={`min-w-0 opacity-80 ${
+      class={`relative min-w-0 ${summary().delivered.length > 0 ? "" : "opacity-80"} ${
         body().length > 0
           ? "hover:opacity-100 focus-within:opacity-100 has-[>details[open]]:opacity-100"
           : ""
@@ -113,13 +146,12 @@ export function ToolCard(props: {
         when={body().length > 0}
         fallback={
           // The same gutter a disclosure indents by, so a row with nothing to
-          // open keeps the column its neighbours are in — with or without the
-          // caret that only a partial or failed call earns. `flow-root` for
-          // the same reason the disclosure's summary has it: the label floats.
+          // open keeps the column its neighbours are in — and fills it, with
+          // the square that says there is nothing here to reach for.
+          // `flow-root` for the same reason the disclosure's summary has it:
+          // the label floats.
           <div class="relative min-w-0 flow-root pl-2ch">
-            <Show when={props.isPartial === true || error()}>
-              <Caret class={caretClass(props.isPartial === true, error())} />
-            </Show>
+            <Marker class={caretClass(props.isPartial === true, error())} />
             {head()}
           </div>
         }
@@ -133,6 +165,22 @@ export function ToolCard(props: {
             <Body blocks={body()} />
           </div>
         </Collapsible>
+      </Show>
+
+      {/* Outside the disclosure entirely, and in the row's own gutter: what
+          the row handed over is not a line about the row, and reaching for it
+          is not a request to see the payload. The rule is the article's, not
+          this box's: it starts one line down — under the square, where a
+          disclosure's own starts — and runs to the bottom of what was
+          delivered, so the file reads as hanging off the row that sent it
+          rather than sitting loose beneath it. */}
+      <Show when={summary().delivered.length > 0}>
+        <Show when={hanging()}>
+          <Spine class="text-neutral-750" />
+        </Show>
+        <div class="mt-1 pl-2ch">
+          <Body blocks={summary().delivered} />
+        </div>
       </Show>
     </article>
   );

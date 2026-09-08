@@ -358,6 +358,22 @@ describe("AnsiPainter link", () => {
   });
 });
 
+// A URL relative to a web gateway this terminal is not talking to says
+// nothing here, and the bytes behind it are a copy of a file already on this
+// machine: the delivery is the news, the address of it is not.
+describe("AnsiPainter attachment", () => {
+  test("names the file and drops the url", () => {
+    expect(
+      paint({
+        kind: "attachment",
+        name: "revenue.png",
+        url: "/attachment/s1/revenue-1.png",
+        isImage: true,
+      })
+    ).toEqual(["<muted>sent</muted> revenue.png"]);
+  });
+});
+
 describe("AnsiPainter notice", () => {
   test("maps severity to theme colors", () => {
     expect(
