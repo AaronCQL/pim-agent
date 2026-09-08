@@ -74,7 +74,7 @@ function opener(host: HTMLElement): HTMLButtonElement | null {
 
 /** The child's log as the store holds it: what the modal is painted from. */
 function childTexts(): readonly string[] {
-  return (store.state.subagent?.events ?? []).flatMap((event) =>
+  return (store.state.subagent?.durable ?? []).flatMap((event) =>
     event.type === "message" ? [event.text] : []
   );
 }

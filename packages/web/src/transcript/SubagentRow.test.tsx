@@ -83,7 +83,7 @@ async function delegate(host: HTMLElement, text: string): Promise<void> {
 /** The child's own log has reached the store, which is what the modal paints. */
 function childSaid(text: string): () => boolean {
   return () =>
-    (store.state.subagent?.events ?? []).some(
+    (store.state.subagent?.durable ?? []).some(
       (event) => event.type === "message" && event.text === text
     );
 }

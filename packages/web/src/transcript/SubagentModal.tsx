@@ -43,7 +43,7 @@ export function SubagentModal(props: { readonly store: SessionStore }) {
     return found?.kind === "tool" ? found : undefined;
   });
 
-  createEffect(() => watched()?.events.length ?? 0, anchor.stick);
+  createEffect(() => watched()?.durable.length ?? 0, anchor.stick);
 
   return (
     <Modal
@@ -84,7 +84,7 @@ export function SubagentModal(props: { readonly store: SessionStore }) {
         >
           <Show when={watched()}>
             {(child) => (
-              <Transcript events={child().events} live={child().live} />
+              <Transcript events={child().durable} live={child().live} />
             )}
           </Show>
         </div>

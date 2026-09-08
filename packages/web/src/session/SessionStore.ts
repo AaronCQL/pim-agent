@@ -15,7 +15,6 @@ import type {
   SessionStatus,
   SessionSummaryView,
   StreamEvent,
-  TurnStats,
 } from "#protocol/ServerEvent";
 import { isDurableEvent } from "#protocol/ServerEvent";
 import {
@@ -65,7 +64,7 @@ export type LiveMessage = {
  */
 export type SubagentTranscript = {
   readonly callId: string;
-  events: DurableEvent[];
+  durable: DurableEvent[];
   live: LiveMessage[];
 };
 
@@ -110,11 +109,7 @@ export type PendingMessage = {
 
 /** The same message, as the store holds it: grown in place by a second send. */
 type OptimisticMessage = {
-  id: string;
-  text: string;
-  attachments?: readonly AttachmentView[];
-  timestamp: number;
-  queued?: boolean;
+  -readonly [K in keyof PendingMessage]: PendingMessage[K];
 };
 
 /**
@@ -151,6 +146,8 @@ export type UnwrittenSummary = {
 export type SessionState = {
   connection: ConnectionStatus;
   sessionId: string;
+  pimVersion: string | undefined;
+  piVersion: string | undefined;
   cwd: string;
   /** The id `set_model` takes; `modelLabel` is what a reader is shown. */
   model: string;
@@ -158,7 +155,6 @@ export type SessionState = {
   thinking: string;
   cost: number;
   agent: SessionStatus;
-  tps: number | undefined;
   /**
    * How long the turn in flight has been running, as the server last said
    * it. Undefined when nothing is running — and read at the moment a client
@@ -189,7 +185,6 @@ export type SessionState = {
    * so the transcript is painted once, whole, rather than assembled on screen.
    */
   loading: boolean;
-  stats: TurnStats | undefined;
   error: string | undefined;
   /**
    * Which sessions have answered since anything last read them, as the
@@ -254,11 +249,16 @@ const COMMAND_PICKER_LIMIT = 20;
  * keeps the old conversation in the sidebar, so clearing is opening a new
  * session beside it rather than dropping the one you have.
  */
-const LOCAL_COMMANDS: readonly PickerItem[] = [
+type LocalCommand = PickerItem & {
+  readonly run: (store: SessionStore) => Promise<void>;
+};
+
+const LOCAL_COMMANDS: readonly LocalCommand[] = [
   {
     value: "/clear",
     label: "/clear",
     description: "Start a new session with this one's model and directory",
+    run: (store) => store.newSession(),
   },
 ];
 
@@ -327,13 +327,14 @@ export class SessionStore {
     const [state, setState] = createStore<SessionState>({
       connection: "closed",
       sessionId: "",
+      pimVersion: undefined,
+      piVersion: undefined,
       cwd: cwd ?? "",
       model: "",
       modelLabel: "",
       thinking: "",
       cost: 0,
       agent: "idle",
-      tps: undefined,
       turnElapsedMs: undefined,
       contextPercent: undefined,
       contextWindow: undefined,
@@ -346,7 +347,6 @@ export class SessionStore {
       optimistic: [],
       activity: {},
       loading: false,
-      stats: undefined,
       error: undefined,
       unread: {},
       drafts: { ...drafts },
@@ -490,13 +490,14 @@ export class SessionStore {
     // the words that asked for one are not a message to anybody — so the box
     // is emptied as if they had been said, or the command would name the
     // session it was typed into and come back with it on the next switch.
-    if (LOCAL_COMMANDS.some((command) => command.value === trimmed)) {
+    const local = LOCAL_COMMANDS.find((command) => command.value === trimmed);
+    if (local) {
       this.putDraft(sessionId, "");
       this.setState((draft) => {
         delete draft.attachments[sessionId];
       });
       // A refused attach is already on `state.error`; the caller is a click.
-      await this.newSession().catch(() => undefined);
+      await local.run(this).catch(() => undefined);
       return;
     }
     const carried: readonly AttachmentView[] = attachments.map(
@@ -603,7 +604,7 @@ export class SessionStore {
    */
   public async watch(callId: string): Promise<void> {
     this.setState((draft) => {
-      draft.subagent = { callId, events: [], live: [] };
+      draft.subagent = { callId, durable: [], live: [] };
     });
     await this.sendWatch(callId, 0);
   }
@@ -1207,13 +1208,6 @@ export class SessionStore {
       return;
     }
     switch (event.type) {
-      // Applied in order and in one task, so the store settles once and the
-      // transcript is painted once, however long the conversation is.
-      case "replay":
-        for (const inner of event.events) {
-          this.ingest(inner);
-        }
-        return;
       case "attached": {
         const previous = this.state.sessionId;
         this.setState((draft) => {
@@ -1236,6 +1230,8 @@ export class SessionStore {
           }
           draft.sessionId = event.sessionId;
           draft.cwd = event.cwd;
+          draft.pimVersion = event.pimVersion;
+          draft.piVersion = event.piVersion;
           // The server re-sends the whole in-flight turn on every attach, so
           // keeping any of it here would double the text.
           draft.live = [];
@@ -1308,7 +1304,6 @@ export class SessionStore {
           // attach itself: nothing transitioned, so this is where a session
           // already mid-turn when it was opened gets its mark.
           draft.activity[draft.sessionId] = event.status;
-          draft.tps = event.tps;
           draft.contextPercent = event.contextPercent;
           draft.contextWindow = event.contextWindow;
           draft.branch = event.branch;
@@ -1323,11 +1318,6 @@ export class SessionStore {
           }
         });
         return;
-      case "turn_end":
-        this.setState((draft) => {
-          draft.stats = event.stats;
-        });
-        return;
       case "error":
         this.setState((draft) => {
           draft.error = event.message;
@@ -1340,7 +1330,7 @@ export class SessionStore {
 
   private ingestDurable(event: DurableEvent): void {
     this.setState((draft) => {
-      draft.durable.push(event);
+      applyDurable(draft, event);
       if (event.type === "message" && event.role === "user") {
         // Splicing a store draft in place is not safe across a batch of
         // events — the write is a patch, and it can be applied against a
@@ -1351,9 +1341,6 @@ export class SessionStore {
         draft.optimistic = draft.optimistic.filter(
           (_, index) => index !== (at === -1 ? 0 : at)
         );
-      }
-      if (event.type === "tool_result") {
-        settleLiveTool(draft, event.callId);
       }
     });
   }
@@ -1477,6 +1464,8 @@ function liveMessage(live: LiveMessage[], messageId: string): LiveMessage {
  */
 type LiveHolder = { live: LiveMessage[] };
 
+type DurableHolder = LiveHolder & { durable: DurableEvent[] };
+
 /**
  * One event of a turn in flight, folded into the bucket holding it. Shared by
  * the session and by a watched subagent, because a child's turn is a turn:
@@ -1588,10 +1577,19 @@ function applyChild(target: SubagentTranscript, event: StreamEvent): void {
   // A watch cannot be resumed across a reconnect, so a re-opened one starts
   // at the child's first entry; the child's own ordinals say which of those
   // this modal has already painted.
-  if (event.seq <= (target.events.at(-1)?.seq ?? 0)) {
+  if (event.seq <= (target.durable.at(-1)?.seq ?? 0)) {
     return;
   }
-  target.events.push(event);
+  applyDurable(target, event);
+}
+
+/**
+ * One written line, folded into the transcript holding it: the session's or a
+ * watched child's. The call it answers for, if it answers for one, is no
+ * longer in flight.
+ */
+function applyDurable(target: DurableHolder, event: DurableEvent): void {
+  target.durable.push(event);
   if (event.type === "tool_result") {
     settleLiveTool(target, event.callId);
   }

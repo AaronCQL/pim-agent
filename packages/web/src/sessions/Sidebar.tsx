@@ -174,12 +174,12 @@ export function Sidebar(props: {
           <span
             class="rounded-full bg-neutral-850 px-2 py-0.5 text-xs text-neutral-350"
             title={
-              props.store.update.state.piVersion
-                ? `pi ${props.store.update.state.piVersion}`
+              props.store.state.piVersion
+                ? `pi ${props.store.state.piVersion}`
                 : undefined
             }
           >
-            {`v${props.store.update.state.pimVersion ?? version}`}
+            {`v${props.store.state.pimVersion ?? version}`}
           </span>
         </div>
         <div class="flex shrink-0 items-center">

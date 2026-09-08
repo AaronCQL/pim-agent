@@ -36,8 +36,6 @@ type State = {
    * one that said it had started.
    */
   dismissed: boolean;
-  pimVersion: string | undefined;
-  piVersion: string | undefined;
 };
 
 const TIMEOUT_MS = 180_000;
@@ -75,8 +73,6 @@ export class Reload {
       label: this.intent ? "Waiting for server…" : "",
       notice: expired ? TIMEOUT_NOTICE : undefined,
       dismissed: false,
-      pimVersion: undefined,
-      piVersion: undefined,
     });
     this.state = state;
     this.setState = setState;
@@ -153,10 +149,6 @@ export class Reload {
       return;
     }
     if (event.type === "attached") {
-      this.setState((state) => {
-        state.pimVersion = event.pimVersion;
-        state.piVersion = event.piVersion;
-      });
       if (this.intent?.phase === "loaded") {
         const { skipped, blocking } = this.intent;
         this.finish({
