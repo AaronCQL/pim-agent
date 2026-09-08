@@ -271,6 +271,6 @@ async function readSummary(path: string): Promise<SessionSummary | undefined> {
     cwd: header.cwd,
     path,
     createdAt: Date.parse(header.timestamp),
-    modifiedAt: Bun.file(path).lastModified,
+    modifiedAt: Math.floor((await Bun.file(path).stat()).mtimeMs),
   };
 }
