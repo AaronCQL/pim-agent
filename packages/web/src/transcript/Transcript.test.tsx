@@ -263,7 +263,7 @@ describe("painting", () => {
     );
   });
 
-  test("a dead turn is rose text where the answer would have been", () => {
+  test("a dead turn is a tagged rose line where the answer would have been", () => {
     const host = replay([
       {
         seq: 1,
@@ -277,7 +277,10 @@ describe("painting", () => {
     ]);
     const notice = host.querySelector("p.text-rose-400");
 
-    expect(notice?.textContent).toBe("rate_limit_error: too many requests");
+    expect(notice?.textContent).toBe(
+      "[ERROR]rate_limit_error: too many requests"
+    );
+    expect(notice?.getAttribute("role")).toBe("alert");
   });
 });
 

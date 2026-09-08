@@ -310,9 +310,31 @@ function ToolRowView(props: {
   );
 }
 
+const NOTICE_LABELS = {
+  info: "INFO",
+  warn: "WARNING",
+  error: "ERROR",
+} as const satisfies Record<NoticeRow["severity"], string>;
+
+/**
+ * A notice is prose about the turn it sits beside, whatever its severity: it
+ * reads on the transcript's own left edge and at its own size, so an error is
+ * as legible as the answer that failed to arrive.
+ *
+ * What says which kind it is, besides hue, is a tag — hue alone is a
+ * distinction nobody can name out loud, and the palette here already spends
+ * rose on failed tool rows. Small and faintly filled, so the tag reads as a
+ * label on the sentence rather than as the first word of it.
+ */
 function NoticeRowView(props: { readonly row: NoticeRow }) {
   return (
-    <p class={`text-center text-sm ${NOTICE_CLASSES[props.row.severity]}`}>
+    <p
+      class={`whitespace-pre-wrap ${NOTICE_CLASSES[props.row.severity]}`}
+      role={props.row.severity === "error" ? "alert" : undefined}
+    >
+      <span class="mr-1ch rounded bg-current/10 px-1.5 py-0.5 text-sm font-semibold">
+        {NOTICE_LABELS[props.row.severity]}
+      </span>
       {props.row.text}
     </p>
   );

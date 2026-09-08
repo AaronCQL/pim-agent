@@ -46,7 +46,7 @@ export const TONE_CLASSES = {
 } as const satisfies Record<Tone, string>;
 
 export const NOTICE_CLASSES = {
-  info: "text-indigo-300",
+  info: "text-neutral-400",
   warn: "text-amber-400",
   error: "text-rose-400",
 } as const satisfies Record<NoticeSeverity, string>;
