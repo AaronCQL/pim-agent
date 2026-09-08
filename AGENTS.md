@@ -16,7 +16,7 @@ Plain layered directories under `packages/*` — no workspaces, no per-directory
 | `packages/tui` | Terminal frontend: splash, autocomplete over `core/picker`, footer, themes. |
 | `packages/telegram` | Telegram frontend: grammy bot, chat-keyed sessions, its `Supervisor` unit descriptor. |
 | `packages/protocol` | Versioned wire types. Server and web **only** — never the TUI; nothing browser-specific. Shipped. |
-| `packages/server` | `WsGateway` (resume handshake, fanout, session/model catalogues), `SessionProjection` (JSONL → wire events), `SessionStream` (live state, git, context usage), probe CLI. Shipped as source. |
+| `packages/server` | `WsGateway` (resume handshake, fanout, model catalogue), `SessionCatalogue` (session listing, digests, unread state), `SessionProjection` (JSONL → wire events), `SessionStream` (live state, git, context usage), probe CLI. Shipped as source. |
 | `packages/web` | Solid 2 browser client: `WsClient`, `SessionStore` (the only place an intent becomes a command), HTML `ViewBlock` painter, `Markdown`, `highlight` (lazy highlight.js, same engine and roles as the TUI). Ships built `dist/client`, not sources. |
 
 ## On-demand Docs
