@@ -92,7 +92,9 @@ function captureMarkdownSnapshot(
       children: Array.from(node.childNodes)
         .map(serializeNode)
         .filter((child): child is MarkdownSnapshotNode => child !== undefined),
-      textContent: node.textContent || "",
+      ...(tagName === "pre" || tagName === "code"
+        ? { textContent: node.textContent || "" }
+        : {}),
     };
   }
 
@@ -123,6 +125,7 @@ export function renderMarkdownSnapshotTree(
   root: MarkdownSnapshotNode,
   baseUrl: string
 ): string {
+  const backtickPattern = /`/g;
   const blockTags = new Set([
     "address",
     "article",
@@ -367,17 +370,15 @@ export function renderMarkdownSnapshotTree(
       return "";
     }
 
-    const fence = String.fromCharCode(96).repeat(3);
-    return fence + "\n" + text + "\n" + fence + "\n\n";
+    return "```\n" + text + "\n```\n\n";
   }
 
   function renderCode(node: MarkdownSnapshotElementNode): string {
-    const backtick = String.fromCharCode(96);
     const text = normalizeInline(node.textContent || textContent(node)).replace(
-      new RegExp(backtick, "g"),
-      "\\" + backtick
+      backtickPattern,
+      "\\`"
     );
-    return text.length === 0 ? "" : backtick + text + backtick;
+    return text.length === 0 ? "" : "`" + text + "`";
   }
 
   function renderLink(node: MarkdownSnapshotElementNode): string {

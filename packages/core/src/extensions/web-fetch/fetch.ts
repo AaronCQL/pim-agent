@@ -130,25 +130,27 @@ export async function executeFetch(
     return formatOutcome(page, "html");
   }
 
-  try {
-    const page = await jina.fetchUrl(fetchInput);
-    return await formatOutcome(page, "markdown");
-  } catch (error) {
-    if (signal?.aborted) {
-      throw error;
+  const sources: readonly WebFetchSource[] = [
+    () => jina.fetchUrl(fetchInput),
+    () => webView.fetchMarkdown(fetchInput),
+  ];
+  let lastError: unknown;
+
+  for (const source of sources) {
+    try {
+      return await formatOutcome(await source(), "markdown");
+    } catch (error) {
+      if (signal?.aborted) {
+        throw error;
+      }
+      lastError = error;
     }
   }
 
-  try {
-    const page = await webView.fetchMarkdown(fetchInput);
-    return await formatOutcome(page, "markdown");
-  } catch (error) {
-    if (signal?.aborted) {
-      throw error;
-    }
-    throw new Error(`Failed to fetch: ${Errors.describe(error)}`);
-  }
+  throw new Error(`Failed to fetch: ${Errors.describe(lastError)}`);
 }
+
+type WebFetchSource = () => Promise<WebFetchPage>;
 
 function isPublicHostname(hostname: string): boolean {
   const normalized = normalizeHostname(hostname);

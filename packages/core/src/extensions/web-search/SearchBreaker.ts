@@ -79,13 +79,14 @@ export class SearchBreaker {
   }
 
   public async reset(provider: string): Promise<void> {
-    const state = await this.read();
+    await this.mutate((state) => {
+      if (state[provider] === undefined) {
+        return state;
+      }
 
-    if (state[provider] === undefined) {
-      return;
-    }
-
-    await this.mutate(({ [provider]: _removed, ...rest }) => rest);
+      const { [provider]: _removed, ...rest } = state;
+      return rest;
+    });
   }
 
   private async read(): Promise<BreakerState> {
@@ -119,7 +120,13 @@ export class SearchBreaker {
     update: (state: BreakerState) => BreakerState
   ): Promise<void> {
     await this.writes.run(async () => {
-      const next = update(await this.read());
+      const state = await this.read();
+      const next = update(state);
+
+      if (next === state) {
+        return;
+      }
+
       await Paths.ensurePimHome();
       await Fs.writeJson(this.filePath, next);
     });

@@ -169,7 +169,7 @@ function readPlainTextSnippet(lines: readonly string[]): string {
   const snippetLines =
     highlightsIndex === -1 ? lines : lines.slice(highlightsIndex + 1);
   const skipPrefixes = ["title:", "url:", "published:", "author:"];
-  const snippet = snippetLines
+  return snippetLines
     .filter((line) => {
       if (line.startsWith("[...]")) {
         return false;
@@ -177,11 +177,7 @@ function readPlainTextSnippet(lines: readonly string[]): string {
       const lower = line.toLowerCase();
       return !skipPrefixes.some((prefix) => lower.startsWith(prefix));
     })
-    .join(" ")
-    .replace(/\s+/gu, " ")
-    .trim();
-
-  return snippet.length > 500 ? `${snippet.slice(0, 500)}...` : snippet;
+    .join(" ");
 }
 
 function findFirstObjectArray(
