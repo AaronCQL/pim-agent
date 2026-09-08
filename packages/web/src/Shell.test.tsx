@@ -173,6 +173,7 @@ describe("the shell, painted from events alone", () => {
       cost: 1.25,
       status: "streaming",
       tps: 30.4,
+      turnElapsedMs: 2_000,
     });
     flush();
 
@@ -284,6 +285,12 @@ describe("the shell, painted from events alone", () => {
   test("the clank chip times the whole turn, not the last thing in it", () => {
     const store = offline();
     const host = paint(store);
+    const real = Date.now;
+    let now = real();
+    Date.now = () => now;
+    // As the server says it: a state frame about a working agent dates the
+    // turn it is working on, so the client never has to guess.
+    const started = now;
     const state = (status: SessionStatus): ServerEvent => ({
       type: "session_state",
       cwd: "/repo",
@@ -291,10 +298,8 @@ describe("the shell, painted from events alone", () => {
       thinking: "medium",
       cost: 0,
       status,
+      ...(status === "idle" ? {} : { turnElapsedMs: now - started }),
     });
-    const real = Date.now;
-    let now = real();
-    Date.now = () => now;
     // The whole reading lives in the chip's title, words and all, because a
     // narrow screen drops the words from the pill itself.
     const chip = (): HTMLElement =>
@@ -329,6 +334,131 @@ describe("the shell, painted from events alone", () => {
       // Settled reads as a tick where running read as the spun ring.
       expect(chip().innerHTML).toContain("i-griddy-icons:check");
       expect(chip().innerHTML).not.toContain("animate-spin");
+    } finally {
+      Date.now = real;
+    }
+  });
+
+  /**
+   * The chip is mounted once and every session borrows it, so its reading
+   * has to be the attached session's own: a new chat has clanked for
+   * nothing, and one switched *to* is timed by its own log rather than by
+   * whatever was on screen a moment ago.
+   */
+  test("the clank reading does not follow the reader to another session", () => {
+    const store = offline();
+    const host = paint(store);
+    const chip = (): HTMLElement | null =>
+      host.querySelector<HTMLElement>("[title*='lank']");
+    const real = Date.now;
+    let now = real();
+    Date.now = () => now;
+    const started = now;
+    const state = (status: SessionStatus): ServerEvent => ({
+      type: "session_state",
+      cwd: "/repo",
+      model: "sonnet",
+      thinking: "medium",
+      cost: 0,
+      status,
+      ...(status === "idle" ? {} : { turnElapsedMs: now - started }),
+    });
+
+    try {
+      store.ingest(attached("s1"));
+      store.ingest(state("thinking"));
+      flush();
+      now += 12_000;
+      store.ingest(state("idle"));
+      flush();
+      expect(chip()?.title).toBe("Clanked for 12s");
+
+      // A brand-new chat: nothing has run in it, so there is nothing to say.
+      store.ingest(attached("s2"));
+      store.ingest(state("idle"));
+      flush();
+      expect(chip()).toBeNull();
+
+      // And one with a turn behind it reads that turn off its own log.
+      store.ingest(attached("s3"));
+      store.ingest({
+        seq: 1,
+        type: "message",
+        messageId: "u1",
+        role: "user",
+        text: "go",
+        timestamp: 1_000,
+      });
+      store.ingest({
+        seq: 2,
+        type: "message",
+        messageId: "a1",
+        role: "assistant",
+        text: "done",
+        timestamp: 6_000,
+      });
+      store.ingest(state("idle"));
+      flush();
+      expect(chip()?.title).toBe("Clanked for 5s");
+    } finally {
+      Date.now = real;
+    }
+  });
+
+  /**
+   * Walking in on a running turn: only the process running it knows when it
+   * began, so it says so, and the chip times from there rather than from the
+   * moment the reader arrived — and says nothing at all until it has been
+   * told, rather than starting at zero and correcting itself on screen.
+   */
+  test("a turn already running is timed from where it started", () => {
+    const store = offline();
+    const host = paint(store);
+    const chip = (): HTMLElement | null =>
+      host.querySelector<HTMLElement>("[title*='lank']");
+    const real = Date.now;
+    let now = real();
+    Date.now = () => now;
+
+    try {
+      // The listing knows this session is working a round trip before the
+      // server says since when, and a turn of unknown age is not a turn that
+      // has run for nothing.
+      store.ingest({
+        type: "session_activity",
+        sessionId: "s1",
+        status: "tool",
+      });
+      store.ingest(attached("s1"));
+      flush();
+      expect(store.isBusy()).toBe(true);
+      expect(chip()).toBeNull();
+
+      store.ingest({
+        type: "session_state",
+        cwd: "/repo",
+        model: "sonnet",
+        thinking: "medium",
+        cost: 0,
+        status: "tool",
+        turnElapsedMs: 90_000,
+      });
+      flush();
+      expect(chip()?.title).toBe("Clanking… 1m 30s");
+
+      // From there it is this client's own clock: the reading grows by what
+      // passed here, on top of what it was handed.
+      now += 5_000;
+      store.ingest({
+        type: "session_state",
+        cwd: "/repo",
+        model: "sonnet",
+        thinking: "medium",
+        cost: 0,
+        status: "idle",
+      });
+      flush();
+      expect(chip()?.title).toBe("Clanked for 1m 35s");
     } finally {
       Date.now = real;
     }

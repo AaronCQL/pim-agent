@@ -157,6 +157,14 @@ export type SessionState = {
   cost: number;
   agent: SessionStatus;
   tps: number | undefined;
+  /**
+   * How long the turn in flight has been running, as the server last said
+   * it. Undefined when nothing is running — and read at the moment a client
+   * starts timing rather than every tick, so a turn this browser watched
+   * from the start is timed by its own clock and one it walked in on is
+   * anchored to the server's.
+   */
+  turnElapsedMs: number | undefined;
   contextPercent: number | undefined;
   contextWindow: number | undefined;
   branch: string | undefined;
@@ -309,6 +317,7 @@ export class SessionStore {
       cost: 0,
       agent: "idle",
       tps: undefined,
+      turnElapsedMs: undefined,
       contextPercent: undefined,
       contextWindow: undefined,
       branch: undefined,
@@ -1050,6 +1059,12 @@ export class SessionStore {
           if (draft.sessionId !== event.sessionId) {
             draft.durable = [];
             draft.optimistic = [];
+            // What the session being left was doing is not what this one is
+            // doing, and the frame that says so is a round trip away: until
+            // it lands, the honest answer is the one the listing gave for
+            // *this* session, so nothing here spins on the outgoing turn.
+            draft.agent = draft.activity[event.sessionId] ?? "idle";
+            draft.turnElapsedMs = undefined;
             // A resume of the same session keeps what is on screen and needs
             // no curtain; a different one has nothing to show until its log
             // lands, and half a log painting itself is worse than a wait.
@@ -1124,6 +1139,7 @@ export class SessionStore {
           draft.thinking = event.thinking;
           draft.cost = event.cost;
           draft.agent = event.status;
+          draft.turnElapsedMs = event.turnElapsedMs;
           // The attached session is announced like any other, but not on the
           // attach itself: nothing transitioned, so this is where a session
           // already mid-turn when it was opened gets its mark.

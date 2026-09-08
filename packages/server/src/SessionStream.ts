@@ -193,6 +193,13 @@ export class SessionStream {
     const usage = this.host.agentSession?.getContextUsage();
     const { branch, dirtyCount, ahead, behind } = this.gitState();
     const modelLabel = this.host.currentModelLabel;
+    // Only this process can answer for a running turn — a session a terminal
+    // is driving reads idle here — so a client that arrives mid-turn is told
+    // how long it has been going rather than left to start its clock at zero.
+    const turnElapsedMs =
+      this.host.status === "idle" || this.turnStartedAt === 0
+        ? undefined
+        : Date.now() - this.turnStartedAt;
     return {
       type: "session_state",
       cwd: this.host.cwd,
@@ -202,6 +209,7 @@ export class SessionStream {
       cost: this.host.settings.cumulativeCost ?? 0,
       status: this.host.status,
       ...(tps === undefined ? {} : { tps }),
+      ...(turnElapsedMs === undefined ? {} : { turnElapsedMs }),
       ...(usage?.percent === null || usage === undefined
         ? {}
         : {

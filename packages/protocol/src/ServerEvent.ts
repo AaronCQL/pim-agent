@@ -312,6 +312,15 @@ export type EphemeralEvent =
       readonly cost: number;
       readonly status: SessionStatus;
       readonly tps?: number;
+      /**
+       * How long the turn in flight has been running, measured by the clock
+       * of the process running it. Absent when the agent is idle, because
+       * there is no turn to measure — and elapsed rather than a start stamp
+       * because the two clocks need not agree: a client that was not watching
+       * when the turn began can only anchor its own timer honestly if what it
+       * is handed is a duration.
+       */
+      readonly turnElapsedMs?: number;
       /** Context filled, 0–100. Absent until a turn has reported usage. */
       readonly contextPercent?: number;
       readonly contextWindow?: number;

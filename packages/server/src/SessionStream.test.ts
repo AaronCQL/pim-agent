@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 
 import type { SessionHost } from "#core/session/SessionHost";
-import type { ServerEvent } from "#protocol/ServerEvent";
+import type { EphemeralEvent, ServerEvent } from "#protocol/ServerEvent";
 import { SessionStream } from "./SessionStream";
 
 let tmp: string;
@@ -315,3 +315,58 @@ test("hands a reattaching client each step exactly once", async () => {
   });
   expect(thinking).toEqual(["step one", "step two"]);
 });
+
+/**
+ * A client that arrives mid-turn has no way of its own to know when that turn
+ * began — the log's stamps are of the entries pi has finished writing, not of
+ * the run — and only the process running it does. So the state carries the
+ * age of the turn, and carries it as a duration: the two clocks need not
+ * agree, and a duration does not ask them to.
+ */
+test("the state carries the age of the turn, and only while one is running", () => {
+  let status: SessionHost["status"] = "thinking";
+  const running = new SessionStream(
+    "s2",
+    {
+      ...host(),
+      get status() {
+        return status;
+      },
+    } as unknown as SessionHost,
+    path
+  );
+  let start!: (event: AgentSessionEvent) => void;
+  running.start({
+    subscribe: (listener: (event: AgentSessionEvent) => void) => {
+      start = listener;
+      return () => {};
+    },
+  } as unknown as AgentSession);
+
+  const real = Date.now;
+  let now = real();
+  Date.now = () => now;
+  try {
+    start(agentEvent({ type: "agent_start" }));
+    now += 45_000;
+    expect(stateOf(running).turnElapsedMs).toBe(45_000);
+
+    // Settled: there is no turn to be aged, and a stale reading would be
+    // read as one still running.
+    status = "idle";
+    expect(stateOf(running).turnElapsedMs).toBeUndefined();
+  } finally {
+    Date.now = real;
+    running.dispose();
+  }
+});
+
+function stateOf(
+  stream: SessionStream
+): Extract<EphemeralEvent, { type: "session_state" }> {
+  const event = stream.sessionState();
+  if (event.type !== "session_state") {
+    throw new Error(`expected session_state, got ${event.type}`);
+  }
+  return event;
+}

@@ -12,6 +12,14 @@ import type { SessionStore } from "../session/SessionStore";
 import { Spinner } from "../ui/Spinner";
 
 /**
+ * How far the server's reading may sit *behind* the clock in hand before it
+ * is read as a different turn rather than as the same one measured better.
+ * Latency can only ever make a turn look younger than it is, so a figure
+ * this much younger cannot be about the turn being timed.
+ */
+const TURN_SLACK_MS = 2_000;
+
+/**
  * The one running indicator: a pill above the composer's left edge, inline
  * with the cost and context pill on its right and drawn in the same style.
  * The agent status word, tok/s and the `seq` readout are gone with the
@@ -22,11 +30,20 @@ import { Spinner } from "../ui/Spinner";
  * ring while the turn runs, a tick once it has settled — so the words are
  * free to go when there is no room for them, which on a phone there is not.
  *
- * The running clock is client-side: it starts when the status leaves `idle`,
- * so nothing about a live turn has to travel on the wire. A client that was
- * not watching — a reload, a phone that woke up — reads the settled figure off
- * the durable log instead, as last user message → last assistant message.
- * Neither needs `turn_end` to be persisted, which is why it never is.
+ * The running clock is client-side but not client-*started*: it is anchored
+ * to the server's `turnElapsedMs` and does not run at all until one has
+ * arrived, so a turn that began before this client was watching is timed
+ * from where it actually began. A turn whose age has not been stated yet is
+ * shown as nothing rather than as zero — the reader is told the chip has no
+ * answer yet, not told a wrong one it has to watch correct itself. A client
+ * reading a *settled* session — a reload, a phone that woke up — takes the
+ * figure off the durable log instead, as last user message → last assistant
+ * message. Neither needs `turn_end` to be persisted, which is why it never
+ * is.
+ *
+ * The clock belongs to the conversation and not to the tab: this is mounted
+ * once and every session borrows it, so switching hands back a blank chip —
+ * a new chat has timed nothing, and an old one is timed by its own log.
  */
 export function ClankChip(props: { readonly store: SessionStore }) {
   const [elapsed, setElapsed] = createSignal<number | undefined>(undefined);
@@ -38,34 +55,58 @@ export function ClankChip(props: { readonly store: SessionStore }) {
   const reading = createMemo(() => Format.formatElapsed(shown() ?? 0));
   let timer: ReturnType<typeof setInterval> | undefined;
   let startedAt = 0;
-  onCleanup(() => {
+  /** The session the reading on screen is about; "" is nobody's. */
+  let timing = "";
+  const stop = (): void => {
     clearInterval(timer);
+    timer = undefined;
+  };
+  onCleanup(() => {
+    stop();
   });
 
   createEffect(
-    () => props.store.isBusy(),
-    (busy) => {
+    () => ({
+      sessionId: props.store.state.sessionId,
+      busy: props.store.isBusy(),
+      since: props.store.state.turnElapsedMs,
+    }),
+    ({ sessionId, busy, since }) => {
       const measure = (): void => {
         setElapsed(Date.now() - startedAt);
       };
-      // Both arms turn on the edge, not on the run: the agent status moves
-      // between `thinking`, `streaming` and `tool` for the whole turn, and
-      // an effect re-runs on each of those — the boolean it computes being
-      // unchanged does not stop it. Reading the clock on every run would
-      // restart it at each tool call and each block of prose, and re-reading
-      // it while idle would keep growing a turn that has already ended.
+      // A switch takes the reading with it: what the session being left
+      // clanked for is not this session's news, and leaving it up would time
+      // a brand-new chat by a turn it never ran.
+      if (sessionId !== timing) {
+        timing = sessionId;
+        stop();
+        setElapsed(undefined);
+      }
       const ticking = timer !== undefined;
-      if (busy === ticking) {
+      if (!busy) {
+        // Idle on the run rather than on the edge would keep growing a turn
+        // that has already ended: a branch poll is another `session_state`.
+        if (ticking) {
+          stop();
+          measure();
+        }
         return;
       }
-      if (busy) {
-        startedAt = Date.now();
-        measure();
-        timer = setInterval(measure, 1000);
+      // Working, and how long for is not known yet: the status can arrive
+      // ahead of the state that dates it — a session opened mid-turn is
+      // known to be running by the listing a round trip before the server
+      // says since when. It may have been going for an hour, so there is
+      // nothing honest to draw until the answer lands.
+      if (since === undefined) {
         return;
       }
-      clearInterval(timer);
-      timer = undefined;
+      // The agent status moves between `thinking`, `streaming` and `tool`
+      // for the whole of one turn and the effect re-runs on each of those,
+      // so the clock is only started once — and where it is started from is
+      // the server's answer, which can improve while the turn runs.
+      startedAt = ticking ? anchor(startedAt, since) : Date.now() - since;
+      timer ??= setInterval(measure, 1000);
       measure();
     }
   );
@@ -100,6 +141,20 @@ export function ClankChip(props: { readonly store: SessionStore }) {
       </div>
     </Show>
   );
+}
+
+/**
+ * Where the running turn began, given where we thought it began and what the
+ * server says. Taken when it is *older* than the origin in hand — the wire
+ * delay between the reading and its arrival can only ever make a turn look
+ * younger, so an older answer is the truer one — and taken when it is much
+ * younger, which is not the same turn measured again but the next one.
+ */
+function anchor(startedAt: number, since: number): number {
+  const origin = Date.now() - since;
+  return origin < startedAt || origin - startedAt > TURN_SLACK_MS
+    ? origin
+    : startedAt;
 }
 
 /**
