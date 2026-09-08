@@ -279,17 +279,17 @@ function renderToolCallTitle(args: {
 }
 
 function makePrefixedBlock(args: {
-  readonly text: string;
+  readonly lines: readonly string[];
   readonly theme: Theme;
   readonly prefix: PrefixSpec;
   readonly lineColor?: ThemeColor;
 }): Component {
-  const { text, theme, prefix, lineColor } = args;
+  const { lines, theme, prefix, lineColor } = args;
   return {
     render(width: number): string[] {
       const inner = Math.max(1, width - prefix.width);
       const out: string[] = [];
-      for (const logical of text.split("\n")) {
+      for (const logical of lines) {
         for (const w of wrapTextWithAnsi(logical, inner)) {
           const body = lineColor ? theme.fg(lineColor, w) : w;
           out.push(theme.fg("toolOutput", prefix.prefix) + body);
@@ -364,7 +364,7 @@ function renderErrorResult(args: {
 
   container.addChild(
     makePrefixedBlock({
-      text: body,
+      lines: body.split("\n"),
       theme,
       prefix: GAPPED_PREFIX,
       lineColor: "error",

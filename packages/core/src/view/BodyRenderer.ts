@@ -59,7 +59,7 @@ function draw(
 
 function gutter(prefix: PrefixSpec, lineColor?: ThemeColor): FrameBuilder {
   return (group, theme) => {
-    if ("markdown" in group) {
+    if (group.frame === "embed") {
       return [
         Renderer.makeMarkdownBlock({
           text: group.markdown,
@@ -69,10 +69,10 @@ function gutter(prefix: PrefixSpec, lineColor?: ThemeColor): FrameBuilder {
         }),
       ];
     }
-    const text = group.lines.join("\n");
-    return text === ""
+    const lines = group.lines;
+    return lines.length === 0 || (lines.length === 1 && lines[0] === "")
       ? []
-      : [Renderer.makePrefixedBlock({ text, theme, prefix, lineColor })];
+      : [Renderer.makePrefixedBlock({ lines, theme, prefix, lineColor })];
   };
 }
 
@@ -81,7 +81,8 @@ function blankLine(): Component {
 }
 
 function headings(group: PaintedGroup, theme: Theme): Component[] {
-  const lines = "markdown" in group ? group.markdown.split("\n") : group.lines;
+  const lines =
+    group.frame === "embed" ? group.markdown.split("\n") : group.lines;
   return lines.map((line) =>
     line === "" ? blankLine() : Renderer.makeTitleBlock({ text: line, theme })
   );

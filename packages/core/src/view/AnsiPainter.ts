@@ -23,7 +23,10 @@ type PainterMap = { readonly [TKind in ViewBlock["kind"]]: Painter<TKind> };
  * the caller instead of pre-painted lines.
  */
 export type PaintedGroup =
-  | { readonly frame: BlockFrame; readonly lines: readonly string[] }
+  | {
+      readonly frame: Exclude<BlockFrame, "embed">;
+      readonly lines: readonly string[];
+    }
   | { readonly frame: "embed"; readonly markdown: string };
 
 function paint(blocks: readonly ViewBlock[], theme: Theme): string[] {
@@ -72,7 +75,7 @@ function paintBody(blocks: readonly ViewBlock[], theme: Theme): PaintedGroup[] {
       return { frame: "embed", markdown: first.text };
     }
     return {
-      frame: group.frame,
+      frame: group.frame as Exclude<BlockFrame, "embed">,
       lines: group.blocks.flatMap((block) => paintBlock(block, theme)),
     };
   });
@@ -165,7 +168,7 @@ function paintCode(block: BlockOf<"code">, theme: Theme): readonly string[] {
     return lines;
   }
 
-  const width = String(start + Math.max(0, lines.length - 1)).length;
+  const width = Painting.lineNumberWidth(start, lines.length);
   return lines.map(
     (line, index) =>
       theme.fg("muted", `${String(start + index).padStart(width)} `) + line
@@ -173,33 +176,25 @@ function paintCode(block: BlockOf<"code">, theme: Theme): readonly string[] {
 }
 
 function paintDiff(block: BlockOf<"diff">, theme: Theme): readonly string[] {
-  const rendered = DiffRenderer.render({
+  return DiffRenderer.renderLines({
     toolDiff: { path: block.path, hunks: block.hunks },
     theme,
   });
-  return rendered === "" ? [] : rendered.split("\n");
 }
 
 function paintFile(block: BlockOf<"file">, theme: Theme): readonly string[] {
-  const range = block.range ? Painting.formatRange(block.range) : "";
-  const truncated = block.truncated === true ? " (truncated)" : "";
+  const { range, truncated } = Painting.fileSuffix(block);
   const suffix = `${range}${truncated}`;
   return [suffix === "" ? block.path : block.path + theme.fg("muted", suffix)];
 }
 
 function paintList(block: BlockOf<"list">, theme: Theme): readonly string[] {
-  const markers = block.items.map((_, index) =>
-    block.ordered === true ? `${index + 1}.` : "•"
+  return Painting.hangingList(
+    block.items,
+    block.ordered === true,
+    (item) => paintBlock(item, theme),
+    (marker) => theme.fg("muted", marker)
   );
-  const width = Math.max(0, ...markers.map((marker) => marker.length)) + 1;
-  const indent = " ".repeat(width);
-
-  return block.items.flatMap((item, index) => {
-    const marker = theme.fg("muted", (markers[index] ?? "•").padEnd(width));
-    return paintBlock(item, theme).map((line, lineIndex) =>
-      lineIndex === 0 ? marker + line : indent + line
-    );
-  });
 }
 
 function paintKv(block: BlockOf<"kv">, theme: Theme): readonly string[] {
@@ -210,12 +205,11 @@ function paintKv(block: BlockOf<"kv">, theme: Theme): readonly string[] {
 }
 
 function paintLink(block: BlockOf<"link">, theme: Theme): readonly string[] {
-  if (block.label === "" || block.label === block.href) {
+  const label = Painting.linkLabel(block);
+  if (label === block.href) {
     return [theme.fg("mdLinkUrl", block.href)];
   }
-  return [
-    `${theme.fg("mdLink", block.label)} ${theme.fg("mdLinkUrl", block.href)}`,
-  ];
+  return [`${theme.fg("mdLink", label)} ${theme.fg("mdLinkUrl", block.href)}`];
 }
 
 /**

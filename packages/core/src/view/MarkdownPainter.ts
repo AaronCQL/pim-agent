@@ -49,12 +49,15 @@ export type PaintedTool = {
 
 const INLINE_LIMIT = 180;
 
+const ENTITIES: Readonly<Record<string, string>> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+};
+
 function escape(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+  return text.replace(/[&<>"]/g, (char) => ENTITIES[char] ?? char);
 }
 
 function paint(blocks: readonly ViewBlock[]): string[] {
@@ -235,7 +238,7 @@ function numbered(
   if (start === undefined) {
     return source;
   }
-  const width = String(start + Math.max(0, source.length - 1)).length;
+  const width = Painting.lineNumberWidth(start, source.length);
   return source.map(
     (line, index) => `${String(start + index).padStart(width)} ${line}`
   );
@@ -279,24 +282,14 @@ const DIFF_MARKERS = {
 /** Inline slots have no room for directories, so a path shows as its leaf. */
 function paintFile(block: BlockOf<"file">, mode: Mode): readonly string[] {
   const path = mode === "inline" ? basename(block.path) : block.path;
-  const range = block.range ? Painting.formatRange(block.range) : "";
-  const truncated = block.truncated === true ? " (truncated)" : "";
+  const { range, truncated } = Painting.fileSuffix(block);
   return [`<code>${escape(oneLine(path) + range)}</code>${truncated}`];
 }
 
 function paintList(block: BlockOf<"list">, mode: Mode): readonly string[] {
-  const markers = block.items.map((_, index) =>
-    block.ordered === true ? `${index + 1}.` : "•"
+  return Painting.hangingList(block.items, block.ordered === true, (item) =>
+    paintBlock(item, mode)
   );
-  const width = Math.max(0, ...markers.map((marker) => marker.length)) + 1;
-  const indent = " ".repeat(width);
-
-  return block.items.flatMap((item, index) => {
-    const marker = (markers[index] ?? "•").padEnd(width);
-    return paintBlock(item, mode).map((line, lineIndex) =>
-      lineIndex === 0 ? marker + line : indent + line
-    );
-  });
 }
 
 function paintKv(block: BlockOf<"kv">, mode: Mode): readonly string[] {
@@ -307,8 +300,7 @@ function paintKv(block: BlockOf<"kv">, mode: Mode): readonly string[] {
 }
 
 function paintLink(block: BlockOf<"link">, mode: Mode): readonly string[] {
-  const label =
-    block.label === "" || block.label === block.href ? block.href : block.label;
+  const label = Painting.linkLabel(block);
   return [`<a href="${escape(block.href)}">${escapeIn(label, mode)}</a>`];
 }
 

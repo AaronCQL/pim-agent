@@ -61,4 +61,53 @@ function formatRange(range: readonly [number, number | undefined]): string {
   return end === undefined ? `:${start}` : `:${start}-${end}`;
 }
 
-export const Painting = { FRAMES, groupByFrame, formatRange };
+function fileSuffix(block: {
+  readonly range?: readonly [number, number | undefined];
+  readonly truncated?: boolean;
+}): { readonly range: string; readonly truncated: string } {
+  return {
+    range: block.range ? formatRange(block.range) : "",
+    truncated: block.truncated === true ? " (truncated)" : "",
+  };
+}
+
+function linkLabel(block: {
+  readonly label: string;
+  readonly href: string;
+}): string {
+  return block.label === "" || block.label === block.href
+    ? block.href
+    : block.label;
+}
+
+function lineNumberWidth(start: number, count: number): number {
+  return String(start + Math.max(0, count - 1)).length;
+}
+
+function hangingList(
+  items: readonly ViewBlock[],
+  ordered: boolean,
+  paintItem: (item: ViewBlock) => readonly string[],
+  styleMarker: (marker: string) => string = (marker) => marker
+): string[] {
+  const markers = items.map((_, index) => (ordered ? `${index + 1}.` : "•"));
+  const width = Math.max(0, ...markers.map((marker) => marker.length)) + 1;
+  const indent = " ".repeat(width);
+
+  return items.flatMap((item, index) => {
+    const marker = styleMarker((markers[index] ?? "•").padEnd(width));
+    return paintItem(item).map((line, lineIndex) =>
+      lineIndex === 0 ? marker + line : indent + line
+    );
+  });
+}
+
+export const Painting = {
+  FRAMES,
+  groupByFrame,
+  formatRange,
+  fileSuffix,
+  linkLabel,
+  lineNumberWidth,
+  hangingList,
+};
