@@ -21,9 +21,12 @@
  * the only trace that the tree was ever wrong. There they report and fail
  * instead, which is the same information at the only time it can be acted on.
  *
- * A task that passes prints nothing: on a green run the exit code is the whole
- * report. The exceptions are the two things worth tokens — a task that failed,
- * and a file that got rewritten.
+ * A task that passes prints nothing. The whole run prints one line naming the
+ * tasks that ran and how long they took, because silence is also what a
+ * crashed runner, a mistyped selector and an empty task list look like, and a
+ * reader cannot tell a gate that passed from one that never ran. Past that
+ * line, everything on screen is one of the two things worth tokens — a task
+ * that failed, or a file that got rewritten.
  */
 import { resolve } from "node:path";
 
@@ -307,6 +310,7 @@ function report(headline: string, body: string, rerun: string): void {
 
 const { tasks, forwarded } = select(Bun.argv.slice(2));
 
+const started = Bun.nanoseconds();
 let ok = true;
 for (const task of tasks.filter((task) => task.mutates)) {
   ok = (await run(task, forwarded)) && ok;
@@ -314,5 +318,12 @@ for (const task of tasks.filter((task) => task.mutates)) {
 const readers = await Promise.all(
   tasks.filter((task) => !task.mutates).map((task) => run(task, forwarded))
 );
+ok = ok && readers.every(Boolean);
 
-process.exit(ok && readers.every(Boolean) ? 0 : 1);
+// The one line a green run is allowed. Named tasks, not a count: on a narrowed
+// run it is also the receipt for what the selector actually chose.
+const elapsed = (Bun.nanoseconds() - started) / 1e9;
+process.stdout.write(
+  `${ok ? "✓" : "✗"} ${tasks.map((task) => task.name).join(", ")} in ${elapsed.toFixed(1)}s\n`
+);
+process.exit(ok ? 0 : 1);
