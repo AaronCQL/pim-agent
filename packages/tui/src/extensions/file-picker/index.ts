@@ -10,8 +10,7 @@ import { wrapProvider } from "../wrapProvider";
 
 const MAX_VISIBLE_ROWS = 50;
 
-// Pi cancels autocomplete after Tab; for directories we want to keep
-// drilling, so re-enter Tab on the next tick.
+// Pi cancels autocomplete after Tab; re-enter Tab next tick to keep drilling.
 function keepDrilling(): void {
   setTimeout(() => {
     try {
@@ -96,8 +95,7 @@ export function createFilePickerProviderFactory(
       },
 
       applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
-        // Pi appends a trailing space after file completions; apply @ items
-        // ourselves so Tab inserts the bare path.
+        // Pi appends a trailing space after file completions; apply @ items here instead.
         if (prefix.startsWith("@")) {
           const line = lines[cursorLine] ?? "";
           const beforePrefix = line.slice(0, cursorCol - prefix.length);

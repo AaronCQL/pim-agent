@@ -139,7 +139,6 @@ export class TaskScheduler {
     );
   }
 
-  /** `undefined` from `patch` means the task already says this; nothing is written. */
   private async mutate(
     sessionId: SessionId,
     id: string,

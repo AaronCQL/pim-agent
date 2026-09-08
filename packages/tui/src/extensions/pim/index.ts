@@ -19,7 +19,6 @@ const DISABLED = "disabled";
 
 const MAX_VISIBLE = 12;
 
-/** Required extensions are left out entirely: a row that cannot change is noise. */
 export async function menuItems(): Promise<SettingItem[]> {
   const disabled = new Set(await ExtensionToggles.disabled());
   return ExtensionToggles.NAMES.filter(
@@ -67,7 +66,6 @@ export default function (pi: ExtensionAPI): void {
         return;
       }
 
-      // Each keypress writes straight away; the whole menu is one reload.
       const writes: Promise<void>[] = [];
       const items = await menuItems();
       await ctx.ui.custom<void>((_tui, _theme, _keybindings, done) =>
@@ -84,8 +82,7 @@ export default function (pi: ExtensionAPI): void {
       }
       await Promise.all(writes);
 
-      // Re-invokes every inline factory, so the gate in `bin/pim.ts` applies
-      // the new state now instead of at the next launch. `ctx` is stale after.
+      // `ctx` is stale after this: `reload()` re-invokes every inline factory.
       await ctx.reload();
     },
   });

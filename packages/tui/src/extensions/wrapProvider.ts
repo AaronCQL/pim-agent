@@ -1,10 +1,6 @@
 import type { AutocompleteProvider } from "@earendil-works/pi-tui";
 
-/**
- * A provider that defers to the one it wraps for everything it does not
- * override. Pi's own provider leaves `shouldTriggerFileCompletion` optional,
- * and the pickers need it answered.
- */
+/** A provider deferring to `current` for everything `overrides` does not replace. */
 export function wrapProvider(
   current: AutocompleteProvider,
   overrides: Partial<AutocompleteProvider>

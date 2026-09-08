@@ -18,9 +18,7 @@ type RenderOptions = {
 
 const SAFE_LINK = /^(https?:|tg:|mailto:)/i;
 
-// Bun's GFM strikethrough strikes on a lone `~`, but Telegram (and CommonMark)
-// only strike on `~~`. We disable the parser's strikethrough and re-apply
-// double-tilde runs in the text callback, where code spans/blocks never reach.
+// Bun's GFM strikes on a lone `~`; Telegram and CommonMark require `~~`.
 const STRIKETHROUGH = /(?<!~)~~(?!~)((?:[^~]|~(?!~))+?)~~(?!~)/g;
 
 function toHtml(md: string, options: RenderOptions = {}): string {
@@ -35,7 +33,6 @@ function toHtml(md: string, options: RenderOptions = {}): string {
   return out.trim();
 }
 
-// One escaper for the whole Telegram HTML dialect, painter included.
 function escape(s: string): string {
   return MarkdownPainter.escape(s);
 }
@@ -125,8 +122,7 @@ function italic(text: string): string {
   return text ? `<i>${text}</i>` : "";
 }
 
-// A nested list is appended to its parent item's content, so italicize only
-// the leading text; wrapping a child <ul>/<ol> in <i> would be invalid.
+// Italicize only the leading text: a child <ul>/<ol> inside <i> is invalid HTML.
 function italicListItemBody(body: string): string {
   const nestedListIndex = body.search(/<(?:ul|ol)\b/);
   if (nestedListIndex < 0) {

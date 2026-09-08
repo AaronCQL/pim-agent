@@ -154,7 +154,6 @@ function notFound(id: string): Error {
   return new Error(`no task with id=${id} in this thread`);
 }
 
-/** Mirrors the schema's action union; a new action gets a bare verb, not a crash. */
 function taskSpans(input: Partial<TaskToolInput>): readonly Span[] {
   const action = input.action;
   if (!action) {

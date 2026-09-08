@@ -37,7 +37,6 @@ const PROSE_OPTS = {
   narration: {},
 } as const;
 
-/** What a later update needs to repaint a row: its tool, and what it was called with. */
 type ToolCall = {
   readonly index: number;
   readonly toolName: string;
@@ -133,8 +132,7 @@ export class Renderer {
       if (this.logsMode === "off") {
         return;
       }
-      // A failed call's result is pi's synthetic error one, whose details are
-      // empty; repainting from it would drop what the call already showed.
+      // A failed call's result is pi's synthetic empty error; repainting drops the row's details.
       if (!event.isError) {
         this.refreshTool(event.toolCallId, event.result, false);
       }
@@ -175,8 +173,6 @@ export class Renderer {
     const { icon, label } = this.paintTool(toolName, args, undefined, true);
     const last = this.entries.at(-1);
 
-    // A repeat of the row already at the bottom reopens it instead of stacking
-    // an identical line, e.g. a retried read of the same file.
     if (last?.kind === "tool" && last.icon === icon && last.label === label) {
       last.state = "running";
     } else {
@@ -191,10 +187,6 @@ export class Renderer {
     this.scheduleEdit();
   }
 
-  /**
-   * Repaints a row from the same view model, now that the tool has a result to
-   * fold in: line counts, a provider name, a subagent's progress.
-   */
   private refreshTool(
     toolCallId: string,
     result: unknown,

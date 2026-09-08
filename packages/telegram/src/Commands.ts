@@ -583,8 +583,7 @@ export class Commands {
     const notes = outcome.skipped.map(
       (s) => `\nSkipped ${s.label}: ${s.reason}.`
     );
-    // The other daemons run from the same tree this just replaced, so they go
-    // first; this one restarts by exiting, which has to be last.
+    // Restart siblings first; this daemon restarts by exiting, so it must go last.
     await Supervisor.restartSiblings(TelegramUnit);
     if (!Supervisor.isSupervised()) {
       await progress(

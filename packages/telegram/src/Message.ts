@@ -79,7 +79,6 @@ function buildReplyContext(
   return `${label}\n${quoted}`;
 }
 
-/** Telegram's half of the shared upload flow: fetch bytes, then store them. */
 async function download(
   ctx: Filter<Context, "message">,
   token: string,
