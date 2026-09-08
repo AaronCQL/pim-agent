@@ -158,6 +158,8 @@ describe("combobox list", () => {
           open
           items={[{ label: "a.ts" }, { label: "b.ts", description: "second" }]}
           activeIndex={1}
+          anchor={() => host}
+          emptyLabel="no matches"
           onActivate={() => undefined}
           onSelect={(index) => selected.push(index)}
         />
@@ -185,6 +187,8 @@ describe("combobox list", () => {
           open
           items={[{ label: "Claude Opus 5.0", tag: "anthropic" }]}
           activeIndex={0}
+          anchor={() => host}
+          emptyLabel="no matches"
           onActivate={() => undefined}
           onSelect={() => undefined}
         />
@@ -203,8 +207,17 @@ describe("combobox list", () => {
 describe("platform wrappers", () => {
   test("the popover is hidden until it is open", () => {
     const host = mountPoint();
+    const trigger = document.createElement("div");
+    host.append(trigger);
     const [open, setOpen] = createSignal(false);
-    render(() => <Popover open={open()}>rows</Popover>, host);
+    render(
+      () => (
+        <Popover open={open()} anchor={() => trigger}>
+          rows
+        </Popover>
+      ),
+      host
+    );
     flush();
 
     const panel = host.querySelector("[popover]");

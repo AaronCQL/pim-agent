@@ -1,6 +1,6 @@
-import { createEffect, type Element } from "solid-js";
+import type { Element } from "solid-js";
 
-import { createBackGuard } from "./history";
+import { createDialog } from "./dialog";
 import { createMediaQuery, DESKTOP } from "./media";
 
 /**
@@ -31,39 +31,22 @@ export function Modal(props: {
   readonly children: Element;
 }) {
   const desktop = createMediaQuery(DESKTOP);
-  let host!: HTMLDialogElement;
-  const back = createBackGuard(() => {
-    props.onClose();
+  const dialog = createDialog({
+    open: () => props.open,
+    onClose: () => {
+      props.onClose();
+    },
+    back: true,
   });
-
-  createEffect(
-    () => props.open,
-    (open) => {
-      if (open === host.open) {
-        return;
-      }
-      if (!open) {
-        host.close();
-        return;
-      }
-      host.showModal();
-      back.arm();
-    }
-  );
 
   return (
     <dialog
-      ref={(element: HTMLDialogElement) => {
-        host = element;
-      }}
+      ref={dialog.ref}
       aria-label={props.label}
-      onClose={() => {
-        back.release();
-        props.onClose();
-      }}
+      onClose={dialog.onNativeClose}
       onClick={(event: MouseEvent) => {
-        if (event.target === host) {
-          host.close();
+        if (dialog.isHost(event.target)) {
+          dialog.close();
         }
       }}
       class={`max-w-none bg-neutral-925 p-0 text-neutral-100 backdrop:bg-black/60 ${
@@ -100,7 +83,7 @@ export function Modal(props: {
             aria-label="Close"
             class="flex size-8 shrink-0 items-center justify-center rounded-lg text-neutral-350 hover:bg-neutral-850 hover:text-neutral-50"
             onClick={() => {
-              host.close();
+              dialog.close();
             }}
           >
             <span class="i-griddy-icons:close size-4" aria-hidden="true" />

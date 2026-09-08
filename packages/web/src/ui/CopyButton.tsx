@@ -1,4 +1,4 @@
-import { createSignal, Show } from "solid-js";
+import { createSignal, onCleanup, Show } from "solid-js";
 
 import { copyText } from "./clipboard";
 
@@ -18,13 +18,17 @@ export function CopyButton(props: {
   readonly class?: string;
 }) {
   const [copied, setCopied] = createSignal(false);
+  let flash: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => {
+    clearTimeout(flash);
+  });
 
   const copy = async (): Promise<void> => {
     if (!(await copyText(props.text()))) {
       return;
     }
     setCopied(true);
-    setTimeout(() => {
+    flash = setTimeout(() => {
       setCopied(false);
     }, FLASH_MS);
   };

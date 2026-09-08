@@ -149,10 +149,10 @@ export function Combobox(props: {
   readonly activeIndex: number;
   readonly onSelect: (index: number) => void;
   readonly onActivate: (index: number) => void;
-  readonly anchor?: () => HTMLElement | undefined;
+  readonly anchor: () => HTMLElement;
   /** Hold the list to the anchor's width; see `Popover`. */
   readonly match?: boolean;
-  readonly emptyLabel?: string;
+  readonly emptyLabel: string;
   /**
    * Drawn inside the panel, above the rows — a filter box, and so far
    * nothing else. It belongs to whoever owns the query it edits, which is
@@ -177,7 +177,7 @@ export function Combobox(props: {
   return (
     <Popover
       open={props.open}
-      {...(props.anchor === undefined ? {} : { anchor: props.anchor })}
+      anchor={props.anchor}
       match={props.match ?? false}
       class="z-50 flex flex-col rounded-lg bg-neutral-850 p-1 text-sm ring-1 ring-neutral-700"
     >
@@ -193,9 +193,7 @@ export function Combobox(props: {
         class="max-h-64 min-h-0 w-full overflow-y-auto"
       >
         <Show when={props.items.length === 0}>
-          <li class="px-2 py-1 text-neutral-500">
-            {props.emptyLabel ?? "no matches"}
-          </li>
+          <li class="px-2 py-1 text-neutral-500">{props.emptyLabel}</li>
         </Show>
         <For each={props.items}>
           {(item, index) => {

@@ -1,5 +1,6 @@
 import {
   createEffect,
+  createMemo,
   createSignal,
   onCleanup,
   onSettled,
@@ -18,7 +19,7 @@ import { Splash } from "./transcript/Splash";
 import { SubagentModal } from "./transcript/SubagentModal";
 import { Transcript } from "./transcript/Transcript";
 import { Topbar } from "./topbar/Topbar";
-import { createScrollAnchor, observeHeight } from "./ui/anchor";
+import { createScrollAnchor, observeHeight } from "./ui/scroll";
 import { Drawer } from "./ui/Drawer";
 import { createMediaQuery, DESKTOP } from "./ui/media";
 
@@ -106,12 +107,15 @@ export function Shell(props: {
   // store deliberately does not re-attach to — and sending a message, which
   // the reader expects to see land however far up they had scrolled.
   const jump = anchor.jump;
-  const hasTranscript = (): boolean =>
-    props.store.state.durable.length > 0 ||
-    props.store.trailing().length > 0 ||
-    props.store.liveSize() > 0;
-  const showSplash = (): boolean =>
-    !props.store.state.loading && !hasTranscript();
+  const hasTranscript = createMemo(
+    (): boolean =>
+      props.store.state.durable.length > 0 ||
+      props.store.trailing().length > 0 ||
+      props.store.liveSize() > 0
+  );
+  const showSplash = createMemo(
+    (): boolean => !props.store.state.loading && !hasTranscript()
+  );
 
   createEffect(
     () =>

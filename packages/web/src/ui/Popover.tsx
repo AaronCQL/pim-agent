@@ -34,7 +34,7 @@ const EDGE = 8;
 export function Popover(props: {
   readonly open: boolean;
   /** The element the panel is placed over — the chip, or the composer card. */
-  readonly anchor?: () => HTMLElement | undefined;
+  readonly anchor: () => HTMLElement;
   /**
    * Cap the panel at the trigger's width instead of the room left on screen.
    * A chip wants the opposite — a two-word trigger cannot say how wide a list
@@ -88,7 +88,7 @@ export function Popover(props: {
     // imperative work driven by scrolls and resizes, and a prop read from one
     // of those is a read nothing is subscribed to — the panel would go on
     // measuring an element the caller had already replaced.
-    () => ({ open: props.open, trigger: props.anchor?.() }),
+    () => ({ open: props.open, trigger: props.anchor() }),
     ({ open, trigger }) => {
       try {
         // Absent on engines without the attribute, and on the DOM the tests
@@ -102,7 +102,7 @@ export function Popover(props: {
       } catch {
         // Toggling to the state it is already in throws; nothing to do.
       }
-      if (!open || trigger === undefined) {
+      if (!open) {
         return;
       }
       // After the show, so the panel has been laid out and can be measured.

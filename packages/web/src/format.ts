@@ -48,7 +48,7 @@ export function abbreviateHome(path: string): string {
  */
 export function baseName(path: string): string {
   const trimmed = path.replace(/\/+$/, "");
-  return trimmed.slice(trimmed.lastIndexOf("/") + 1) || trimmed || path;
+  return trimmed.slice(trimmed.lastIndexOf("/") + 1) || path;
 }
 
 /**

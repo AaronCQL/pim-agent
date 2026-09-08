@@ -1,11 +1,11 @@
 import { createEffect, createMemo, Show } from "solid-js";
 
 import type { SessionStore } from "../session/SessionStore";
-import { createScrollAnchor, observeHeight } from "../ui/anchor";
+import { createScrollAnchor, observeHeight } from "../ui/scroll";
 import { Modal } from "../ui/Modal";
 import { Spinner } from "../ui/Spinner";
 import { Body } from "../view/Blocks";
-import { toRows, type ToolRow } from "./rows";
+import { buildRows, extendRows, type ToolRow } from "./rows";
 import { Transcript } from "./Transcript";
 
 /**
@@ -25,6 +25,7 @@ import { Transcript } from "./Transcript";
 export function SubagentModal(props: { readonly store: SessionStore }) {
   const anchor = createScrollAnchor();
   const watched = () => props.store.state.subagent;
+  const durable = createMemo(() => buildRows(props.store.state.durable));
 
   const row = createMemo((): ToolRow | undefined => {
     const callId = watched()?.callId;
@@ -33,13 +34,11 @@ export function SubagentModal(props: { readonly store: SessionStore }) {
     }
     // The parent's transcript answers for the call in both its states: while
     // it runs the view is in the live turn, and once it settles it is in the
-    // durable result. `toRows` is what reconciles those two, so asking it is
-    // what keeps this header from being a third opinion.
-    const found = toRows(
-      props.store.state.durable,
-      [],
-      props.store.state.live
-    ).find((candidate) => candidate.id === callId);
+    // durable result. `extendRows` is what reconciles those two, so asking it
+    // is what keeps this header from being a third opinion.
+    const found = extendRows(durable(), [], props.store.state.live).find(
+      (candidate) => candidate.id === callId
+    );
     return found?.kind === "tool" ? found : undefined;
   });
 

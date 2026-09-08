@@ -89,7 +89,8 @@ export function Menu(props: {
   const shown = createMemo(() => matching(props.options, query()));
   const rows = createMemo<readonly ComboboxItem[]>(() =>
     shown().map((option) => ({
-      ...option,
+      label: option.label,
+      tag: option.tag,
       selected: option.value === props.value,
     }))
   );

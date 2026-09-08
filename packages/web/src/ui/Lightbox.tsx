@@ -1,6 +1,4 @@
-import { createEffect } from "solid-js";
-
-import { createBackGuard } from "./history";
+import { createDialog } from "./dialog";
 
 /**
  * A control over the corner of the picture. The disc and its hairline are what
@@ -35,36 +33,20 @@ export function Lightbox(props: {
   readonly alt: string;
   readonly onClose: () => void;
 }) {
-  let host!: HTMLDialogElement;
-  const back = createBackGuard(() => {
-    host.close();
+  const dialog = createDialog({
+    open: () => true,
+    onClose: () => {
+      props.onClose();
+    },
+    back: true,
   });
-
-  // Opened from an effect rather than from the ref: a `<dialog>` must be in
-  // the document before it can be shown, and the ref runs before it is.
-  createEffect(
-    () => props.src,
-    () => {
-      if (!host.open) {
-        host.showModal();
-        back.arm();
-      }
-    }
-  );
 
   return (
     <dialog
-      ref={(element: HTMLDialogElement) => {
-        host = element;
-      }}
+      ref={dialog.ref}
       aria-label={props.alt}
-      onClose={() => {
-        back.release();
-        props.onClose();
-      }}
-      onClick={() => {
-        host.close();
-      }}
+      onClose={dialog.onNativeClose}
+      onClick={dialog.close}
       // `m-auto` is what centres a modal dialog in the viewport, and it is
       // spelled out because the CSS reset zeroes the margin the UA sheet
       // relies on for it. Nothing is positioned against the dialog: `:modal`
@@ -108,7 +90,7 @@ export function Lightbox(props: {
           aria-label="Close"
           class={CONTROL}
           onClick={() => {
-            host.close();
+            dialog.close();
           }}
         >
           <span class="i-griddy-icons:close size-4" aria-hidden="true" />
