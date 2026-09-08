@@ -8,23 +8,14 @@ import {
 
 import type { PickerItem } from "#core/picker/PickerItem";
 import { activeToken, applyCompletion, tokenKey } from "#core/picker/token";
-import { Format, type ContextFill } from "#core/shared/Format";
 import type { ModelCatalogue, SessionStore } from "../session/SessionStore";
 import { Combobox, createComboboxNavigation } from "../ui/Combobox";
 import { createMediaQuery, KEYBOARD } from "../ui/media";
 import { Menu } from "../ui/Menu";
 import { Attachments, type AttachmentTile } from "../view/Attachments";
 import { ClankChip } from "./ClankChip";
-
-const FILE_LIMIT = 50;
-const COMMAND_LIMIT = 20;
-
-/** The ramp's colour for each verdict `Format.contextFill` hands back. */
-const CONTEXT_TONES: Record<ContextFill, string> = {
-  ok: "text-neutral-350",
-  warn: "text-amber-400",
-  full: "text-rose-400",
-};
+import { Readouts } from "./Readouts";
+import { createUploads } from "./uploads";
 
 /**
  * Whether an Enter is a send or a newline. Same rule on both platforms —
@@ -89,15 +80,8 @@ export function Composer(props: {
   // rather than a boolean means the next keystroke, which moves the query,
   // re-opens it without a second gesture.
   const [dismissed, setDismissed] = createSignal("");
-  const [failed, setFailed] = createSignal("");
-  /**
-   * Uploads still in flight, drawn from the browser's own copy of the bytes.
-   * A photo is on screen the instant it is dropped rather than a round trip
-   * later — the wait is the upload, and hiding it until it finishes makes a
-   * dropped file look like a file that was refused.
-   */
-  const [uploading, setUploading] = createSignal<readonly AttachmentTile[]>([]);
   const [dropping, setDropping] = createSignal(false);
+  const uploads = createUploads(props.store);
   const keyboard = createMediaQuery(KEYBOARD);
   const [catalogue, setCatalogue] = createSignal<ModelCatalogue>({
     models: [],
@@ -109,7 +93,6 @@ export function Composer(props: {
   // what the reader sees the completion belonging to.
   let card!: HTMLDivElement;
   let generation = 0;
-  let previews = 0;
 
   /**
    * Every write to the message goes through here: the store mirrors it as
@@ -144,7 +127,7 @@ export function Composer(props: {
           props.store.detachFile(sessionId, file.id);
         },
       })),
-      ...uploading(),
+      ...uploads.tiles(),
     ];
   });
   /**
@@ -158,17 +141,6 @@ export function Composer(props: {
     () =>
       props.store.isBusy() && text().trim() === "" && attachments().length === 0
   );
-  // One memo, not a percentage read three times: a fill of 0 is a reading,
-  // and an object keeps it from being mistaken for "no reading yet".
-  const fill = createMemo(() => {
-    const percent = props.store.state.contextPercent;
-    return percent === undefined
-      ? undefined
-      : {
-          text: `${percent.toFixed(1)}%`,
-          tone: CONTEXT_TONES[Format.contextFill(percent)],
-        };
-  });
   const modelOptions = createMemo(() =>
     catalogue().models.map(({ id, label, provider }) => ({
       value: id,
@@ -182,8 +154,8 @@ export function Composer(props: {
 
   createEffect(
     () => key(),
-    (current) => {
-      void refine(current);
+    () => {
+      void refine();
     }
   );
 
@@ -221,27 +193,22 @@ export function Composer(props: {
       setCaret(held.length);
       setItems([]);
       setDismissed("");
-      setUploading([]);
+      uploads.reset();
       input.value = held;
     }
   );
 
-  async function refine(current: string): Promise<void> {
+  async function refine(): Promise<void> {
     const mine = ++generation;
-    if (current === "") {
-      setItems([]);
-      return;
-    }
     const active = untrack(token);
     if (!active) {
+      setItems([]);
       return;
     }
     const rows =
       active.kind === "file"
-        ? ((await props.store.files.rank(active.query, {
-            limit: FILE_LIMIT,
-          })) ?? [])
-        : await props.store.pickCommands(active.query, COMMAND_LIMIT);
+        ? ((await props.store.files.rank(active.query, {})) ?? [])
+        : await props.store.pickCommands(active.query);
     if (mine === generation) {
       setItems(rows);
     }
@@ -280,40 +247,6 @@ export function Composer(props: {
   function track(): void {
     edit(input.value);
     setCaret(input.selectionStart ?? input.value.length);
-  }
-
-  /**
-   * Every way bytes get in ends here — drop, paste, and the button. All of
-   * them at once rather than one after another: a five-photo drop over a
-   * home connection is five uploads, and doing them in turn makes the last
-   * one wait for four it has nothing to do with.
-   */
-  async function absorb(files: readonly File[]): Promise<void> {
-    setFailed("");
-    await Promise.all(files.map((file) => hoist(file)));
-  }
-
-  async function hoist(file: File): Promise<void> {
-    const key = `uploading:${++previews}`;
-    const preview = URL.createObjectURL(file);
-    setUploading((current) => [
-      ...current,
-      {
-        key,
-        name: file.name,
-        url: preview,
-        isImage: file.type.startsWith("image/"),
-        uploading: true,
-      },
-    ]);
-    try {
-      await props.store.attachFile(file);
-    } catch (err) {
-      setFailed(`${file.name}: ${(err as Error).message}`);
-    } finally {
-      setUploading((current) => current.filter((one) => one.key !== key));
-      URL.revokeObjectURL(preview);
-    }
   }
 
   /**
@@ -384,32 +317,10 @@ export function Composer(props: {
           right edge whether or not it is drawn. */}
       <div class="pointer-events-none absolute inset-x-0 bottom-full mb-2 flex items-center gap-2">
         <ClankChip store={props.store} />
-        {/* The divided pill: spend on the left, context fill on the right,
-            each half drawn only once there is something to say. */}
-        <Show when={props.store.state.cost > 0 || fill() !== undefined}>
-          <div class="ml-auto flex items-center divide-x-1.5 divide-neutral-750 rounded-lg bg-neutral-900 text-sm text-neutral-350 tabular-nums ring-1 ring-neutral-750">
-            <Show when={props.store.state.cost > 0}>
-              <div class="px-2.5 py-1">{`$${props.store.state.cost.toFixed(3)}`}</div>
-            </Show>
-            <Show when={fill()}>
-              {(shown) => (
-                <div class={`px-2.5 py-1 ${shown().tone}`}>
-                  {shown().text}
-                  <Show when={props.store.state.contextWindow}>
-                    {(window) => (
-                      <span class="text-neutral-500">
-                        {`/${Format.formatTokens(window())}`}
-                      </span>
-                    )}
-                  </Show>
-                </div>
-              )}
-            </Show>
-          </div>
-        </Show>
+        <Readouts store={props.store} />
       </div>
 
-      <Show when={props.store.state.error ?? failed()}>
+      <Show when={props.store.state.error ?? uploads.failed()}>
         {(message) => (
           <p class="mb-2 truncate text-sm text-rose-400">{message()}</p>
         )}
@@ -434,7 +345,7 @@ export function Composer(props: {
         onDrop={(event: DragEvent) => {
           event.preventDefault();
           setDropping(false);
-          void absorb([...(event.dataTransfer?.files ?? [])]);
+          void uploads.absorb([...(event.dataTransfer?.files ?? [])]);
         }}
       >
         <Attachments files={tiles()} variant="compact" />
@@ -457,7 +368,7 @@ export function Composer(props: {
             const files = [...(event.clipboardData?.files ?? [])];
             if (files.length > 0) {
               event.preventDefault();
-              void absorb(files);
+              void uploads.absorb(files);
             }
           }}
           onKeyDown={(event: KeyboardEvent) => {
@@ -515,7 +426,7 @@ export function Composer(props: {
               // Cleared so choosing the same file twice is two events; the
               // input keeps its value otherwise and the second pick is silent.
               chooser.value = "";
-              void absorb(picked);
+              void uploads.absorb(picked);
             }}
           />
           <button

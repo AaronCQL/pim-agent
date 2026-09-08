@@ -325,7 +325,19 @@ test("the picker asks for fifty files and twenty commands", async () => {
     query: "gre",
     limit: 50,
   });
-  expect(asked).toEqual([{ query: "ski", limit: 20 }]);
+  expect(asked).toEqual([{ query: "ski", limit: undefined }]);
+
+  const direct = offline();
+  const frames = answers(direct, () => rows("/skill"));
+  direct.ingest(attached());
+  flush();
+  await direct.pickCommands("ski");
+  expect(frames.find((command) => command.type === "pick_commands")).toEqual({
+    type: "pick_commands",
+    sessionId: "s1",
+    query: "ski",
+    limit: 20,
+  });
 });
 
 test("pasting files uploads them; pasting words is left to the browser", async () => {
