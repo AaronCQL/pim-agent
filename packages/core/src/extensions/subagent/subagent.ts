@@ -12,13 +12,10 @@ import {
   getAgentDir,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import type {
-  AssistantMessage,
-  TextContent,
-  Usage,
-} from "@earendil-works/pi-ai";
+import type { Usage } from "@earendil-works/pi-ai";
 import { Errors } from "../../shared/Errors";
 import { SubagentLogs } from "../../shared/SubagentLogs";
+import { MessageText } from "../../session/MessageText";
 import { CoreExtensions } from "../CoreExtensions";
 import { formatTopLine } from "./render";
 
@@ -281,14 +278,14 @@ export class SubagentEventCapture {
   }
 
   public handle(event: AgentSessionEvent): void {
-    if (event.type === "message_update" && isAssistantMessage(event.message)) {
-      this.pendingText = collectText(event.message);
+    if (event.type === "message_update" && event.message.role === "assistant") {
+      this.pendingText = MessageText.textOf(event.message.content);
       this.scheduleUpdate();
       return;
     }
 
-    if (event.type === "message_end" && isAssistantMessage(event.message)) {
-      this.commitText(collectText(event.message));
+    if (event.type === "message_end" && event.message.role === "assistant") {
+      this.commitText(MessageText.textOf(event.message.content));
       addUsage(this.usage, event.message.usage);
       this.usage.turns += 1;
       this.stopReason = event.message.stopReason;
@@ -315,7 +312,7 @@ export class SubagentEventCapture {
   public snapshot(): SubagentSnapshot {
     return {
       sessionId: this.sessionId,
-      usage: freezeUsage(this.usage),
+      usage: { ...this.usage },
       stopReason: this.stopReason,
       errorMessage: this.errorMessage,
       model: this.model,
@@ -410,14 +407,13 @@ export function applyOutputCap(
   text: string,
   capBytes = PER_TASK_OUTPUT_CAP
 ): OutputCapResult {
-  const encoder = new TextEncoder();
-  const totalBytes = encoder.encode(text).byteLength;
+  const totalBytes = Buffer.byteLength(text, "utf8");
   if (totalBytes <= capBytes) {
     return { text, truncated: false, omittedBytes: 0 };
   }
 
   const buffer = new Uint8Array(capBytes);
-  const { read, written } = encoder.encodeInto(text, buffer);
+  const { read, written } = new TextEncoder().encodeInto(text, buffer);
   const out = text.slice(0, read);
   const omittedBytes = totalBytes - written;
   return {
@@ -439,24 +435,6 @@ function makeFailureError(
   );
 }
 
-function collectText(message: AssistantMessage): string {
-  return message.content
-    .filter((part): part is TextContent => part.type === "text")
-    .map((part) => part.text)
-    .join("");
-}
-
-function isAssistantMessage(message: unknown): message is AssistantMessage {
-  return (
-    typeof message === "object" &&
-    message !== null &&
-    "role" in message &&
-    message.role === "assistant" &&
-    "content" in message &&
-    Array.isArray(message.content)
-  );
-}
-
 function emptyUsage(): MutableUsage {
   return {
     input: 0,
@@ -467,10 +445,6 @@ function emptyUsage(): MutableUsage {
     turns: 0,
     contextTokens: undefined,
   };
-}
-
-function freezeUsage(usage: MutableUsage): SubagentUsage {
-  return { ...usage };
 }
 
 function addUsage(target: MutableUsage, usage: Usage): void {
