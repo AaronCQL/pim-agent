@@ -9,51 +9,39 @@ import { MarkdownPainter } from "#core/view/MarkdownPainter";
 import type { LogsMode } from "./Config";
 import { Markdown } from "./Markdown";
 import type { Session, SessionId } from "./Session";
+import { BR, TelegramHtml } from "./TelegramHtml";
 import { TypingIndicator } from "./TypingIndicator";
 
 export type TurnEndState = "ok" | "cancelled" | "error";
 type TurnState = TurnEndState | "running";
 
-type TrackerEntry = {
-  readonly key: string;
-  readonly kind: "tool" | "thinking" | "narration";
+type ToolEntry = {
+  readonly kind: "tool";
   icon: string;
   label: string;
   state: "running" | "ok" | "error";
 };
+
+type ProseKind = "thinking" | "narration";
+
+type ProseEntry = {
+  readonly kind: ProseKind;
+  readonly label: string;
+  html?: string;
+};
+
+type TrackerEntry = ToolEntry | ProseEntry;
+
+const PROSE_OPTS = {
+  thinking: { italics: true },
+  narration: {},
+} as const;
 
 /** What a later update needs to repaint a row: its tool, and what it was called with. */
 type ToolCall = {
   readonly index: number;
   readonly toolName: string;
   readonly args: unknown;
-};
-
-const MESSAGE_LIMIT = 32000;
-const BR = "<br>";
-const BLOCK_TAGS = new Set([
-  "blockquote",
-  "h1",
-  "h2",
-  "h3",
-  "h4",
-  "h5",
-  "h6",
-  "ol",
-  "p",
-  "pre",
-  "table",
-  "tg-math-block",
-  "ul",
-]);
-const VOID_BLOCK_TAGS = new Set(["br", "hr"]);
-
-type HtmlTag = {
-  readonly start: number;
-  readonly end: number;
-  readonly name: string;
-  readonly closing: boolean;
-  readonly selfClosing: boolean;
 };
 
 export class Renderer {
@@ -151,8 +139,9 @@ export class Renderer {
         this.refreshTool(event.toolCallId, event.result, false);
       }
       const call = this.calls.get(event.toolCallId);
-      if (call !== undefined) {
-        this.entries[call.index]!.state = event.isError ? "error" : "ok";
+      const entry = call === undefined ? undefined : this.entries[call.index];
+      if (entry?.kind === "tool") {
+        entry.state = event.isError ? "error" : "ok";
         this.scheduleEdit();
       }
       return;
@@ -191,13 +180,7 @@ export class Renderer {
     if (last?.kind === "tool" && last.icon === icon && last.label === label) {
       last.state = "running";
     } else {
-      this.entries.push({
-        key: toolCallId,
-        kind: "tool",
-        icon,
-        label,
-        state: "running",
-      });
+      this.entries.push({ kind: "tool", icon, label, state: "running" });
     }
 
     this.calls.set(toolCallId, {
@@ -227,7 +210,10 @@ export class Renderer {
       result as AgentToolResult<unknown> | undefined,
       isPartial
     );
-    const entry = this.entries[call.index]!;
+    const entry = this.entries[call.index];
+    if (entry?.kind !== "tool") {
+      return;
+    }
     if (entry.icon === icon && entry.label === label) {
       return;
     }
@@ -255,52 +241,37 @@ export class Renderer {
   }
 
   private flushThinking(): void {
-    if (this.logsMode !== "verbose") {
-      this.thinking = "";
-      return;
-    }
-    const text = cleanProse(this.thinking);
+    const raw = this.thinking;
     this.thinking = "";
-    if (!text) {
+    if (this.logsMode !== "verbose") {
       return;
     }
-    const last = this.entries.at(-1);
-    if (last?.kind === "thinking" && last.label === text) {
-      return;
-    }
-    this.entries.push({
-      key: `thinking-${this.entries.length}`,
-      kind: "thinking",
-      icon: "",
-      label: text,
-      state: "ok",
-    });
-    this.scheduleEdit();
+    this.pushProse("thinking", raw);
   }
 
   private pushNarration(): void {
-    const raw = this.narration.trim();
+    const raw = this.narration;
     this.narration = "";
-    if (!raw) {
-      return;
-    }
     if (this.logsMode !== "text" && this.logsMode !== "verbose") {
       return;
     }
-    const text = cleanProse(raw);
-    const last = this.entries.at(-1);
-    if (last?.kind === "narration" && last.label === text) {
-      return;
+    if (this.pushProse("narration", raw)) {
+      this.pendingNarrationCount += 1;
     }
-    this.entries.push({
-      key: `narration-${this.entries.length}`,
-      kind: "narration",
-      icon: "",
-      label: text,
-      state: "ok",
-    });
-    this.pendingNarrationCount += 1;
+  }
+
+  private pushProse(kind: ProseKind, raw: string): boolean {
+    const text = cleanProse(raw);
+    if (!text) {
+      return false;
+    }
+    const last = this.entries.at(-1);
+    if (last?.kind === kind && last.label === text) {
+      return false;
+    }
+    this.entries.push({ kind, label: text });
     this.scheduleEdit();
+    return true;
   }
 
   private settleMessageNarrations(message: unknown): void {
@@ -311,18 +282,15 @@ export class Renderer {
     const isFinal = msg.role === "assistant" && msg.stopReason !== "toolUse";
     if (isFinal) {
       this.streamedFinalText = this.currentMessageText;
-      if (this.pendingNarrationCount > 0) {
-        let removed = 0;
-        for (let i = 0; i < this.pendingNarrationCount; i++) {
-          if (this.entries.at(-1)?.kind !== "narration") {
-            break;
-          }
-          this.entries.pop();
-          removed += 1;
+      const before = this.entries.length;
+      for (let i = 0; i < this.pendingNarrationCount; i++) {
+        if (this.entries.at(-1)?.kind !== "narration") {
+          break;
         }
-        if (removed > 0) {
-          this.scheduleEdit();
-        }
+        this.entries.pop();
+      }
+      if (this.entries.length !== before) {
+        this.scheduleEdit();
       }
     }
     this.pendingNarrationCount = 0;
@@ -369,18 +337,14 @@ export class Renderer {
   }
 
   private renderStatus(state: TurnState): string {
-    const visible = this.entries.filter((entry) => this.entryVisible(entry));
+    const visible = this.entries;
     const pieces: string[] = [];
     if (visible.length === 0) {
       return "";
     }
     for (let i = 0; i < visible.length; i++) {
       const entry = visible[i]!;
-      if (entry.kind === "thinking") {
-        pieces.push(Markdown.toHtml(entry.label, { italics: true }));
-      } else if (entry.kind === "narration") {
-        pieces.push(Markdown.toHtml(entry.label));
-      } else {
+      if (entry.kind === "tool") {
         const isLastEntry = i === visible.length - 1;
         let suffix = "";
         if (entry.state === "error") {
@@ -389,6 +353,9 @@ export class Renderer {
           suffix = " 🟡";
         }
         pieces.push(`${entry.icon} ${entry.label}${suffix}`);
+      } else {
+        entry.html ??= Markdown.toHtml(entry.label, PROSE_OPTS[entry.kind]);
+        pieces.push(entry.html);
       }
       const next = visible[i + 1];
       if (next && isInlineEntry(entry) && isInlineEntry(next)) {
@@ -402,12 +369,12 @@ export class Renderer {
     } else if (state === "error") {
       body += "<br><br>❌ Error";
     }
-    return capStatus(body);
+    return TelegramHtml.cap(body);
   }
 
   private async sendFinal(markdown: string): Promise<void> {
     const html = Markdown.toHtml(markdown);
-    for (const piece of chunk(html)) {
+    for (const piece of TelegramHtml.chunk(html)) {
       await this.sendMessage(piece, { status: false });
     }
   }
@@ -419,7 +386,7 @@ export class Renderer {
     if (!html) {
       return undefined;
     }
-    const clean = sanitize(html);
+    const clean = TelegramHtml.sanitize(html);
     try {
       const msg = await this.api.sendRichMessage(
         this.sessionId.chatId,
@@ -433,17 +400,21 @@ export class Renderer {
     } catch (err) {
       if (err instanceof GrammyError && err.error_code === 400) {
         console.warn(`[send] rich 400 (${err.description}) — retry plain`);
-        return this.api.sendMessage(this.sessionId.chatId, stripHtml(clean), {
-          message_thread_id: this.sessionId.threadId,
-          link_preview_options: { is_disabled: true },
-        });
+        return this.api.sendMessage(
+          this.sessionId.chatId,
+          TelegramHtml.strip(clean),
+          {
+            message_thread_id: this.sessionId.threadId,
+            link_preview_options: { is_disabled: true },
+          }
+        );
       }
       throw err;
     }
   }
 
   private async editMessage(html: string): Promise<void> {
-    const clean = sanitize(html);
+    const clean = TelegramHtml.sanitize(html);
     try {
       await this.api.editMessageText(
         this.sessionId.chatId,
@@ -462,7 +433,7 @@ export class Renderer {
             .editMessageText(
               this.sessionId.chatId,
               this.statusMessageId!,
-              stripHtml(clean),
+              TelegramHtml.strip(clean),
               {
                 link_preview_options: { is_disabled: true },
               }
@@ -473,19 +444,6 @@ export class Renderer {
       }
       console.warn(`[send] status edit failed:`, err);
     }
-  }
-
-  private entryVisible(entry: TrackerEntry): boolean {
-    if (this.logsMode === "off") {
-      return false;
-    }
-    if (entry.kind === "tool") {
-      return true;
-    }
-    if (entry.kind === "narration") {
-      return this.logsMode === "text" || this.logsMode === "verbose";
-    }
-    return this.logsMode === "verbose";
   }
 
   private clearTimers(): void {
@@ -503,256 +461,4 @@ function isInlineEntry(entry: TrackerEntry): boolean {
 
 function cleanProse(text: string): string {
   return text.replace(/\n{3,}/g, "\n\n").trim();
-}
-
-function capStatus(text: string): string {
-  if (text.length <= MESSAGE_LIMIT) {
-    return text;
-  }
-  const blocks = splitStatusBlocks(text);
-  let dropped = 0;
-  while (blocks.length > 1) {
-    blocks.shift();
-    dropped += 1;
-    const rest = trimLeadingBreaks(blocks.join("").trimStart());
-    const candidate = `<p>… ${dropped} earlier entries</p>${rest}`;
-    if (candidate.length <= MESSAGE_LIMIT) {
-      return candidate;
-    }
-  }
-  return capPlainStatus(blocks);
-}
-
-function splitStatusBlocks(html: string): string[] {
-  const blocks: string[] = [];
-  let cursor = 0;
-  while (cursor < html.length) {
-    const tag = nextStatusBlockTag(html, cursor);
-    if (!tag) {
-      pushStatusBlock(blocks, html.slice(cursor));
-      break;
-    }
-    if (VOID_BLOCK_TAGS.has(tag.name)) {
-      pushStatusBlock(blocks, html.slice(cursor, tag.end));
-      cursor = tag.end;
-      continue;
-    }
-    pushStatusBlock(blocks, html.slice(cursor, tag.start));
-    const end = statusBlockEnd(html, tag);
-    pushStatusBlock(blocks, html.slice(tag.start, end));
-    cursor = end;
-  }
-  return blocks;
-}
-
-function nextStatusBlockTag(html: string, start: number): HtmlTag | undefined {
-  const tags = htmlTags(html, start);
-  for (const tag of tags) {
-    if (tag.closing) {
-      continue;
-    }
-    if (BLOCK_TAGS.has(tag.name) || VOID_BLOCK_TAGS.has(tag.name)) {
-      return tag;
-    }
-  }
-  return undefined;
-}
-
-function statusBlockEnd(html: string, opener: HtmlTag): number {
-  if (opener.selfClosing) {
-    return opener.end;
-  }
-  const stack = [opener.name];
-  const tags = htmlTags(html, opener.end);
-  for (const tag of tags) {
-    if (VOID_BLOCK_TAGS.has(tag.name)) {
-      continue;
-    }
-    if (!BLOCK_TAGS.has(tag.name)) {
-      continue;
-    }
-    if (tag.closing) {
-      if (stack.at(-1) === tag.name) {
-        stack.pop();
-      }
-    } else if (!tag.selfClosing) {
-      stack.push(tag.name);
-    }
-    if (stack.length === 0) {
-      return tag.end;
-    }
-  }
-  return html.length;
-}
-
-function* htmlTags(html: string, start: number): Generator<HtmlTag> {
-  const re = /<\s*(\/)?\s*([a-z][\w:-]*)(?:\s[^>]*)?\/?\s*>/gi;
-  re.lastIndex = start;
-  for (let match = re.exec(html); match; match = re.exec(html)) {
-    const raw = match[0]!;
-    yield {
-      start: match.index,
-      end: re.lastIndex,
-      name: match[2]!.toLowerCase(),
-      closing: match[1] !== undefined,
-      selfClosing: /\/\s*>$/.test(raw),
-    };
-  }
-}
-
-function pushStatusBlock(blocks: string[], block: string): void {
-  if (block) {
-    blocks.push(block);
-  }
-}
-
-function trimLeadingBreaks(text: string): string {
-  return text.replace(/^(?:<br\s*\/?>)+/i, "").trimStart();
-}
-
-function capPlainStatus(blocks: readonly string[]): string {
-  let head = "";
-  for (let i = 0; i < blocks.length; i++) {
-    const block = blocks[i]!;
-    const candidate = `${head}${block}`;
-    if (candidate.length <= MESSAGE_LIMIT) {
-      head = candidate;
-      continue;
-    }
-    const remaining = MESSAGE_LIMIT - head.length;
-    const truncated = truncateHtmlHead(block, remaining);
-    if (truncated) {
-      head = `${head}${truncated}`;
-    }
-    break;
-  }
-  return head.trimEnd();
-}
-
-function truncateHtmlHead(html: string, limit: number): string {
-  if (html.length <= limit) {
-    return html;
-  }
-  if (limit <= 0) {
-    return "";
-  }
-  const wrapper = outerHtmlWrapper(html);
-  if (wrapper) {
-    const innerLimit = limit - wrapper.open.length - wrapper.close.length;
-    if (innerLimit > 0) {
-      const inner = truncateHtmlHead(wrapper.inner, innerLimit);
-      if (inner) {
-        return `${wrapper.open}${inner}${wrapper.close}`;
-      }
-    }
-  }
-  return escapePlainHead(stripHtml(html), limit);
-}
-
-function outerHtmlWrapper(html: string):
-  | {
-      readonly open: string;
-      readonly inner: string;
-      readonly close: string;
-    }
-  | undefined {
-  const opener = /^<\s*([a-z][\w:-]*)(?:\s[^>]*)?\/?\s*>/i.exec(html);
-  if (!opener) {
-    return undefined;
-  }
-  const open = opener[0]!;
-  if (/\/\s*>$/.test(open)) {
-    return undefined;
-  }
-  const name = opener[1]!.toLowerCase();
-  const close = matchingHtmlCloseTag(html, name, open.length);
-  if (!close || close.end !== html.length) {
-    return undefined;
-  }
-  return {
-    open,
-    inner: html.slice(open.length, close.start),
-    close: html.slice(close.start, close.end),
-  };
-}
-
-function matchingHtmlCloseTag(
-  html: string,
-  name: string,
-  start: number
-): HtmlTag | undefined {
-  let depth = 1;
-  const tags = htmlTags(html, start);
-  for (const tag of tags) {
-    if (tag.name !== name) {
-      continue;
-    }
-    if (tag.closing) {
-      depth -= 1;
-      if (depth === 0) {
-        return tag;
-      }
-    } else if (!tag.selfClosing && !VOID_BLOCK_TAGS.has(tag.name)) {
-      depth += 1;
-    }
-  }
-  return undefined;
-}
-
-function escapePlainHead(text: string, limit: number): string {
-  const marker = "…";
-  if (limit < marker.length) {
-    return "";
-  }
-  const budget = limit - marker.length;
-  const escaped: string[] = [];
-  let length = 0;
-  for (const char of text) {
-    const next = char === "\n" ? BR : Markdown.escape(char);
-    if (length + next.length > budget) {
-      break;
-    }
-    escaped.push(next);
-    length += next.length;
-  }
-  return `${escaped.join("").trimEnd()}${marker}`;
-}
-
-function chunk(html: string): readonly string[] {
-  if (html.length <= MESSAGE_LIMIT) {
-    return [html];
-  }
-  const chunks: string[] = [];
-  let rest = html;
-  while (rest.length > MESSAGE_LIMIT) {
-    const idx = rest.lastIndexOf(BR, MESSAGE_LIMIT);
-    if (idx > 0) {
-      chunks.push(rest.slice(0, idx).trim());
-      rest = rest.slice(idx + BR.length).trim();
-    } else {
-      chunks.push(rest.slice(0, MESSAGE_LIMIT).trim());
-      rest = rest.slice(MESSAGE_LIMIT).trim();
-    }
-  }
-  if (rest) {
-    chunks.push(rest);
-  }
-  return chunks;
-}
-
-function sanitize(text: string): string {
-  return text.replace(
-    /\b(api[_-]?key|token|secret)\b\s*[:=]\s*\S+/gi,
-    "$1=[redacted]"
-  );
-}
-
-function stripHtml(html: string): string {
-  return html
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&amp;/g, "&");
 }
