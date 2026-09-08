@@ -56,6 +56,21 @@ test("empty relative query returns cached catalog in given order", async () => {
   expect(result?.map((item) => item.value)).toEqual(["a.ts", "b.ts"]);
 });
 
+test("literal substring hits stop at the limit", async () => {
+  const cachedRelative: readonly FileCandidate[] = [
+    file("src/log-a.ts"),
+    file("src/log-b.ts"),
+    file("src/log-c.ts"),
+  ];
+
+  const result = await rank("og", { cachedRelative, limit: 2 });
+
+  expect(result?.map((item) => item.value)).toEqual([
+    "src/log-a.ts",
+    "src/log-b.ts",
+  ]);
+});
+
 test("relative path query ranks only direct children of the selected directory", async () => {
   const cachedRelative: readonly FileCandidate[] = [
     file("src/util"),
