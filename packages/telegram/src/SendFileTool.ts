@@ -2,13 +2,11 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { InputFile, type Api } from "grammy";
 import { basename } from "node:path";
 
-import { FsErrors } from "#core/shared/FsErrors";
-import { Paths } from "#core/shared/Paths";
+import { SendFile } from "#core/shared/SendFile";
 import type { PimToolDefinition } from "#core/shared/Tools";
 import type { ToolView } from "#core/view/ViewBlock";
 import {
   MAX_CAPTION_CHARS,
-  MAX_DOCUMENT_BYTES,
   sendFileSchema,
   type SendFileInput,
 } from "./SendFileSchema";
@@ -25,11 +23,11 @@ function build(deps: SendFileDeps): PimToolDefinition<typeof sendFileSchema> {
     ...defineTool({
       name: "send_file",
       label: "send_file",
-      description: `Send a local file to the current Telegram chat/thread as a document. Max ${MAX_DOCUMENT_BYTES / (1024 * 1024)} MB.`,
+      description: `Send a local file to the current Telegram chat/thread as a document. Max ${SendFile.MAX_BYTES / (1024 * 1024)} MB.`,
       parameters: sendFileSchema,
       async execute(_id, params) {
         const { path: rawPath, caption } = params as SendFileInput;
-        const resolved = await validate(rawPath, deps.cwd);
+        const resolved = await SendFile.validate(rawPath, deps.cwd);
         const trimmedCaption = caption?.slice(0, MAX_CAPTION_CHARS);
         await send(deps.api, deps.sessionId, resolved.path, trimmedCaption);
         return {
@@ -50,23 +48,6 @@ function build(deps: SendFileDeps): PimToolDefinition<typeof sendFileSchema> {
       };
     },
   };
-}
-
-async function validate(
-  rawPath: string,
-  cwd: string
-): Promise<{ readonly path: string; readonly size: number }> {
-  const path = Paths.resolve(rawPath, cwd);
-  const st = await FsErrors.statOrThrow(path);
-  if (!st.isFile()) {
-    throw new Error(`${rawPath} is not a regular file.`);
-  }
-  if (st.size > MAX_DOCUMENT_BYTES) {
-    throw new Error(
-      `${rawPath} is ${st.size} bytes; max allowed is ${MAX_DOCUMENT_BYTES}.`
-    );
-  }
-  return { path, size: st.size };
 }
 
 async function send(

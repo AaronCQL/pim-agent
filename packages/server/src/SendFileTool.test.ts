@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { AttachmentStore } from "#core/attachments/AttachmentStore";
+import { SendFile } from "#core/shared/SendFile";
 import { AttachmentEndpoint } from "./AttachmentEndpoint";
 import { SendFileTool } from "./SendFileTool";
 
@@ -108,7 +109,7 @@ test("only a regular file that exists and fits can be sent", async () => {
   const huge = join(cwd, "huge.bin");
   await Bun.write(huge, "");
   // Sparse, so the limit is tested without spending 50 MB to do it.
-  await truncate(huge, SendFileTool.MAX_FILE_BYTES + 1);
+  await truncate(huge, SendFile.MAX_BYTES + 1);
   expect(send("huge.bin")).rejects.toThrow(/max allowed/);
 });
 

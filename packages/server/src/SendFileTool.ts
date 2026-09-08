@@ -3,14 +3,11 @@ import { basename } from "node:path";
 import { type Static, Type } from "typebox";
 
 import type { AttachmentStore } from "#core/attachments/AttachmentStore";
-import { FsErrors } from "#core/shared/FsErrors";
 import { Paths } from "#core/shared/Paths";
+import { SendFile } from "#core/shared/SendFile";
 import type { PimToolDefinition } from "#core/shared/Tools";
 import type { ToolView } from "#core/view/ViewBlock";
 import { attachmentUrl } from "./AttachmentEndpoint";
-
-/** Telegram's document ceiling, borrowed so one number governs both sends. */
-const MAX_FILE_BYTES = 50 * 1024 * 1024;
 
 const sendFileSchema = Type.Object({
   path: Type.String({
@@ -57,11 +54,11 @@ function build(
     ...defineTool({
       name: "send_file",
       label: "send_file",
-      description: `Send a local file to the user's web browser. Images appear inline. Max ${MAX_FILE_BYTES / (1024 * 1024)} MB.`,
+      description: `Send a local file to the user's web browser. Images appear inline. Max ${SendFile.MAX_BYTES / (1024 * 1024)} MB.`,
       parameters: sendFileSchema,
       async execute(_id, params) {
         const { path: rawPath } = params as SendFileInput;
-        const { path, size } = await validate(rawPath, deps.cwd);
+        const { path, size } = await SendFile.validate(rawPath, deps.cwd);
         const scope = deps.sessionId();
         if (!scope) {
           throw new Error("This session cannot send files yet.");
@@ -114,21 +111,4 @@ function build(
   };
 }
 
-async function validate(
-  rawPath: string,
-  cwd: string
-): Promise<{ readonly path: string; readonly size: number }> {
-  const path = Paths.resolve(rawPath, cwd);
-  const st = await FsErrors.statOrThrow(path);
-  if (!st.isFile()) {
-    throw new Error(`${rawPath} is not a regular file.`);
-  }
-  if (st.size > MAX_FILE_BYTES) {
-    throw new Error(
-      `${rawPath} is ${st.size} bytes; max allowed is ${MAX_FILE_BYTES}.`
-    );
-  }
-  return { path, size: st.size };
-}
-
-export const SendFileTool = { build, MAX_FILE_BYTES };
+export const SendFileTool = { build };
