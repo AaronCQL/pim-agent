@@ -3,7 +3,6 @@ import { DiffView } from "../shared/DiffView";
 import { Paths } from "../shared/Paths";
 import type { Span, ToolView, ViewBlock } from "./ViewBlock";
 
-/** `+n`/`-n` counters, empty when nothing changed. */
 function statSpans(diff: ToolDiff | undefined): readonly Span[] {
   const { added, removed } = DiffView.countStats(diff);
   const spans: Span[] = [];
@@ -21,7 +20,6 @@ function statSpans(diff: ToolDiff | undefined): readonly Span[] {
   return spans;
 }
 
-/** The counters as a title block, or nothing when there is no change. */
 function stats(diff: ToolDiff | undefined): readonly ViewBlock[] {
   const spans = statSpans(diff);
   return spans.length === 0 ? [] : [{ kind: "spans", spans }];
@@ -33,7 +31,6 @@ function body(diff: ToolDiff | undefined): readonly ViewBlock[] {
     : [{ kind: "diff", path: diff.path, hunks: diff.hunks }];
 }
 
-/** The whole `<path> +n/-n` row plus its diff, shared by edit and write. */
 function fileView(args: {
   readonly label: string;
   readonly path: string | undefined;

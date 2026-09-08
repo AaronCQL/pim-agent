@@ -22,8 +22,6 @@ export default function (pi: ExtensionAPI): void {
     parameters: applyPatchSchema,
     prepareArguments: prepareApplyPatchArguments,
     renderShell: "self",
-    // A patch that will not parse cannot be bounded, and `parsePatch` throwing
-    // is exactly how the caller learns that.
     effect: {
       kind: "writesPaths",
       paths: ({ input }) =>

@@ -23,10 +23,7 @@ type ParseErrorDetails =
       readonly lineNumber: number;
     };
 
-/**
- * Match Codex's ParseError Display formats verbatim so GPT models see the exact
- * error strings they were trained to recover from.
- */
+// Keep these formats byte-identical to Codex's ParseError Display; GPT models recover from them.
 function formatParseError(error: ParseErrorDetails): string {
   switch (error.type) {
     case "patch":
@@ -36,13 +33,6 @@ function formatParseError(error: ParseErrorDetails): string {
   }
 }
 
-/**
- * Strict envelope + hunk parser, faithfully ported from Codex's
- * `parse_patch_text` (strict mode). The envelope check trims the whole text,
- * requires the first line to start with `*** Begin Patch` and the last line to
- * trim to exactly `*** End Patch`. Paths have a leading `@` and surrounding
- * quotes stripped.
- */
 export function parsePatch(text: string): Patch {
   const lines = text.trim().split("\n");
   checkBoundaries(lines);
@@ -255,8 +245,6 @@ function parseUpdateHunk(
     remaining = remaining.slice(chunkLines);
   }
 
-  // An Update with a Move to and no hunks is a valid pure rename; only an
-  // Update with neither a move nor any hunks is truly empty.
   if (chunks.length === 0 && movePath === undefined) {
     throw new Error(
       formatParseError({

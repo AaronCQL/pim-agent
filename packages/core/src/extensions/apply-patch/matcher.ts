@@ -4,17 +4,7 @@ const MATCHERS: ReadonlyArray<(a: string, b: string) => boolean> = [
   (a, b) => a.trim() === b.trim(),
 ];
 
-/**
- * Faithful port of Codex's `seek_sequence`. Locates `pattern` within `lines`
- * at or after `start`, advancing strictness in three passes: exact, then
- * ignore trailing whitespace, then ignore leading + trailing whitespace.
- * When `eof` is true the search begins at the position where the pattern
- * would land flush against the end of the file.
- *
- * Special cases (matching Codex):
- *  - empty `pattern` -> returns `[start]` (no-op match).
- *  - `pattern.length > lines.length` -> returns `[]`.
- */
+/** Locate `pattern` in `lines` at or after `start`, relaxing whitespace over three passes; `eof` searches flush against the end. */
 export function seekSequenceMatches(
   lines: readonly string[],
   pattern: readonly string[],

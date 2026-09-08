@@ -19,17 +19,9 @@ function dispatch<TOut, TArgs extends readonly unknown[]>(
   return painter(block, ...args);
 }
 
-/**
- * How a block sits relative to the container a body is drawn in. `flow` is
- * ordinary output the container may restyle and re-wrap; `embed` is
- * preformatted and already styled, so the container must leave it alone;
- * `tight` is terminal-only — the block paints its own leading column, so the
- * gutter gives that column up; `heading` steps outside the container to
- * introduce a sub-item.
- */
+/** How a block sits in its container: `embed` must not be restyled or re-wrapped, `tight` paints its own leading column. */
 export type BlockFrame = "flow" | "embed" | "tight" | "heading";
 
-/** The frame each block kind takes on a surface with no gutter to defer to. */
 const FRAMES = {
   text: "flow",
   markdown: "embed",
@@ -50,12 +42,6 @@ export type FrameGroup<TFrame> = {
   readonly blocks: readonly ViewBlock[];
 };
 
-/**
- * Runs of consecutive same-frame blocks, so a caller draws one container per
- * run instead of one per block. A frame `mergeable` rejects keeps one block
- * per group even mid-run — a heading is a sub-item's own boundary, and an
- * ANSI markdown embed travels as a single source payload.
- */
 function groupByFrame<TFrame>(
   blocks: readonly ViewBlock[],
   frames: Readonly<Record<ViewBlock["kind"], TFrame>>,
@@ -74,7 +60,6 @@ function groupByFrame<TFrame>(
   return groups;
 }
 
-/** The `:12` / `:12-40` suffix a `file` block's range paints as. */
 function formatRange(range: readonly [number, number | undefined]): string {
   const [start, end] = range;
   return end === undefined ? `:${start}` : `:${start}-${end}`;

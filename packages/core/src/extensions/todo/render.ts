@@ -15,17 +15,8 @@ const WIDGET_ANCHOR_SLOT = Math.floor(MAX_WIDGET_LINES / 2) - 1;
 
 export type TodoViewInput = ToolViewInput<typeof todoSchema, TodoDetails>;
 
-/**
- * The checklist itself stays out of the view: it lives in the persistent
- * widget, so a per-call copy in the transcript would duplicate it on every
- * update. What the widget cannot show is *which* item a given call started
- * working on, so that one item is carried as a body section — expand-only in
- * the TUI, and the line a status tracker leads with.
- */
 export function todoView({ args }: TodoViewInput): ToolView {
   const todos = ((args ?? {}) as Partial<TodoInput>).todos;
-  // Args stream in partially and a weak model may send junk, so the view only
-  // trusts the shape once it is actually there.
   const items = Array.isArray(todos) ? todos : [];
   return {
     label: "Todo",
@@ -35,10 +26,6 @@ export function todoView({ args }: TodoViewInput): ToolView {
   };
 }
 
-/**
- * The last in-progress item, since a model that marks several picks up the
- * bottom one; nothing when the call only completes or reorders.
- */
 function inProgressSection(items: readonly TodoItem[]): readonly ViewBlock[] {
   const current = items.findLast(
     (item) => (item as Partial<TodoItem> | null)?.status === "in_progress"

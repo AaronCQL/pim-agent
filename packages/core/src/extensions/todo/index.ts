@@ -35,7 +35,7 @@ export default function (pi: ExtensionAPI): void {
       ctx.ui.setWidget(WIDGET_ID, undefined);
       return;
     }
-    // Defer so todo widget is always the last widget to show up (right above editor)
+    // Defer so the todo widget registers last, right above the editor.
     pendingRefresh = setImmediate(() => {
       pendingRefresh = undefined;
       ctx.ui.setWidget(WIDGET_ID, renderWidgetLines(items, ctx.ui.theme));
@@ -67,7 +67,6 @@ export default function (pi: ExtensionAPI): void {
       "At most one item may be in_progress.",
     parameters: todoSchema,
     renderShell: "self",
-    // Writes only pi's own session entries, never the user's filesystem.
     effect: { kind: "readOnly" },
     executionMode: "sequential",
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {

@@ -10,8 +10,6 @@ type Reader = ReadableStreamDefaultReader<Uint8Array>;
 
 const activePids = new Set<number>();
 
-// Wired into the extension's signal handlers so a daemon that `setsid`s
-// out of our group (or harbor/parent SIGTERM) still tears down its subtree.
 export function killAllActiveBashGroups(sig: NodeJS.Signals = "SIGTERM"): void {
   for (const pid of activePids) {
     killGroup(pid, sig);
@@ -34,7 +32,6 @@ async function drain(reader: Reader | null, cap: StreamCapture): Promise<void> {
       }
     }
   } catch {
-    // reader cancelled; drop remaining bytes
   } finally {
     try {
       reader.releaseLock();
@@ -81,9 +78,7 @@ export async function runBashCommand(
   const stdoutCap = new StreamCapture();
   const stderrCap = new StreamCapture();
 
-  // setsid puts bash and its descendants into a fresh process group with
-  // pgid == proc.pid, so we can signal the whole tree on timeout/abort
-  // instead of leaving backgrounded grandchildren alive holding our pipes.
+  // setsid gives the tree its own process group (pgid == proc.pid) so the whole tree can be signalled.
   const proc = Bun.spawn({
     cmd: ["setsid", "bash", "-lc", command],
     cwd,
@@ -98,9 +93,7 @@ export async function runBashCommand(
   let timedOut = false;
   let aborted = false;
 
-  // We own the readers so we can force-cancel them later even while the
-  // background drains are still mid-read. Cancelling via the held reader
-  // does not throw the way ReadableStream.cancel() on a locked stream does.
+  // Hold the readers: cancelling a locked stream through the stream itself throws.
   const stdoutReader = getReader(
     proc.stdout as unknown as ReadableStream<Uint8Array>
   );
@@ -108,9 +101,7 @@ export async function runBashCommand(
     proc.stderr as unknown as ReadableStream<Uint8Array>
   );
 
-  // Fire-and-forget drains. A backgrounded child can inherit the subshell's
-  // fds and keep the pipes open after bash exits, so we can't block on EOF;
-  // we race proc.exited against a wall-clock timeout instead.
+  // Never block on EOF: a backgrounded child can hold the pipes open after bash exits.
   const stdoutDrain = drain(stdoutReader, stdoutCap);
   const stderrDrain = drain(stderrReader, stderrCap);
 
@@ -161,8 +152,7 @@ export async function runBashCommand(
     exitCode = proc.exitCode ?? null;
     signalCode = (proc.signalCode as NodeJS.Signals | null | undefined) ?? null;
 
-    // Bound the drain so a detached grandchild holding the pipe can't keep
-    // the drain promise + capture buffer alive past this call.
+    // Bound the drain: a detached grandchild holding the pipe would outlive this call.
     await Promise.race([
       Promise.all([stdoutDrain, stderrDrain]),
       Bun.sleep(DRAIN_GRACE_MS),

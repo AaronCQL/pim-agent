@@ -11,18 +11,9 @@ import type {
   ViewBlock,
 } from "./ViewBlock";
 
-/**
- * `inline` is the one-line mode a title or a status row uses: multi-line text
- * collapses to its first line, long text is capped, and a path shrinks to its
- * basename. `block` keeps everything.
- */
 type Mode = "inline" | "block";
 
-/**
- * How a block sits in a body. `flow` is ordinary lines, `embed` is a
- * preformatted payload that must not be re-wrapped, `heading` steps out of the
- * flow to introduce a sub-item.
- */
+/** How a block sits in a body; `embed` payloads must never be re-wrapped. */
 export type MarkdownFrame = "flow" | "embed" | "heading";
 
 export type MarkdownGroup = {
@@ -30,7 +21,6 @@ export type MarkdownGroup = {
   readonly lines: readonly string[];
 };
 
-/** A tool row: a leading glyph plus the lines that follow it. */
 export type PaintedTool = {
   readonly icon: string;
   readonly lines: readonly string[];
@@ -53,7 +43,6 @@ function paint(blocks: readonly ViewBlock[]): string[] {
   return blocks.flatMap((block) => paintBlock(block, "block"));
 }
 
-/** Flattens blocks to the single line a title or status row occupies. */
 function paintInline(blocks: readonly ViewBlock[]): string {
   return blocks
     .flatMap((block) => paintBlock(block, "inline"))
@@ -61,7 +50,6 @@ function paintInline(blocks: readonly ViewBlock[]): string {
     .join(" ");
 }
 
-/** Groups a body by frame so a caller can treat payloads differently. */
 function paintBody(blocks: readonly ViewBlock[]): MarkdownGroup[] {
   return Painting.groupByFrame(blocks, Painting.FRAMES).map((group) => ({
     frame: group.frame,
@@ -73,16 +61,6 @@ function icon(toolIcon: ToolIcon | undefined): string {
   return toolIcon === undefined ? DEFAULT_ICON : ICONS[toolIcon];
 }
 
-/**
- * Paints a whole tool row for a surface with no expand affordance.
- *
- * `title` and `summary` are the always-on parts everywhere else too, so they
- * share the first line. `body` is the expand-only payload and is dropped —
- * it is unbounded (a whole file, a whole diff) and there is nothing to
- * expand it from. Its `section` headings survive: they are the structural
- * outline of a multi-part result (one line per file of a patch), bounded by
- * the number of sub-items rather than by their size.
- */
 function paintTool(view: ToolView): PaintedTool {
   const head = [view.title, view.summary ?? []]
     .map((blocks) => paintInline(blocks))
@@ -113,11 +91,6 @@ const ICONS = {
 
 const DEFAULT_ICON = "⚙️";
 
-/**
- * Telegram has no colour, so tones carry no styling: severity that matters is
- * modelled as a `notice`, and emphasis as a span flag. `error` is the one tone
- * that must survive on its own, and bold is the only louder register there is.
- */
 const TONE_WRAPPERS = {
   default: identity,
   muted: identity,
@@ -148,7 +121,6 @@ function paintBlock(block: ViewBlock, mode: Mode): readonly string[] {
   return Painting.dispatch(PAINTERS, block, mode);
 }
 
-/** First line only, capped: an inline slot has one line and no scrollbar. */
 function oneLine(text: string): string {
   const index = text.indexOf("\n");
   const first = index < 0 ? text : `${text.slice(0, index).trimEnd()} …`;
@@ -195,10 +167,6 @@ function spansText(spans: readonly Span[], mode: Mode): string {
     .join("");
 }
 
-/**
- * The icon replaces the label when there is one: a glyph reads as a heading on
- * its own, and repeating "Delete" next to a wastebasket adds nothing.
- */
 function paintSection(block: BlockOf<"section">): readonly string[] {
   const lead =
     block.icon === undefined ? bold(escape(block.label)) : icon(block.icon);
@@ -236,10 +204,6 @@ function preformatted(body: string, lang?: string): string {
     : `<pre><code class="language-${escape(lang)}">${body}</code></pre>`;
 }
 
-/**
- * A unified-diff rendering rather than the terminal's two-column one: it is
- * the shape every markdown surface already knows how to highlight.
- */
 function paintDiff(block: BlockOf<"diff">, mode: Mode): readonly string[] {
   const body = block.hunks.flatMap((hunk) => diffLines(hunk));
   if (body.length === 0) {
@@ -265,7 +229,6 @@ const DIFF_MARKERS = {
   removed: "-",
 } as const;
 
-/** Inline slots have no room for directories, so a path shows as its leaf. */
 function paintFile(block: BlockOf<"file">, mode: Mode): readonly string[] {
   const path = mode === "inline" ? basename(block.path) : block.path;
   const { range, truncated } = Painting.fileSuffix(block);
@@ -290,11 +253,6 @@ function paintLink(block: BlockOf<"link">, mode: Mode): readonly string[] {
   return [`<a href="${escape(block.href)}">${escapeIn(label, mode)}</a>`];
 }
 
-/**
- * The name, unlinked. `url` is relative to the web gateway, which is not the
- * server this chat is served by — a link here would resolve against Telegram
- * and 404, and a file this surface delivered arrived as a document anyway.
- */
 function paintAttachment(
   block: BlockOf<"attachment">,
   mode: Mode
@@ -302,11 +260,6 @@ function paintAttachment(
   return [escapeIn(block.name, mode)];
 }
 
-/**
- * Markdown source is escaped, not re-rendered: which markdown dialect the
- * surface speaks is the surface's business, and re-rendering here would emit
- * block tags into slots that only accept inline ones.
- */
 function paintMarkdown(
   block: BlockOf<"markdown">,
   mode: Mode
@@ -334,12 +287,7 @@ const PAINTERS: PainterMap<readonly string[], [Mode]> = {
   notice: paintNotice,
 };
 
-/**
- * Paints a `ViewBlock` tree to Telegram-flavoured HTML. Telegram's "markdown"
- * is a small HTML subset (`b`, `i`, `s`, `code`, `pre`, `a`, `blockquote`),
- * which is what this emits; block separation is left to the caller, which
- * joins lines with whatever break its surface uses.
- */
+/** Paints a `ViewBlock` tree to Telegram-flavoured HTML; the caller joins lines. */
 export const MarkdownPainter = {
   escape,
   paint,

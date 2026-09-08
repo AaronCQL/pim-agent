@@ -1,17 +1,7 @@
 const EDIT_TOOL = "edit";
 const APPLY_PATCH_TOOL = "apply_patch";
 
-/**
- * Pure reconcile over available and active tool lists. Single-slot swap:
- *  - If exactly one of `edit` or `apply_patch` is available, use that tool.
- *  - If both are available, keep exactly one in the same position: `apply_patch`
- *    when the model is post-trained on V4A patches, else `edit`.
- *  - If neither is active and availability does not force a choice, no-op
- *    (respect user opt-out). All other active tools are preserved in order.
- *
- * Returns the same array reference when nothing changes so callers can skip the
- * prompt-rebuilding `setActiveTools` call.
- */
+/** Reconcile the single `edit`/`apply_patch` slot; returns `active` by reference when nothing changes. */
 export function computeActiveTools(
   available: readonly string[],
   active: readonly string[],

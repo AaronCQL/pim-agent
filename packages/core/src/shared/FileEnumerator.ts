@@ -2,69 +2,24 @@ import { readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import ignore, { type Ignore } from "ignore";
 
-/**
- * Max in-flight `readdir` syscalls.
- */
 const CONCURRENCY = 32;
 
-/**
- * Options that decide what the walk enumerates.
- */
 export type EnumerateOptions = {
-  /**
-   * Include dot-prefixed files/dirs such as `.env`, `.github`. Default false.
-   */
   readonly includeDotfiles?: boolean;
-  /**
-   * Include gitignored / normally-ignored paths such as `node_modules`. Default false.
-   */
   readonly includeIgnored?: boolean;
 };
 
 type StackEntry = {
-  /**
-   * Absolute path of the directory.
-   */
   readonly abs: string;
-  /**
-   * Root-relative POSIX path of the directory ("" for root), no trailing slash.
-   */
   readonly rel: string;
-  /**
-   * Whether this directory lies within a git repository. When false, no
-   * `.gitignore` files are honored — matching git/fd, which treat ignore files
-   * as inert outside a repository.
-   */
   readonly inRepo: boolean;
-  /**
-   * Absolute path of the git repository root the ignore rules are anchored to.
-   * Paths are tested relative to this. Only meaningful when `inRepo`.
-   */
   readonly repoRootAbs: string;
-  /**
-   * Every gitignore pattern that applies to this subtree, ordered shallowest
-   * (repo root) to deepest, each already re-anchored to be relative to
-   * `repoRootAbs`. Held so a nested `.gitignore` can extend it without losing
-   * the ancestor rules. Empty when `inRepo` is false.
-   *
-   * Keeping all of a repo's rules in a single matcher (rather than one matcher
-   * per `.gitignore`) is what lets negations work across files: a `build/`
-   * exclusion at the repo root and a `!build/` re-inclusion in a nested
-   * `.gitignore` are only resolved correctly when evaluated together.
-   */
   readonly ignoreRules: string[];
-  /**
-   * Matcher built from `ignoreRules`; tests paths relative to `repoRootAbs`.
-   */
   readonly matcher: Ignore;
 };
 
-/** Reused for directories outside any repo, where no rules apply. */
 const EMPTY_MATCHER = ignore();
 
-/**
- * Shared mutable state threaded through one `enumerate` walk.
- */
 type WalkContext = {
   includeDotfiles: boolean;
   useIgnore: boolean;

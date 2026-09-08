@@ -28,8 +28,6 @@ function render(args: {
     (context.lastComponent as Container | undefined) ?? new Container();
   container.clear();
 
-  // The summary is the row's status line, so it survives streaming and stays
-  // put while the body is collapsed away.
   let drew = draw(container, summary ?? [], SUMMARY_BUILDERS, theme);
   if (!options.isPartial && options.expanded) {
     drew = draw(container, body ?? [], FRAME_BUILDERS, theme) || drew;
@@ -95,19 +93,10 @@ const FRAME_BUILDERS: FrameBuilders = {
   heading: headings,
 };
 
-/**
- * A summary line is the tool's own status, not its output, so the gutter does
- * not tint it: its spans arrive already toned, the way a wrapped title keeps
- * its colours as it continues into the gutter.
- */
 const SUMMARY_BUILDERS: FrameBuilders = {
   ...FRAME_BUILDERS,
   flow: gutter(Renderer.GAPPED_PREFIX),
 };
 
-/**
- * Turns painted body lines into the pi-tui components that frame them. The
- * frame is the only part of a body the painter cannot decide on its own: the
- * gutter has to wrap at the terminal width, which is known at render time.
- */
+/** Turns painted body lines into the pi-tui components that frame them. */
 export const BodyRenderer = { render };
