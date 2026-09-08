@@ -5,7 +5,7 @@ import type { IntraLineRange, ToolDiffLine } from "#core/shared/DiffLines";
 import { Languages } from "#core/shared/Languages";
 import { DiffLayout } from "#core/view/DiffLayout";
 import { Painting } from "#core/view/Painting";
-import type { DiffHunk, Span, ViewBlock } from "#core/view/ViewBlock";
+import type { BlockOf, DiffHunk, Span, ViewBlock } from "#core/view/ViewBlock";
 import { Markdown } from "../markdown/Markdown";
 import { CopyButton } from "../ui/CopyButton";
 import { Attachments } from "./Attachments";
@@ -20,11 +20,6 @@ import {
   syntaxClass,
   toneClass,
 } from "./tokens";
-
-type BlockOf<TKind extends ViewBlock["kind"]> = Extract<
-  ViewBlock,
-  { kind: TKind }
->;
 
 type BlockPainter<TKind extends ViewBlock["kind"]> = Component<{
   readonly block: BlockOf<TKind>;

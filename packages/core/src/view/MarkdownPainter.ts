@@ -1,6 +1,7 @@
 import { basename } from "node:path";
-import { Painting } from "./Painting";
+import { Painting, type PainterMap } from "./Painting";
 import type {
+  BlockOf,
   DiffHunk,
   NoticeSeverity,
   Span,
@@ -10,24 +11,12 @@ import type {
   ViewBlock,
 } from "./ViewBlock";
 
-type BlockOf<TKind extends ViewBlock["kind"]> = Extract<
-  ViewBlock,
-  { kind: TKind }
->;
-
 /**
  * `inline` is the one-line mode a title or a status row uses: multi-line text
  * collapses to its first line, long text is capped, and a path shrinks to its
  * basename. `block` keeps everything.
  */
 type Mode = "inline" | "block";
-
-type Painter<TKind extends ViewBlock["kind"]> = (
-  block: BlockOf<TKind>,
-  mode: Mode
-) => readonly string[];
-
-type PainterMap = { readonly [TKind in ViewBlock["kind"]]: Painter<TKind> };
 
 /**
  * How a block sits in a body. `flow` is ordinary lines, `embed` is a
@@ -156,10 +145,7 @@ function bold(text: string): string {
 }
 
 function paintBlock(block: ViewBlock, mode: Mode): readonly string[] {
-  // Record lookup instead of a switch: a kind added to the union without a
-  // painter fails to typecheck at the `PainterMap` declaration.
-  const painter = PAINTERS[block.kind] as Painter<ViewBlock["kind"]>;
-  return painter(block, mode);
+  return Painting.dispatch(PAINTERS, block, mode);
 }
 
 /** First line only, capped: an inline slot has one line and no scrollbar. */
@@ -333,7 +319,7 @@ function paintNotice(block: BlockOf<"notice">, mode: Mode): readonly string[] {
   return lines(block.text, mode).map((line) => `${prefix}${line}`);
 }
 
-const PAINTERS: PainterMap = {
+const PAINTERS: PainterMap<readonly string[], [Mode]> = {
   text: paintText,
   markdown: paintMarkdown,
   spans: paintSpans,

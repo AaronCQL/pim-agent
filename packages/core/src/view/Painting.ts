@@ -1,4 +1,23 @@
-import type { ViewBlock } from "./ViewBlock";
+import type { BlockOf, ViewBlock } from "./ViewBlock";
+
+export type PainterMap<TOut, TArgs extends readonly unknown[] = []> = {
+  readonly [TKind in ViewBlock["kind"]]: (
+    block: BlockOf<TKind>,
+    ...args: TArgs
+  ) => TOut;
+};
+
+function dispatch<TOut, TArgs extends readonly unknown[]>(
+  painters: PainterMap<TOut, TArgs>,
+  block: ViewBlock,
+  ...args: TArgs
+): TOut {
+  const painter = painters[block.kind] as (
+    block: ViewBlock,
+    ...args: TArgs
+  ) => TOut;
+  return painter(block, ...args);
+}
 
 /**
  * How a block sits relative to the container a body is drawn in. `flow` is
@@ -104,6 +123,7 @@ function hangingList(
 
 export const Painting = {
   FRAMES,
+  dispatch,
   groupByFrame,
   formatRange,
   fileSuffix,

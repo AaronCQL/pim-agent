@@ -1,22 +1,16 @@
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { DiffRenderer } from "../shared/DiffRenderer";
 import { Renderer } from "../shared/Renderer";
-import { type BlockFrame, Painting } from "./Painting";
-import type { NoticeSeverity, Span, Tone, ViewBlock } from "./ViewBlock";
+import { type BlockFrame, Painting, type PainterMap } from "./Painting";
+import type {
+  BlockOf,
+  NoticeSeverity,
+  Span,
+  Tone,
+  ViewBlock,
+} from "./ViewBlock";
 
 export type { BlockFrame } from "./Painting";
-
-type BlockOf<TKind extends ViewBlock["kind"]> = Extract<
-  ViewBlock,
-  { kind: TKind }
->;
-
-type Painter<TKind extends ViewBlock["kind"]> = (
-  block: BlockOf<TKind>,
-  theme: Theme
-) => readonly string[];
-
-type PainterMap = { readonly [TKind in ViewBlock["kind"]]: Painter<TKind> };
 
 /**
  * Markdown wraps at the render-time width, so a body hands the source on to
@@ -99,10 +93,7 @@ const NOTICE_COLORS = {
 } as const satisfies Record<NoticeSeverity, ThemeColor>;
 
 function paintBlock(block: ViewBlock, theme: Theme): readonly string[] {
-  // Record lookup instead of a switch: a kind added to the union without a
-  // painter fails to typecheck at the `PainterMap` declaration.
-  const painter = PAINTERS[block.kind] as Painter<ViewBlock["kind"]>;
-  return painter(block, theme);
+  return Painting.dispatch(PAINTERS, block, theme);
 }
 
 function paintText(block: BlockOf<"text">, theme: Theme): readonly string[] {
@@ -242,7 +233,7 @@ function paintNotice(
   return block.text.split("\n").map((line) => theme.fg(color, line));
 }
 
-const PAINTERS: PainterMap = {
+const PAINTERS: PainterMap<readonly string[], [Theme]> = {
   text: paintText,
   markdown: paintMarkdown,
   spans: paintSpans,

@@ -132,6 +132,11 @@ export type ViewBlock =
       readonly severity: NoticeSeverity;
     };
 
+export type BlockOf<TKind extends ViewBlock["kind"]> = Extract<
+  ViewBlock,
+  { kind: TKind }
+>;
+
 export type ToolView = {
   /**
    * Display label for the title row, e.g. `"Read"`. Defaults to the
