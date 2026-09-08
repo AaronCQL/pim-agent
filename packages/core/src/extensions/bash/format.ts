@@ -6,6 +6,8 @@ import {
   STREAM_TAIL_BYTES,
 } from "./schema";
 
+const STREAMS = ["stdout", "stderr"] as const;
+
 export function stripTrailingNewline(s: string): string {
   return s.endsWith("\n") ? s.slice(0, -1) : s;
 }
@@ -34,18 +36,15 @@ export function formatResult(
   } else if (result.timedOut) {
     lines.push(`Timed out after ${timeoutMs} ms.`);
   }
-  if (result.stdout.totalBytes > 0) {
-    lines.push("stdout:");
-    lines.push(stripTrailingNewline(result.stdout.text));
-    if (result.stdout.truncated) {
-      lines.push(formatTruncationAffordance("stdout", result.stdout));
+  for (const label of STREAMS) {
+    const stream = result[label];
+    if (stream.totalBytes === 0) {
+      continue;
     }
-  }
-  if (result.stderr.totalBytes > 0) {
-    lines.push("stderr:");
-    lines.push(stripTrailingNewline(result.stderr.text));
-    if (result.stderr.truncated) {
-      lines.push(formatTruncationAffordance("stderr", result.stderr));
+    lines.push(`${label}:`);
+    lines.push(stripTrailingNewline(stream.text));
+    if (stream.truncated) {
+      lines.push(formatTruncationAffordance(label, stream));
     }
   }
   return lines.join("\n");
@@ -62,15 +61,15 @@ export function detailsOf(result: BashCommandResult): BashDetails {
     durationMs: result.durationMs,
     timedOut: result.timedOut,
     aborted: result.aborted,
-    stdout: {
-      totalBytes: result.stdout.totalBytes,
-      truncated: result.stdout.truncated,
-      path: result.stdout.path,
-    },
-    stderr: {
-      totalBytes: result.stderr.totalBytes,
-      truncated: result.stderr.truncated,
-      path: result.stderr.path,
-    },
+    stdout: streamDetails(result.stdout),
+    stderr: streamDetails(result.stderr),
+  };
+}
+
+function streamDetails(stream: CapturedStream): BashDetails["stdout"] {
+  return {
+    totalBytes: stream.totalBytes,
+    truncated: stream.truncated,
+    path: stream.path,
   };
 }

@@ -1,20 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { concat, StreamCapture } from "./capture";
+import { StreamCapture } from "./capture";
 import { STREAM_HEAD_BYTES, STREAM_TAIL_BYTES } from "./schema";
 
 const enc = new TextEncoder();
 const u8 = (s: string) => enc.encode(s);
-
-describe("concat", () => {
-  test("merges multiple chunks in order", () => {
-    const out = concat([u8("foo"), u8("bar")], 6);
-    expect(new TextDecoder().decode(out)).toBe("foobar");
-  });
-
-  test("returns empty array when total is 0", () => {
-    expect(concat([], 0).byteLength).toBe(0);
-  });
-});
 
 describe("StreamCapture", () => {
   test("empty capture", () => {

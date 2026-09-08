@@ -120,13 +120,10 @@ export async function runBashCommand(
     timeoutHandle = setTimeout(() => resolve("timeout"), timeoutMs);
   });
 
-  let abortResolve: ((v: "aborted") => void) | null = null;
-  const abortPromise = new Promise<"aborted">((resolve) => {
-    abortResolve = resolve;
-  });
+  const abort = Promise.withResolvers<"aborted">();
   const onAbort = () => {
     aborted = true;
-    abortResolve?.("aborted");
+    abort.resolve("aborted");
   };
   if (signal) {
     if (signal.aborted) {
@@ -142,7 +139,7 @@ export async function runBashCommand(
     const result = await Promise.race([
       exitedPromise,
       timeoutPromise,
-      abortPromise,
+      abort.promise,
     ]);
 
     if (result === "timeout") {
