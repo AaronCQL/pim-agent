@@ -33,8 +33,6 @@ const NAMES = Object.keys(EXTENSIONS) as readonly PimExtensionName[];
 
 const DEFAULT_DISABLED: readonly PimExtensionName[] = ["todo", "tps"];
 
-let writeQueue: Promise<unknown> = Promise.resolve();
-
 /**
  * `_init` carries the Bun runtime guard and the splash.
  * `pim` is the only in-session way back from a disable.
@@ -92,18 +90,15 @@ async function setDisabled(name: string, isOff: boolean): Promise<void> {
   if (isOff && isRequired(name)) {
     throw new Error(`"${name}" is required by pim and cannot be disabled`);
   }
-  const task = async (): Promise<void> => {
-    const { toggles } = await PimSettings.get("extensions");
+  await PimSettings.update("extensions", ({ toggles }) => {
     const next = { ...toggles };
     if (!isOff === defaultEnabled(name)) {
       delete next[name];
     } else {
       next[name] = !isOff;
     }
-    await PimSettings.set("extensions", { toggles: next });
-  };
-  writeQueue = writeQueue.then(task, task);
-  await writeQueue;
+    return { toggles: next };
+  });
 }
 
 async function toggle(

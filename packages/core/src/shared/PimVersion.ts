@@ -1,5 +1,7 @@
 import ky from "ky";
 
+import { Fs } from "./Fs";
+
 const REGISTRY = "https://registry.npmjs.org";
 const DEFAULT_TIMEOUT_MS = 5_000;
 
@@ -14,15 +16,11 @@ type LatestOptions = {
 };
 
 async function read(url: URL): Promise<Manifest> {
-  try {
-    const pkg = (await Bun.file(url).json()) as Partial<Manifest>;
-    return {
-      name: typeof pkg.name === "string" ? pkg.name : "?",
-      version: typeof pkg.version === "string" ? pkg.version : "?",
-    };
-  } catch {
-    return { name: "?", version: "?" };
-  }
+  const pkg = await Fs.readJsonOr<Partial<Manifest> | null>(url, null);
+  return {
+    name: typeof pkg?.name === "string" ? pkg.name : "?",
+    version: typeof pkg?.version === "string" ? pkg.version : "?",
+  };
 }
 
 function self(): Promise<Manifest> {

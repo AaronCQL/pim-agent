@@ -1,6 +1,7 @@
 import { readdir, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
+import { FsErrors } from "./FsErrors";
 import { Paths } from "./Paths";
 
 /** One subdirectory, named and located, so a client does no path arithmetic. */
@@ -34,8 +35,7 @@ async function check(path: string): Promise<string | undefined> {
     const found = await stat(path);
     return found.isDirectory() ? undefined : `not a directory: ${path}`;
   } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    return code === "ENOENT"
+    return FsErrors.code(err) === "ENOENT"
       ? `path does not exist: ${path}`
       : `stat failed: ${(err as Error).message}`;
   }

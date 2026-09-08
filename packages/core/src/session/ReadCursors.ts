@@ -36,7 +36,7 @@ export class ReadCursors {
    * it and reads as read.
    */
   private baseline = 0;
-  private writes: Promise<unknown> = Promise.resolve();
+  private readonly writes = Fs.serialised();
 
   /** Defaults to `~/.pim/read.json`. */
   public constructor(path?: string) {
@@ -102,7 +102,7 @@ export class ReadCursors {
   /** Settles the writes behind the marks taken so far, for a clean stop. */
   public async flush(): Promise<void> {
     await this.ready;
-    await this.writes;
+    await this.writes.run(async () => undefined);
   }
 
   private async load(): Promise<void> {
@@ -138,17 +138,12 @@ export class ReadCursors {
    * disk error worth failing a session list — or an ending turn — over.
    */
   private persist(): void {
-    const task = async (): Promise<void> => {
+    void this.writes.run(async () => {
       const stored: Stored = {
         baseline: this.baseline,
         sessions: Object.fromEntries(this.cursors),
       };
-      await Fs.writeAtomic(
-        this.file,
-        `${JSON.stringify(stored, null, 2)}\n`,
-        0o600
-      ).catch(() => undefined);
-    };
-    this.writes = this.writes.then(task, task);
+      await Fs.writeJson(this.file, stored).catch(() => undefined);
+    });
   }
 }

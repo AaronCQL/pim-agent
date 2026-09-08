@@ -1,4 +1,3 @@
-import { chmod, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Fs } from "../../shared/Fs";
@@ -43,7 +42,7 @@ export class SearchBreaker {
   private readonly filePath: string;
   private readonly now: () => number;
   private readonly probeIntervalMs: number;
-  private writeQueue: Promise<unknown> = Promise.resolve();
+  private readonly writes = Fs.serialised();
 
   public constructor(options: SearchBreakerOptions = {}) {
     this.filePath =
@@ -119,19 +118,11 @@ export class SearchBreaker {
   private async mutate(
     update: (state: BreakerState) => BreakerState
   ): Promise<void> {
-    const task = async (): Promise<void> => {
+    await this.writes.run(async () => {
       const next = update(await this.read());
-      await mkdir(Paths.pimHomeDir(), { recursive: true, mode: 0o700 });
-      await chmod(Paths.pimHomeDir(), 0o700);
-      await Fs.writeAtomic(
-        this.filePath,
-        `${JSON.stringify(next, null, 2)}\n`,
-        0o600
-      );
-    };
-
-    this.writeQueue = this.writeQueue.then(task, task);
-    await this.writeQueue;
+      await Paths.ensurePimHome();
+      await Fs.writeJson(this.filePath, next);
+    });
   }
 }
 
