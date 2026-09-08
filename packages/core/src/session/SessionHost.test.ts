@@ -203,29 +203,6 @@ test("prompts, streams, and lands the turn in the event log", async () => {
   const messages = entries.filter((e) => e.entry.type === "message");
   expect(messages.length).toBeGreaterThanOrEqual(2);
   expect(entries.map((e) => e.seq)).toEqual(entries.map((_, i) => i + 1));
-  expect(log!.inFlight).toBeUndefined();
-});
-
-test("buffers the in-flight turn while it streams, then clears it", async () => {
-  const host = await buildHost();
-  const release = holdTurn();
-  const turn = host.run(async (agent) => {
-    await agent.prompt("say hello");
-  });
-  await requestSeen;
-  await until(
-    () => (host.eventLog?.inFlight?.text.length ?? 0) > 0,
-    "the in-flight buffer to take a delta"
-  );
-  const midFlight = host.eventLog?.inFlight?.text;
-  const busyStatus = host.status;
-  release();
-  await turn;
-
-  expect(midFlight).toBeString();
-  expect("hello from the host").toStartWith(midFlight!);
-  expect(["thinking", "streaming"]).toContain(busyStatus);
-  expect(host.eventLog?.inFlight).toBeUndefined();
 });
 
 test("aborts a running turn", async () => {

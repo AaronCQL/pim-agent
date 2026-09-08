@@ -1,10 +1,6 @@
 import type { BunFile } from "bun";
 
-import type {
-  AgentSessionEvent,
-  FileEntry,
-  SessionHeader,
-} from "@earendil-works/pi-coding-agent";
+import type { FileEntry, SessionHeader } from "@earendil-works/pi-coding-agent";
 import { parseSessionEntries } from "@earendil-works/pi-coding-agent";
 
 import { Attachments } from "../attachments/Attachments";
@@ -38,25 +34,6 @@ async function ifPresent<T>(read: () => Promise<T>, absent: T): Promise<T> {
 export type LoggedEntry = {
   readonly seq: number;
   readonly entry: FileEntry;
-};
-
-/**
- * The assistant turn currently being produced. Never durable: pi persists an
- * assistant message once, on completion, so the deltas that built it have no
- * `seq` and cannot be replayed from disk. A reconnecting client receives this
- * as one coalesced block instead of a delta stream.
- */
-export type InFlightTurn = {
-  readonly startedAt: number;
-  readonly text: string;
-  readonly thinking: string;
-  readonly tools: readonly InFlightToolCall[];
-};
-
-export type InFlightToolCall = {
-  readonly toolCallId: string;
-  readonly toolName: string;
-  readonly startedAt: number;
 };
 
 type Cursor = {
@@ -141,8 +118,7 @@ function isHeader(entry: FileEntry): entry is SessionHeader {
 }
 
 /**
- * A reader over one pi session file, plus the in-memory buffer for the turn
- * that has not been written yet. Deliberately **not** a store: pi's JSONL is
+ * A reader over one pi session file. Deliberately **not** a store: pi's JSONL is
  * already append-only, so `seq` is the physical line ordinal and resuming is
  * `seq > n`. Compaction is an appended entry, never a rewrite, so ordinals
  * assigned to a line never change once that line exists.
@@ -150,7 +126,6 @@ function isHeader(entry: FileEntry): entry is SessionHeader {
 export class EventLog {
   public readonly path: string;
   private cursor: Cursor = { offset: 0, seq: 0 };
-  private inFlightTurn: InFlightTurn | undefined;
 
   public constructor(path: string) {
     this.path = path;
@@ -192,12 +167,6 @@ export class EventLog {
     return entries;
   }
 
-  /** Highest durable `seq`, or 0 when the session has not been flushed yet. */
-  public async head(): Promise<number> {
-    await this.read(this.cursor.seq);
-    return this.cursor.seq;
-  }
-
   /** Line 1 only, so listing many sessions never reads their bodies. */
   public async header(): Promise<SessionHeader | undefined> {
     for await (const line of headLines(Bun.file(this.path), 1)) {
@@ -226,78 +195,6 @@ export class EventLog {
       ...(title === undefined ? {} : { title }),
       ...(settledAt === undefined ? {} : { settledAt }),
     };
-  }
-
-  public get inFlight(): InFlightTurn | undefined {
-    return this.inFlightTurn;
-  }
-
-  /**
-   * Feed live `AgentSession` events so the in-flight turn stays current. Every
-   * event that reaches here is either already durable or about to become so;
-   * the buffer exists only to cover the window between the two.
-   */
-  public observe(event: AgentSessionEvent): void {
-    switch (event.type) {
-      case "agent_start":
-        this.inFlightTurn = {
-          startedAt: Date.now(),
-          text: "",
-          thinking: "",
-          tools: [],
-        };
-        return;
-      case "message_update": {
-        if (event.message.role !== "assistant") {
-          return;
-        }
-        const turn = this.ensureTurn();
-        this.inFlightTurn = {
-          ...turn,
-          text: MessageText.textOf(event.message.content),
-          thinking: MessageText.textOf(event.message.content, "thinking"),
-        };
-        return;
-      }
-      case "tool_execution_start": {
-        const turn = this.ensureTurn();
-        this.inFlightTurn = {
-          ...turn,
-          tools: [
-            ...turn.tools,
-            {
-              toolCallId: event.toolCallId,
-              toolName: event.toolName,
-              startedAt: Date.now(),
-            },
-          ],
-        };
-        return;
-      }
-      case "tool_execution_end": {
-        const turn = this.ensureTurn();
-        this.inFlightTurn = {
-          ...turn,
-          tools: turn.tools.filter((t) => t.toolCallId !== event.toolCallId),
-        };
-        return;
-      }
-      case "agent_settled":
-        this.inFlightTurn = undefined;
-        return;
-      default:
-        return;
-    }
-  }
-
-  private ensureTurn(): InFlightTurn {
-    this.inFlightTurn ??= {
-      startedAt: Date.now(),
-      text: "",
-      thinking: "",
-      tools: [],
-    };
-    return this.inFlightTurn;
   }
 }
 

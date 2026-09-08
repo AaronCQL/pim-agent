@@ -415,15 +415,13 @@ export class SessionHost {
   }
 
   /**
-   * Drives everything the frontends read as state: `status`, `tps`, the event
-   * log's in-flight buffer, and cumulative cost. Only the cached agent gets
-   * this — an isolated run has its own file and must not move this session's
-   * status.
+   * Drives everything the frontends read as state: `status`, `tps`, and
+   * cumulative cost. Only the cached agent gets this — an isolated run has
+   * its own file and must not move this session's status.
    */
   private observe(agent: AgentSession): () => void {
     const stopCostTracking = this.observeCost(agent);
     const stop = agent.subscribe((event: AgentSessionEvent) => {
-      this.cachedLog?.observe(event);
       switch (event.type) {
         case "agent_start":
           this.streaming = true;
