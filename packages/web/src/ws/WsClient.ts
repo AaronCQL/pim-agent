@@ -6,12 +6,7 @@ import {
   type ServerEvent,
 } from "#protocol/ServerEvent";
 
-/**
- * `outdated` is terminal and is the only one that is: the server has refused
- * this client's protocol version, and it will refuse the next socket for the
- * same reason. What fixes it is newer code in this tab, which is not
- * something the transport can go and get.
- */
+/** `outdated` is terminal: the server refused this client's protocol version. */
 export type ConnectionStatus =
   | "connecting"
   | "open"
@@ -19,12 +14,7 @@ export type ConnectionStatus =
   | "closed"
   | "outdated";
 
-/**
- * Which session the client wants; `sessionId` absent means "make me one".
- * `like` names the session a new one should be opened like, and is dropped
- * the moment the server answers: from then on this connection is pointed at
- * a session of its own, which a reconnect resumes rather than re-derives.
- */
+/** Which session the client wants; an absent `sessionId` means "make me one". */
 export type AttachTarget = {
   readonly sessionId?: string;
   readonly cwd?: string;
@@ -37,7 +27,6 @@ export type WsClientOptions = {
   readonly cwd?: string;
   readonly onEvent: (event: ServerEvent) => void;
   readonly onStatus?: (status: ConnectionStatus) => void;
-  /** Delay before retry `attempt` (1-based). Overridden to 0 in tests. */
   readonly backoffMs?: (attempt: number) => number;
 };
 
@@ -55,15 +44,6 @@ function defaultBackoff(attempt: number): number {
 /**
  * The transport half of pim-web: one socket, one attached session, and a seq
  * cursor that survives the socket.
- *
- * Reconnect is not error handling here, it is the product: a phone that slept
- * for an hour re-attaches with `fromSeq` set to the last durable ordinal it
- * painted and the server replays exactly the tail beyond it. Nothing is
- * buffered on this side, so nothing can be lost by dropping the socket — the
- * cursor is the whole of the client's memory of the transport.
- *
- * DOM-free on purpose: only `WebSocket` and `setTimeout`, so it is driven in
- * tests by the same real gateway the CLI probe runs against.
  */
 export class WsClient {
   private readonly options: WsClientOptions;
@@ -75,12 +55,7 @@ export class WsClient {
   private attempt = 0;
   private retry: ReturnType<typeof setTimeout> | undefined;
   private disposed = false;
-  /**
-   * Frames between an `attach` going out and its `attached` coming back belong
-   * to whatever this connection was looking at before, so they are dropped.
-   * Without this a session switch on a live socket would feed the old
-   * session's tail into the new session's cursor.
-   */
+  /** Gate: frames between an `attach` and its `attached` belong to the old session. */
   private settled = false;
   private outdated = false;
   private state: ConnectionStatus = "closed";
@@ -119,14 +94,8 @@ export class WsClient {
   }
 
   /**
-   * Point this connection at another session, or at a new one. The cursor
-   * resets because `seq` is an ordinal inside one session's log and means
-   * nothing in another's.
-   *
-   * A refusal moves nothing: the server is still attached to the session it
-   * was, so this client goes back to reading it. Without that it would hold a
-   * target it never reached and a closed gate — dropping every frame of the
-   * conversation still on screen, on a socket that is perfectly healthy.
+   * Point this connection at another session, or at a new one. A refusal
+   * restores the previous target and cursor.
    */
   public async attachTo(target: AttachTarget): Promise<ResponseEvent> {
     const previous = this.target;
@@ -141,8 +110,7 @@ export class WsClient {
     if (!response.success) {
       this.target = previous;
       this.cursor = cursor;
-      // Only on a socket that was already carrying the old session: a fresh
-      // one is attached to nothing, and has nothing to go back to.
+      // Only a socket already carrying the old session has one to go back to.
       this.settled = live;
     }
     return response;
@@ -217,10 +185,7 @@ export class WsClient {
       this.setStatus("closed");
       return;
     }
-    // Retrying a refusal is a spin: this server has already read the version
-    // it will read again. Reported and left there — what to do about a stale
-    // tab is the application's call, and this half of the client has no way
-    // to reload one anyway.
+    // A version refusal will repeat, so do not retry it.
     if (code === CLOSE_PROTOCOL_MISMATCH) {
       this.outdated = true;
       this.setStatus("outdated");
@@ -272,9 +237,8 @@ export class WsClient {
     } catch {
       return;
     }
-    // Fanned out synchronously, which is the whole point of the envelope: a
-    // consumer that batches its own work by task sees one task, not one per
-    // event, and paints the resume in a single pass.
+    // Fanned out synchronously: a consumer batching by task paints the resume
+    // in one pass.
     if (frame.type === "replay") {
       for (const event of frame.events) {
         this.dispatch(event);
@@ -291,9 +255,8 @@ export class WsClient {
       waiter?.resolve(event);
       return;
     }
-    // Names the session it is about, so it is nobody's tail and cannot
-    // disturb a cursor: it passes the gate below rather than waiting behind
-    // an attach that may be for a different session entirely.
+    // Session-scoped frames name their session, so they pass the attach gate
+    // and disturb no cursor.
     if (event.type === "session_activity" || event.type === "update_state") {
       this.options.onEvent(event);
       return;

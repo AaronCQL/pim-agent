@@ -1,26 +1,7 @@
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
-/**
- * Import this *first* in any web test: Solid's DOM runtime and micromark's
- * entity decoder reach for a global `document` as they evaluate, and ES
- * modules evaluate in declaration order, so a leading side-effect import is
- * what puts one there in time.
- *
- * Per file rather than from `bunfig.toml` because the registrator is a whole
- * environment, not a shim; the `web` task in `check.ts` runs with `--isolate`,
- * so the globals never outlive the file that asked for them.
- *
- * The network globals are put back afterwards. The registrator's own are a
- * browser's — same-origin policy included, and a `Response` `Bun.serve`
- * refuses — and a test that drives the real gateway is not a browser talking
- * to a foreign origin, it is this process talking to itself.
- *
- * `AbortController`/`AbortSignal` belong to that set even though they carry no
- * bytes: the native `fetch` type-checks `signal` by identity, so a happy-dom
- * signal reaching it fails the call outright. Pi cancels every provider request
- * with one, so leaving them registered turns each model call into a retried
- * "Connection error." instead of a request.
- */
+// Import this first: Solid and micromark reach for a global `document` as they evaluate.
+// Keep the native network globals: happy-dom's `AbortSignal` fails native `fetch`'s identity check.
 const NETWORK_GLOBALS = [
   "fetch",
   "WebSocket",

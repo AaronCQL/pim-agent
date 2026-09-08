@@ -1,14 +1,6 @@
 import { For } from "solid-js";
 
-/**
- * What stands in for a conversation that has been asked for and not arrived.
- *
- * Shaped like the transcript it replaces — a right-aligned card, then prose,
- * then a run of tool lines — so the swap moves nothing the eye was already
- * tracking. Deliberately not a spinner: the wait is short, and a spinner in
- * the middle of an empty page reads as "something is wrong" where a greyed-out
- * conversation reads as "your conversation, in a moment".
- */
+/** What stands in for a conversation that has been asked for and not arrived. */
 export function Skeleton() {
   const widths = ["60%", "95%", "85%", "70%"];
 

@@ -8,11 +8,7 @@ import { CopyButton } from "../ui/CopyButton";
 import { Highlight } from "../view/highlight";
 import { syntaxClass } from "../view/tokens";
 
-/**
- * The `<pre>` the parser may still append to: it is always the deepest last
- * element, since markdown only ever grows at its tail. Everything before it
- * is finished and can be decorated.
- */
+// The `<pre>` the parser may still append to: markdown only grows at its tail.
 function openBlock(host: HTMLElement): Element | undefined {
   let node = host.lastElementChild;
   while (node !== null) {
@@ -24,17 +20,7 @@ function openBlock(host: HTMLElement): Element | undefined {
   return undefined;
 }
 
-/**
- * The parser's renderer, with every link pointed out of the page. A
- * transcript is a session in flight — one that is still streaming into this
- * tab — so navigating it away is never what a reader meant by following a
- * reference, and `noopener` keeps whatever opens from reaching back through
- * `window.opener`.
- *
- * Marked as the anchor is created rather than swept up afterwards: the parser
- * hands each node over exactly once, and the href it fills in later does not
- * change who opens it.
- */
+// Links open out of the page: `target=_blank` and `noopener`, set as each anchor arrives.
 function renderer(host: HTMLElement): smd.Default_Renderer {
   const base = smd.default_renderer(host);
   return {
@@ -50,21 +36,12 @@ function renderer(host: HTMLElement): smd.Default_Renderer {
   };
 }
 
-/**
- * The copy, and the flash that is the only report of it: a toast announcing a
- * word's worth of clipboard is louder than the thing it reports, and it would
- * cover the transcript to say it. The attribute is what CSS animates, and it
- * is dropped again when the animation ends rather than on a timer that would
- * have to be kept equal to it.
- */
 async function copyInline(code: Element): Promise<void> {
   if (!(await copyText(code.textContent ?? ""))) {
-    // A refused clipboard is not worth a message over one token of text.
     return;
   }
   code.removeAttribute("data-copied");
-  // Reading layout resolves the removal on its own, so a second click on a
-  // token still lit replays the flash instead of vanishing into it.
+  // Force layout so a second click on a still-lit token replays the flash.
   code.getBoundingClientRect();
   code.addEventListener(
     "animationend",
@@ -76,18 +53,8 @@ async function copyInline(code: Element): Promise<void> {
   code.setAttribute("data-copied", "");
 }
 
-/**
- * Inline code is nearly always something meant to end up somewhere else — a
- * path, a flag, a command, a symbol — so a click on it copies it, and picking
- * one token out of a sentence by hand, which on a phone is a fight, stops
- * being how you get it. Anything that already answers a click keeps its own
- * answer: a fence has a copy button, and a link navigates.
- *
- * One listener on the host rather than one per token, because this DOM is the
- * parser's — it grows append-only while a message streams, and a diverging
- * message rebuilds it from scratch — so there is no moment at which every
- * token could be found and bound.
- */
+// One delegated listener: the parser owns this DOM and rewrites it, so no token
+// can be bound individually.
 function onCodeClick(event: MouseEvent): void {
   const from = event.target;
   if (!(from instanceof Element)) {
@@ -97,22 +64,15 @@ function onCodeClick(event: MouseEvent): void {
   if (code === null || code.closest("pre, a") !== null) {
     return;
   }
-  // A click that ends a drag is where a selection stopped, not a request to
-  // replace what the reader was in the middle of selecting.
+  // A click that ends a drag is a selection, not a copy request.
   if (window.getSelection()?.isCollapsed === false) {
     return;
   }
   void copyInline(code);
 }
 
-/**
- * A copy button per finished code block. The parser owns this DOM and knows
- * nothing of components, so the button is mounted afterwards rather than
- * rendered with the block — and only once the block is closed, so it never
- * offers half a payload. The wrapper is what the absolute position resolves
- * against: `<pre>` scrolls, and a button inside it would slide off with the
- * code.
- */
+// Only closed blocks, and in a wrapper: `<pre>` scrolls, and a button inside it
+// would slide off with the code.
 function mountCopyButtons(
   host: HTMLElement,
   open: Element | undefined,
@@ -142,18 +102,8 @@ function mountCopyButtons(
   }
 }
 
-/**
- * Syntax highlighting for a fence, on the same rule the copy button follows:
- * only once the block has closed. The parser writes this DOM append-only and
- * never repaints it — which is why it can stream at all — so a fence cannot
- * be coloured while it is still growing without fighting it. A finished one
- * is also the only one worth colouring: half a line of TypeScript tokenises
- * as something it is about to stop being.
- *
- * The parser puts the fence language in the `<code>` class, which the fence
- * markers in CSS also read, so the marker here is a `data-` attribute and the
- * class is left exactly as it was found.
- */
+// Closed fences only: the parser never repaints, and half a line tokenises wrong.
+// Marked with `data-hl` rather than a class, which carries the fence language.
 function highlightFences(host: HTMLElement, open: Element | undefined): void {
   for (const code of host.querySelectorAll("pre > code:not([data-hl])")) {
     if (code.parentElement === open) {
@@ -161,9 +111,7 @@ function highlightFences(host: HTMLElement, open: Element | undefined): void {
     }
 
     const lang = Languages.resolve(code.className);
-    // Untracked because the subscription is already held where it can act:
-    // the effect below tracks the grammar generation and repaints every
-    // fence, and this runs from its callback, where nothing is listening.
+    // Untracked: the effect below already tracks the grammar generation.
     const lines = untrack(() =>
       Highlight.tokenize(code.textContent ?? "", lang)
     );
@@ -183,19 +131,9 @@ function highlightFences(host: HTMLElement, open: Element | undefined): void {
 }
 
 /**
- * Markdown, rendered by `streaming-markdown`, chosen over the re-parsing
- * renderers (marked, markdown-it, micromark) by measuring partial input: they
- * re-parse the whole prefix on every chunk, so a growing message repaints what
- * is already on screen. This one writes into the DOM append-only, and raw HTML
- * can never escape into it.
- *
- * Only the appended suffix is handed to the parser. Text that shrinks or
- * diverges from what was already written can only be a different message, so
- * the element is rebuilt from scratch.
- *
- * `complete` is what flushes: mid-stream the parser deliberately withholds a
- * trailing token it cannot yet disambiguate (a lone `#`, a half-typed fence
- * language), and that is exactly why it never has to repaint.
+ * Markdown rendered by `streaming-markdown`: only the appended suffix is
+ * parsed, text that diverges rebuilds the element, and `complete` flushes the
+ * token the parser withholds mid-stream.
  */
 export function Markdown(props: {
   readonly text: string;
@@ -211,7 +149,6 @@ export function Markdown(props: {
     }
     disposers.length = 0;
   };
-  /** The grammar generation the fences on screen were painted against. */
   let painted = untrack(Highlight.version);
 
   onCleanup(disposeButtons);
@@ -220,8 +157,7 @@ export function Markdown(props: {
     () => ({
       text: props.text,
       complete: props.complete !== false,
-      // A grammar arriving is a repaint: every fence painted plain while it
-      // was still loading is offered to the highlighter again.
+      // A grammar arriving repaints every fence painted plain without it.
       grammars: Highlight.version(),
     }),
     ({ text, complete, grammars }) => {

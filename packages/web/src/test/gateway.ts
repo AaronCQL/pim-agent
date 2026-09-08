@@ -11,19 +11,12 @@ import { Tools, type PimToolDefinition } from "#core/shared/Tools";
 import { WsGateway } from "#server/WsGateway";
 
 export const REPLY = "hello from the gateway";
-/** What the step that calls the tool reasons and says before calling it. */
 export const REASONING = "a ping is what was asked for";
 export const TOOL_PROSE = "Pinging now.";
 
-/**
- * Paces the reply so a test that drops the socket mid-turn still finds the
- * step open. Load-bearing, unlike the equivalent in the gateway's own tests:
- * shrinking it makes "re-attaching does not replay the in-flight text twice"
- * reconnect to a session whose projection comes back empty.
- */
+// Load-bearing: shrinking it makes the mid-turn reconnect test project an empty session.
 const TOKEN_DELAY_MS = 15;
 
-/** Fine enough that polling is not itself the thing the tests are waiting on. */
 const POLL_MS = 1;
 
 const pingSchema = Type.Object({ text: Type.String() });
@@ -56,16 +49,11 @@ function pingTool(): PimToolDefinition<typeof pingSchema, { echoed: string }> {
   };
 }
 
-/** The parent's call id for the delegated run, so a watch can name it. */
 export const SUBAGENT_CALL_ID = "call_sub";
-/** The same, for the delegation that throws instead of answering. */
 export const SUBAGENT_FAIL_CALL_ID = "call_sub_bad";
-/** What the failing run throws, which is all the parent keeps of it. */
 export const SUBAGENT_FAILURE = "child hit its step limit";
 export const SUBAGENT_PROMPT = "find every call site of parseConfig";
-/** What the child says once it has finished looking. */
 export const SUBAGENT_ANSWER = "three of the nine are in tests";
-/** The line the child's own tool call changed, which is the diff's point. */
 export const CHILD_PATCH_LINE = "const port = 8080;";
 
 const subagentSchema = Type.Object({ prompt: Type.String() });
@@ -95,11 +83,6 @@ const CHILD_DIFF: ToolDiff = {
   ],
 };
 
-/**
- * A tool the child calls and the parent never does. Registered for its view
- * alone: a watched transcript is projected in this process, so the diff a row
- * opens onto is painted by the same factory a real tool would register.
- */
 function patchTool(): PimToolDefinition<
   typeof patchSchema,
   { diff: ToolDiff }
@@ -132,11 +115,6 @@ function patchTool(): PimToolDefinition<
   };
 }
 
-/**
- * A subagent, reduced to what a watch can see of one: a child session file
- * written where the server derives it from, and a progress report per entry —
- * which is the only signal the server gets that the child wrote anything.
- */
 function subagentTool(
   gate: () => Promise<void> | undefined
 ): PimToolDefinition<typeof subagentSchema, { turns: number }> {
@@ -154,9 +132,7 @@ function subagentTool(
         details: { turns: 1 },
       });
       await gate();
-      // A failure is thrown rather than returned, which is what makes it a
-      // failure: pi keeps the message and drops the details, and the child log
-      // written on the way down is what keeps the run readable at all.
+      // Thrown, not returned: pi keeps the message and drops the details.
       if (callId === SUBAGENT_FAIL_CALL_ID) {
         throw new Error(SUBAGENT_FAILURE);
       }
@@ -189,11 +165,6 @@ function subagentTool(
   };
 }
 
-/**
- * The child's session file, written by hand in pi's own JSONL: a real
- * subagent's log is pi appending to it, and what a watch reads is the file,
- * not the tool that filled it.
- */
 async function childLog(
   parentSessionId: string | undefined,
   callId: string
@@ -270,7 +241,6 @@ type ChatBody = {
   }[];
 };
 
-/** Which tool the prompt is asking for, if it is asking for one. */
 function requestedTool(
   prompt: string
 ):
@@ -308,14 +278,7 @@ function lastUserText(body: ChatBody): string {
   return "";
 }
 
-/**
- * A real gateway over a real session, with a stub model server standing in for
- * the provider. The web client is driven against this rather than a mocked
- * socket, so what the tests prove is the wire, not a fixture of it.
- *
- * The stub reads the prompt: "tool" asks for the one registered tool, and
- * anything else streams prose a word at a time.
- */
+/** A real gateway over a real session, with a stub model server for the provider. */
 export class GatewayHarness {
   public tmp = "";
   public registry!: SessionRegistry;
@@ -325,22 +288,13 @@ export class GatewayHarness {
   private previousPimHome: string | undefined;
   private agentDir = "";
   private port = 0;
-  /** Held open by a test that wants the turn to still be in flight. */
   private gate: Promise<void> | undefined;
 
   public get url(): string {
     return this.gateway.url;
   }
 
-  /**
-   * How many messages pi is actually holding behind the turn in flight.
-   *
-   * `user_message` is acked when the gateway accepts it, not when the agent
-   * has queued it — deliberately, since a turn has to outlive the connection
-   * that asked for it. So the row a client paints on that ack is optimistic
-   * and says nothing about pi, and a test that means to reclaim the queue has
-   * to wait for this instead.
-   */
+  /** How many messages pi holds behind the turn; the `user_message` ack does not say. */
   public pending(sessionId: string): number {
     return (
       this.registry.peek(sessionId)?.agentSession?.pendingMessageCount ?? 0
@@ -353,8 +307,7 @@ export class GatewayHarness {
     await mkdir(join(this.agentDir, "extensions"), { recursive: true });
     this.previousAgentDir = process.env.PI_CODING_AGENT_DIR;
     process.env.PI_CODING_AGENT_DIR = this.agentDir;
-    // A subagent's log is derived under this root, so a test run must never
-    // write into the developer's own ~/.pim/subagents.
+    // A subagent's log derives under this root; never the developer's ~/.pim.
     this.previousPimHome = process.env.PIM_HOME_DIR;
     process.env.PIM_HOME_DIR = join(this.tmp, "pim");
     this.startModelServer();
@@ -488,12 +441,8 @@ export class GatewayHarness {
 }
 
 /**
- * Polls until `test` holds; the store is a reactive object, not an emitter.
- *
- * The default has to stay under bun's own 5s per-test timeout, or the runner
- * kills the test first and the verdict is a bare "timed out after 5000ms"
- * with no clue which wait hung — which is exactly the diagnostic this label
- * exists to give.
+ * Polls until `test` holds. The default stays under bun's own 5s per-test
+ * timeout, so a hung wait is named by `label` rather than killed by the runner.
  */
 export async function until(
   test: () => boolean,

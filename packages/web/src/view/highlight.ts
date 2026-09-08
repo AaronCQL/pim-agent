@@ -2,13 +2,7 @@ import { createSignal } from "solid-js";
 
 import type hljsCore from "highlight.js/lib/core";
 
-/**
- * The nine roles a theme colours, which are pi's `syntax*` theme keys. The
- * TUI highlights through `cli-highlight`, which folds highlight.js's ~40
- * scopes onto exactly these; `SCOPES` below is that same folding, so a line
- * of TypeScript is cut into the same pieces here as it is in the terminal and
- * only the palette differs.
- */
+/** The roles a theme colours, folded from highlight.js's scopes as the TUI folds them. */
 export type SyntaxRole =
   | "keyword"
   | "type"
@@ -20,9 +14,6 @@ export type SyntaxRole =
   | "meta"
   | "operator"
   | "punctuation"
-  // The diff grammar's two scopes. Not roles any other language emits, but
-  // the terminal colours them too (`toolDiffAdded`/`toolDiffRemoved`), and
-  // without them a ```diff block is plain text apart from its hunk headers.
   | "added"
   | "removed";
 
@@ -32,7 +23,6 @@ export type Token = {
   readonly role?: SyntaxRole;
 };
 
-/** highlight.js scope → role, transcribed from pi's `buildCliHighlightTheme`. */
 const SCOPES: Readonly<Record<string, SyntaxRole>> = {
   keyword: "keyword",
   name: "keyword",
@@ -63,12 +53,6 @@ const SCOPES: Readonly<Record<string, SyntaxRole>> = {
   deletion: "removed",
 };
 
-/**
- * The grammars the client can fetch, each its own chunk: a transcript full of
- * TypeScript should not also download Erlang. Keyed by the ids
- * `Languages.resolve` produces, so anything that table can name is either
- * loadable here or deliberately left plain.
- */
 const GRAMMARS: Readonly<Record<string, () => Promise<unknown>>> = {
   bash: () => import("highlight.js/lib/languages/bash"),
   c: () => import("highlight.js/lib/languages/c"),
@@ -81,8 +65,7 @@ const GRAMMARS: Readonly<Record<string, () => Promise<unknown>>> = {
   dockerfile: () => import("highlight.js/lib/languages/dockerfile"),
   elixir: () => import("highlight.js/lib/languages/elixir"),
   erlang: () => import("highlight.js/lib/languages/erlang"),
-  // No fish grammar ships with highlight.js; bash is close enough that a
-  // script reads right, and wrong enough to be worth saying so.
+  // No fish grammar ships with highlight.js; bash is close enough.
   fish: () => import("highlight.js/lib/languages/bash"),
   go: () => import("highlight.js/lib/languages/go"),
   graphql: () => import("highlight.js/lib/languages/graphql"),
@@ -118,25 +101,14 @@ const GRAMMARS: Readonly<Record<string, () => Promise<unknown>>> = {
   yaml: () => import("highlight.js/lib/languages/yaml"),
 };
 
-/**
- * Bumped whenever a grammar finishes loading. Every `tokenize` call reads it,
- * so a block painted plain because its language had not arrived yet repaints
- * itself the moment it does — which is the whole price of loading grammars on
- * demand, one frame of unhighlighted code.
- */
+// Bumped when a grammar lands, so every `tokenize` repaints the plain block.
 const [loaded, setLoaded] = createSignal(0);
 
-/** Languages already fetched, and the ones whose fetch failed or is in flight. */
 const registered = new Set<string>();
 const pending = new Set<string>();
 
 type Grammar = { readonly default: unknown };
 
-/**
- * The engine itself is fetched with the first grammar, not with the app: a
- * session that is all prose and shell output never pays for a highlighter it
- * has nothing to point at.
- */
 let hljs: typeof hljsCore | undefined;
 
 async function load(lang: string): Promise<void> {
@@ -152,8 +124,7 @@ async function load(lang: string): Promise<void> {
   ]);
 
   hljs = core;
-  // `registerLanguage` wants the definition function highlight.js's own
-  // language modules default-export.
+  // highlight.js language modules default-export the definition function.
   core.registerLanguage(lang, (module as Grammar).default as never);
   registered.add(lang);
   setLoaded((version) => version + 1);
@@ -166,21 +137,13 @@ function request(lang: string): void {
 
   pending.add(lang);
   void load(lang).catch(() => {
-    // A grammar that will not load is a block that stays plain; a transcript
-    // is still perfectly readable without colour.
+    // A grammar that will not load leaves the block plain.
   });
 }
 
 /**
- * `code` cut into one token list per line.
- *
- * Whole blocks go in, not lines: highlight.js has to see a block comment or a
- * template literal open and close to tokenise the lines between them, and it
- * emits spans that cross newlines to say so. Splitting those spans back into
- * lines is this function's other half, and is why callers get tokens instead
- * of the HTML highlight.js would rather hand them.
- *
- * Reactive: called inside a memo, it re-runs once the language lands.
+ * `code` cut into one token list per line; whole blocks only, since
+ * highlight.js must see a comment or literal open and close to tokenise it.
  */
 function tokenize(
   code: string,
@@ -212,13 +175,7 @@ function plain(code: string): readonly (readonly Token[])[] {
   return code.split("\n").map((line) => (line === "" ? [] : [{ text: line }]));
 }
 
-/**
- * highlight.js's HTML, read back as tokens. Its output is a tree of nested
- * `<span class="hljs-…">`, and walking it is both safer and cheaper than
- * setting it as `innerHTML` in the transcript: nothing the model wrote can
- * ever be interpreted as markup, and the diff painter needs the text anyway
- * to intersect it with the intra-line emphasis ranges.
- */
+// Walked into tokens, never injected as HTML: model text cannot become markup.
 function parse(html: string): readonly Token[] {
   const template = document.createElement("template");
   template.innerHTML = html;
@@ -238,11 +195,7 @@ function parse(html: string): readonly Token[] {
   return tokens;
 }
 
-/**
- * The innermost role a span names. highlight.js writes sub-scopes as a second
- * class — `hljs-title function_` — so the more specific one is preferred, and
- * a scope with no role of its own inherits the one it sits in.
- */
+// highlight.js writes sub-scopes as a second class, so the last one wins.
 function roleOf(element: globalThis.Element): SyntaxRole | undefined {
   let role: SyntaxRole | undefined;
 
@@ -253,7 +206,6 @@ function roleOf(element: globalThis.Element): SyntaxRole | undefined {
   return role;
 }
 
-/** Tokens re-cut at every newline, so each line is its own list. */
 function split(tokens: readonly Token[]): readonly (readonly Token[])[] {
   const lines: Token[][] = [[]];
 
@@ -274,10 +226,6 @@ function split(tokens: readonly Token[]): readonly (readonly Token[])[] {
 
 export const Highlight = {
   tokenize,
-  /**
-   * How many grammars have landed. A reactive read, for the one consumer that
-   * cannot re-derive its output from scratch — `Markdown`, whose DOM belongs
-   * to the streaming parser — and so has to be told when to repaint.
-   */
+  /** How many grammars have landed; a reactive read for consumers that repaint. */
   version: loaded,
 };

@@ -7,21 +7,10 @@ export type MessageRow = {
   readonly id: string;
   readonly role: "user" | "assistant";
   readonly text: string;
-  /** When pi wrote the message, in epoch ms. */
   readonly timestamp: number;
-  /** Files the message carried; only ever on a user row. */
   readonly attachments?: readonly AttachmentView[];
   readonly thinking?: string;
-  /**
-   * Still streaming, which is true of live rows and of nothing else. The
-   * markdown renderer must not be flushed while it is set, or every delta
-   * would repaint the whole message.
-   */
   readonly streaming?: boolean;
-  /**
-   * Said, accepted, and not delivered yet: the agent is mid-turn and pi is
-   * holding this until it can hear it. Only ever set on a user row.
-   */
   readonly queued?: boolean;
 };
 
@@ -31,7 +20,6 @@ export type ToolRow = {
   readonly name: string;
   readonly view: ToolView;
   readonly isError: boolean;
-  /** The call is on the wire but its result has not landed yet. */
   readonly isPartial: boolean;
 };
 
@@ -50,14 +38,7 @@ export type RowBuild = {
   readonly toolIndex: ReadonlyMap<string, number>;
 };
 
-/**
- * Folds one durable event into the rows a transcript draws. A tool appears at
- * least twice on the wire — as the requesting message's `toolCalls`, as its
- * own `tool_result`, and again in the in-flight bucket while it runs — and the
- * protocol says to dedupe on `callId`, so each later sighting upgrades the row
- * in place rather than appending a second one. A call whose result never
- * landed stays a partial row.
- */
+// A call is sighted more than once on the wire; dedupe on `callId` and upgrade in place.
 function append(
   rows: Row[],
   toolIndex: Map<string, number>,
@@ -65,12 +46,9 @@ function append(
 ): void {
   switch (event.type) {
     case "message": {
-      // Trimmed because the block is drawn `whitespace-pre-wrap`: models end
-      // reasoning with a newline or two, and untrimmed those are blank lines
-      // between the thinking and the prose it introduces.
+      // Trimmed: the block is `whitespace-pre-wrap`, and models end reasoning
+      // with newlines.
       const thinking = event.thinking?.trim() ?? "";
-      // A message of nothing but a photo has no text at all, and is still a
-      // message: the row is the picture.
       const attachments = event.attachments ?? [];
       if (event.text !== "" || thinking !== "" || attachments.length > 0) {
         rows.push({
@@ -83,10 +61,6 @@ function append(
           ...(thinking === "" ? {} : { thinking }),
         });
       }
-      // Under whatever the message managed to say, because that is where it
-      // stopped saying it. Its own row rather than a mark on the message's:
-      // a rate limit usually kills a message before a word of it streams, and
-      // the row that would carry the mark is one this build never draws.
       if (event.error !== undefined) {
         rows.push({
           kind: "notice",
@@ -129,10 +103,7 @@ function append(
   }
 }
 
-/**
- * A later sighting of a call upgrades its row in place; a settled one is
- * never downgraded back to partial by a re-stated call.
- */
+// A settled row is never downgraded back to partial by a re-stated call.
 function upsertTool(
   rows: Row[],
   toolIndex: Map<string, number>,
@@ -149,24 +120,12 @@ function upsertTool(
   }
 }
 
-/**
- * Folds the in-flight turn in after the durable rows: one row per live
- * assistant message, each followed by the calls it made, in the order they
- * were streamed. These rows carry `streaming`, and nothing else does.
- *
- * A message the log has taken over stays in the bucket as a shell holding its
- * calls, and having no prose left it draws no row of its own: what it still
- * contributes are the settled views of calls the durable message restated
- * without a result, and those upgrade those partial rows in place.
- */
 function appendLive(
   rows: Row[],
   toolIndex: Map<string, number>,
   live: readonly LiveMessage[]
 ): void {
   for (const message of live) {
-    // Trimmed as the durable path trims it, and for the same reason; a delta
-    // that is only the closing newline must not push the prose down a line.
     const thinking = message.thinking.trim();
     if (message.text !== "" || thinking !== "") {
       rows.push({
@@ -202,7 +161,6 @@ export function buildRows(events: readonly DurableEvent[]): RowBuild {
   return { rows, toolIndex };
 }
 
-/** One unacknowledged message of this client's, as the row that draws it. */
 function pushPending(rows: Row[], pending: PendingMessage): void {
   rows.push({
     kind: "message",
@@ -219,17 +177,8 @@ function pushPending(rows: Row[], pending: PendingMessage): void {
 
 /**
  * Continues a build with this client's unacknowledged messages and the live
- * turn, copying it first so the base — a memo of the whole durable log — is
- * never mutated. The copy is shallow, which is the point: on a text delta the
- * durable row objects keep their identity, and only the trailing rows are
- * rebuilt.
- *
- * Where a pending message goes says what it did. One that *started* the turn
- * precedes it, as the log will once it lands. One that was queued into a turn
- * already running waits below it — under the prose still being written and
- * the calls still running — because that is the work it has not interrupted
- * yet, and it only moves above the next step when pi accepts it and the
- * durable echo puts it in its real place.
+ * turn. The copy is shallow, so durable rows keep their identity across a
+ * delta; a message queued into a running turn sits below it.
  */
 export function extendRows(
   base: RowBuild,
