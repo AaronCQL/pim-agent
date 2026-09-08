@@ -99,7 +99,13 @@ export function Modal(props: {
             second panel. The hairline is what separates it from the
             transcript; the padding only has to keep the text off that. */}
         <header class="flex items-start gap-3 border-b border-neutral-700 px-3 py-[calc(var(--line)/2)]">
-          <div class="min-w-0 grow">{props.header}</div>
+          {/* `min-h-8` is the close button's height, so a one-line title sits
+              on the button's centre line instead of riding above it. A header
+              taller than the button keeps its first line at the top, where a
+              button that closes the whole dialog belongs. */}
+          <div class="flex min-h-8 min-w-0 grow flex-col justify-center">
+            {props.header}
+          </div>
           {/* The icon button the sidebar and topbar draw: a 32px
               `rounded-lg` square with no fill until it is pointed at. A
               round-cornered button around an X, not a circled X floating in

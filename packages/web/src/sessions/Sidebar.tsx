@@ -207,7 +207,7 @@ export function Sidebar(props: {
           title="New session"
           class="flex size-8 items-center justify-center rounded-lg text-neutral-350 hover:bg-neutral-850 hover:text-neutral-50"
           onClick={() => {
-            go(() => props.store.newSession(props.store.state.cwd));
+            go(() => props.store.newSession());
           }}
         >
           <span class="i-griddy-icons:chat-bubble-plus size-5" />

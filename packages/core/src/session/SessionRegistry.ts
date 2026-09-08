@@ -9,6 +9,7 @@ import type { Api as ModelApi, Model } from "@earendil-works/pi-ai";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 
+import { Directories } from "../shared/Directories";
 import { EventLog } from "./EventLog";
 import { SessionHost, type HostSettings } from "./SessionHost";
 
@@ -41,6 +42,23 @@ export type SessionRegistryDeps = {
   readonly agentDir?: string;
   readonly capacity?: number;
   readonly customTools?: (cwd: string) => readonly ToolDefinition[];
+};
+
+export type SessionCreateOptions = {
+  readonly cwd?: string;
+  /**
+   * Open the new session like this one: its model and thinking level carry
+   * over, and its directory does when none is given.
+   *
+   * The model copied is the one that session is *running* rather than the one
+   * explicitly set on it — a session resumed onto a model pi recorded has
+   * chosen it as surely as one switched by hand, and a model id means the
+   * same thing in every directory. The thinking level is only copied when it
+   * was chosen, because that one is defaulted per directory: carrying an old
+   * directory's default into a new one would shadow its answer with a choice
+   * nobody made.
+   */
+  readonly like?: SessionHost;
 };
 
 /**
@@ -143,10 +161,27 @@ export class SessionRegistry {
    * Start a new session. Pi assigns the UUID and picks the file name inside its
    * own cwd-encoded directory, so the agent is built eagerly — the identity
    * does not exist before it does.
+   *
+   * The directory is checked first, and a bad one is refused rather than
+   * created in: pi encodes the cwd into the path it writes the log to, so a
+   * session made in a directory that does not exist is a conversation whose
+   * every tool call fails.
    */
-  public async create(cwd?: string): Promise<SessionHost> {
+  public async create(
+    options: SessionCreateOptions = {}
+  ): Promise<SessionHost> {
+    const like = options.like;
+    const cwd = options.cwd ?? like?.cwd ?? this.deps.defaults.cwd;
+    const reason = await Directories.check(cwd);
+    if (reason !== undefined) {
+      throw new Error(reason);
+    }
+    const model = like?.currentModelId;
+    const thinkingLevel = like?.chosenThinkingLevel;
     const host = this.buildHost("pending", {
-      cwd: cwd ?? this.deps.defaults.cwd,
+      cwd,
+      ...(model === undefined ? {} : { model }),
+      ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
     });
     const agent = await host.ensureAgent();
     return this.adopt(agent.sessionId, host);

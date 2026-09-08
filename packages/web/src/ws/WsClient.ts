@@ -19,10 +19,16 @@ export type ConnectionStatus =
   | "closed"
   | "outdated";
 
-/** Which session the client wants; `sessionId` absent means "make me one". */
+/**
+ * Which session the client wants; `sessionId` absent means "make me one".
+ * `like` names the session a new one should be opened like, and is dropped
+ * the moment the server answers: from then on this connection is pointed at
+ * a session of its own, which a reconnect resumes rather than re-derives.
+ */
 export type AttachTarget = {
   readonly sessionId?: string;
   readonly cwd?: string;
+  readonly like?: string;
 };
 
 export type WsClientOptions = {
@@ -116,15 +122,30 @@ export class WsClient {
    * Point this connection at another session, or at a new one. The cursor
    * resets because `seq` is an ordinal inside one session's log and means
    * nothing in another's.
+   *
+   * A refusal moves nothing: the server is still attached to the session it
+   * was, so this client goes back to reading it. Without that it would hold a
+   * target it never reached and a closed gate — dropping every frame of the
+   * conversation still on screen, on a socket that is perfectly healthy.
    */
   public async attachTo(target: AttachTarget): Promise<ResponseEvent> {
+    const previous = this.target;
+    const cursor = this.cursor;
     this.target = target;
     this.cursor = 0;
-    if (this.socket?.readyState !== WebSocket.OPEN) {
+    const live = this.socket?.readyState === WebSocket.OPEN;
+    if (!live) {
       this.cancelRetry();
-      return await this.connect();
     }
-    return await this.sendAttach();
+    const response = live ? await this.sendAttach() : await this.connect();
+    if (!response.success) {
+      this.target = previous;
+      this.cursor = cursor;
+      // Only on a socket that was already carrying the old session: a fresh
+      // one is attached to nothing, and has nothing to go back to.
+      this.settled = live;
+    }
+    return response;
   }
 
   public send(command: CommandDraft): Promise<ResponseEvent> {
@@ -181,6 +202,7 @@ export class WsClient {
         ? {}
         : { sessionId: this.target.sessionId }),
       ...(this.target.cwd === undefined ? {} : { cwd: this.target.cwd }),
+      ...(this.target.like === undefined ? {} : { like: this.target.like }),
       fromSeq: this.cursor,
     });
   }

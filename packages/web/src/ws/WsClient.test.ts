@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { join } from "node:path";
 import { flush } from "solid-js";
 
 import type { DurableEvent } from "#protocol/ServerEvent";
@@ -377,7 +378,7 @@ test("switching sessions swaps the log and keeps the socket", async () => {
   await idle(store);
   const firstLog = [...store.state.durable];
 
-  await store.newSession(harness.tmp);
+  await store.newSession();
   await until(
     () => store.state.sessionId !== "" && store.state.sessionId !== first,
     "a new session"
@@ -489,7 +490,7 @@ test("a new chat is the browser's alone until pi writes its first line", async (
   expect(store.localTitle(first)).toBe("say hello");
 
   // Asking for a new chat while holding one is a request to go back to it.
-  await store.newSession(harness.tmp);
+  await store.newSession();
   expect(store.state.sessionId).toBe(first);
 
   await store.prompt("say hello");
@@ -517,7 +518,7 @@ test("a new chat is the browser's alone until pi writes its first line", async (
   );
 
   // A conversation, so a new chat is a new session now.
-  await store.newSession(harness.tmp);
+  await store.newSession();
   await until(() => store.state.sessionId !== first, "a second session");
   expect(store.state.unwritten?.sessionId).toBe(store.state.sessionId);
 });
@@ -532,7 +533,7 @@ test("a session sent to and left keeps its name against the real listing", async
   // that could name the first session is now somewhere else: the transcript
   // holds the session being read, the unwritten record holds the new one,
   // and pi has not been given long enough to have a log worth scanning.
-  await store.newSession(harness.tmp);
+  await store.newSession();
   await until(() => store.state.sessionId !== first, "a second session");
   flush();
 
@@ -541,4 +542,66 @@ test("a session sent to and left keeps its name against the real listing", async
   // Exactly what the sidebar paints, in the order it asks the questions.
   const row = listed.find((entry) => entry.sessionId === first);
   expect(row?.title ?? store.localTitle(first)).toBe("say hello");
+});
+
+test("`/clear` opens a session beside the one it was typed into", async () => {
+  const store = await connect();
+  const first = store.state.sessionId;
+  await store.prompt("say hello");
+  await idle(store);
+
+  await store.prompt("/clear");
+  await until(() => store.state.sessionId !== first, "the cleared session");
+  flush();
+
+  // A fresh context, not a lost one: the conversation is still on disk and
+  // still named, which is what a browser can offer that a terminal cannot.
+  expect(store.state.durable).toEqual([]);
+  expect(store.state.cwd).toBe(harness.tmp);
+  const listed = await store.listSessions();
+  expect(listed.find((row) => row.sessionId === first)?.title).toBe(
+    "say hello"
+  );
+  // The words asked for a session rather than saying anything, so they are
+  // spent: left in the box they would name the session on the next switch,
+  // and come back into the composer with it.
+  expect(store.draftText(first)).toBe("");
+});
+
+test("the command picker merges `/clear` into the server's own rows", async () => {
+  await Bun.write(
+    join(harness.tmp, ".pi", "skills", "deploy", "SKILL.md"),
+    "---\nname: deploy\ndescription: Ship the thing.\n---\n\nbody\n"
+  );
+  const store = await connect();
+
+  const all = await store.pickCommands("");
+
+  // One list from two sources: the skills live on the machine the agent runs
+  // on, `/clear` only means anything in this browser.
+  expect(all.map((item) => item.value)).toContain("/skill:deploy");
+  expect(all.map((item) => item.value)).toContain("/clear");
+  expect((await store.pickCommands("cle"))[0]?.value).toBe("/clear");
+});
+
+test("a directory that cannot be opened leaves the session being read alone", async () => {
+  const store = await connect();
+  const first = store.state.sessionId;
+  store.setDraftText("half a thought");
+
+  await expect(
+    store.openDirectory(join(harness.tmp, "no-such-place"))
+  ).rejects.toThrow();
+  flush();
+
+  expect(store.state.sessionId).toBe(first);
+  expect(store.state.error).toContain("does not exist");
+  // Nothing was replaced, so the unsent message is still where it was typed.
+  expect(store.draftText(first)).toBe("half a thought");
+
+  // And the socket is still carrying the session it was: a refused attach
+  // must not close the gate the frames of this conversation come through.
+  await store.prompt("say hello");
+  await idle(store);
+  expect(store.state.durable.length).toBeGreaterThan(0);
 });

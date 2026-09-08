@@ -5,9 +5,12 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 
 import { Attachments } from "#core/attachments/Attachments";
 import type { PickerItem } from "#core/picker/PickerItem";
+import { Directories } from "#core/shared/Directories";
+import type { DirectoryListing } from "#core/shared/Directories";
 import { EventLog } from "#core/session/EventLog";
 import type { SessionDigest } from "#core/session/EventLog";
 import { ReadCursors } from "#core/session/ReadCursors";
+import type { SessionHost } from "#core/session/SessionHost";
 import type { SessionRegistry } from "#core/session/SessionRegistry";
 import { PimVersion } from "#core/shared/PimVersion";
 import { SubagentLogs } from "#core/shared/SubagentLogs";
@@ -61,6 +64,7 @@ type Outcome = {
   readonly sessions?: readonly SessionSummaryView[];
   readonly models?: readonly ModelView[];
   readonly thinkingLevels?: readonly string[];
+  readonly directory?: DirectoryListing;
   readonly restored?: readonly string[];
   /**
    * Work that must not run ahead of its own answer. Only `reload` has any:
@@ -68,6 +72,13 @@ type Outcome = {
    * client never told at all.
    */
   readonly after?: () => void;
+};
+
+/** Which session a connection is asking for, and what to open a new one like. */
+type StreamTarget = {
+  readonly sessionId?: string;
+  readonly cwd?: string;
+  readonly like?: SessionHost;
 };
 
 /** Enough rows to fill a switcher; the catalogue is read newest-first. */
@@ -306,6 +317,12 @@ export class WsGateway {
             : undefined) ?? [],
       };
     }
+    // A fact about the machine's disk, so it answers without a session too:
+    // reading where a session could be opened is not opening one, and a
+    // reader who browses and then closes the modal has asked for nothing.
+    if (command.type === "list_dirs") {
+      return { directory: await Directories.list(command.path) };
+    }
     // Answered without a session because it is about a watch this connection
     // holds, and a connection that has lost its session has lost that too:
     // closing a modal must never fail.
@@ -411,7 +428,21 @@ export class WsGateway {
     connection: ClientConnection,
     command: Command & { readonly type: "attach" }
   ): Promise<Outcome> {
-    const stream = await this.ensureStream(command.sessionId, command.cwd);
+    // Resolved against the streams this server holds rather than looked up on
+    // disk: what a new session copies is what another one is *running*, which
+    // only a loaded session has. One this server has never opened has no
+    // answer to give, so the hint is dropped and the defaults stand.
+    const like =
+      command.like === undefined
+        ? undefined
+        : this.streams.get(command.like)?.host;
+    const stream = await this.ensureStream({
+      ...(command.sessionId === undefined
+        ? {}
+        : { sessionId: command.sessionId }),
+      ...(command.cwd === undefined ? {} : { cwd: command.cwd }),
+      ...(like === undefined ? {} : { like }),
+    });
     const [pimVersion, piVersion] = await this.versions();
     connection.send({
       type: "attached",
@@ -624,10 +655,8 @@ export class WsGateway {
     return digest;
   }
 
-  private async ensureStream(
-    sessionId: string | undefined,
-    cwd: string | undefined
-  ): Promise<SessionStream> {
+  private async ensureStream(target: StreamTarget): Promise<SessionStream> {
+    const sessionId = target.sessionId;
     if (sessionId) {
       const live = this.streams.get(sessionId);
       if (live) {
@@ -638,7 +667,7 @@ export class WsGateway {
         return await pending;
       }
     }
-    const build = this.buildStream(sessionId, cwd);
+    const build = this.buildStream(target);
     if (sessionId) {
       this.opening.set(sessionId, build);
     }
@@ -651,13 +680,14 @@ export class WsGateway {
     }
   }
 
-  private async buildStream(
-    sessionId: string | undefined,
-    cwd: string | undefined
-  ): Promise<SessionStream> {
+  private async buildStream(target: StreamTarget): Promise<SessionStream> {
+    const sessionId = target.sessionId;
     const host = sessionId
       ? await this.registry.open(sessionId)
-      : await this.registry.create(cwd);
+      : await this.registry.create({
+          ...(target.cwd === undefined ? {} : { cwd: target.cwd }),
+          ...(target.like === undefined ? {} : { like: target.like }),
+        });
     // Pi assigns the id and the file, and only does so once an agent exists;
     // `create` built one already, so only a resumed host pays for it here.
     const agent = host.agentSession ?? (await host.ensureAgent());

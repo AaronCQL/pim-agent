@@ -1,3 +1,4 @@
+import type { DirectoryListing } from "#core/shared/Directories";
 import type { PickerItem } from "#core/picker/PickerItem";
 import type { UpdateSkip } from "#core/shared/Updater";
 import type { NoticeSeverity, ToolView } from "#core/view/ViewBlock";
@@ -396,6 +397,8 @@ export type ResponseEvent = {
   readonly models?: readonly ModelView[];
   /** What the *current* model supports, on the same answer. */
   readonly thinkingLevels?: readonly string[];
+  /** One directory's subdirectories, for `list_dirs`. */
+  readonly directory?: DirectoryListing;
   /**
    * For `cancel` and `dequeue`: the messages pi was still holding for the
    * turn. They were never said, so the client that asked owns them from here

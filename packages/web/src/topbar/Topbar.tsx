@@ -1,7 +1,8 @@
-import { Show } from "solid-js";
+import { createSignal, Show } from "solid-js";
 
 import { abbreviateHome, baseName, splitTail } from "../format";
 import type { SessionStore } from "../session/SessionStore";
+import { DirectoryModal } from "./DirectoryModal";
 
 /**
  * Half the row is every chip's ceiling, which is what makes a tight row
@@ -25,7 +26,10 @@ const CHIP =
  * Neither chip is given a width: both size to their own text, and give it up
  * only when the row runs out.
  *
- * Both are readouts. Nothing here is settable, so nothing here is a button.
+ * The directory is the row's one control, and the only entrance to choosing
+ * one: where the session works is the single fact up here that a reader can
+ * change, so it is a button and the branch beside it stays a readout — what
+ * git says is not settable by asking.
  */
 export function Topbar(props: {
   readonly store: SessionStore;
@@ -33,6 +37,7 @@ export function Topbar(props: {
   readonly compact: boolean;
   readonly onToggleSidebar: () => void;
 }) {
+  const [choosing, setChoosing] = createSignal(false);
   // A phone gets the directory alone. The route to it is the first thing a
   // narrow row cannot afford and the last thing the reader needs there: the
   // question on a phone is which project this is, not where it sits on disk.
@@ -52,10 +57,18 @@ export function Topbar(props: {
 
       <Show when={props.store.state.cwd}>
         {(cwd) => (
-          <div class={CHIP} title={cwd()}>
+          <button
+            type="button"
+            class={`${CHIP} hover:bg-neutral-800 hover:text-neutral-50`}
+            aria-label={`Working directory ${path(cwd())}, open another`}
+            title={cwd()}
+            onClick={() => {
+              setChoosing(true);
+            }}
+          >
             <span class="i-griddy-icons:folder size-4 shrink-0" />
             <Elided text={path(cwd())} />
-          </div>
+          </button>
         )}
       </Show>
 
@@ -94,6 +107,16 @@ export function Topbar(props: {
           </div>
         )}
       </Show>
+
+      {/* Last, because it is not part of the row: an open dialog is in the
+          top layer and a closed one is not drawn at all. */}
+      <DirectoryModal
+        open={choosing()}
+        store={props.store}
+        onClose={() => {
+          setChoosing(false);
+        }}
+      />
     </div>
   );
 }

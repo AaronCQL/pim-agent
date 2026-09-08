@@ -17,9 +17,10 @@ import {
   type CompactionResult,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { stat, unlink } from "node:fs/promises";
+import { unlink } from "node:fs/promises";
 
 import { CoreExtensions } from "../extensions/CoreExtensions";
+import { Directories } from "../shared/Directories";
 import { FuzzyMatcher, type FuzzyCandidate } from "../shared/FuzzyMatcher";
 import { EventLog } from "./EventLog";
 
@@ -199,14 +200,23 @@ export class SessionHost {
   }
 
   public get currentThinkingLevel(): ThinkingLevel {
-    if (this.currentSettings.thinkingLevel) {
-      return this.currentSettings.thinkingLevel;
-    }
-    if (this.cached) {
-      return this.cached.thinkingLevel;
+    const chosen = this.chosenThinkingLevel;
+    if (chosen) {
+      return chosen;
     }
     const sm = this.deps.settingsManagerFor(this.cwd);
     return (sm.getDefaultThinkingLevel() as ThinkingLevel) ?? "medium";
+  }
+
+  /**
+   * The level this session was told to think at, as against the one its
+   * directory merely defaults to — absent when nothing has said. What one
+   * session copies from another: a default belongs to the place, so carrying
+   * it to another directory would shadow that directory's own answer with a
+   * choice nobody made.
+   */
+  public get chosenThinkingLevel(): ThinkingLevel | undefined {
+    return this.currentSettings.thinkingLevel ?? this.cached?.thinkingLevel;
   }
 
   /**
@@ -301,17 +311,9 @@ export class SessionHost {
 
   public setCwd(newCwd: string): Promise<SetCwdResult> {
     return this.enqueue(async (): Promise<SetCwdResult> => {
-      try {
-        const st = await stat(newCwd);
-        if (!st.isDirectory()) {
-          return { ok: false, error: `not a directory: ${newCwd}` };
-        }
-      } catch (err) {
-        const code = (err as NodeJS.ErrnoException).code;
-        if (code === "ENOENT") {
-          return { ok: false, error: `path does not exist: ${newCwd}` };
-        }
-        return { ok: false, error: `stat failed: ${(err as Error).message}` };
+      const reason = await Directories.check(newCwd);
+      if (reason !== undefined) {
+        return { ok: false, error: reason };
       }
       await this.tearDownCached();
       await this.patchSettings({ cwd: newCwd, sessionPath: undefined });

@@ -23,6 +23,19 @@ export type Command =
       readonly protocolVersion: ProtocolVersion;
       readonly sessionId?: string;
       readonly cwd?: string;
+      /**
+       * Open the new session like this one: the model and thinking level it
+       * is running carry over, and so does its directory unless `cwd` says
+       * otherwise. Ignored when `sessionId` is present — an existing session
+       * is already itself — and ignored when the server is not holding the
+       * session named, since a hint that cannot be honoured is not a reason
+       * to refuse the session being asked for.
+       *
+       * A session id rather than the settings themselves: model ids are the
+       * server's vocabulary, and a client that sent them would be deciding
+       * what a new session is instead of saying which one to copy.
+       */
+      readonly like?: string;
       readonly fromSeq: number;
     }
   /**
@@ -87,6 +100,18 @@ export type Command =
    * because the catalogue is a property of the machine, not of a conversation.
    */
   | { readonly id: string; readonly type: "list_models" }
+  /**
+   * The directories inside one directory, on the filesystem the agent runs
+   * on — which is the server's, the only one any path here ever means.
+   * Sessionless like the two catalogues above it, for the same reason: what
+   * is on that disk is a fact about the machine rather than about any
+   * conversation.
+   *
+   * Answers with an error rather than an empty listing for a path that is
+   * not a readable directory, so a client can tell "nothing in it" from
+   * "no such place".
+   */
+  | { readonly id: string; readonly type: "list_dirs"; readonly path: string }
   /**
    * Read one subagent's transcript, live if it is still running. Read-only
    * and **not** a second `attach`: a connection stays attached to exactly one

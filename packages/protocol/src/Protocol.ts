@@ -14,6 +14,13 @@
  * connection rather than mis-parsing a newer frame. Versioned from day one so
  * the first incompatible change is a rejection, not a silent field mismatch.
  *
+ * 12 — a client can read the server's directories with `list_dirs`, and can
+ * ask for a new session that looks like one it names: `attach` takes `like`,
+ * whose model, thinking level and directory the new session opens with.
+ * Breaking on `list_dirs` alone — a server that predates it answers "unknown
+ * command" — while `like` degrades on its own, since a server that has never
+ * heard of the session named simply opens the session on its defaults.
+ *
  * 11 — a client can read one subagent's transcript, live, with
  * `watch_subagent` / `unwatch_subagent`; its events arrive enveloped in
  * `subagent_events` so they can never be mistaken for the parent's. A watch
@@ -62,7 +69,7 @@
  * git branch; durable messages carry a `timestamp`; `list_models` answers
  * with the model catalogue and this model's thinking levels.
  */
-export const PROTOCOL_VERSION = 11;
+export const PROTOCOL_VERSION = 12;
 
 export type ProtocolVersion = typeof PROTOCOL_VERSION;
 

@@ -1,7 +1,9 @@
 import { createStore, type Store, type StoreSetter } from "solid-js";
 
 import type { PickerItem } from "#core/picker/PickerItem";
+import { rankCommands } from "#core/picker/commandRanker";
 import { RemoteFilePickerSuggestionEngine } from "#core/picker/RemoteFilePickerSuggestionEngine";
+import type { DirectoryListing } from "#core/shared/Directories";
 import type { ToolView } from "#core/view/ViewBlock";
 import type { AttachmentRef, CommandDraft } from "#protocol/Command";
 import type {
@@ -246,6 +248,21 @@ const FILE_PICKER_LIMIT = 50;
 const COMMAND_PICKER_LIMIT = 20;
 
 /**
+ * The commands this client answers itself, merged into the server's own so
+ * one list is one picker. `/clear` is here rather than on the machine
+ * because what it means here is not what it means in a terminal: a browser
+ * keeps the old conversation in the sidebar, so clearing is opening a new
+ * session beside it rather than dropping the one you have.
+ */
+const LOCAL_COMMANDS: readonly PickerItem[] = [
+  {
+    value: "/clear",
+    label: "/clear",
+    description: "Start a new session with this one's model and directory",
+  },
+];
+
+/**
  * Where the unsent messages and the id of the unwritten session live across a
  * reload. Local to this browser deliberately, unlike the read cursor: an
  * unsent message is not part of the conversation, and no other client has any
@@ -469,6 +486,19 @@ export class SessionStore {
     if (trimmed === "" && attachments.length === 0) {
       return;
     }
+    // Answered here rather than sent: a fresh context is a new session, and
+    // the words that asked for one are not a message to anybody — so the box
+    // is emptied as if they had been said, or the command would name the
+    // session it was typed into and come back with it on the next switch.
+    if (LOCAL_COMMANDS.some((command) => command.value === trimmed)) {
+      this.putDraft(sessionId, "");
+      this.setState((draft) => {
+        delete draft.attachments[sessionId];
+      });
+      // A refused attach is already on `state.error`; the caller is a click.
+      await this.newSession().catch(() => undefined);
+      return;
+    }
     const carried: readonly AttachmentView[] = attachments.map(
       ({ name, url, isImage }) => ({ name, url, isImage })
     );
@@ -648,7 +678,50 @@ export class SessionStore {
         limit,
       })
       .catch(() => undefined);
-    return response?.items ?? [];
+    // Re-ranked rather than concatenated: the server's rows are ranked
+    // against each other, and a client command dropped on either end of them
+    // would sort by where it came from instead of by what was typed.
+    return rankCommands(
+      query,
+      [...LOCAL_COMMANDS, ...(response?.items ?? [])],
+      {
+        limit,
+      }
+    );
+  }
+
+  /**
+   * What is inside a directory on the server, which is the only filesystem
+   * any path in this client names. Throws what the server refused with — a
+   * path that has gone, or one it may not read — because a browser that
+   * cannot go there has to say so rather than draw an empty directory.
+   */
+  public async listDirectory(path: string): Promise<DirectoryListing> {
+    const response = await this.client.send({ type: "list_dirs", path });
+    if (!response.success || !response.directory) {
+      throw new Error(response.error ?? `could not read ${path}`);
+    }
+    return response.directory;
+  }
+
+  /**
+   * The directories this machine has sessions in, most recent first and the
+   * current one left out. The listing is already the sidebar's, so asking
+   * where a reader has worked costs nothing the sidebar was not paying: a
+   * session's cwd is on every row of it.
+   */
+  public async recentDirectories(limit = 5): Promise<readonly string[]> {
+    const sessions = await this.listSessions();
+    const recent: string[] = [];
+    for (const session of sessions) {
+      if (session.cwd !== this.state.cwd && !recent.includes(session.cwd)) {
+        recent.push(session.cwd);
+        if (recent.length === limit) {
+          break;
+        }
+      }
+    }
+    return recent;
   }
 
   public async listSessions(
@@ -957,8 +1030,12 @@ export class SessionStore {
    * A second press while a new chat is open is not a second session: there is
    * one unwritten session at a time, and asking for a new chat while holding
    * one is a request to go back to it.
+   *
+   * Takes no directory and no model: a new session is opened *like* the one
+   * it was asked for from, which the server resolves. A reader asks for a
+   * fresh context, not for a fresh set of settings — those they chose.
    */
-  public async newSession(cwd?: string): Promise<void> {
+  public async newSession(): Promise<void> {
     const unwritten = this.state.unwritten;
     if (
       unwritten &&
@@ -970,28 +1047,87 @@ export class SessionStore {
       });
       return;
     }
+    await this.startDraft("");
+  }
+
+  /**
+   * Work somewhere else. Always a new session rather than a move of this one:
+   * pi writes a session's log inside a directory named for its cwd, so a
+   * conversation cannot change directory without leaving its own transcript
+   * behind — and a fresh session in the new place is what a reader picking a
+   * directory is asking for anyway.
+   */
+  public async openDirectory(cwd: string): Promise<void> {
+    const unwritten = this.state.unwritten;
+    // A new chat nobody has sent from is not worth keeping a second copy of,
+    // and the words typed into it were typed for the session about to open,
+    // so they move with the reader rather than being stranded on a row that
+    // is about to disappear.
+    if (
+      unwritten &&
+      !unwritten.sent &&
+      unwritten.sessionId === this.state.sessionId
+    ) {
+      await this.restart(unwritten, cwd);
+      return;
+    }
     await this.startDraft("", cwd);
   }
 
   /**
-   * The gateway has forgotten the unwritten session — it restarted under us —
-   * so the id is gone and only the message typed into it is worth carrying
-   * into its replacement.
+   * Open the unwritten session's replacement, carrying what was typed into
+   * it. Its id is worth nothing to anybody else — the gateway has forgotten
+   * it, or the reader has moved on from where it was made — but the message
+   * that was never sent is still the message they are writing.
    */
-  private async restart(unwritten: Unwritten): Promise<void> {
-    const typed = this.draftText(unwritten.sessionId);
-    this.putDraft(unwritten.sessionId, "");
-    await this.startDraft(typed, unwritten.cwd);
+  private async restart(
+    unwritten: Unwritten,
+    cwd = unwritten.cwd
+  ): Promise<void> {
+    const typed = this.takeDraft(unwritten.sessionId);
+    try {
+      await this.startDraft(typed, cwd);
+    } catch (error) {
+      // Nothing was replaced, so the words belong where they were written:
+      // this is the one path that has already taken them out of the box.
+      this.putDraft(unwritten.sessionId, typed);
+      throw error;
+    }
   }
 
-  /** Attaches to a session the server is about to make, and claims it. */
-  private async startDraft(
-    text: string,
-    cwd: string | undefined
-  ): Promise<void> {
+  /**
+   * Empties a session's box and answers with what was in it, read from the
+   * synchronous copy rather than from the store: a keystroke and the click
+   * that carries it elsewhere can land in the same task, and `state` settles
+   * one microtask later — long enough to carry away an empty string and then
+   * delete the words it stood for.
+   */
+  private takeDraft(sessionId: string): string {
+    const typed = this.drafts[sessionId] ?? "";
+    this.putDraft(sessionId, "");
+    return typed;
+  }
+
+  /**
+   * Attaches to a session the server is about to make, and claims it. The
+   * session being left is named as the one to open it like, so the model and
+   * the thinking level a reader chose survive a new chat; the directory does
+   * too, unless this is the request that moves it.
+   *
+   * The directory is sent as well as implied, because `like` is a hint a
+   * server that has restarted cannot honour — and a new chat that lands in
+   * the daemon's own directory rather than the reader's is the one failure
+   * here nobody would think to check for.
+   */
+  private async startDraft(text: string, cwd?: string): Promise<void> {
+    const like = this.state.sessionId;
+    const where = cwd ?? this.state.cwd;
     this.claimed = text;
     try {
-      await this.attach(cwd ? { cwd } : {});
+      await this.attach({
+        ...(where === "" ? {} : { cwd: where }),
+        ...(like === "" ? {} : { like }),
+      });
     } catch (error) {
       this.claimed = undefined;
       throw error;

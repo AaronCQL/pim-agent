@@ -111,7 +111,7 @@ test("opens an existing session by pi's uuid and caches it under that key", asyn
 });
 
 test("creates a session under the uuid pi assigns it", async () => {
-  const host = await registry.create(tmp);
+  const host = await registry.create({ cwd: tmp });
 
   const sessionId = host.sessionId;
   expect(sessionId).toBeString();

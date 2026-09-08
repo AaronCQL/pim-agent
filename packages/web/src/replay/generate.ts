@@ -168,7 +168,7 @@ async function main(): Promise<void> {
     customTools: () => pimTools(),
   });
   await registry.init();
-  const host = await registry.create(WORKSPACE);
+  const host = await registry.create({ cwd: WORKSPACE });
   await host.run((session) =>
     session.prompt("Modernise the string building in greeter.ts.")
   );
