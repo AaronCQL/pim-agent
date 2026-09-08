@@ -113,11 +113,13 @@ function onCodeClick(event: MouseEvent): void {
  * against: `<pre>` scrolls, and a button inside it would slide off with the
  * code.
  */
-function mountCopyButtons(host: HTMLElement, complete: boolean): () => void {
-  const skip = complete ? undefined : openBlock(host);
-  const disposers: (() => void)[] = [];
+function mountCopyButtons(
+  host: HTMLElement,
+  open: Element | undefined,
+  disposers: (() => void)[]
+): void {
   for (const pre of host.querySelectorAll("pre:not([data-copy])")) {
-    if (pre === skip) {
+    if (pre === open) {
       continue;
     }
     pre.setAttribute("data-copy", "");
@@ -138,11 +140,6 @@ function mountCopyButtons(host: HTMLElement, complete: boolean): () => void {
       )
     );
   }
-  return () => {
-    for (const dispose of disposers) {
-      dispose();
-    }
-  };
 }
 
 /**
@@ -157,11 +154,9 @@ function mountCopyButtons(host: HTMLElement, complete: boolean): () => void {
  * markers in CSS also read, so the marker here is a `data-` attribute and the
  * class is left exactly as it was found.
  */
-function highlightFences(host: HTMLElement, complete: boolean): void {
-  const skip = complete ? undefined : openBlock(host);
-
+function highlightFences(host: HTMLElement, open: Element | undefined): void {
   for (const code of host.querySelectorAll("pre > code:not([data-hl])")) {
-    if (code.parentElement === skip) {
+    if (code.parentElement === open) {
       continue;
     }
 
@@ -209,13 +204,17 @@ export function Markdown(props: {
   let host!: HTMLDivElement;
   let written = "";
   let parser: smd.Parser | undefined;
-  let disposeButtons = (): void => {};
+  const disposers: (() => void)[] = [];
+  const disposeButtons = (): void => {
+    for (const dispose of disposers) {
+      dispose();
+    }
+    disposers.length = 0;
+  };
   /** The grammar generation the fences on screen were painted against. */
   let painted = untrack(Highlight.version);
 
-  onCleanup(() => {
-    disposeButtons();
-  });
+  onCleanup(disposeButtons);
 
   createEffect(
     () => ({
@@ -228,7 +227,6 @@ export function Markdown(props: {
     ({ text, complete, grammars }) => {
       if (parser === undefined || !text.startsWith(written)) {
         disposeButtons();
-        disposeButtons = () => {};
         host.replaceChildren();
         parser = smd.parser(renderer(host));
         written = "";
@@ -245,13 +243,9 @@ export function Markdown(props: {
           code.removeAttribute("data-hl");
         }
       }
-      highlightFences(host, complete);
-      const disposeAdded = mountCopyButtons(host, complete);
-      const disposePrevious = disposeButtons;
-      disposeButtons = () => {
-        disposePrevious();
-        disposeAdded();
-      };
+      const open = complete ? undefined : openBlock(host);
+      highlightFences(host, open);
+      mountCopyButtons(host, open, disposers);
     }
   );
 

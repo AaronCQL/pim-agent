@@ -76,6 +76,9 @@ export function ToolCard(props: {
   // both the class object and the disclosure on each of them.
   const body = createMemo(() => (props.view.body ?? []).filter(isDrawn));
   const error = () => props.isError === true;
+  const partial = () => props.isPartial === true;
+  const caret = () => caretClass(partial(), error());
+  const spine = () => spineClass(partial(), error());
   // Opened output is quoted material — it recedes behind the row that names
   // it. Two kinds of block are not. A diff's meaning *is* its colour, so
   // dimming one dims the only thing that makes it readable; and markdown is
@@ -91,7 +94,7 @@ export function ToolCard(props: {
   // more specific than "running" — a subagent's indigo — so it wins.
   const tone = (): Tone | undefined =>
     props.view.labelTone ??
-    (error() ? "error" : props.isPartial === true ? "warning" : undefined);
+    (error() ? "error" : partial() ? "warning" : undefined);
 
   /**
    * A summary splits in two. Most of it is a status line — muted, and part of
@@ -146,7 +149,7 @@ export function ToolCard(props: {
           article, so it threads the wrapped lines of the head and runs on past
           whatever the row delivered. Not a grip: there is nothing to work. */}
       <Show when={body().length === 0}>
-        <Spine class={spineClass(props.isPartial === true, error())} />
+        <Spine class={spine()} />
       </Show>
 
       <Show
@@ -158,16 +161,12 @@ export function ToolCard(props: {
           // `flow-root` for the same reason the disclosure's summary has it:
           // the label floats.
           <div class="relative min-w-0 flow-root pl-2ch">
-            <Marker class={caretClass(props.isPartial === true, error())} />
+            <Marker class={caret()} />
             {head()}
           </div>
         }
       >
-        <Collapsible
-          summary={head()}
-          caret={caretClass(props.isPartial === true, error())}
-          spine={spineClass(props.isPartial === true, error())}
-        >
+        <Collapsible summary={head()} caret={caret()} spine={spine()}>
           <div class={dimmed() ? "opacity-60" : ""}>
             <Body blocks={body()} />
           </div>

@@ -7,8 +7,8 @@ import { Markdown } from "../markdown/Markdown";
 import type { LiveMessage, PendingMessage } from "../session/SessionStore";
 import { HideThinking } from "../settings/Settings";
 import { Attachments } from "../view/Attachments";
+import { Notice } from "../view/Blocks";
 import { ToolCards } from "../view/ToolCard";
-import { NOTICE_CLASSES } from "../view/tokens";
 import { SubagentRow } from "./SubagentRow";
 import {
   buildRows,
@@ -329,14 +329,14 @@ const NOTICE_LABELS = {
  */
 function NoticeRowView(props: { readonly row: NoticeRow }) {
   return (
-    <p
-      class={`whitespace-pre-wrap ${NOTICE_CLASSES[props.row.severity]}`}
-      role={props.row.severity === "error" ? "alert" : undefined}
-    >
-      <span class="mr-1ch rounded bg-current/10 px-1.5 py-0.5 text-sm font-semibold">
-        {NOTICE_LABELS[props.row.severity]}
-      </span>
-      {props.row.text}
-    </p>
+    <Notice
+      severity={props.row.severity}
+      text={props.row.text}
+      tag={
+        <span class="mr-1ch rounded bg-current/10 px-1.5 py-0.5 text-sm font-semibold">
+          {NOTICE_LABELS[props.row.severity]}
+        </span>
+      }
+    />
   );
 }

@@ -266,7 +266,7 @@ const SIGNS = {
   removed: "−",
 } as const satisfies Record<ToolDiffLine["kind"], string>;
 
-type Piece = Token & { readonly emphasis: boolean };
+type Piece = Token & { readonly emphasis?: boolean };
 
 /**
  * Syntax tokens re-cut against the intra-line emphasis ranges — the words a
@@ -280,7 +280,7 @@ function emphasize(
   ranges: readonly IntraLineRange[] = []
 ): readonly Piece[] {
   if (ranges.length === 0) {
-    return tokens.map((token) => ({ ...token, emphasis: false }));
+    return tokens;
   }
 
   const pieces: Piece[] = [];
@@ -412,15 +412,23 @@ function LinkBlock(props: { readonly block: BlockOf<"link"> }) {
   );
 }
 
-function NoticeBlock(props: { readonly block: BlockOf<"notice"> }) {
+export function Notice(props: {
+  readonly severity: keyof typeof NOTICE_CLASSES;
+  readonly text: string;
+  readonly tag?: Element;
+}) {
   return (
     <p
-      class={`whitespace-pre-wrap ${NOTICE_CLASSES[props.block.severity]}`}
-      role={props.block.severity === "error" ? "alert" : undefined}
+      class={`whitespace-pre-wrap ${NOTICE_CLASSES[props.severity]}`}
+      role={props.severity === "error" ? "alert" : undefined}
     >
-      {props.block.text}
+      {props.tag === undefined ? props.text : [props.tag, props.text]}
     </p>
   );
+}
+
+function NoticeBlock(props: { readonly block: BlockOf<"notice"> }) {
+  return <Notice severity={props.block.severity} text={props.block.text} />;
 }
 
 /**
