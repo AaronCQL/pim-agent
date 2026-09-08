@@ -4,17 +4,14 @@ import type { PickerItem } from "#core/picker/PickerItem";
 import { rankCommands } from "#core/picker/commandRanker";
 import { RemoteFilePickerSuggestionEngine } from "#core/picker/RemoteFilePickerSuggestionEngine";
 import type { DirectoryListing } from "#core/shared/Directories";
-import type { ToolView, ViewBlock } from "#core/view/ViewBlock";
 import type { AttachmentRef, CommandDraft } from "#protocol/Command";
 import type {
   AttachmentView,
   DurableEvent,
-  EphemeralEvent,
   ModelView,
   ServerEvent,
   SessionStatus,
   SessionSummaryView,
-  StreamEvent,
 } from "#protocol/ServerEvent";
 import { isDurableEvent } from "#protocol/ServerEvent";
 import {
@@ -22,51 +19,33 @@ import {
   type AttachTarget,
   type ConnectionStatus,
 } from "../ws/WsClient";
+import {
+  Drafts,
+  readDrafts,
+  readUnwritten,
+  type Unwritten,
+  type UnwrittenSummary,
+} from "./Drafts";
+import {
+  applyChild,
+  applyLive,
+  ingestDurable,
+  openingMessage,
+  resolveUrls,
+  type LiveMessage,
+  type OptimisticMessage,
+  type PendingMessage,
+  type SubagentTranscript,
+} from "./fold";
 import { Reload } from "./Reload";
 
-export type LiveTool = {
-  readonly callId: string;
-  readonly name: string;
-  readonly view: ToolView;
-  readonly isError: boolean;
-  /** The call is on the wire but nothing has settled its result yet. */
-  readonly isPartial: boolean;
-};
-
-/**
- * One assistant message of the turn in flight. There is a list of them, not
- * one: a turn is a model call per step, and pi appends the entry for a step
- * long after it streamed — usually only when the whole turn settles — so a
- * bucket that held a single message would drop the prose of every step but
- * the last on the floor.
- */
-export type LiveMessage = {
-  readonly messageId: string;
-  text: string;
-  thinking: string;
-  tools: LiveTool[];
-  /**
-   * The durable copy of this message has landed, so its prose is gone from
-   * here and what is left is a shell holding the calls it made. Those outlive
-   * it: pi writes a step down before it writes the results of the calls that
-   * step asked for, and the durable message restates each call without one,
-   * so until the results are written this is the only settled view of them
-   * there is — and the only place an update to one still running can land.
-   */
-  retired: boolean;
-};
-
-/**
- * The one subagent this browser is reading: the child's own log as far as it
- * has been sent, and its turn in flight. The same two halves the session has,
- * because a child's transcript is a transcript — and separate from them,
- * because nothing a child said belongs in the conversation that spawned it.
- */
-export type SubagentTranscript = {
-  readonly callId: string;
-  durable: DurableEvent[];
-  live: LiveMessage[];
-};
+export type {
+  LiveMessage,
+  LiveTool,
+  PendingMessage,
+  SubagentTranscript,
+} from "./fold";
+export type { Unwritten, UnwrittenSummary } from "./Drafts";
 
 /** What the composer's two chips choose from; one query answers both. */
 export type ModelCatalogue = {
@@ -85,58 +64,6 @@ export type UploadedAttachment = {
   readonly isImage: boolean;
   /** The client's own name for the bytes, which is the one worth showing. */
   readonly name: string;
-};
-
-/**
- * A message this client has said and the server has not echoed back yet. Not
- * a `DurableEvent` pretending to be one: it has no ordinal, its stamp is a
- * guess, and — unlike anything the log can hold — it may still be sitting in
- * pi's queue rather than in the conversation, which is what `queued` names.
- */
-export type PendingMessage = {
-  readonly id: string;
-  readonly text: string;
-  /** The files sent with it, so the row is not a caption with nothing above it. */
-  readonly attachments?: readonly AttachmentView[];
-  /**
-   * When it was said, which is the closest thing to a stamp there is until
-   * the durable event that supersedes it arrives with pi's own.
-   */
-  readonly timestamp: number;
-  /** Said into a running turn, so pi holds it; absent when it began one. */
-  readonly queued?: boolean;
-};
-
-/** The same message, as the store holds it: grown in place by a second send. */
-type OptimisticMessage = {
-  -readonly [K in keyof PendingMessage]: PendingMessage[K];
-};
-
-/**
- * A session this client made and the server has not written a line of yet, so
- * it exists in the gateway's memory and nowhere else: the sessions directory
- * cannot list it, which is why the sidebar is handed it separately.
- */
-export type Unwritten = {
-  readonly sessionId: string;
-  readonly cwd: string;
-  /**
-   * A message has gone out, so it is a conversation now and only the listing
-   * is behind. The row stays until the directory can answer for it, but a new
-   * chat asked for from here is a new session rather than a return to this
-   * one.
-   */
-  readonly sent: boolean;
-};
-
-/**
- * The unwritten session as the sidebar paints it: one row the listing has no
- * answer for. Untitled here like every other row, because a row is named by
- * `localTitle` whichever source drew it.
- */
-export type UnwrittenSummary = {
-  readonly sessionId: string;
-  readonly cwd: string;
 };
 
 /**
@@ -263,15 +190,6 @@ const LOCAL_COMMANDS: readonly LocalCommand[] = [
 ];
 
 /**
- * Where the unsent messages and the id of the unwritten session live across a
- * reload. Local to this browser deliberately, unlike the read cursor: an
- * unsent message is not part of the conversation, and no other client has any
- * business seeing it.
- */
-const DRAFTS_KEY = "pim.drafts";
-const UNWRITTEN_KEY = "pim.unwritten";
-
-/**
  * Everything the browser knows about one session, and the only place an
  * intent turns into a command.
  *
@@ -290,28 +208,8 @@ export class SessionStore {
   private optimisticId = 0;
   /** The catalogue is a property of the server, so one query per connection. */
   private catalogue: Promise<ModelCatalogue> | undefined;
-  /**
-   * The unsent messages, synchronously. The store copy is the same strings,
-   * but a keystroke writes it before anything reads it back, so the
-   * persisted value is taken from here.
-   */
-  private readonly drafts: Record<string, string>;
-  /**
-   * Pending `localStorage` writes, one per key. A draft moves far faster
-   * than a reload can read it — once per keystroke — and `localStorage` is
-   * synchronous disk, so the writes are coalesced onto the next microtask:
-   * what a reload needs is where a value ended up, not each place it passed
-   * through.
-   */
-  private readonly writes = new Map<string, () => string | undefined>();
-  /**
-   * The unsent message waiting for a session to belong to, held while an
-   * attach for a *new* chat is in flight. Id and cwd are the server's to
-   * assign, so the draft is recorded where they arrive — the `attached`
-   * frame — rather than read back out of a store that settles its writes on
-   * its own schedule.
-   */
-  private claimed: string | undefined;
+  /** The unsent messages and the session that is nothing but one. */
+  private readonly drafts: Drafts;
 
   public constructor(options: SessionStoreOptions) {
     this.update = new Reload(options.url, options.reloadPage);
@@ -355,13 +253,13 @@ export class SessionStore {
       unwritten,
       subagent: undefined,
     });
-    this.drafts = drafts;
+    this.state = state;
+    this.setState = setState;
+    this.drafts = new Drafts(state, setState, drafts);
     // Nothing to attach to means the server is about to make a session, and
     // a session made for this browser with nothing in it is a draft — the
     // first chat of a fresh tab belongs in the sidebar like any other.
-    this.claimed = sessionId === undefined ? "" : undefined;
-    this.state = state;
-    this.setState = setState;
+    this.drafts.claimed = sessionId === undefined ? "" : undefined;
     this.client = new WsClient({
       url: options.url,
       ...(sessionId === undefined ? {} : { sessionId }),
@@ -492,7 +390,7 @@ export class SessionStore {
     // session it was typed into and come back with it on the next switch.
     const local = LOCAL_COMMANDS.find((command) => command.value === trimmed);
     if (local) {
-      this.putDraft(sessionId, "");
+      this.drafts.putDraft(sessionId, "");
       this.setState((draft) => {
         delete draft.attachments[sessionId];
       });
@@ -542,7 +440,7 @@ export class SessionStore {
       }
       draft.error = undefined;
     });
-    this.spendDraft();
+    this.drafts.spendDraft();
     const refs: readonly AttachmentRef[] = attachments.map(({ id: ref }) => ({
       id: ref,
     }));
@@ -757,55 +655,21 @@ export class SessionStore {
       unwritten &&
       sessions.some(({ sessionId }) => sessionId === unwritten.sessionId)
     ) {
-      this.setUnwritten(undefined);
+      this.drafts.setUnwritten(undefined);
     }
     return sessions;
   }
 
-  /**
-   * The row the server's listing cannot produce, for a session whose first
-   * line has not reached disk yet.
-   *
-   * A new chat nobody has typed into yet gets no row at all: an empty
-   * composer is not a conversation, and a row for it would be the sidebar
-   * listing the button that made it.
-   */
   public unwrittenSummary(): UnwrittenSummary | undefined {
-    const unwritten = this.state.unwritten;
-    if (!unwritten) {
-      return undefined;
-    }
-    if (!unwritten.sent && this.localTitle(unwritten.sessionId) === undefined) {
-      return undefined;
-    }
-    return { sessionId: unwritten.sessionId, cwd: unwritten.cwd };
+    return this.drafts.unwrittenSummary();
   }
 
-  /**
-   * What a session is called when the listing has no name for it: a session
-   * is its opening message, and one that has not been sent yet is the message
-   * about to open it. Never the other way round — a second message being
-   * typed into a conversation does not rename it.
-   *
-   * The same rule the listing uses, which is why the two agree the moment pi
-   * writes the log: what this covers is the gap before it does, where the row
-   * would otherwise fall back to an id it already had a name for.
-   */
   public localTitle(sessionId: string): string | undefined {
-    const opening =
-      sessionId === this.state.sessionId
-        ? this.firstUserText()
-        : // A session left behind by a switch has no transcript here, so what
-          // it was opened with is only known if this browser is what opened
-          // it — which, for the whole of the gap this covers, it is.
-          this.state.openings[sessionId];
-    const title = opening?.trim() || this.draftText(sessionId).trim();
-    return title === "" ? undefined : title;
+    return this.drafts.localTitle(sessionId);
   }
 
-  /** The unsent message typed into a session; empty when there is none. */
   public draftText(sessionId: string): string {
-    return this.state.drafts[sessionId] ?? "";
+    return this.drafts.draftText(sessionId);
   }
 
   /**
@@ -871,82 +735,8 @@ export class SessionStore {
     });
   }
 
-  /**
-   * Mirrors the composer's unsent message onto the session it is being typed
-   * into. Which session that is, is the store's answer and not the box's:
-   * the composer is one box shared by every session.
-   */
   public setDraftText(text: string): void {
-    this.putDraft(
-      untrack(() => this.state.sessionId),
-      text
-    );
-  }
-
-  private putDraft(sessionId: string, text: string): void {
-    if (sessionId === "" || (this.drafts[sessionId] ?? "") === text) {
-      return;
-    }
-    // An empty draft is no draft, and deleting rather than storing `""` is
-    // what keeps this from growing one entry per session ever opened.
-    if (text === "") {
-      delete this.drafts[sessionId];
-    } else {
-      this.drafts[sessionId] = text;
-    }
-    this.setState((state) => {
-      if (text === "") {
-        delete state.drafts[sessionId];
-      } else {
-        state.drafts[sessionId] = text;
-      }
-    });
-    this.persist(DRAFTS_KEY, () => JSON.stringify(this.drafts));
-  }
-
-  /**
-   * The message is on its way, so the box it left is empty. An unwritten
-   * session keeps its row — nothing else can draw one until pi has written
-   * the log — but it is a conversation from here, named by what was sent
-   * rather than by what is typed.
-   */
-  private spendDraft(): void {
-    this.putDraft(this.state.sessionId, "");
-    const sessionId = this.state.sessionId;
-    this.setState((draft) => {
-      delete draft.attachments[sessionId];
-    });
-    const unwritten = this.state.unwritten;
-    if (unwritten && unwritten.sessionId === this.state.sessionId) {
-      this.setUnwritten({ ...unwritten, sent: true });
-    }
-  }
-
-  /**
-   * The message the unwritten session opens with, if it has one. Only the
-   * attached session's content is readable here; one left behind by a switch
-   * has nothing but what was typed into it.
-   */
-  private openingText(unwritten: Unwritten): string | undefined {
-    return unwritten.sessionId === this.state.sessionId
-      ? this.firstUserText()
-      : undefined;
-  }
-
-  private setUnwritten(unwritten: Unwritten | undefined): void {
-    this.setState((state) => {
-      state.unwritten = unwritten;
-    });
-    // Written from the value just set rather than read back at flush time:
-    // a store write lands on its own schedule, and storage must not be told
-    // what state was before it did.
-    const written =
-      unwritten === undefined ? undefined : JSON.stringify(unwritten);
-    this.persist(UNWRITTEN_KEY, () => written);
-  }
-
-  private firstUserText(): string | undefined {
-    return openingMessage(this.state.durable, this.state.optimistic);
+    this.drafts.setDraftText(text);
   }
 
   /**
@@ -997,37 +787,6 @@ export class SessionStore {
     return this.state.unread[sessionId] ?? false;
   }
 
-  /**
-   * Queues one key's write. The value is a thunk so a caller whose value is
-   * expensive — the read cursor, re-serialised once per replayed event —
-   * pays for the write that actually happens rather than for each one
-   * coalesced away. `undefined` removes the key.
-   */
-  private persist(key: string, value: () => string | undefined): void {
-    const flushing = this.writes.size > 0;
-    this.writes.set(key, value);
-    if (flushing) {
-      return;
-    }
-    queueMicrotask(() => {
-      const pending = [...this.writes];
-      this.writes.clear();
-      for (const [name, read] of pending) {
-        const written = read();
-        try {
-          if (written === undefined) {
-            localStorage.removeItem(name);
-          } else {
-            localStorage.setItem(name, written);
-          }
-        } catch {
-          // Private mode, a full quota, or no storage at all. Both of these
-          // are niceties: a draft and a session id that survive a reload.
-        }
-      }
-    });
-  }
-
   private async set(
     type: "set_model" | "set_thinking",
     value: string
@@ -1062,7 +821,7 @@ export class SessionStore {
     if (
       unwritten &&
       !unwritten.sent &&
-      this.openingText(unwritten) === undefined
+      this.drafts.openingText(unwritten) === undefined
     ) {
       await this.switchTo(unwritten.sessionId).catch(async () => {
         await this.restart(unwritten);
@@ -1106,28 +865,15 @@ export class SessionStore {
     unwritten: Unwritten,
     cwd = unwritten.cwd
   ): Promise<void> {
-    const typed = this.takeDraft(unwritten.sessionId);
+    const typed = this.drafts.takeDraft(unwritten.sessionId);
     try {
       await this.startDraft(typed, cwd);
     } catch (error) {
       // Nothing was replaced, so the words belong where they were written:
       // this is the one path that has already taken them out of the box.
-      this.putDraft(unwritten.sessionId, typed);
+      this.drafts.putDraft(unwritten.sessionId, typed);
       throw error;
     }
-  }
-
-  /**
-   * Empties a session's box and answers with what was in it, read from the
-   * synchronous copy rather than from the store: a keystroke and the click
-   * that carries it elsewhere can land in the same task, and `state` settles
-   * one microtask later — long enough to carry away an empty string and then
-   * delete the words it stood for.
-   */
-  private takeDraft(sessionId: string): string {
-    const typed = this.drafts[sessionId] ?? "";
-    this.putDraft(sessionId, "");
-    return typed;
   }
 
   /**
@@ -1144,14 +890,14 @@ export class SessionStore {
   private async startDraft(text: string, cwd?: string): Promise<void> {
     const like = this.state.sessionId;
     const where = cwd ?? this.state.cwd;
-    this.claimed = text;
+    this.drafts.claimed = text;
     try {
       await this.attach({
         ...(where === "" ? {} : { cwd: where }),
         ...(like === "" ? {} : { like }),
       });
     } catch (error) {
-      this.claimed = undefined;
+      this.drafts.claimed = undefined;
       throw error;
     }
   }
@@ -1201,10 +947,12 @@ export class SessionStore {
     // Every URL a frame carries becomes fetchable here, once, before anything
     // reads it: the alternative is a base URL threaded down to the painters
     // through every layer of the transcript.
-    const event = this.resolveUrls(frame);
+    const event = resolveUrls(frame, this.toAbsolute);
     this.update.ingest(event);
     if (isDurableEvent(event)) {
-      this.ingestDurable(event);
+      this.setState((draft) => {
+        ingestDurable(draft, event);
+      });
       return;
     }
     switch (event.type) {
@@ -1239,15 +987,7 @@ export class SessionStore {
         });
         // A chat the reader just started: the server has named it, so the
         // message typed into it now has somewhere to live.
-        if (this.claimed !== undefined) {
-          this.setUnwritten({
-            sessionId: event.sessionId,
-            cwd: event.cwd,
-            sent: false,
-          });
-          this.putDraft(event.sessionId, this.claimed);
-          this.claimed = undefined;
-        }
+        this.drafts.claim(event.sessionId, event.cwd);
         this.rewatch(previous, event.sessionId);
         return;
       }
@@ -1271,7 +1011,7 @@ export class SessionStore {
             return;
           }
           for (const inner of event.events) {
-            applyChild(watched, this.resolveUrls(inner));
+            applyChild(watched, resolveUrls(inner, this.toAbsolute));
           }
         });
         return;
@@ -1328,65 +1068,6 @@ export class SessionStore {
     }
   }
 
-  private ingestDurable(event: DurableEvent): void {
-    this.setState((draft) => {
-      applyDurable(draft, event);
-      if (event.type === "message" && event.role === "user") {
-        // Splicing a store draft in place is not safe across a batch of
-        // events — the write is a patch, and it can be applied against a
-        // later array than the one the index was read from.
-        const at = draft.optimistic.findIndex((pending) =>
-          event.text.startsWith(pending.text)
-        );
-        draft.optimistic = draft.optimistic.filter(
-          (_, index) => index !== (at === -1 ? 0 : at)
-        );
-      }
-    });
-  }
-
-  /**
-   * A frame's files, where this browser can fetch them: what a message
-   * carried, and what a tool sent back — a `send_file` view holds the same
-   * kind of URL, and a durable message holds the views of the calls it made.
-   * Server frames carry server-relative paths, and a child's events are
-   * served by the same gateway the session's are.
-   */
-  private resolveUrls<TEvent extends ServerEvent>(event: TEvent): TEvent {
-    switch (event.type) {
-      case "message":
-        if (event.attachments === undefined && event.toolCalls === undefined) {
-          return event;
-        }
-        return {
-          ...event,
-          ...(event.attachments === undefined
-            ? {}
-            : {
-                attachments: event.attachments.map((file) => ({
-                  ...file,
-                  url: this.absolute(file.url),
-                })),
-              }),
-          ...(event.toolCalls === undefined
-            ? {}
-            : {
-                toolCalls: event.toolCalls.map((call) => ({
-                  ...call,
-                  view: resolveViewUrls(call.view, this.toAbsolute),
-                })),
-              }),
-        };
-      case "tool_call":
-      case "tool_update":
-      case "tool_end":
-      case "tool_result":
-        return { ...event, view: resolveViewUrls(event.view, this.toAbsolute) };
-      default:
-        return event;
-    }
-  }
-
   /**
    * A watch does not survive the socket that asked for it, and does not
    * follow a reader to another session. So a modal still open over a session
@@ -1432,250 +1113,5 @@ export class SessionStore {
     this.setState((draft) => {
       draft.optimistic = draft.optimistic.filter((pending) => !pending.queued);
     });
-  }
-}
-
-/**
- * The live message with this id, appended if this is the first sight of it.
- * Any of the turn's events may be the first to name a message — a replay
- * arrives mid-turn, and a step that only calls a tool never streams a word.
- */
-function liveMessage(live: LiveMessage[], messageId: string): LiveMessage {
-  const existing = live.find((message) => message.messageId === messageId);
-  if (existing) {
-    return existing;
-  }
-  const message: LiveMessage = {
-    messageId,
-    text: "",
-    thinking: "",
-    tools: [],
-    retired: false,
-  };
-  live.push(message);
-  return message;
-}
-
-/**
- * The bucket a turn in flight is held in — the session's, or a watched
- * subagent's. Taken as a whole rather than as its array because dropping a
- * message from one is a write to the field: a store draft is patched, and a
- * splice through the patch is not the same edit as the array it replaces.
- */
-type LiveHolder = { live: LiveMessage[] };
-
-type DurableHolder = LiveHolder & { durable: DurableEvent[] };
-
-/**
- * One event of a turn in flight, folded into the bucket holding it. Shared by
- * the session and by a watched subagent, because a child's turn is a turn:
- * what differs between them is which bucket it lands in, and nothing else.
- */
-function applyLive(target: LiveHolder, event: EphemeralEvent): void {
-  switch (event.type) {
-    case "message_start":
-      liveMessage(target.live, event.messageId);
-      return;
-    case "text_delta":
-      liveMessage(target.live, event.messageId).text += event.delta;
-      return;
-    case "thinking_delta":
-      liveMessage(target.live, event.messageId).thinking += event.delta;
-      return;
-    case "tool_call": {
-      // Onto the message being streamed: pi calls tools from the step it just
-      // wrote, and that is the order the transcript draws them in.
-      const message = liveMessage(target.live, event.messageId);
-      if (message.tools.every((tool) => tool.callId !== event.callId)) {
-        message.tools.push({
-          callId: event.callId,
-          name: event.name,
-          view: event.view,
-          isError: false,
-          isPartial: true,
-        });
-      }
-      return;
-    }
-    case "tool_update":
-      patchLiveTool(target.live, event.callId, { view: event.view });
-      return;
-    case "tool_end":
-      patchLiveTool(target.live, event.callId, {
-        view: event.view,
-        isError: event.isError,
-        isPartial: false,
-      });
-      return;
-    case "message_retire":
-      // The durable copy of this message arrived in the same frame, so
-      // dropping its prose here is a swap, not a gap. Its calls are not
-      // superseded with it — each of them leaves separately, on the durable
-      // result that answers for it.
-      target.live = target.live.flatMap((message) => {
-        if (message.messageId !== event.messageId) {
-          return [message];
-        }
-        return message.tools.length === 0
-          ? []
-          : [{ ...message, text: "", thinking: "", retired: true }];
-      });
-      return;
-    default:
-      return;
-  }
-}
-
-/** Rewrites one live call wherever in the turn it was made. */
-function patchLiveTool(
-  live: LiveMessage[],
-  callId: string,
-  patch: Partial<Omit<LiveTool, "callId" | "name">>
-): void {
-  for (const message of live) {
-    const at = message.tools.findIndex((tool) => tool.callId === callId);
-    const existing = message.tools[at];
-    if (existing) {
-      message.tools[at] = { ...existing, ...patch };
-      return;
-    }
-  }
-}
-
-/**
- * The call has been written down, so the live view of it is superseded.
- *
- * A new bucket rather than an edit inside the one that is there: this runs
- * off a durable event, so the `message_retire` that superseded the message
- * holding the call can be an earlier event of the same batch — and a write
- * through a message that batch has already replaced is a patch on the path
- * it sat at, applied after the assignment that drops it. The message comes
- * back as a shell with nothing in it.
- */
-function settleLiveTool(target: LiveHolder, callId: string): void {
-  target.live = target.live
-    .map((message) => ({
-      ...message,
-      tools: message.tools.filter((tool) => tool.callId !== callId),
-    }))
-    // A retired message is kept for its calls alone, so the last result to be
-    // written is what takes the shell with it.
-    .filter((message) => !message.retired || message.tools.length > 0);
-}
-
-/**
- * One event of a child's log, folded into the modal reading it. Applied here
- * rather than through `ingest` for the reason the envelope exists at all: a
- * child's messages carry ordinals of their own, and taken for the session's
- * they would land in the conversation.
- */
-function applyChild(target: SubagentTranscript, event: StreamEvent): void {
-  if (!isDurableEvent(event)) {
-    applyLive(target, event);
-    return;
-  }
-  // A watch cannot be resumed across a reconnect, so a re-opened one starts
-  // at the child's first entry; the child's own ordinals say which of those
-  // this modal has already painted.
-  if (event.seq <= (target.durable.at(-1)?.seq ?? 0)) {
-    return;
-  }
-  applyDurable(target, event);
-}
-
-/**
- * One written line, folded into the transcript holding it: the session's or a
- * watched child's. The call it answers for, if it answers for one, is no
- * longer in flight.
- */
-function applyDurable(target: DurableHolder, event: DurableEvent): void {
-  target.durable.push(event);
-  if (event.type === "tool_result") {
-    settleLiveTool(target, event.callId);
-  }
-}
-
-function readDrafts(): Record<string, string> {
-  return readRecord<string>(DRAFTS_KEY);
-}
-
-/**
- * The message a session opens with: the first one written, and before it is
- * written the first one said. One rule, because a name that changed when the
- * echo landed would be two.
- */
-function openingMessage(
-  durable: readonly DurableEvent[],
-  optimistic: readonly OptimisticMessage[]
-): string | undefined {
-  for (const event of durable) {
-    if (event.type === "message" && event.role === "user") {
-      return event.text || namesOf(event.attachments);
-    }
-  }
-  const first = optimistic[0];
-  return first && (first.text || namesOf(first.attachments));
-}
-
-/**
- * What to call a message that is only files, which is how the server names
- * one too: a row reading "Untitled" says less than the photo it stands for.
- */
-function namesOf(attachments: readonly AttachmentView[] | undefined): string {
-  return (attachments ?? []).map((file) => file.name).join(", ");
-}
-
-/**
- * A tool view with every `attachment` block's URL made absolute.
- *
- * Rebuilt rather than patched, and with no attempt to hand back the same
- * arrays when nothing changed: the view was parsed out of a JSON frame
- * moments ago and is already nobody's reference, so preserving identity
- * would save a handful of pointer copies and buy no reconciliation.
- */
-function resolveViewUrls(
-  view: ToolView,
-  absolute: (url: string) => string
-): ToolView {
-  const walk = (blocks: readonly ViewBlock[]): readonly ViewBlock[] =>
-    blocks.map((block) => {
-      switch (block.kind) {
-        case "attachment":
-          return { ...block, url: absolute(block.url) };
-        // The containers, so a block nested in one is not quietly skipped.
-        case "section":
-          return { ...block, content: walk(block.content) };
-        case "list":
-          return { ...block, items: walk(block.items) };
-        default:
-          return block;
-      }
-    });
-
-  return {
-    ...view,
-    title: walk(view.title),
-    ...(view.summary === undefined ? {} : { summary: walk(view.summary) }),
-    ...(view.body === undefined ? {} : { body: walk(view.body) }),
-  };
-}
-
-/** Anything storage has none of, or has nonsense in, reads as empty. */
-function readRecord<T>(key: string): Record<string, T> {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw === null ? {} : (JSON.parse(raw) as Record<string, T>);
-  } catch {
-    return {};
-  }
-}
-
-function readUnwritten(): Unwritten | undefined {
-  try {
-    const raw = localStorage.getItem(UNWRITTEN_KEY);
-    const held = raw === null ? undefined : (JSON.parse(raw) as Unwritten);
-    return typeof held?.sessionId === "string" ? held : undefined;
-  } catch {
-    return undefined;
   }
 }
