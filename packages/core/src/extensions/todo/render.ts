@@ -1,8 +1,9 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
+import { Format } from "../../shared/Format";
 import type { ToolViewInput } from "../../shared/Tools";
 import type { ToolView, ViewBlock } from "../../view/ViewBlock";
 import type { TodoInput, TodoItem, todoSchema } from "./schema";
-import type { TodoDetails } from "./todo";
+import { normalizeContent, type TodoDetails } from "./todo";
 
 const MAX_WIDGET_LINES = 7;
 const WIDGET_TITLE_LINES = 1;
@@ -44,7 +45,7 @@ function inProgressSection(items: readonly TodoItem[]): readonly ViewBlock[] {
   );
   const content =
     typeof current?.content === "string"
-      ? current.content.trim().replaceAll(/\s+/gu, " ")
+      ? normalizeContent(current.content)
       : "";
   if (content === "") {
     return [];
@@ -63,8 +64,7 @@ export function formatWidgetTitle(
   items: readonly TodoItem[],
   theme: Theme
 ): string {
-  const noun = items.length === 1 ? "todo" : "todos";
-  const total = theme.bold(`${items.length} ${noun}`);
+  const total = theme.bold(Format.count(items.length, "todo"));
   const summary = formatStatusSummary(items);
   return summary ? `${total} (${summary})` : total;
 }

@@ -117,7 +117,7 @@ function isActive(item: TodoItem): boolean {
   return item.status === "pending" || item.status === "in_progress";
 }
 
-function normalizeContent(content: string): string {
+export function normalizeContent(content: string): string {
   return content.trim().replaceAll(/\s+/g, " ");
 }
 
