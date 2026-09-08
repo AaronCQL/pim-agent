@@ -33,6 +33,12 @@ import { caretClass, spineClass, toneClass } from "./tokens";
  *   it does not change because the row is still doing it. A view that sets
  *   `labelTone` outranks all of that, which is how a subagent paints its own
  *   run state.
+ * - The rule under that mark is drawn either way, for the reason the TUI's
+ *   `│` is: it says "this ink continues the row above", which is as true of a
+ *   four-line shell command that opens onto nothing as of one that opens. A
+ *   row that fits on its line is exactly one `--line` tall, so the rule is
+ *   zero-height and draws nothing; what changes with the mark is only whether
+ *   the rule is also a grip.
  * - `summary` renders in every state — streaming, collapsed, expanded — so it
  *   rides in the `<summary>` alongside the head rather than in the payload,
  *   which is also the order `BodyRenderer` draws the two in. With one
@@ -103,14 +109,6 @@ export function ToolCard(props: {
     };
   });
 
-  /**
-   * A delivery with no payload behind it: the row draws no disclosure, so the
-   * rule under its square is its own to hang. When there *is* a body the
-   * disclosure already owns the gutter — it draws its own, in the state's
-   * hues — and a second rule down the same column would only double the first.
-   */
-  const hanging = () => summary().delivered.length > 0 && body().length === 0;
-
   // The whole visible face of the row: what it is called and what it is
   // doing. Both branches below draw it, and only one of them ever runs, so
   // this is a call rather than a shared node.
@@ -142,6 +140,15 @@ export function ToolCard(props: {
           : ""
       }`}
     >
+      {/* The rule, when nothing else owns the gutter. A row with a payload
+          gets one from its disclosure, which spans the details and doubles as
+          the grip that works it; a row without one hangs its own from the
+          article, so it threads the wrapped lines of the head and runs on past
+          whatever the row delivered. Not a grip: there is nothing to work. */}
+      <Show when={body().length === 0}>
+        <Spine class={spineClass(props.isPartial === true, error())} />
+      </Show>
+
       <Show
         when={body().length > 0}
         fallback={
@@ -169,15 +176,10 @@ export function ToolCard(props: {
 
       {/* Outside the disclosure entirely, and in the row's own gutter: what
           the row handed over is not a line about the row, and reaching for it
-          is not a request to see the payload. The rule is the article's, not
-          this box's: it starts one line down — under the square, where a
-          disclosure's own starts — and runs to the bottom of what was
-          delivered, so the file reads as hanging off the row that sent it
-          rather than sitting loose beneath it. */}
+          is not a request to see the payload. It sits under the article's own
+          rule, where there is one, so the file reads as hanging off the row
+          that sent it rather than sitting loose beneath it. */}
       <Show when={summary().delivered.length > 0}>
-        <Show when={hanging()}>
-          <Spine class="text-neutral-750" />
-        </Show>
         <div class="mt-1 pl-2ch">
           <Body blocks={summary().delivered} />
         </div>

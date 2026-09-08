@@ -443,6 +443,38 @@ describe("ToolCard", () => {
     expect(paintTool(view).innerHTML).toContain("text-neutral-750");
   });
 
+  /**
+   * And it hangs off the square as readily as off the caret. The rule means
+   * "this ink continues the row above", which a four-line shell command that
+   * opens onto nothing needs said as much as one that opens — a row that fits
+   * its line is one `--line` tall, so the rule is zero-height and shows
+   * nothing either way. What the mark changes is only whether it is a grip.
+   */
+  test("a row with nothing to open still hangs a rule", () => {
+    const RULE = "[class*='top-[--line]']";
+    const spine = (host: HTMLElement): string => {
+      const rule = host.querySelector(RULE);
+      expect(rule).not.toBeNull();
+      return rule!.className;
+    };
+
+    for (const bodiless of [
+      { title: [SAMPLES.file] },
+      { title: [SAMPLES.file], summary: [SAMPLES.attachment] },
+    ] satisfies readonly ToolView[]) {
+      const rule = spine(paintTool(bodiless));
+      expect(rule).toContain("w-2ch");
+      expect(rule).not.toContain("cursor-pointer");
+    }
+
+    // In the state's hues, like the disclosure's own, and one rule only: a
+    // row that opens gets its from the details it opens.
+    expect(spine(paintTool({ title: [SAMPLES.file] }, true))).toContain(
+      "text-amber-400"
+    );
+    expect(paintTool(view).querySelectorAll(RULE)).toHaveLength(1);
+  });
+
   // So does the one word a reader scans for down the left edge — but only the
   // label. What the row did is not restated in the state's colour.
   test("the label reads the state too, and the subject never does", () => {
