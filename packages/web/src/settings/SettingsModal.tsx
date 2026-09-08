@@ -6,19 +6,15 @@ import {
   type Element,
 } from "solid-js";
 
+import { Format } from "#core/shared/Format";
 import type { SessionStore } from "../session/SessionStore";
+import { ACTION, FIELD, QUIET } from "../ui/classes";
 import { Modal } from "../ui/Modal";
 import { Spinner } from "../ui/Spinner";
 import type { Settings } from "./Settings";
 
 /** The section headings, each a label for the controls beneath it. */
 const TITLE = "text-xs font-bold uppercase tracking-widest text-neutral-500";
-const FIELD =
-  "h-8 min-w-0 flex-1 rounded-lg bg-neutral-850 px-2 text-sm outline-none ring-1 ring-transparent focus:ring-neutral-600";
-const ACTION =
-  "h-8 shrink-0 rounded-lg bg-indigo-500 px-3 text-sm font-semibold text-white hover:bg-indigo-400 disabled:bg-neutral-850 disabled:text-neutral-500";
-const QUIET =
-  "h-8 shrink-0 rounded-lg bg-neutral-850 px-3 text-sm text-neutral-350 hover:bg-neutral-800 hover:text-neutral-50 disabled:text-neutral-500 disabled:hover:bg-neutral-850";
 
 /**
  * Everything this browser decides for itself: which machine it drives, what
@@ -70,7 +66,7 @@ export function SettingsModal(props: {
     if (
       busy() > 0 &&
       !window.confirm(
-        `Restarting will stop ${busy()} running session${busy() === 1 ? "" : "s"}. Update and restart anyway?`
+        `Restarting will stop ${Format.count(busy(), "running session")}. Update and restart anyway?`
       )
     ) {
       return;
@@ -193,7 +189,7 @@ export function SettingsModal(props: {
             </button>
             <p class="text-sm text-neutral-500">
               {busy() > 0
-                ? `Installs all updates and refreshes your browser, stopping ${busy()} running session${busy() === 1 ? "" : "s"}.`
+                ? `Installs all updates and refreshes your browser, stopping ${Format.count(busy(), "running session")}.`
                 : "Installs all updates and refreshes your browser."}
             </p>
           </Section>

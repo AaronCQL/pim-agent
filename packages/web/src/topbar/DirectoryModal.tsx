@@ -10,6 +10,7 @@ import {
 import type { DirectoryListing } from "#core/shared/Directories";
 import { abbreviateHome } from "../format";
 import type { SessionStore } from "../session/SessionStore";
+import { ACTION, FIELD, ICON } from "../ui/classes";
 import { createComboboxNavigation } from "../ui/Combobox";
 import { createMediaQuery, KEYBOARD } from "../ui/media";
 import { Modal } from "../ui/Modal";
@@ -208,6 +209,11 @@ export function DirectoryModal(props: {
    */
   const settled = (): boolean => target() !== undefined;
 
+  const footer = (): string => {
+    const path = target();
+    return path === undefined ? "Nowhere to open" : abbreviateHome(path);
+  };
+
   const commit = (path: string): void => {
     props.onClose();
     // A refused directory lands on `state.error`, which the shell paints;
@@ -229,7 +235,7 @@ export function DirectoryModal(props: {
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
       const path = target();
-      if (path !== undefined && settled()) {
+      if (path !== undefined) {
         commit(path);
       }
       return;
@@ -257,7 +263,7 @@ export function DirectoryModal(props: {
             aria-label="Parent directory"
             title="Parent directory"
             disabled={listing()?.parent === undefined}
-            class="flex size-8 shrink-0 items-center justify-center rounded-lg text-neutral-350 hover:bg-neutral-850 hover:text-neutral-50 disabled:opacity-40"
+            class={`${ICON} disabled:opacity-40`}
             onClick={() => {
               const parent = listing()?.parent;
               if (parent !== undefined) {
@@ -277,7 +283,7 @@ export function DirectoryModal(props: {
             autocapitalize="off"
             autocomplete="off"
             aria-label="Directory path"
-            class="h-8 min-w-0 flex-1 rounded-lg bg-neutral-850 px-2 text-sm outline-none ring-1 ring-transparent focus:ring-neutral-600"
+            class={FIELD}
             onInput={(event: InputEvent) => {
               setInput((event.currentTarget as HTMLInputElement).value);
             }}
@@ -330,15 +336,13 @@ export function DirectoryModal(props: {
             rather than a destination. */}
         <div class="flex shrink-0 items-center gap-3 border-t border-neutral-700 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <span class="min-w-0 flex-1 truncate text-sm text-neutral-400">
-            {target() === undefined
-              ? "Nowhere to open"
-              : abbreviateHome(target()!)}
+            {footer()}
           </span>
           <button
             type="button"
             disabled={!settled()}
             title="Start a new session in this directory"
-            class="h-8 shrink-0 rounded-lg bg-indigo-500 px-3 text-sm font-semibold text-white hover:bg-indigo-400 disabled:bg-neutral-850 disabled:text-neutral-500"
+            class={ACTION}
             onClick={() => {
               const path = target();
               if (path !== undefined) {

@@ -15,11 +15,8 @@ import type { SessionSummaryView } from "#protocol/ServerEvent";
 import { version } from "../../../../package.json";
 import type { SessionStore } from "../session/SessionStore";
 import { abbreviateHome, relativeTime } from "../format";
+import { ICON } from "../ui/classes";
 import { Spinner } from "../ui/Spinner";
-
-/** The 32px square every piece of chrome in this app is pressed through. */
-const ICON =
-  "flex size-8 shrink-0 items-center justify-center rounded-lg text-neutral-350 hover:bg-neutral-850 hover:text-neutral-50";
 
 /**
  * One row, from either source: the server's listing or the unwritten session
