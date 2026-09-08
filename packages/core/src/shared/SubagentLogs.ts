@@ -2,6 +2,7 @@ import { readdirSync, rmSync, statSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Paths } from "./Paths";
+import { Sweeper } from "./Sweeper";
 
 /**
  * The charset a pi session id and a provider tool call id share. Both become
@@ -12,8 +13,6 @@ const ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 
 const TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
-
-let installed = false;
 
 /**
  * Deliberately not under pi's sessions root: `SessionRegistry` lists the
@@ -95,36 +94,8 @@ function newestMtime(parentDir: string): number {
   return newest;
 }
 
-/**
- * Idempotent: registers the retention lifecycle (startup sweep, periodic
- * sweep, and cleanup on exit/termination) once, however many times it is
- * called.
- */
 function installSweeper(): void {
-  if (installed) {
-    return;
-  }
-  installed = true;
-
-  cleanup();
-  setInterval(() => {
-    cleanup();
-  }, SWEEP_INTERVAL_MS).unref?.();
-  process.once("exit", () => {
-    cleanup();
-  });
-
-  // Signal-induced termination skips the "exit" handler, so sweep here too.
-  // Re-raise after our once-handler is gone so the default termination still
-  // happens — merely registering a signal listener otherwise suppresses it.
-  for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
-    process.once(sig, () => {
-      try {
-        cleanup();
-      } catch {}
-      process.kill(process.pid, sig);
-    });
-  }
+  Sweeper.install({ cleanup, intervalMs: SWEEP_INTERVAL_MS });
 }
 
 export const SubagentLogs = {

@@ -2,14 +2,13 @@ import { readdirSync, statSync, unlinkSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Paths } from "./Paths";
+import { Sweeper } from "./Sweeper";
 
 const SPILL_FILE_RE =
   /^[a-z0-9]+-[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.[a-z0-9]+$/;
 
 const TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
-
-let installed = false;
 
 function dir(): string {
   return join(Paths.pimHomeDir(), "cache");
@@ -54,36 +53,9 @@ function cleanup(cacheDir = dir(), now = Date.now()): void {
   }
 }
 
-/**
- * Idempotent: registers the full spill-file lifecycle (startup sweep,
- * periodic sweep, and cleanup on exit/termination) once, no matter how many
- * extensions call it. Each tool that writes spills calls this in its setup.
- */
+/** Each tool that writes spills calls this in its setup. */
 function installSweeper(): void {
-  if (installed) {
-    return;
-  }
-  installed = true;
-
-  cleanup();
-  setInterval(() => {
-    cleanup();
-  }, SWEEP_INTERVAL_MS).unref?.();
-  process.once("exit", () => {
-    cleanup();
-  });
-
-  // Signal-induced termination skips the "exit" handler, so sweep here too.
-  // Re-raise after our once-handler is gone so the default termination still
-  // happens — merely registering a signal listener otherwise suppresses it.
-  for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
-    process.once(sig, () => {
-      try {
-        cleanup();
-      } catch {}
-      process.kill(process.pid, sig);
-    });
-  }
+  Sweeper.install({ cleanup, intervalMs: SWEEP_INTERVAL_MS });
 }
 
 export const SpillCache = {
