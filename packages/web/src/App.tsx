@@ -10,6 +10,7 @@ import { Composer } from "./input/Composer";
 import { SessionStore } from "./session/SessionStore";
 import { Sidebar } from "./sessions/Sidebar";
 import { Skeleton } from "./transcript/Skeleton";
+import { Splash } from "./transcript/Splash";
 import { SubagentModal } from "./transcript/SubagentModal";
 import { Transcript } from "./transcript/Transcript";
 import { Topbar } from "./topbar/Topbar";
@@ -108,6 +109,14 @@ export function Shell(props: { readonly store: SessionStore }) {
   // store deliberately does not re-attach to — and sending a message, which
   // the reader expects to see land however far up they had scrolled.
   const jump = anchor.jump;
+  const hasTranscript = (): boolean =>
+    props.store.state.durable.length > 0 ||
+    props.store.trailing().length > 0 ||
+    props.store.liveSize() > 0 ||
+    props.store.draftText(props.store.state.sessionId) !== "" ||
+    props.store.attachmentsOf(props.store.state.sessionId).length > 0;
+  const showSplash = (): boolean =>
+    !props.store.state.loading && !hasTranscript();
 
   createEffect(
     () =>
@@ -193,15 +202,17 @@ export function Shell(props: { readonly store: SessionStore }) {
               {/* Whole or not at all: a conversation that paints itself row
                   by row as the log arrives is a flicker, not progress. */}
               <Show when={!props.store.state.loading} fallback={<Skeleton />}>
-                <Transcript
-                  events={props.store.state.durable}
-                  trailing={props.store.trailing()}
-                  live={props.store.state.live}
-                  onEdit={recall}
-                  onOpenSubagent={(callId) => {
-                    void props.store.watch(callId);
-                  }}
-                />
+                <Show when={hasTranscript()}>
+                  <Transcript
+                    events={props.store.state.durable}
+                    trailing={props.store.trailing()}
+                    live={props.store.state.live}
+                    onEdit={recall}
+                    onOpenSubagent={(callId) => {
+                      void props.store.watch(callId);
+                    }}
+                  />
+                </Show>
               </Show>
             </div>
           </div>
@@ -210,13 +221,29 @@ export function Shell(props: { readonly store: SessionStore }) {
             ref={(element: HTMLDivElement) => {
               observeHeight(element, setInset);
             }}
-            // Stops at the scroller's scrollbar instead of at the container's
-            // edge: the transcript scrolls under this backdrop, so covering
-            // the scrollbar column would hide the thumb exactly where the
-            // reader is dragging it.
-            class="pointer-events-none absolute right-[--scrollbar] bottom-0 left-0 flex justify-center bg-neutral-925 px-3 pt-10 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+            class={{
+              "pointer-events-none flex": true,
+              // Stops at the scroller's scrollbar instead of at the
+              // container's edge: the transcript scrolls under this backdrop,
+              // so covering the scrollbar column would hide the thumb exactly
+              // where the reader is dragging it.
+              "absolute right-[--scrollbar] bottom-0 left-0 justify-center bg-neutral-925 px-3 pt-10 pb-[max(0.75rem,env(safe-area-inset-bottom))]":
+                !showSplash(),
+              "absolute inset-0 items-center justify-center px-3": showSplash(),
+            }}
           >
-            <Composer store={props.store} onSend={jump} recalled={recalled()} />
+            <div class="w-full max-w-3xl">
+              <Show when={showSplash()}>
+                <Splash />
+              </Show>
+              <div class={{ "mt-[calc(var(--line)*2)]": showSplash() }}>
+                <Composer
+                  store={props.store}
+                  onSend={jump}
+                  recalled={recalled()}
+                />
+              </div>
+            </div>
           </div>
         </div>
       </div>

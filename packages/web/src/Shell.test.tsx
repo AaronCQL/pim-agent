@@ -121,6 +121,29 @@ function message(seq: number, text: string): ServerEvent {
 }
 
 describe("the shell, painted from events alone", () => {
+  test("a new session opens with the basic controls", () => {
+    const store = offline();
+    const host = paint(store);
+
+    store.ingest(attached());
+    flush();
+    const splash = host.querySelector<HTMLElement>(
+      "[aria-label='Pim controls']"
+    )!;
+    expect(splash.textContent).toContain("PIM - Pi IMproved");
+    expect(splash.textContent).toContain("Escape");
+    expect(splash.textContent).toContain("/<command>");
+    expect(splash.textContent).toContain("@<path>");
+    expect(splash.textContent).toContain("Ctrl/⌘ + Enter");
+    expect(splash.parentElement?.parentElement?.className).toContain("inset-0");
+
+    const composer = host.querySelector("textarea")!;
+    type(composer, "hello");
+    flush();
+    expect(host.querySelector("[aria-label='Pim controls']")).toBeNull();
+    expect(host.querySelector("textarea")).toBe(composer);
+  });
+
   test("paints the streaming turn and then the durable message", () => {
     const store = offline();
     const host = paint(store);
