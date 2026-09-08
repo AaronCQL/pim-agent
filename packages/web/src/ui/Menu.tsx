@@ -16,18 +16,9 @@ import { createMediaQuery, KEYBOARD } from "./media";
 export type MenuOption = {
   readonly value: string;
   readonly label: string;
-  /** Right-aligned qualifier on the row, e.g. a model's provider. */
   readonly tag?: string;
 };
 
-/**
- * Substring, case-insensitive, over the label and its tag, and in the order
- * the caller gave. Not the fuzzy ranker the `@` and `/` pickers use: that one
- * scores a query against thousands of paths, and it would earn a browser
- * bundle for its trouble here to reorder a list a reader is already looking
- * at — a menu that resorted itself under the second keystroke is harder to
- * hit than one that only got shorter.
- */
 function matching(
   options: readonly MenuOption[],
   query: string
@@ -41,40 +32,14 @@ function matching(
   );
 }
 
-/**
- * A chip that opens a list of choices above itself: the composer's model and
- * thinking pickers, and nothing else so far.
- *
- * The list is the `Combobox` the `@` and `/` pickers use, so the two overlays
- * in the composer look the same and answer the same keys; what this adds is
- * the trigger and its open/closed state, which a completion surface over a
- * text field does not have.
- *
- * Dismissal is a capture-phase `pointerdown` while open, rather than
- * `popover="auto"`'s light dismiss: the popover is `manual`, and the two
- * mechanisms would disagree about who closed it — the chip's own click would
- * re-open what the light dismiss had just closed.
- *
- * "Outside" is measured against the whole menu, chip and panel together, and
- * not the chip alone. A touch scroll of the list opens with a `pointerdown`
- * on a row, so a chip-only test closes the menu under the finger before it
- * moves — and takes the tap with it, since touch defers its compat
- * `mousedown` to `touchend`, by which point the row is unmounted. A mouse
- * hides the bug: its `mousedown` follows in the same task, while the list is
- * still there.
- */
+/** A chip that opens a `Combobox` of choices above itself. */
 export function Menu(props: {
   readonly label: string;
   readonly icon: string;
   readonly options: readonly MenuOption[];
   readonly value?: string;
   readonly title?: string;
-  /**
-   * Places a filter box at the top of the list, with this as its placeholder.
-   * Given only to a list too long to read down: a server's models run past
-   * the panel's height, while the levels a model thinks at are four rows
-   * nobody would type at.
-   */
+  /** Places a filter box at the top of the list, with this as its placeholder. */
   readonly search?: string;
   readonly onOpen?: () => void;
   readonly onSelect: (value: string) => void;
@@ -116,59 +81,37 @@ export function Menu(props: {
     () => open(),
     (isOpen) => {
       if (!isOpen) {
-        // Cleared on the way out rather than on the way in, so the list the
-        // next open lands on is the whole one before any of it is read: a
-        // reset written as the menu opens has not been applied yet when the
-        // active row below is chosen from it.
+        // Clear on the way out: a reset written at open has not applied when the active row is chosen from it.
         setQuery("");
-        // The box itself is uncontrolled: the signal above is what the rows
-        // obey, and the element keeps whatever was typed into it until it is
-        // told otherwise — so the next open would read as a filtered list
-        // that is showing everything.
+        // The box is uncontrolled, so it keeps what was typed until told otherwise.
         if (field) {
           field.value = "";
         }
-        // The filter box is inside the panel that just went away, so a
-        // keyboard left standing on it would be typing at nothing: the chip
-        // is where the focus was before it, and where the next Tab is
-        // measured from.
         if (document.activeElement === field) {
           chip.focus();
         }
         return;
       }
       props.onOpen?.();
-      // The current value is where the keyboard starts, so opening the menu
-      // lands on what the chip already says.
-      // Untracked because it is a snapshot taken at the open: this callback
-      // is not a tracking scope, and the list changing later is the filter
-      // doing its job, not a reason to re-run the open.
+      // Untracked: a snapshot at the open, not a dependency of this effect.
       const at = untrack(() =>
         shown().findIndex((option) => option.value === props.value)
       );
       navigation.setActiveIndex(at === -1 ? 0 : at);
-      // Only where the keyboard is already out. A soft one is drawn over the
-      // page when a field takes focus, and the panel opens upward from a chip
-      // at the bottom of the screen — so focusing here would cover the list
-      // with the keys, for a reader who tapped to browse rather than to type.
-      // The panel is shown by an effect of its own, and a hidden field cannot
-      // take focus: the microtask waits for that to have happened.
+      // Focus in a microtask: the panel is shown by another effect, and a hidden field cannot take focus.
       if (untrack(keyboard)) {
         queueMicrotask(() => {
           field?.focus();
         });
       }
       const dismiss = (event: PointerEvent): void => {
-        // The panel is in the top layer but still a DOM child of the root,
-        // so one containment test covers both halves.
+        // Test the whole menu, chip and panel: a chip-only test closes the list under a touch scroll of a row.
         if (!root.contains(event.target as Node)) {
           setOpen(false);
         }
       };
       document.addEventListener("pointerdown", dismiss, true);
-      // Returned rather than registered with `onCleanup`: an effect callback
-      // is not an owner, so a cleanup asked for there is never run at all and
-      // every open leaves another dismiss listener on the document.
+      // Return the cleanup: an effect callback is not an owner, so `onCleanup` here would never run.
       return () => {
         document.removeEventListener("pointerdown", dismiss, true);
       };
@@ -223,8 +166,6 @@ export function Menu(props: {
                 class="mb-1 w-full rounded-lg bg-neutral-900 px-2 py-1 outline-none ring-1 ring-neutral-700 placeholder:text-neutral-500 focus:ring-neutral-600"
                 onInput={(event: InputEvent) => {
                   setQuery((event.target as HTMLInputElement).value);
-                  // The rows underneath are a different list now, and the
-                  // one the keyboard was standing on is not in it.
                   navigation.setActiveIndex(0);
                 }}
                 onKeyDown={(event: KeyboardEvent) => {

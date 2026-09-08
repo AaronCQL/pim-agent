@@ -21,8 +21,7 @@ export function createDialog(options: {
       })
     : undefined;
 
-  // Opened from an effect rather than from the ref: a `<dialog>` must be in
-  // the document before it can be shown, and the ref runs before it is.
+  // Open from an effect, not the ref: a `<dialog>` must be in the document before it can be shown.
   createEffect(
     () => options.open(),
     (open) => {

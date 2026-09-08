@@ -2,20 +2,7 @@ import type { Element } from "solid-js";
 
 import { createDialog } from "./dialog";
 
-/**
- * A left sheet, and the only overlay primitive `ui/` adds for mobile.
- *
- * `<dialog>.showModal()` again: focus trap, `inert` on the rest of the
- * document, ESC-to-close and `::backdrop` are the parts a drawer library
- * exists to supply, and the platform already has them. What is left is the
- * geometry — full height, pinned to the inline start — plus closing on a
- * backdrop tap, which is a click on the dialog box itself because the backdrop
- * is not an element.
- *
- * No slide-in: a `<dialog>` toggles `display`, so animating it needs
- * `@starting-style` and discrete transitions, which is a lot of machinery for
- * a frame of motion the mockup never asked for.
- */
+/** A left sheet over `<dialog>.showModal()`; a backdrop tap is a click on the dialog box itself. */
 export function Drawer(props: {
   readonly open: boolean;
   readonly onClose: () => void;

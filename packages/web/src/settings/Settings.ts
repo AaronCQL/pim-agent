@@ -6,49 +6,21 @@ import {
 } from "solid-js";
 
 const KEY = "pim.settings";
-/** Where `pim-server` listens when the page itself came from Vite. */
 const DEV_PORT = 4319;
 
 type Preferences = {
-  /**
-   * Which machine to drive. Empty is the one that served this page, which is
-   * what every install that is not being reached across a network wants —
-   * stored as the empty string rather than as the resolved address so that a
-   * tab left open keeps following its origin instead of pinning the hostname
-   * it happened to be opened on.
-   */
   serverUrl: string;
   hideThinking: boolean;
 };
 
-/**
- * Whether the transcript paints what the model thought, read where the
- * thinking is drawn rather than passed down to it: the transcript is mounted
- * in two places — the session and the subagent modal — and neither of the
- * things between them has any other reason to know this preference exists.
- *
- * Defaulted rather than default-less, so a transcript rendered outside the
- * shell (a test, a fixture) shows everything instead of throwing.
- */
+/** Whether the transcript hides what the model thought; outside the shell it shows everything. */
 export const HideThinking = createContext<() => boolean>(() => false);
 
-/**
- * What this browser remembers, as opposed to what the server knows: where to
- * connect and what to draw. Neither is a fact about any session, so neither
- * goes near `SessionStore` — nothing here is ever sent anywhere.
- *
- * Persisted whole under one key, because the pair is small and read exactly
- * once, at boot, before there is a socket to be reactive about.
- */
+/** What this browser remembers rather than the server: where to connect, and what to draw. */
 export class Settings {
-  /** The reactive view, for anything that paints a preference. */
   public readonly state: Store<Preferences>;
   private readonly setState: StoreSetter<Preferences>;
-  /**
-   * The same values, written synchronously. A store write only lands on the
-   * next flush, and both the address to connect to and the bytes to persist
-   * are read in the same breath as the write that changed them.
-   */
+  // The same values, written synchronously: a store write only lands on the next flush.
   private current: Preferences;
 
   public constructor() {
@@ -58,24 +30,13 @@ export class Settings {
     this.setState = setState;
   }
 
-  /**
-   * The socket address to open, which is the only form of the setting that
-   * anything else may use. A typed address is a courtesy to the person who
-   * typed it — `laptop:4319`, `http://laptop:4319` and `ws://laptop:4319` all
-   * mean the same machine — and one that cannot be read at all falls back to
-   * this origin rather than leaving the app with nowhere to connect.
-   */
+  /** The socket address to open; an address that cannot be read falls back to this origin. */
   public gateway(): string {
     const typed = this.current.serverUrl;
     return (typed === "" ? undefined : socketUrl(typed)) ?? origin();
   }
 
-  /**
-   * A `ws://` gateway named from an `https://` page. The browser blocks the
-   * socket outright and reports it only to the console, so this is the one
-   * misconfiguration the modal has to name itself: every symptom of it looks
-   * exactly like a server that is switched off.
-   */
+  /** A `ws://` gateway named from an `https://` page, which the browser blocks silently. */
   public insecure(): boolean {
     return location.protocol === "https:" && this.gateway().startsWith("ws:");
   }
@@ -97,8 +58,7 @@ export class Settings {
     try {
       localStorage.setItem(KEY, JSON.stringify(next));
     } catch {
-      // Private mode or a full quota. Both preferences hold for this tab's
-      // life either way; only remembering them is lost.
+      // Private mode or a full quota; the preferences still hold for this tab.
     }
   }
 }
@@ -118,7 +78,6 @@ function read(): Preferences {
   }
 }
 
-/** The server that served this page, or whatever the build was pointed at. */
 function origin(): string {
   const override = import.meta.env.VITE_PIM_SERVER;
   if (override !== undefined && override !== "") {
@@ -138,10 +97,7 @@ const SOCKET_SCHEMES: Record<string, string> = {
   "wss:": "wss:",
 };
 
-/**
- * Assembled from the parsed parts rather than by assigning `protocol`, whose
- * setter has its own rules about which schemes may become which.
- */
+// Assemble from the parsed parts: the `protocol` setter refuses some scheme changes.
 function socketUrl(typed: string): string | undefined {
   const secure = location.protocol === "https:";
   const url = URL.parse(

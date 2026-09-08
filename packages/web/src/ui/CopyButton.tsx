@@ -4,14 +4,7 @@ import { copyText } from "./clipboard";
 
 const FLASH_MS = 1200;
 
-/**
- * Copy-to-clipboard, wrapped for the same reason the overlays are: feature
- * code should express "copy this" and nothing more, and the tick is only
- * shown for a copy that actually happened.
- *
- * Always visible, per the mockup — a hover-only affordance does not exist on a
- * phone, and this one sits over code that is worth copying from either.
- */
+/** Copy-to-clipboard button; the tick is shown only for a copy that happened. */
 export function CopyButton(props: {
   readonly text: () => string;
   readonly label?: string;

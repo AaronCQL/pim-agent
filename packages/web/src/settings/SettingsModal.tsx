@@ -13,26 +13,15 @@ import { Modal } from "../ui/Modal";
 import { Spinner } from "../ui/Spinner";
 import type { Settings } from "./Settings";
 
-/** The section headings, each a label for the controls beneath it. */
 const TITLE = "text-xs font-bold uppercase tracking-widest text-neutral-500";
 
-/**
- * Everything this browser decides for itself: which machine it drives, what
- * it draws, and the one button that changes the machine rather than the tab.
- *
- * It is also where a connection that will not come back is triaged — the
- * topbar's disconnected mark opens this, because the address is the only part
- * of a dead socket a reader can actually change.
- */
+/** Everything this browser decides for itself: which machine it drives, and what it draws. */
 export function SettingsModal(props: {
   readonly open: boolean;
   readonly onClose: () => void;
   readonly store: SessionStore;
   readonly settings: Settings;
 }) {
-  // The saved address is the field's value, not its default: reopening after
-  // a half-typed hostname should show what is in force, not what was
-  // abandoned.
   const saved = (): string => props.settings.state.serverUrl;
   const [draft, setDraft] = createSignal(untrack(saved));
   createEffect(
@@ -48,11 +37,7 @@ export function SettingsModal(props: {
   const busy = (): number => props.store.runningIds().length;
   const pending = (): boolean => props.store.update.state.pending;
 
-  /**
-   * Saved, then straight into a reload: the socket, the upload endpoint and
-   * every image URL are all fixed at construction from one address, so
-   * pointing the tab somewhere else is a new page rather than a reconnect.
-   */
+  // Save, then reload: the socket and every URL are fixed at construction from one address.
   const apply = (url: string): void => {
     props.settings.setServerUrl(url);
     props.store.update.refresh();
@@ -82,9 +67,6 @@ export function SettingsModal(props: {
       size="narrow"
       header={<div class="font-bold leading-[--line]">Settings</div>}
     >
-      {/* Mounted only while open, like the directory browser: a closed dialog
-          is hidden rather than absent, and the field would otherwise hold a
-          draft nobody can see. */}
       <Show when={props.open}>
         <div class="min-h-0 space-y-[calc(var(--line)*1.5)] overflow-y-auto p-3">
           <Section title="Server">
@@ -117,8 +99,6 @@ export function SettingsModal(props: {
                 Connect
               </button>
             </form>
-            {/* Only worth offering once there is something to come back
-                from: on a default install this button undoes nothing. */}
             <Show when={props.settings.state.serverUrl !== ""}>
               <button
                 type="button"
@@ -144,9 +124,6 @@ export function SettingsModal(props: {
 
           <Section title="App">
             <label class="flex w-fit cursor-pointer items-center gap-2 text-sm">
-              {/* The box is the input itself — `appearance-none` and a tick
-                  laid over it, so the checked fill is ours rather than the
-                  platform's `accent-color`, which paints its own blue. */}
               <span class="relative flex size-4 shrink-0 items-center justify-center">
                 <input
                   type="checkbox"
@@ -199,11 +176,6 @@ export function SettingsModal(props: {
   );
 }
 
-/**
- * What the socket is doing, in words. The topbar says only that something is
- * wrong; this is where it says what and to whom — which matters most for the
- * reader who has just pointed the tab at another machine.
- */
 function Status(props: {
   readonly store: SessionStore;
   readonly settings: Settings;

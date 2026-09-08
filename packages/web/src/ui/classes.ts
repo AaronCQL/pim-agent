@@ -1,4 +1,3 @@
-/** The 32px square every piece of chrome in this app is pressed through. */
 export const ICON =
   "flex size-8 shrink-0 items-center justify-center rounded-lg text-neutral-350 hover:bg-neutral-850 hover:text-neutral-50";
 
