@@ -49,6 +49,16 @@ function displayRelative(path: string, cwd: string): string {
   return rel;
 }
 
+function compare(left: string, right: string): number {
+  if (left < right) {
+    return -1;
+  }
+  if (left > right) {
+    return 1;
+  }
+  return 0;
+}
+
 function titleOr(
   path: string | undefined,
   cwd: string,
@@ -66,4 +76,5 @@ export const Paths = {
   abbreviateHome,
   displayRelative,
   titleOr,
+  compare,
 };

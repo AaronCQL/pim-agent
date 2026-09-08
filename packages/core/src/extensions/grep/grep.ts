@@ -1,6 +1,8 @@
 import { FileScanner, type FileScanOptions } from "../../shared/FileScanner";
 import { FsErrors } from "../../shared/FsErrors";
 import { Lines } from "../../shared/Lines";
+import { Paths } from "../../shared/Paths";
+import { Pool } from "../../shared/Pool";
 
 const MATCH_CONCURRENCY = 16;
 
@@ -34,7 +36,9 @@ export type GrepMatcher = {
   readonly literal: Buffer | undefined;
 };
 
-export type GrepScanOptions = FileScanOptions;
+export type GrepScanOptions = FileScanOptions & {
+  readonly retainFileLines?: boolean;
+};
 
 // Characters that stand for themselves in both a default-flag regex and raw
 // UTF-8 bytes (all ASCII, so they never alias a multibyte sequence). A pattern
@@ -89,24 +93,13 @@ export async function findMatches(
   const files = metadata.isFile()
     ? [path]
     : (await FileScanner.scan(path, glob ?? "**/*", options)).toSorted(
-        comparePaths
+        Paths.compare
       );
-  const results: GrepMatch[] = [];
+  const scanned = await Pool.mapPooled(files, MATCH_CONCURRENCY, (filePath) =>
+    matchFile(filePath, matcher, options.retainFileLines ?? true)
+  );
 
-  for (let index = 0; index < files.length; index += MATCH_CONCURRENCY) {
-    const chunk = files.slice(index, index + MATCH_CONCURRENCY);
-    const chunkResults = await Promise.all(
-      chunk.map((filePath) => matchFile(filePath, matcher))
-    );
-
-    for (const match of chunkResults) {
-      if (match !== undefined) {
-        results.push(match);
-      }
-    }
-  }
-
-  return results;
+  return scanned.filter((match) => match !== undefined);
 }
 
 /**
@@ -119,7 +112,8 @@ export async function findMatches(
  */
 async function matchFile(
   filePath: string,
-  matcher: GrepMatcher
+  matcher: GrepMatcher,
+  retainFileLines: boolean
 ): Promise<GrepMatch | undefined> {
   const file = Bun.file(filePath);
 
@@ -147,7 +141,7 @@ async function matchFile(
   }
 
   const content = Lines.normalize(text);
-  const fileLines = Lines.split(content);
+  const fileLines = Lines.splitNormalized(content);
   const ranges = matcher.matchAcrossLines
     ? regexRanges(content, matcher.regex)
     : matchLineByLine(fileLines, matcher.regex);
@@ -161,7 +155,7 @@ async function matchFile(
     mtime: file.lastModified,
     lines: linesForRanges(fileLines, ranges),
     ranges,
-    fileLines,
+    fileLines: retainFileLines ? fileLines : [],
   };
 }
 
@@ -184,6 +178,7 @@ function matchLineByLine(
 function regexRanges(content: string, regex: RegExp): readonly GrepLineRange[] {
   const globalRegex = new RegExp(regex.source, addFlag(regex.flags, "g"));
   const ranges: GrepLineRange[] = [];
+  const cursor: LineCursor = { offset: 0, line: 1 };
 
   while (true) {
     const match = globalRegex.exec(content);
@@ -193,7 +188,12 @@ function regexRanges(content: string, regex: RegExp): readonly GrepLineRange[] {
     }
 
     ranges.push(
-      lineRangeForOffsets(content, match.index, match.index + match[0].length)
+      lineRangeForOffsets(
+        content,
+        match.index,
+        match.index + match[0].length,
+        cursor
+      )
     );
 
     if (match[0].length === 0) {
@@ -208,30 +208,43 @@ function addFlag(flags: string, flag: string): string {
   return flags.includes(flag) ? flags : `${flags}${flag}`;
 }
 
+type LineCursor = {
+  offset: number;
+  line: number;
+};
+
 function lineRangeForOffsets(
   content: string,
   startOffset: number,
-  endOffset: number
+  endOffset: number,
+  cursor: LineCursor
 ): GrepLineRange {
   return {
-    startLineNumber: lineNumberForOffset(content, startOffset),
+    startLineNumber: lineNumberForOffset(content, startOffset, cursor),
     endLineNumber: lineNumberForOffset(
       content,
-      Math.max(startOffset, endOffset - 1)
+      Math.max(startOffset, endOffset - 1),
+      cursor
     ),
   };
 }
 
-function lineNumberForOffset(content: string, offset: number): number {
-  let lineNumber = 1;
+function lineNumberForOffset(
+  content: string,
+  offset: number,
+  cursor: LineCursor
+): number {
+  const target = Math.min(offset, content.length);
 
-  for (let index = 0; index < offset && index < content.length; index += 1) {
+  for (let index = cursor.offset; index < target; index += 1) {
     if (content[index] === "\n") {
-      lineNumber += 1;
+      cursor.line += 1;
     }
   }
 
-  return lineNumber;
+  cursor.offset = target;
+
+  return cursor.line;
 }
 
 function linesForRanges(
@@ -257,14 +270,4 @@ function linesForRanges(
   }
 
   return lines;
-}
-
-function comparePaths(left: string, right: string): number {
-  if (left < right) {
-    return -1;
-  }
-  if (left > right) {
-    return 1;
-  }
-  return 0;
 }
