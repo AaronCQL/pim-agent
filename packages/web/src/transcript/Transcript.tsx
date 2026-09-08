@@ -8,7 +8,7 @@ import type { LiveMessage, PendingMessage } from "../session/SessionStore";
 import { Attachments } from "../view/Attachments";
 import { ToolCards } from "../view/ToolCard";
 import { NOTICE_CLASSES } from "../view/tokens";
-import { SubagentCard } from "./SubagentCard";
+import { SubagentRow } from "./SubagentRow";
 import {
   buildRows,
   extendRows,
@@ -220,7 +220,16 @@ function Card(props: { readonly row: MessageRow }) {
           under a photo is a speech bubble with nothing said in it. */}
       <Show when={props.row.text !== ""}>
         <div
-          class={`min-w-0 whitespace-pre-wrap break-words rounded-lg px-4 py-3 ${
+          // `wrap-anywhere`, not `break-words`. The card is sized to fit its
+          // own content — it is a flex item under `items-end`, so it is as
+          // wide as its text and no wider — and `overflow-wrap: break-word`
+          // breaks a long run only after the box has a width, leaving the
+          // box's own min-content width at the longest unbreakable run. A
+          // message carrying a path or a URL is then laid out that wide,
+          // straight past the 85% column and off the left edge of a phone.
+          // `anywhere` is the same break with the intrinsic width counted, so
+          // the card fits the column and the path wraps inside it.
+          class={`whitespace-pre-wrap wrap-anywhere rounded-lg px-4 py-3 ${
             props.row.queued
               ? "bg-neutral-900 group-hover:bg-neutral-850"
               : "bg-neutral-850"
@@ -241,11 +250,13 @@ function Card(props: { readonly row: MessageRow }) {
 }
 
 /**
- * A tool row — except for the one tool whose output is a conversation, which
- * gets a card instead. A subagent's run is a session of its own, far too much
- * to hang off a disclosure inside a column, so its row is a button that opens
- * it rather than a disclosure that expands it; the two share no chrome, which
- * is why they are two components and not one with a flag.
+ * A tool row — except for the one tool whose output is a conversation. A
+ * subagent's run is a session of its own, far too much to hang off a
+ * disclosure inside a column, so its row is a button that opens it rather
+ * than a disclosure that expands it. It is still a tool row and still drawn
+ * as one; what differs is small enough to describe in a sentence and too
+ * load-bearing to hide behind a flag on `ToolCard`, whose whole subject is
+ * the disclosure this row does not have.
  */
 function ToolRowView(props: {
   readonly row: ToolRow;
@@ -263,7 +274,7 @@ function ToolRowView(props: {
         />
       }
     >
-      <SubagentCard
+      <SubagentRow
         row={props.row}
         onOpen={(callId) => props.onOpenSubagent?.(callId)}
       />

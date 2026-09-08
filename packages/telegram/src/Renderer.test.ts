@@ -567,19 +567,15 @@ describe("Telegram Renderer subagent status", () => {
       partialResult: {
         content: [],
         details: {
-          entries: [
-            { kind: "tool", callId: "t1", name: "read", isError: false },
-            { kind: "tool", callId: "t2", name: "read", isError: false },
-          ],
-          usage: { cost: 0.01, turns: 1 },
-          activeToolNames: ["grep"],
+          usage: { cost: 0.01, turns: 1, contextTokens: 20_000 },
+          contextWindow: 1_000_000,
         },
       },
     } as AgentSessionEvent);
     await renderer.finish("", "ok");
 
     expect(api.sent.map((msg) => msg.text)).toEqual([
-      "🤖 review the diff read ×2 ⬝ 1 turn ⬝ $0.01 ⬝ grep…",
+      "🤖 review the diff 1 turn ⬝ $0.01 ⬝ 2.0%/1.0M",
     ]);
   });
 

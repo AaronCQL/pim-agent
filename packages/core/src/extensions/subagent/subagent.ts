@@ -29,7 +29,7 @@ export const SUBAGENT_TOOL_NAME = "subagent";
  * character count: a short answer that never reaches a byte threshold would
  * otherwise sit invisible until the call settled.
  */
-const UPDATE_INTERVAL_MS = 100;
+export const UPDATE_INTERVAL_MS = 100;
 
 const inSubagent = new AsyncLocalStorage<true>();
 
@@ -43,21 +43,6 @@ export type SubagentUsage = {
   readonly contextTokens: number | undefined;
 };
 
-/**
- * One thing the child did, in the order it did it. Tool entries are names
- * only: this list is re-serialised into the parent's log and re-shipped on
- * every partial update, so a child's arguments and output must never ride
- * along.
- */
-export type SubagentEntry =
-  | { readonly kind: "text"; readonly text: string }
-  | {
-      readonly kind: "tool";
-      readonly callId: string;
-      readonly name: string;
-      readonly isError: boolean;
-    };
-
 export type SubagentSnapshot = {
   /**
    * The child's own session id, for a human reading a log. Nothing may resolve
@@ -65,10 +50,7 @@ export type SubagentSnapshot = {
    * all, so its log is found by deriving the path from the call id instead.
    */
   readonly sessionId: string | undefined;
-  readonly entries: readonly SubagentEntry[];
   readonly usage: SubagentUsage;
-  readonly activeToolNames: readonly string[];
-  readonly lastToolName: string | undefined;
   readonly stopReason: string | undefined;
   readonly errorMessage: string | undefined;
   readonly model: string | undefined;
@@ -118,19 +100,6 @@ export function childToolNames(
   activeToolNames: readonly string[]
 ): readonly string[] {
   return activeToolNames.filter((name) => name !== SUBAGENT_TOOL_NAME);
-}
-
-/** Everything the child wrote, one paragraph per assistant message. */
-function narrationOf(entries: readonly SubagentEntry[]): string {
-  return entries
-    .filter((entry) => entry.kind === "text")
-    .map((entry) => entry.text)
-    .join("\n\n");
-}
-
-/** The child's last word, which is the answer the parent model asked for. */
-function answerOf(entries: readonly SubagentEntry[]): string {
-  return entries.findLast((entry) => entry.kind === "text")?.text ?? "";
 }
 
 /**
@@ -257,14 +226,14 @@ export async function runSubagent(
       throw makeFailureError(
         thrownMessage(thrown),
         undefined,
-        narrationOf(snapshot.entries)
+        capture.narration()
       );
     }
     if (snapshot.stopReason === "error" || snapshot.stopReason === "aborted") {
       throw makeFailureError(
         snapshot.stopReason,
         snapshot.errorMessage,
-        narrationOf(snapshot.entries)
+        capture.narration()
       );
     }
 
@@ -280,12 +249,21 @@ export async function runSubagent(
 }
 
 export class SubagentEventCapture {
-  private readonly entries: SubagentEntry[] = [];
+  /**
+   * What the child said, one entry per assistant message, in order — and only
+   * what it said, never the tools it reached for.
+   *
+   * Private, and it stays private: `details` is re-serialised into the
+   * parent's log and re-shipped on every partial update, `fullOutput` already
+   * carries every word of this, and nothing may ride along that no one reads.
+   * A roster of the child's tool calls would be a transcript with the
+   * substance taken out; the child's own log has every call in full, and that
+   * is what its row opens.
+   */
+  private readonly entries: string[] = [];
   private pendingText = "";
   private updateTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly usage: MutableUsage = emptyUsage();
-  private readonly activeToolsById = new Map<string, string>();
-  private lastToolName: string | undefined;
   private stopReason: string | undefined;
   private errorMessage: string | undefined;
   private model: string | undefined;
@@ -316,26 +294,6 @@ export class SubagentEventCapture {
       this.errorMessage = event.message.errorMessage;
       this.model = event.message.model;
       this.emitUpdate();
-      return;
-    }
-
-    if (event.type === "tool_execution_start") {
-      this.activeToolsById.set(event.toolCallId, event.toolName);
-      this.lastToolName = event.toolName;
-      this.emitUpdate();
-      return;
-    }
-
-    if (event.type === "tool_execution_end") {
-      this.activeToolsById.delete(event.toolCallId);
-      this.entries.push({
-        kind: "tool",
-        callId: event.toolCallId,
-        name: event.toolName,
-        isError: event.isError,
-      });
-      this.lastToolName = event.toolName;
-      this.emitUpdate();
     }
   }
 
@@ -353,17 +311,10 @@ export class SubagentEventCapture {
     this.cancelPending();
   }
 
-  /** A message still streaming reads as the entry it is about to become. */
   public snapshot(): SubagentSnapshot {
     return {
       sessionId: this.sessionId,
-      entries:
-        this.pendingText === ""
-          ? [...this.entries]
-          : [...this.entries, { kind: "text", text: this.pendingText }],
       usage: freezeUsage(this.usage),
-      activeToolNames: Array.from(new Set(this.activeToolsById.values())),
-      lastToolName: this.lastToolName,
       stopReason: this.stopReason,
       errorMessage: this.errorMessage,
       model: this.model,
@@ -371,22 +322,40 @@ export class SubagentEventCapture {
     };
   }
 
+  /**
+   * Everything the child wrote, one paragraph per assistant message. A
+   * message still streaming reads as the entry it is about to become.
+   */
+  public narration(): string {
+    const said =
+      this.pendingText === ""
+        ? this.entries
+        : [...this.entries, this.pendingText];
+    return said.join("\n\n");
+  }
+
   public details(): SubagentDetails {
-    const snapshot = this.snapshot();
-    const cap = applyOutputCap(answerOf(snapshot.entries));
+    const cap = applyOutputCap(this.answer());
     return {
-      ...snapshot,
+      ...this.snapshot(),
       returnedOutput: cap.text,
-      fullOutput: narrationOf(snapshot.entries),
+      fullOutput: this.narration(),
       outputTruncated: cap.truncated,
       omittedBytes: cap.omittedBytes,
     };
   }
 
+  /** The child's last word, which is the answer the parent model asked for. */
+  private answer(): string {
+    return this.pendingText === ""
+      ? (this.entries.at(-1) ?? "")
+      : this.pendingText;
+  }
+
   private commitText(text: string): void {
     this.pendingText = "";
     if (text !== "") {
-      this.entries.push({ kind: "text", text });
+      this.entries.push(text);
     }
   }
 

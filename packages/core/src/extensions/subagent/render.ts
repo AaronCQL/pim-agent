@@ -3,24 +3,16 @@ import { Renderer } from "../../shared/Renderer";
 import type { ToolViewInput } from "../../shared/Tools";
 import type { Span, Tone, ToolView, ViewBlock } from "../../view/ViewBlock";
 import type { subagentSchema } from "./schema";
-import type { SubagentDetails, SubagentEntry } from "./subagent";
+import type { SubagentDetails } from "./subagent";
 
-const DOT = "⬝";
-
-/**
- * How many distinct tool names the roster names before it elides. Past this
- * the summary stops being one line on a phone, and the names it would add are
- * the ones the run used least.
- */
-const ROSTER_CAP = 8;
+/** The one separator the accounting is joined on, muted in every state. */
+const SEPARATOR: Span = { text: " ⬝ ", tone: "muted" };
 
 type SubagentViewInput = ToolViewInput<typeof subagentSchema, SubagentDetails>;
 
-type ToolTally = { count: number; failures: number };
-
 /**
- * The summary is what the run did — roster, turns, cost — and it renders in
- * every state, so it is the whole of a collapsed row. The body is what the
+ * The summary is what the run cost — turns, money, context — and it renders
+ * in every state, so it is the whole of a collapsed row. The body is what the
  * child wrote, opened on request. `details` carries both, so a replayed
  * session renders exactly like the live run did.
  */
@@ -79,67 +71,36 @@ function summaryBlocks(
  * Accounting recedes once the run is over: a settled row reads muted so the
  * answer above it is the loudest thing, and amber means only that the child is
  * still working.
+ *
+ * Tool names are deliberately absent. A roster of what the child reached for
+ * — either tallied over the whole run or named as it happens — is one line
+ * standing in for a transcript, and it answers nothing a reader would act on:
+ * the run either produced the answer or it did not, and if the how matters,
+ * the child's own log is a tap away. What is left is what the parent is
+ * actually spending on the delegation.
  */
 function summarySpans(
   details: SubagentDetails,
   isPartial: boolean
 ): readonly Span[] {
   // `details` is only as current as whatever wrote it: pi replaces a failed
-  // result with an empty object, and a session recorded before the roster
-  // existed replays without one. Both arrive typed as a whole
-  // `SubagentDetails` and are neither.
+  // result with an empty object, and an old enough session replays without
+  // usage on it. Both arrive typed as a whole `SubagentDetails` and are
+  // neither.
   if (details.usage === undefined) {
     return [];
   }
 
   const tone: Tone = isPartial ? "warning" : "muted";
-  const segments = [
-    ...rosterSegments(details.entries ?? [], tone),
-    [{ text: formatTurns(details.usage.turns), tone }],
-    [{ text: formatCost(details.usage.cost), tone }],
-    ...(details.stopReason === undefined
-      ? [[{ text: `${activeToolLabel(details)}…`, tone: "warning" as const }]]
-      : []),
-  ];
+  const parts = [
+    Format.count(details.usage.turns, "turn"),
+    formatCost(details.usage.cost),
+    formatContext(details.usage.contextTokens, details.contextWindow),
+  ].filter((part) => part !== undefined);
 
-  return segments.flatMap((spans, index) =>
-    index === 0
-      ? spans
-      : [{ text: ` ${DOT} `, tone: "muted" as const }, ...spans]
+  return parts.flatMap((text, index): readonly Span[] =>
+    index === 0 ? [{ text, tone }] : [SEPARATOR, { text, tone }]
   );
-}
-
-/** `read ×6`, in the order the child first reached for each tool. */
-function rosterSegments(
-  entries: readonly SubagentEntry[],
-  tone: Tone
-): ReadonlyArray<readonly Span[]> {
-  const tallies = new Map<string, ToolTally>();
-  for (const entry of entries) {
-    if (entry.kind !== "tool") {
-      continue;
-    }
-    const tally = tallies.get(entry.name) ?? { count: 0, failures: 0 };
-    tally.count += 1;
-    tally.failures += entry.isError ? 1 : 0;
-    tallies.set(entry.name, tally);
-  }
-
-  const named = Array.from(tallies).slice(0, ROSTER_CAP);
-  const segments = named.map(([name, tally]): readonly Span[] => {
-    const label = tally.count === 1 ? name : `${name} ×${tally.count}`;
-    return tally.failures === 0
-      ? [{ text: label, tone }]
-      : [
-          { text: label, tone },
-          { text: ` (${tally.failures} failed)`, tone: "error" },
-        ];
-  });
-
-  const elided = tallies.size - named.length;
-  return elided === 0
-    ? segments
-    : [...segments, [{ text: `… ${elided} more`, tone }]];
 }
 
 /**
@@ -180,50 +141,30 @@ function bodyBlocks(
 }
 
 /**
- * The child's own context window and model, which say nothing about what the
- * run achieved and are identical on every row of a session.
+ * The child's own model, which says nothing about what the run achieved and
+ * is identical on every row of a session — so it foots the body rather than
+ * riding the summary, where the accounting lives.
  */
 function footPairs(
   details: SubagentDetails | undefined
 ): ReadonlyArray<readonly [string, string]> {
-  const pairs: Array<readonly [string, string]> = [];
-  if (details === undefined) {
-    return pairs;
-  }
-
-  const context = formatContext(details);
-  if (context !== undefined) {
-    pairs.push(["context", context]);
-  }
-  if (details.model !== undefined) {
-    pairs.push(["model", details.model]);
-  }
-  return pairs;
+  return details?.model === undefined ? [] : [["model", details.model]];
 }
 
-function activeToolLabel(details: SubagentDetails): string {
-  if (details.activeToolNames.length === 1) {
-    return details.activeToolNames[0]!;
-  }
-  if (details.activeToolNames.length > 1) {
-    return `${details.activeToolNames.length} tools`;
-  }
-  return details.lastToolName ?? "thinking";
-}
-
-function formatContext(details: SubagentDetails): string | undefined {
-  const window = details.contextWindow;
-  // Optional even though the type says otherwise: an emptied `details` from a
-  // thrown call reaches here too.
-  const tokens = details.usage?.contextTokens;
+/**
+ * `0.4%/1.0M`: how full the child left its own window, over how big that
+ * window was. The percentage is the number a reader acts on — a run that came
+ * back at 90% is one to split next time — and the window is what makes the
+ * percentage mean anything.
+ */
+function formatContext(
+  tokens: number | undefined,
+  window: number | undefined
+): string | undefined {
   if (window === undefined || window <= 0 || tokens === undefined) {
     return undefined;
   }
-  return `${((tokens / window) * 100).toFixed(1)}% of ${Format.formatTokens(window)}`;
-}
-
-function formatTurns(turns: number): string {
-  return `${turns} ${turns === 1 ? "turn" : "turns"}`;
+  return `${((tokens / window) * 100).toFixed(1)}%/${Format.formatTokens(window)}`;
 }
 
 function formatCost(cost: number): string {

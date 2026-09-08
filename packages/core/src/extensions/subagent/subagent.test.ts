@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, jest, test } from "bun:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
 import {
@@ -7,6 +7,7 @@ import {
   childLoaderOptions,
   runSubagent,
   SubagentEventCapture,
+  UPDATE_INTERVAL_MS,
   type SubagentDetails,
   type SubagentSession,
 } from "./subagent";
@@ -130,7 +131,7 @@ describe("childLoaderOptions", () => {
 });
 
 describe("SubagentEventCapture", () => {
-  test("keeps every message in order, interleaved with the tools between them", () => {
+  test("keeps every message in order, and no trace of the tools between them", () => {
     const updates: string[] = [];
     const capture = new SubagentEventCapture((partial) => {
       updates.push(
@@ -164,11 +165,10 @@ describe("SubagentEventCapture", () => {
     } as never);
 
     const snapshot = capture.snapshot();
-    expect(snapshot.entries).toEqual([
-      { kind: "text", text: "first turn" },
-      { kind: "tool", callId: "1", name: "read", isError: false },
-      { kind: "text", text: "final answer" },
-    ]);
+    // The tool call above leaves nothing behind: the narration is what rides
+    // into the parent's log, and no row reports what the child reached for —
+    // its own log has the calls in full.
+    expect(capture.narration()).toBe("first turn\n\nfinal answer");
     expect(snapshot.usage).toEqual({
       input: 12,
       output: 12,
@@ -178,8 +178,7 @@ describe("SubagentEventCapture", () => {
       turns: 2,
       contextTokens: undefined,
     });
-    expect(snapshot.lastToolName).toBe("read");
-    expect(updates.at(-1)).toBe("read ⬝ 2 turns ⬝ $0.03");
+    expect(updates.at(-1)).toBe("2 turns ⬝ $0.03");
   });
 
   test("narration survives a final message that says nothing", () => {
@@ -205,10 +204,8 @@ describe("SubagentEventCapture", () => {
       message: assistant(["partial"]),
     } as never);
 
-    expect(capture.snapshot().entries).toEqual([
-      { kind: "text", text: "partial" },
-    ]);
     expect(capture.details().fullOutput).toBe("partial");
+    expect(capture.details().returnedOutput).toBe("partial");
   });
 
   test("streams the body on a trailing throttle, not on every delta", async () => {
@@ -261,25 +258,27 @@ describe("SubagentEventCapture", () => {
     ]);
   });
 
-  test("dispose drops an update the run no longer wants", async () => {
+  test("dispose drops an update the run no longer wants", () => {
     const updates: SubagentDetails[] = [];
     const capture = new SubagentEventCapture((partial) =>
       updates.push(partial.details)
     );
 
-    capture.handle({
-      type: "message_update",
-      message: assistant(["orphan"]),
-    } as never);
-    capture.dispose();
-    capture.handle({
-      type: "tool_execution_start",
-      toolCallId: "1",
-      toolName: "read",
-    } as never);
+    jest.useFakeTimers();
+    try {
+      capture.handle({
+        type: "message_update",
+        message: assistant(["orphan"]),
+      } as never);
+      capture.dispose();
 
-    await until(() => updates.length === 1, "the tool update");
-    expect(updates).toHaveLength(1);
+      // Past the throttle: had dispose only skipped the callback and left the
+      // timer running, the scheduled update would have landed here.
+      jest.advanceTimersByTime(UPDATE_INTERVAL_MS * 2);
+      expect(updates).toEqual([]);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
 

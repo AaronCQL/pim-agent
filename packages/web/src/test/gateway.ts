@@ -179,7 +179,7 @@ function subagentTool(
           kind: "spans",
           spans: [
             {
-              text: `patch ⬝ ${result?.details.turns ?? 1} turns`,
+              text: `${result?.details.turns ?? 1} turns ⬝ $0.02`,
               tone: isPartial ? "warning" : "muted",
             },
           ],

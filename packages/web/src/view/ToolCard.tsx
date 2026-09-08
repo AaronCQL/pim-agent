@@ -1,10 +1,10 @@
 import { createMemo, For, Show } from "solid-js";
 
-import type { ToolView, ViewBlock } from "#core/view/ViewBlock";
+import type { Tone, ToolView, ViewBlock } from "#core/view/ViewBlock";
 import { Markdown } from "../markdown/Markdown";
 import { Caret, Collapsible } from "../ui/Collapsible";
 import { Blocks, Body } from "./Blocks";
-import { toneClass } from "./tokens";
+import { caretClass, toneClass } from "./tokens";
 
 /**
  * One tool row. The mockup supplies the shape; the TUI supplies the semantics,
@@ -129,15 +129,24 @@ export function ToolCards(props: {
   );
 }
 
-/** The tint of a call still in flight, matching the `warning` tone. */
-const PENDING_CARET = "bg-amber-400";
-
-/** Neutral, amber while the call is still in flight, rose once it has failed. */
-function caretClass(isPartial: boolean, isError: boolean): string {
-  if (isPartial) {
-    return PENDING_CARET;
-  }
-  return isError ? "bg-rose-400" : "bg-neutral-300";
+/**
+ * What a row is called, and the muted colon that hands the rest of the line
+ * to its subject. Shared rather than copied, because the subagent row is a
+ * `<button>` that draws no disclosure and still has to sit on the same left
+ * edge as the tool rows above and below it.
+ */
+export function RowLabel(props: {
+  readonly label: string;
+  readonly tone?: Tone;
+}) {
+  return (
+    <Show when={props.label}>
+      <span class={`shrink-0 font-bold ${toneClass(props.tone)}`}>
+        {props.label}
+      </span>
+      <span class="shrink-0 pr-1ch text-neutral-400">:</span>
+    </Show>
+  );
 }
 
 /** Splits the `apply_patch` renderer's leading item and trailing sections. */
@@ -197,12 +206,7 @@ function Head(props: { readonly view: ToolView; readonly name?: string }) {
     // and `Bash:` naming a four-line pipeline belongs on the pipeline's first
     // line rather than floating halfway down it.
     <span class="flex min-w-0 grow items-start">
-      <Show when={label()}>
-        <span class={`shrink-0 font-bold ${toneClass(props.view.labelTone)}`}>
-          {label()}
-        </span>
-        <span class="shrink-0 pr-1ch text-neutral-400">:</span>
-      </Show>
+      <RowLabel label={label()} tone={props.view.labelTone} />
       <Show
         when={prose()}
         fallback={

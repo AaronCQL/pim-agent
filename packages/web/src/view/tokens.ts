@@ -110,6 +110,17 @@ export function toneClass(tone: Tone | undefined): string {
   return TONE_CLASSES[tone ?? "default"];
 }
 
+/**
+ * The caret a tool row hangs off: neutral, amber while the call is still in
+ * flight — the `warning` tone's own tint — and rose once it has failed.
+ */
+export function caretClass(isPartial: boolean, isError: boolean): string {
+  if (isPartial) {
+    return "bg-amber-400";
+  }
+  return isError ? "bg-rose-400" : "bg-neutral-300";
+}
+
 export type FrameGroup = {
   readonly frame: Frame;
   readonly blocks: readonly ViewBlock[];

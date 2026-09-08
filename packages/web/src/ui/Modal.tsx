@@ -94,17 +94,27 @@ export function Modal(props: {
       }`}
     >
       <div class="flex h-full min-h-0 flex-col">
-        <header class="flex items-start gap-3 border-b border-neutral-700 px-3 py-[--line]">
+        {/* Half a `--line` either side, not a whole one: the header is a bar
+            naming what is below it, and a bar that is mostly air reads as a
+            second panel. The hairline is what separates it from the
+            transcript; the padding only has to keep the text off that. */}
+        <header class="flex items-start gap-3 border-b border-neutral-700 px-3 py-[calc(var(--line)/2)]">
           <div class="min-w-0 grow">{props.header}</div>
+          {/* The icon button the sidebar and topbar draw: a 32px
+              `rounded-lg` square with no fill until it is pointed at. A
+              round-cornered button around an X, not a circled X floating in
+              the corner — the ring in `close-circle-bold` reads as the
+              button's own edge and then disagrees with every other button in
+              the UI about what shape a button is. */}
           <button
             type="button"
             aria-label="Close"
-            class="flex size-6 shrink-0 items-center justify-center text-neutral-400 hover:text-neutral-100"
+            class="flex size-8 shrink-0 items-center justify-center rounded-lg text-neutral-350 hover:bg-neutral-850 hover:text-neutral-50"
             onClick={() => {
               host.close();
             }}
           >
-            <span class="i-solar:close-circle-bold size-5" aria-hidden="true" />
+            <span class="i-griddy-icons:close size-4" aria-hidden="true" />
           </button>
         </header>
         {props.children}

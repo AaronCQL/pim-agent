@@ -207,6 +207,29 @@ describe("painting", () => {
     expect(host.querySelector("a")?.textContent).toBe("shot.png");
   });
 
+  // A subagent's prompt is the message that showed this up: it names files,
+  // and a path is one unbreakable run. The card is only ever as wide as its
+  // text, so a break that waits for the box to have a width leaves the box
+  // itself min-content wide — wider than the phone, hanging off its left
+  // edge. There is no layout in the DOM stub to measure, so the rule that
+  // makes the run count against the intrinsic width is the assertion.
+  test("a user message breaks a run too long to fit instead of widening", () => {
+    const host = replay([
+      {
+        seq: 1,
+        type: "message",
+        messageId: "m",
+        role: "user",
+        text: "read packages/web/src/transcript/SubagentModal.tsx",
+        timestamp: 0,
+      },
+    ]);
+
+    expect(host.querySelector(".bg-neutral-850")?.className).toContain(
+      "wrap-anywhere"
+    );
+  });
+
   test("a dead turn is rose text where the answer would have been", () => {
     const host = replay([
       {
