@@ -74,6 +74,29 @@ describe("the published tarball", () => {
     ).toEqual([]);
   });
 
+  test.each(["wordmark.svg", "favicon.svg", "apple-touch-icon.png"])(
+    "ships the generated brand asset %s unchanged",
+    async (name) => {
+      const path = `packages/web/dist/client/${name}`;
+      expect(builtClient).toContain(path);
+      expect(await Bun.file(`${repoRoot}${path}`).bytes()).toEqual(
+        await Bun.file(`${repoRoot}assets/brand/${name}`).bytes()
+      );
+    }
+  );
+
+  test("the built page declares the favicon and Apple touch icon", async () => {
+    const html = await Bun.file(
+      `${repoRoot}packages/web/dist/client/index.html`
+    ).text();
+    expect(html).toContain("<title>PIM - Pi IMproved</title>");
+    expect(html).toMatch(/<link\b[^>]*rel="icon"[^>]*href="\/favicon\.svg"/);
+    expect(html).toMatch(
+      /<link\b[^>]*rel="apple-touch-icon"[^>]*href="\/apple-touch-icon\.png"/
+    );
+    expect(builtClient).not.toContain("packages/web/dist/client/README.md");
+  });
+
   test("does not ship tests or fixtures", () => {
     expect(paths.filter((path) => path.endsWith(".test.ts"))).toEqual([]);
     expect(

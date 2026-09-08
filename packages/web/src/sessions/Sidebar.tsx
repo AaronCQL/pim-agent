@@ -189,7 +189,9 @@ export function Sidebar(props: {
     <div class="flex h-full flex-col bg-neutral-950">
       <div class="flex h-12 shrink-0 items-center justify-between gap-2 px-3">
         <div class="flex items-center gap-2">
-          <h1 class="font-bold">PIM</h1>
+          <h1 class="shrink-0">
+            <img src="/wordmark.svg" alt="PIM" class="block h-5" />
+          </h1>
           <span
             class="rounded-full bg-neutral-850 px-2 py-0.5 text-xs text-neutral-350"
             title={

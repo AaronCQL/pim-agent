@@ -91,6 +91,7 @@ const TASKS: readonly Task[] = [
       "bun",
       "test",
       "./packages",
+      "./scripts/brand",
       "--path-ignore-patterns=**/packages/web/**",
       "--path-ignore-patterns=**/packaging.test.ts",
       "--only-failures",

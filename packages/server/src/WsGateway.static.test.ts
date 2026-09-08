@@ -82,6 +82,28 @@ test("falls back to index.html for an unknown route", async () => {
   expect(await response.text()).toBe(INDEX);
 });
 
+test.each([
+  ["wordmark.svg", "image/svg+xml"],
+  ["favicon.svg", "image/svg+xml"],
+  ["apple-touch-icon.png", "image/png"],
+])(
+  "serves %s with its image type and revalidates its stable URL",
+  async (name, type) => {
+    const asset = Bun.file(
+      new URL(`../../../assets/brand/${name}`, import.meta.url)
+    );
+    await Bun.write(join(clientDir, name), asset);
+
+    const response = await fetch(`${httpUrl()}/${name}`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain(type);
+    expect(response.headers.get("cache-control")).toBe("no-cache");
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(
+      await asset.bytes()
+    );
+  }
+);
+
 test("a missing asset is a 404, not the SPA shell", async () => {
   const response = await fetch(`${httpUrl()}/assets/gone-000000.js`);
 

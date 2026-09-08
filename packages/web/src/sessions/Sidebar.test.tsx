@@ -115,6 +115,14 @@ async function listed(host: HTMLElement): Promise<void> {
   }
 }
 
+test("the header uses the compact pixel wordmark with an accessible name", () => {
+  const { host } = paint();
+  const logo = host.querySelector("h1 img");
+  expect(logo?.getAttribute("src")).toBe("/wordmark.svg");
+  expect(logo?.getAttribute("alt")).toBe("PIM");
+  expect(logo?.classList.contains("h-5")).toBe(true);
+});
+
 test("one flat row per session: name, cwd and how long ago", async () => {
   const { host } = paint();
   await Bun.sleep(0);
