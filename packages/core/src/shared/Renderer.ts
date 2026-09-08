@@ -19,14 +19,6 @@ export type RenderContext = {
   readonly isError: boolean;
 };
 
-export type StatefulToolCallTitleContext = RenderContext & {
-  readonly state: unknown;
-};
-
-export type StatefulToolCallTitleState = {
-  titleComponent?: Component;
-};
-
 export type MarkerStatus = "warning" | "error" | "success";
 
 export type PrefixSpec = {
@@ -286,25 +278,6 @@ function renderToolCallTitle(args: {
   });
 }
 
-function renderStatefulToolCallTitle(args: {
-  readonly label: string;
-  readonly title: string;
-  readonly theme: Theme;
-  readonly context: StatefulToolCallTitleContext;
-  readonly labelColor?: ThemeColor;
-}): Component {
-  const state = args.context.state as StatefulToolCallTitleState;
-  const component = renderToolCallTitle({
-    ...args,
-    context: {
-      ...args.context,
-      lastComponent: state.titleComponent ?? args.context.lastComponent,
-    },
-  });
-  state.titleComponent = component;
-  return component;
-}
-
 function makePrefixedBlock(args: {
   readonly text: string;
   readonly theme: Theme;
@@ -411,7 +384,6 @@ export const Renderer = {
   toolTitleText,
   makeTitleBlock,
   renderToolCallTitle,
-  renderStatefulToolCallTitle,
   makePrefixedBlock,
   markdownLines,
   makeMarkdownBlock,
