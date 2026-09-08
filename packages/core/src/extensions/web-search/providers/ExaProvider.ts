@@ -1,7 +1,7 @@
+import { Errors } from "../../../shared/Errors";
 import { McpClientError } from "../../../shared/McpClient";
 import { ExaMcpClient } from "../ExaMcpClient";
 import {
-  isAbortError,
   ProviderQuotaError,
   ProviderSearchError,
   type ProviderSearchInput,
@@ -37,7 +37,7 @@ export class ExaProvider implements SearchProvider {
         ...(input.signal === undefined ? {} : { signal: input.signal }),
       });
     } catch (error) {
-      if (input.signal?.aborted || isAbortError(error)) {
+      if (input.signal?.aborted || Errors.isAbort(error)) {
         throw error;
       }
 
@@ -48,11 +48,7 @@ export class ExaProvider implements SearchProvider {
         );
       }
 
-      throw new ProviderSearchError(this.name, describeError(error));
+      throw new ProviderSearchError(this.name, Errors.describe(error));
     }
   }
-}
-
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

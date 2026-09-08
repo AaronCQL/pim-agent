@@ -1,6 +1,6 @@
+import { Errors } from "../../shared/Errors";
 import type { SearchBreaker } from "./SearchBreaker";
 import {
-  isAbortError,
   ProviderQuotaError,
   type ProviderSearchInput,
   type SearchProvider,
@@ -56,7 +56,7 @@ export class SearchChain {
 
         return { provider: provider.name, results, fellBack: attempted };
       } catch (error) {
-        if (input.signal?.aborted || isAbortError(error)) {
+        if (input.signal?.aborted || Errors.isAbort(error)) {
           throw error;
         }
 
@@ -72,7 +72,7 @@ export class SearchChain {
           });
         }
 
-        failures.push(`${provider.name}: ${describeError(error)}`);
+        failures.push(`${provider.name}: ${Errors.describe(error)}`);
       }
     }
 
@@ -82,8 +82,4 @@ export class SearchChain {
         .join("\n")}`
     );
   }
-}
-
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

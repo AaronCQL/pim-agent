@@ -1,3 +1,4 @@
+import { Json } from "../../shared/Json";
 import { McpClient, type McpFetch } from "../../shared/McpClient";
 import { RateLimiter } from "../../shared/RateLimiter";
 import {
@@ -73,7 +74,7 @@ export class ExaMcpClient {
 }
 
 function extractResults(result: unknown): readonly SearchResult[] {
-  const record = asRecord(result);
+  const record = Json.asRecord(result);
   const content = record?.["content"];
 
   if (!Array.isArray(content) || content.length === 0) {
@@ -89,7 +90,7 @@ function extractResults(result: unknown): readonly SearchResult[] {
 
   const resultObjects = findFirstObjectArray(
     textBlocks
-      .map((block) => tryParseJson(block))
+      .map((block) => Json.tryParseJson(block))
       .filter((value) => value !== undefined)
   );
 
@@ -101,7 +102,7 @@ function extractResults(result: unknown): readonly SearchResult[] {
 }
 
 function readTextBlock(block: unknown): string {
-  const record = asRecord(block);
+  const record = Json.asRecord(block);
 
   if (record?.["type"] !== "text" || typeof record["text"] !== "string") {
     throw new ExaSearchError("Exa returned malformed tool content.");
@@ -189,12 +190,12 @@ function findFirstObjectArray(
   for (const value of values) {
     if (
       Array.isArray(value) &&
-      value.every((item) => asRecord(item) !== undefined)
+      value.every((item) => Json.asRecord(item) !== undefined)
     ) {
       return value as readonly Readonly<Record<string, unknown>>[];
     }
 
-    const record = asRecord(value);
+    const record = Json.asRecord(value);
 
     if (record === undefined) {
       continue;
@@ -203,7 +204,7 @@ function findFirstObjectArray(
     for (const nestedValue of Object.values(record)) {
       if (
         Array.isArray(nestedValue) &&
-        nestedValue.every((item) => asRecord(item) !== undefined)
+        nestedValue.every((item) => Json.asRecord(item) !== undefined)
       ) {
         return nestedValue as readonly Readonly<Record<string, unknown>>[];
       }
@@ -252,22 +253,4 @@ function readOptionalResultString(
   const value = result[name];
 
   return typeof value === "string" ? value : undefined;
-}
-
-function tryParseJson(text: string): unknown | undefined {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-}
-
-function asRecord(
-  value: unknown
-): Readonly<Record<string, unknown>> | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
-  }
-
-  return value as Readonly<Record<string, unknown>>;
 }

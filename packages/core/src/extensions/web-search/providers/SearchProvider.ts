@@ -72,7 +72,3 @@ export function parseRetryAfterMs(value: string | null): number | undefined {
 
   return Number.isNaN(date) ? undefined : Math.max(0, date - Date.now());
 }
-
-export function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === "AbortError";
-}

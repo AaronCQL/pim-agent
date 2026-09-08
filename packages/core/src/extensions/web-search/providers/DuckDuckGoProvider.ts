@@ -1,6 +1,7 @@
+import { Errors } from "../../../shared/Errors";
+import { Json } from "../../../shared/Json";
 import ky, { HTTPError, TimeoutError, type KyInstance } from "ky";
 import {
-  isAbortError,
   normalizeSnippet,
   parseRetryAfterMs,
   ProviderQuotaError,
@@ -90,7 +91,7 @@ export class DuckDuckGoProvider implements SearchProvider {
   }
 
   private toProviderError(error: unknown, signal?: AbortSignal): unknown {
-    if (signal?.aborted || isAbortError(error)) {
+    if (signal?.aborted || Errors.isAbort(error)) {
       return error;
     }
 
@@ -120,19 +121,19 @@ export class DuckDuckGoProvider implements SearchProvider {
 
     return new ProviderSearchError(
       this.name,
-      `DuckDuckGo lookup failed: ${describeError(error)}`
+      `DuckDuckGo lookup failed: ${Errors.describe(error)}`
     );
   }
 
   private readContent(body: string): string {
-    const parsed = tryParseJson(body);
+    const parsed = Json.tryParseJson(body);
 
     if (parsed === undefined) {
       return body;
     }
 
-    const record = asRecord(parsed);
-    const data = asRecord(record?.["data"]) ?? record;
+    const record = Json.asRecord(parsed);
+    const data = Json.asRecord(record?.["data"]) ?? record;
     const content = data?.["content"];
 
     if (typeof content !== "string") {
@@ -233,26 +234,4 @@ function joinSnippet(lines: readonly string[]): string {
 
 function stripEmphasis(value: string): string {
   return value.replaceAll("**", "");
-}
-
-function tryParseJson(text: string): unknown | undefined {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-}
-
-function asRecord(
-  value: unknown
-): Readonly<Record<string, unknown>> | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
-  }
-
-  return value as Readonly<Record<string, unknown>>;
-}
-
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

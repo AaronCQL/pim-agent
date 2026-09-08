@@ -1,3 +1,4 @@
+import { Errors } from "../../shared/Errors";
 import { isIP } from "node:net";
 import { Lines } from "../../shared/Lines";
 import { OutputBudget } from "../../shared/OutputBudget";
@@ -145,7 +146,7 @@ export async function executeFetch(
     if (signal?.aborted) {
       throw error;
     }
-    throw new Error(`Failed to fetch: ${describeError(error)}`);
+    throw new Error(`Failed to fetch: ${Errors.describe(error)}`);
   }
 }
 
@@ -242,8 +243,4 @@ function readFirstIpv6Segment(ip: string): number {
       .split(":")
       .find((segment) => segment.length > 0 && !segment.includes(".")) ?? "0";
   return Number.parseInt(first, 16);
-}
-
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

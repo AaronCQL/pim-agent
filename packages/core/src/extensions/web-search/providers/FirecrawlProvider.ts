@@ -1,6 +1,7 @@
+import { Errors } from "../../../shared/Errors";
+import { Json } from "../../../shared/Json";
 import ky, { HTTPError, TimeoutError, type KyInstance } from "ky";
 import {
-  isAbortError,
   normalizeSnippet,
   parseRetryAfterMs,
   ProviderQuotaError,
@@ -82,7 +83,7 @@ export class FirecrawlProvider implements SearchProvider {
     error: unknown,
     signal?: AbortSignal
   ): Promise<unknown> {
-    if (signal?.aborted || isAbortError(error)) {
+    if (signal?.aborted || Errors.isAbort(error)) {
       return error;
     }
 
@@ -118,7 +119,7 @@ export class FirecrawlProvider implements SearchProvider {
 
     return new ProviderSearchError(
       this.name,
-      `Firecrawl request failed: ${describeError(error)}`
+      `Firecrawl request failed: ${Errors.describe(error)}`
     );
   }
 
@@ -134,7 +135,7 @@ export class FirecrawlProvider implements SearchProvider {
       );
     }
 
-    const record = asRecord(payload);
+    const record = Json.asRecord(payload);
 
     if (record?.["success"] === false) {
       throw new ProviderSearchError(
@@ -143,7 +144,7 @@ export class FirecrawlProvider implements SearchProvider {
       );
     }
 
-    const data = asRecord(record?.["data"]);
+    const data = Json.asRecord(record?.["data"]);
     const web = data?.["web"];
 
     if (!Array.isArray(web)) {
@@ -159,7 +160,7 @@ export class FirecrawlProvider implements SearchProvider {
   }
 
   private project(entry: unknown): SearchResult | undefined {
-    const record = asRecord(entry);
+    const record = Json.asRecord(entry);
     const url = readString(record?.["url"]);
 
     if (record === undefined || url === undefined) {
@@ -175,36 +176,14 @@ export class FirecrawlProvider implements SearchProvider {
 }
 
 function readRetryAfterMs(data: unknown): number | undefined {
-  const payload = typeof data === "string" ? tryParseJson(data) : data;
-  const seconds = asRecord(payload)?.["retry_after_seconds"];
+  const payload = typeof data === "string" ? Json.tryParseJson(data) : data;
+  const seconds = Json.asRecord(payload)?.["retry_after_seconds"];
 
   return typeof seconds === "number" && Number.isFinite(seconds)
     ? Math.max(0, seconds) * 1000
     : undefined;
 }
 
-function tryParseJson(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-}
-
 function readString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function asRecord(
-  value: unknown
-): Readonly<Record<string, unknown>> | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
-  }
-
-  return value as Readonly<Record<string, unknown>>;
-}
-
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

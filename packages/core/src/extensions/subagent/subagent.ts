@@ -17,6 +17,7 @@ import type {
   TextContent,
   Usage,
 } from "@earendil-works/pi-ai";
+import { Errors } from "../../shared/Errors";
 import { SubagentLogs } from "../../shared/SubagentLogs";
 import { CoreExtensions } from "../CoreExtensions";
 import { formatTopLine } from "./render";
@@ -224,7 +225,7 @@ export async function runSubagent(
     const snapshot = capture.snapshot();
     if (thrown !== undefined) {
       throw makeFailureError(
-        thrownMessage(thrown),
+        Errors.describe(thrown),
         undefined,
         capture.narration()
       );
@@ -479,8 +480,4 @@ function addUsage(target: MutableUsage, usage: Usage): void {
   target.cacheWrite += usage.cacheWrite;
   target.cost += usage.cost.total;
   target.contextTokens = usage.totalTokens || target.contextTokens;
-}
-
-function thrownMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

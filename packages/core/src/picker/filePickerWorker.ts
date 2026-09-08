@@ -1,3 +1,4 @@
+import { Errors } from "../shared/Errors";
 import type { FileCandidate } from "./catalog";
 import { loadRelative } from "./catalog";
 import type {
@@ -7,13 +8,6 @@ import type {
 import { rank } from "./ranker";
 
 let cachedRelative: readonly FileCandidate[] | undefined;
-
-const toErrorMessage = (error: unknown): string => {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return String(error);
-};
 
 const refreshRelative = async (id: number, root: string): Promise<void> => {
   try {
@@ -31,7 +25,7 @@ const refreshRelative = async (id: number, root: string): Promise<void> => {
       id,
       type: "refreshRelative",
       ok: false,
-      error: toErrorMessage(error),
+      error: Errors.describe(error),
     } satisfies FilePickerWorkerResponse);
   }
 };
@@ -54,7 +48,7 @@ const rankSuggestions = async (
       id,
       type: "rank",
       ok: false,
-      error: toErrorMessage(error),
+      error: Errors.describe(error),
     } satisfies FilePickerWorkerResponse);
   }
 };

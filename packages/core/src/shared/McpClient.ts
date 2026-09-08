@@ -1,3 +1,5 @@
+import { Errors } from "./Errors";
+import { Json } from "./Json";
 import ky, { HTTPError, type KyInstance } from "ky";
 import type { RateLimiter } from "./RateLimiter";
 
@@ -176,7 +178,7 @@ export class McpClient {
     const sessionId =
       input.sessionId ?? response.headers.get("mcp-session-id") ?? undefined;
 
-    if (asRecord(envelope.error) !== undefined) {
+    if (Json.asRecord(envelope.error) !== undefined) {
       throw new McpClientError(
         `MCP JSON-RPC error: ${describeRpcError(envelope.error)}`
       );
@@ -255,7 +257,7 @@ export class McpClient {
         );
       }
 
-      throw new McpClientError(`MCP request failed: ${describeThrown(error)}`);
+      throw new McpClientError(`MCP request failed: ${Errors.describe(error)}`);
     }
   }
 
@@ -392,18 +394,8 @@ function isStaleSessionError(error: unknown): boolean {
   return error instanceof McpClientError && error.status === 404;
 }
 
-function asRecord(
-  value: unknown
-): Readonly<Record<string, unknown>> | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
-  }
-
-  return value as Readonly<Record<string, unknown>>;
-}
-
 function asRpcResponse(value: unknown): JsonRpcResponse | undefined {
-  const record = asRecord(value);
+  const record = Json.asRecord(value);
 
   if (record === undefined) {
     return undefined;
@@ -425,7 +417,7 @@ function parseJson(text: string): unknown {
 }
 
 function describeRpcError(error: unknown): string {
-  const record = asRecord(error);
+  const record = Json.asRecord(error);
   const message = record?.["message"];
 
   if (typeof message === "string" && message.length > 0) {
@@ -433,14 +425,6 @@ function describeRpcError(error: unknown): string {
   }
 
   return JSON.stringify(error);
-}
-
-function describeThrown(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return String(error);
 }
 
 function stringifyErrorData(data: unknown): string {

@@ -1,3 +1,5 @@
+import { Errors } from "../../shared/Errors";
+import { Json } from "../../shared/Json";
 import ky, { HTTPError, TimeoutError, type KyInstance } from "ky";
 import type { WebFetchPage } from "./fetch";
 
@@ -60,7 +62,7 @@ export class JinaReaderClient {
     } catch (error) {
       const aborted = input.signal?.aborted ?? false;
 
-      if (isAbortError(error) || aborted) {
+      if (Errors.isAbort(error) || aborted) {
         throw new JinaReaderClientError("Request aborted.");
       }
 
@@ -77,7 +79,7 @@ export class JinaReaderClient {
       }
 
       throw new JinaReaderClientError(
-        `Request failed: ${describeError(error)}`
+        `Request failed: ${Errors.describe(error)}`
       );
     }
 
@@ -107,7 +109,7 @@ function parseResponse(
   const contentType = response.headers.get("content-type") ?? "";
   const declaresJson =
     contentType.includes("application/json") || contentType.includes("+json");
-  const parsedJson = tryParseJson(responseText);
+  const parsedJson = Json.tryParseJson(responseText);
 
   if (parsedJson === undefined) {
     if (declaresJson) {
@@ -128,8 +130,8 @@ function parseJsonPayload(
   requestedUrl: string,
   parsedJson: unknown
 ): WebFetchPage {
-  const responseRecord = asRecord(parsedJson);
-  const payload = asRecord(responseRecord?.["data"]) ?? responseRecord;
+  const responseRecord = Json.asRecord(parsedJson);
+  const payload = Json.asRecord(responseRecord?.["data"]) ?? responseRecord;
 
   if (payload === undefined) {
     throw new JinaReaderClientError("Response contained invalid payload.");
@@ -148,14 +150,6 @@ function createPage(page: WebFetchPage): WebFetchPage {
   }
 
   return page;
-}
-
-function tryParseJson(text: string): unknown | undefined {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
 }
 
 function requiredString(value: unknown, name: string): string {
@@ -182,16 +176,6 @@ function optionalString(value: unknown, name: string): string | undefined {
   return value;
 }
 
-function asRecord(
-  value: unknown
-): Readonly<Record<string, unknown>> | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
-  }
-
-  return value as Readonly<Record<string, unknown>>;
-}
-
 function stringifyErrorData(data: unknown): string {
   if (typeof data === "string") {
     return data;
@@ -208,12 +192,4 @@ function excerpt(text: string): string {
   const excerpt = text.replaceAll(/\s+/gu, " ").trim().slice(0, 200);
 
   return excerpt.length === 0 ? "empty response body" : excerpt;
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === "AbortError";
-}
-
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
