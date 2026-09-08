@@ -195,6 +195,15 @@ export class SessionHost {
     return this.lastTps;
   }
 
+  public usage(): ReturnType<AgentSession["getContextUsage"]> | undefined {
+    return this.cached?.getContextUsage();
+  }
+
+  public sessionCost(): number | undefined {
+    const agent = this.cached;
+    return agent ? (agent.getSessionStats().cost ?? 0) : undefined;
+  }
+
   public get currentModelId(): string | undefined {
     const model = this.cached?.model ?? this.resolveDefaultModel();
     return model ? qualifiedModelId(model) : undefined;

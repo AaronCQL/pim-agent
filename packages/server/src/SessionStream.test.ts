@@ -30,7 +30,7 @@ function host(): SessionHost {
   return {
     cwd: tmp,
     agentDir: tmp,
-    agentSession: undefined,
+    usage: () => undefined,
     status: "thinking",
     settings: {},
     currentModelId: "test/echo",

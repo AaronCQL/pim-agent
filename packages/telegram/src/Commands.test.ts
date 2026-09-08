@@ -100,9 +100,10 @@ class FakeApi {
   }
 }
 
-type Agent = {
-  readonly getContextUsage: () => unknown;
-  readonly getSessionStats: () => unknown;
+type Usage = {
+  readonly tokens: number | null;
+  readonly contextWindow: number;
+  readonly percent: number | null;
 };
 
 type SessionStub = {
@@ -113,7 +114,8 @@ type SessionStub = {
   currentModelId: string | undefined;
   currentThinkingLevel: string;
   supportedThinkingLevels: readonly string[];
-  agentSession: Agent | undefined;
+  usage: () => Usage | undefined;
+  sessionCost: () => number | undefined;
   cancel: () => Promise<boolean>;
   clear: () => Promise<void>;
   compact: (custom?: string) => Promise<unknown>;
@@ -133,7 +135,8 @@ function fakeSession(overrides: Partial<SessionStub> = {}): SessionStub {
     currentModelId: "gpt-5",
     currentThinkingLevel: "medium",
     supportedThinkingLevels: THINKING_LEVELS,
-    agentSession: undefined,
+    usage: () => undefined,
+    sessionCost: () => undefined,
     cancel: async () => true,
     clear: async () => {},
     compact: async () => ({
@@ -329,13 +332,14 @@ test("the tokenizer collapses whitespace inside the arguments", async () => {
 });
 
 test("a queued failure and a direct failure read differently", async () => {
-  const exploding = fakeSession();
-  Object.defineProperty(exploding, "agentSession", {
-    get: () => {
-      throw new Error("boom");
-    },
-  });
-  const direct = await run(exploding, "/usage");
+  const direct = await run(
+    fakeSession({
+      usage: () => {
+        throw new Error("boom");
+      },
+    }),
+    "/usage"
+  );
   expect(direct.api.sent).toHaveLength(1);
   expect(direct.api.sent[0]?.text).toBe("⚠️ /usage failed: boom");
 
@@ -539,14 +543,12 @@ test("/usage formats what the agent knows, and the fallbacks when it does not", 
   const full = await run(
     fakeSession({
       settings: { cwd: "/repo", cumulativeCost: 12.3456 },
-      agentSession: {
-        getContextUsage: () => ({
-          tokens: 1234567,
-          contextWindow: 200000,
-          percent: 12.34,
-        }),
-        getSessionStats: () => ({ cost: 0.5 }),
-      },
+      usage: () => ({
+        tokens: 1234567,
+        contextWindow: 200000,
+        percent: 12.34,
+      }),
+      sessionCost: () => 0.5,
     }),
     "/usage"
   );
@@ -560,14 +562,12 @@ test("/usage formats what the agent knows, and the fallbacks when it does not", 
 
   const unknown = await run(
     fakeSession({
-      agentSession: {
-        getContextUsage: () => ({
-          tokens: null,
-          contextWindow: 200000,
-          percent: null,
-        }),
-        getSessionStats: () => ({}),
-      },
+      usage: () => ({
+        tokens: null,
+        contextWindow: 200000,
+        percent: null,
+      }),
+      sessionCost: () => 0,
     }),
     "/usage"
   );
@@ -586,10 +586,8 @@ test("/usage formats what the agent knows, and the fallbacks when it does not", 
 
   const noUsage = await run(
     fakeSession({
-      agentSession: {
-        getContextUsage: () => undefined,
-        getSessionStats: () => ({ cost: 1 }),
-      },
+      usage: () => undefined,
+      sessionCost: () => 1,
     }),
     "/usage"
   );

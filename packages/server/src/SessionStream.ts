@@ -190,7 +190,7 @@ export class SessionStream {
 
   public sessionState(): EphemeralEvent {
     const tps = this.host.tps;
-    const usage = this.host.agentSession?.getContextUsage();
+    const usage = this.host.usage();
     const { branch, dirtyCount, ahead, behind } = this.gitState();
     const modelLabel = this.host.currentModelLabel;
     // Only this process can answer for a running turn — a session a terminal

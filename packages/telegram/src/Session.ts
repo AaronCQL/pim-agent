@@ -118,8 +118,12 @@ export class Session {
     return this.host.isStreaming;
   }
 
-  public get agentSession(): AgentSession | undefined {
-    return this.host.agentSession;
+  public usage(): ReturnType<SessionHost["usage"]> {
+    return this.host.usage();
+  }
+
+  public sessionCost(): number | undefined {
+    return this.host.sessionCost();
   }
 
   /**
