@@ -65,11 +65,36 @@ type Cursor = {
 };
 
 /**
- * How much of a session file is worth parsing to describe it: the header is
- * line 1, and the first user message — the session's name — is in the first
- * entries or it is not worth finding.
+ * How far into a session file its name is: past the header, the setting
+ * changes, and whatever an extension wrote before the user got a word in.
+ *
+ * Counted in lines, because that is the claim being made — a byte window is
+ * not a proxy for it in either direction. Those entries are half a kilobyte
+ * together, while an opening message carrying an inline image is hundreds of
+ * kilobytes on one line, and a window cut through that line reads as a write
+ * in progress: the name is then not found late, it is not found at all.
  */
-const PROBE_BYTES = 64 * 1024;
+const PROBE_LINES = 16;
+
+/**
+ * A ceiling on the head, so a corrupt file cannot make a listing read
+ * forever. Far above any real opening message on purpose: a backstop, not
+ * the bound. Megabytes of base64 on line one is a photo, and naming that row
+ * is worth reading it once.
+ */
+const PROBE_LIMIT = 16 * 1024 * 1024;
+
+/**
+ * How much is asked for at a time. The first ask covers the head of an
+ * ordinary session whole, and doubling from there reaches the end of a photo
+ * in a handful of reads without making every other session pay for one.
+ * `Bun.file().stream()` chunks for us and costs milliseconds per file to set
+ * up — more than a whole listing of slices.
+ */
+const PROBE_CHUNK = 8 * 1024;
+const PROBE_CHUNK_MAX = 256 * 1024;
+
+const EMPTY = new Uint8Array();
 
 /**
  * How much of the end is read to find where the agent last stopped, and how
@@ -175,31 +200,28 @@ export class EventLog {
 
   /** Line 1 only, so listing many sessions never reads their bodies. */
   public async header(): Promise<SessionHeader | undefined> {
-    const file = Bun.file(this.path);
-    const head = await ifPresent(() => file.slice(0, PROBE_BYTES).text(), "");
-    const end = head.indexOf("\n");
-    if (end === -1) {
-      return undefined;
+    for await (const line of headLines(Bun.file(this.path), 1)) {
+      const entry = parseSessionEntries(line)[0];
+      return entry && isHeader(entry) ? entry : undefined;
     }
-    const entry = parseSessionEntries(head.slice(0, end))[0];
-    return entry && isHeader(entry) ? entry : undefined;
+    return undefined;
   }
 
   /**
    * Title and settle time for the catalogue, from the two ends of the file
    * and without reading between them: the name is in the first entries and
-   * the settle time is in the last, so a listing reads two bounded windows
-   * per session rather than the whole of each. Deliberately not `read()` —
-   * a listing must not pay to project a conversation it is only naming, and
-   * the session being listed is usually the largest file in the directory.
+   * the settle time is in the last, so a listing reads a bounded run of
+   * lines from each end rather than the whole of a session. Deliberately not
+   * `read()` — a listing must not pay to project a conversation it is only
+   * naming, and the session being listed is usually the largest file in the
+   * directory.
    */
   public async digest(): Promise<SessionDigest> {
     const file = Bun.file(this.path);
-    const [probe, settledAt] = await Promise.all([
-      ifPresent(() => file.slice(0, PROBE_BYTES).text(), ""),
+    const [title, settledAt] = await Promise.all([
+      firstUserMessage(file),
       settleTime(file),
     ]);
-    const title = firstUserMessage(probe);
     return {
       ...(title === undefined ? {} : { title }),
       ...(settledAt === undefined ? {} : { settledAt }),
@@ -280,6 +302,49 @@ export class EventLog {
 }
 
 /**
+ * The first `count` complete lines of a file, or every line it has if it has
+ * fewer, read in growing chunks. Lazy on purpose: the caller stops at the
+ * line it was looking for, so an ordinary session is one small read and only
+ * a file that hides its answer behind an inline image reads on for it. A
+ * line larger than a chunk is joined rather than cut, which is the point.
+ *
+ * A trailing fragment is never yielded — the end of a file being written, or
+ * the line a stopped read is in the middle of. Neither is an entry.
+ */
+async function* headLines(
+  file: BunFile,
+  count: number
+): AsyncGenerator<string> {
+  // Streaming decode, because a chunk boundary lands mid-character often
+  // enough and decoding each chunk alone would corrupt the one it split.
+  const decoder = new TextDecoder();
+  let pending = "";
+  let yielded = 0;
+  let offset = 0;
+  let ask = PROBE_CHUNK;
+  while (offset < PROBE_LIMIT) {
+    const chunk = await ifPresent(
+      () => file.slice(offset, offset + ask).bytes(),
+      EMPTY
+    );
+    if (chunk.length === 0) {
+      return;
+    }
+    offset += chunk.length;
+    ask = Math.min(ask * 2, PROBE_CHUNK_MAX);
+    pending += decoder.decode(chunk, { stream: true });
+    const lines = pending.split("\n");
+    pending = lines.pop() ?? "";
+    for (const line of lines) {
+      yield line;
+      if (++yielded >= count) {
+        return;
+      }
+    }
+  }
+}
+
+/**
  * When the agent last wrote, read backwards from the end of the file — which
  * is where the answer always is, and usually on the very last line, since a
  * session usually ends in the agent's reply.
@@ -332,11 +397,8 @@ function lastAgentTime(lines: readonly string[]): number | undefined {
   return undefined;
 }
 
-function firstUserMessage(probe: string): string | undefined {
-  // The last line of a probe is a fragment as often as not, so it is dropped
-  // rather than fed to the parser.
-  const lines = probe.split("\n").slice(0, -1);
-  for (const line of lines) {
+async function firstUserMessage(file: BunFile): Promise<string | undefined> {
+  for await (const line of headLines(file, PROBE_LINES)) {
     const entry = parseSessionEntries(line)[0];
     if (entry?.type !== "message" || entry.message.role !== "user") {
       continue;

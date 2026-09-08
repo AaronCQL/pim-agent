@@ -167,6 +167,114 @@ describe("EventLog digest", () => {
     expect(digest.title).toBeUndefined();
     expect(digest.settledAt).toBeUndefined();
   });
+
+  test("names a session opened with an inline image by what was typed", async () => {
+    // pi stores an attached image as base64 in the message, so line 4 of a
+    // session that starts with a screenshot is hundreds of kilobytes wide.
+    // The name is on that line, in the text part in front of the photo.
+    const path = join(tmp, "photo.jsonl");
+    await Bun.write(
+      path,
+      line({
+        type: "session",
+        id: "s1",
+        timestamp: "2026-08-01T10:00:00.000Z",
+        cwd: "/tmp",
+      }) +
+        line({
+          type: "model_change",
+          id: "m0",
+          parentId: null,
+          timestamp: "2026-08-01T10:00:00.500Z",
+          provider: "anthropic",
+          modelId: "claude-opus-5",
+        }) +
+        line({
+          type: "message",
+          id: "m1",
+          parentId: "m0",
+          timestamp: "2026-08-01T10:00:01.000Z",
+          message: {
+            role: "user",
+            content: [
+              { type: "text", text: "why is this row unnamed" },
+              {
+                type: "image",
+                data: "A".repeat(450 * 1024),
+                mimeType: "image/png",
+              },
+            ],
+          },
+        })
+    );
+
+    expect((await new EventLog(path).digest()).title).toBe(
+      "why is this row unnamed"
+    );
+  });
+
+  test("an opening message still being written is not a name", async () => {
+    // Same shape, cut mid-entry: a fragment is not an entry, however much of
+    // it is on disk. Naming a row from one would show half a message.
+    const path = join(tmp, "torn-head.jsonl");
+    await Bun.write(
+      path,
+      line({
+        type: "session",
+        id: "s1",
+        timestamp: "2026-08-01T10:00:00.000Z",
+        cwd: "/tmp",
+      }) +
+        line({
+          type: "message",
+          id: "m1",
+          parentId: null,
+          timestamp: "2026-08-01T10:00:01.000Z",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "y".repeat(200 * 1024) }],
+          },
+        }).slice(0, -20_000)
+    );
+
+    const log = new EventLog(path);
+    expect((await log.digest()).title).toBeUndefined();
+    // The header is line 1 and complete, so it survives the same read.
+    expect((await log.header())?.id).toBe("s1");
+  });
+
+  test("skips past the entries pi writes before the user speaks", async () => {
+    const path = join(tmp, "preamble.jsonl");
+    const preamble = Array.from({ length: 8 }, (_, n) =>
+      line({
+        type: "custom",
+        id: `c${n}`,
+        parentId: null,
+        timestamp: "2026-08-01T10:00:00.000Z",
+        customType: "some-extension",
+        data: { n },
+      })
+    ).join("");
+    await Bun.write(
+      path,
+      line({
+        type: "session",
+        id: "s1",
+        timestamp: "2026-08-01T10:00:00.000Z",
+        cwd: "/tmp",
+      }) +
+        preamble +
+        line({
+          type: "message",
+          id: "m1",
+          parentId: null,
+          timestamp: "2026-08-01T10:00:01.000Z",
+          message: { role: "user", content: [{ type: "text", text: "hello" }] },
+        })
+    );
+
+    expect((await new EventLog(path).digest()).title).toBe("hello");
+  });
 });
 
 describe("EventLog settle time", () => {
