@@ -133,6 +133,31 @@ button {
   color: rgb(244 114 182);
 }
 
+/* A click on inline code copies it, so it is drawn as something that answers
+   one, and answers it in place: the tint fades out from under the token and
+   leaves nothing behind. The cursor is the whole resting-state affordance: a
+   hover tint would paint a box under every token a pointer crosses on its way
+   somewhere else, and a phone never sees it anyway. Nothing here moves or
+   reserves space — a highlight that grew a box would reflow the sentence
+   around it, and the rule is that prose stays on the --line grid. Scoped by
+   parent rather than reset on `pre code`, since a fence carries a copy button
+   instead and its text is meant to be selected. */
+.pim-markdown :not(pre) > code {
+  cursor: pointer;
+  border-radius: 3px;
+}
+.pim-markdown :not(pre) > code[data-copied] {
+  animation: pim-copied 550ms ease-out;
+}
+@keyframes pim-copied {
+  from {
+    background: rgb(244 114 182 / 40%);
+  }
+  to {
+    background: rgb(244 114 182 / 0%);
+  }
+}
+
 /* No background, no radius, no padding: the fence is drawn as visible ```
    text above and below, and the code itself sits on the page. The parser
    consumes the fence and puts the language in the <code> class, so the

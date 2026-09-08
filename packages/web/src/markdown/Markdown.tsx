@@ -3,6 +3,7 @@ import { createEffect, onCleanup } from "solid-js";
 import * as smd from "streaming-markdown";
 
 import { Languages } from "#core/shared/Languages";
+import { copyText } from "../ui/clipboard";
 import { CopyButton } from "../ui/CopyButton";
 import { Highlight } from "../view/highlight";
 import { syntaxClass } from "../view/tokens";
@@ -21,6 +22,87 @@ function openBlock(host: HTMLElement): Element | undefined {
     node = node.lastElementChild;
   }
   return undefined;
+}
+
+/**
+ * The parser's renderer, with every link pointed out of the page. A
+ * transcript is a session in flight — one that is still streaming into this
+ * tab — so navigating it away is never what a reader meant by following a
+ * reference, and `noopener` keeps whatever opens from reaching back through
+ * `window.opener`.
+ *
+ * Marked as the anchor is created rather than swept up afterwards: the parser
+ * hands each node over exactly once, and the href it fills in later does not
+ * change who opens it.
+ */
+function renderer(host: HTMLElement): smd.Default_Renderer {
+  const base = smd.default_renderer(host);
+  return {
+    ...base,
+    add_token: (data, type) => {
+      base.add_token(data, type);
+      const node = data.nodes[data.index];
+      if (node?.tagName === "A") {
+        node.setAttribute("target", "_blank");
+        node.setAttribute("rel", "noopener");
+      }
+    },
+  };
+}
+
+/**
+ * The copy, and the flash that is the only report of it: a toast announcing a
+ * word's worth of clipboard is louder than the thing it reports, and it would
+ * cover the transcript to say it. The attribute is what CSS animates, and it
+ * is dropped again when the animation ends rather than on a timer that would
+ * have to be kept equal to it.
+ */
+async function copyInline(code: Element): Promise<void> {
+  if (!(await copyText(code.textContent ?? ""))) {
+    // A refused clipboard is not worth a message over one token of text.
+    return;
+  }
+  code.removeAttribute("data-copied");
+  // Reading layout resolves the removal on its own, so a second click on a
+  // token still lit replays the flash instead of vanishing into it.
+  code.getBoundingClientRect();
+  code.addEventListener(
+    "animationend",
+    () => {
+      code.removeAttribute("data-copied");
+    },
+    { once: true }
+  );
+  code.setAttribute("data-copied", "");
+}
+
+/**
+ * Inline code is nearly always something meant to end up somewhere else — a
+ * path, a flag, a command, a symbol — so a click on it copies it, and picking
+ * one token out of a sentence by hand, which on a phone is a fight, stops
+ * being how you get it. Anything that already answers a click keeps its own
+ * answer: a fence has a copy button, and a link navigates.
+ *
+ * One listener on the host rather than one per token, because this DOM is the
+ * parser's — it grows append-only while a message streams, and a diverging
+ * message rebuilds it from scratch — so there is no moment at which every
+ * token could be found and bound.
+ */
+function onCodeClick(event: MouseEvent): void {
+  const from = event.target;
+  if (!(from instanceof Element)) {
+    return;
+  }
+  const code = from.closest("code");
+  if (code === null || code.closest("pre, a") !== null) {
+    return;
+  }
+  // A click that ends a drag is where a selection stopped, not a request to
+  // replace what the reader was in the middle of selecting.
+  if (window.getSelection()?.isCollapsed === false) {
+    return;
+  }
+  void copyInline(code);
 }
 
 /**
@@ -143,7 +225,7 @@ export function Markdown(props: {
         disposeButtons();
         disposeButtons = () => {};
         host.replaceChildren();
-        parser = smd.parser(smd.default_renderer(host));
+        parser = smd.parser(renderer(host));
         written = "";
       }
       smd.parser_write(parser, text.slice(written.length));
@@ -173,6 +255,7 @@ export function Markdown(props: {
       ref={(element) => {
         host = element;
       }}
+      onClick={onCodeClick}
       class="pim-markdown min-w-0 break-words"
     />
   );

@@ -15,11 +15,23 @@ function mount(initial: string, complete = true) {
   return {
     html: () => host.querySelector(".pim-markdown")?.innerHTML ?? "",
     text: () => host.textContent ?? "",
+    find: (selector: string) => host.querySelector(selector),
     write: (next: string) => {
       setText(next);
       flush();
     },
   };
+}
+
+function click(element: Element | null): void {
+  element?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+}
+
+/** A click does not hand back the copy it starts; yield until it has settled. */
+async function settle(): Promise<void> {
+  for (let tick = 0; tick < 10; tick += 1) {
+    await Promise.resolve();
+  }
 }
 
 describe("Markdown", () => {
@@ -115,5 +127,72 @@ describe("Markdown", () => {
   test("a fence still being written is left plain", () => {
     const view = mount("```ts\nconst a = 1;", false);
     expect(view.html()).not.toContain("data-hl");
+  });
+
+  test("links open out of the page and cannot reach back into it", () => {
+    const view = mount("See [the docs](https://pi.dev/) for more.\n");
+    const link = view.find("a");
+    expect(link?.getAttribute("href")).toBe("https://pi.dev/");
+    expect(link?.getAttribute("target")).toBe("_blank");
+    expect(link?.getAttribute("rel")).toBe("noopener");
+  });
+
+  /** Anchors are marked as they are created, so one still being written has
+   *  them too — the href arrives later and does not change who opens it. */
+  test("a link still being written is marked already", () => {
+    const view = mount("See [the docs](https://pi.", false);
+    expect(view.find("a")?.getAttribute("target")).toBe("_blank");
+  });
+
+  test("clicking inline code copies it and flashes it", async () => {
+    const view = mount("Run `bun run check` first.\n");
+    const code = view.find("code");
+
+    click(code);
+    await settle();
+
+    expect(await navigator.clipboard.readText()).toBe("bun run check");
+    expect(code?.hasAttribute("data-copied")).toBe(true);
+    // The flash is an attribute the CSS animates; the text is untouched.
+    expect(view.text()).toContain("Run bun run check first.");
+  });
+
+  test("the flash is cleared once it has played", async () => {
+    const view = mount("Run `bun run check` first.\n");
+    const code = view.find("code");
+
+    click(code);
+    await settle();
+    code?.dispatchEvent(new Event("animationend"));
+
+    expect(code?.hasAttribute("data-copied")).toBe(false);
+  });
+
+  /** A fence answers a click with its own button, and a link navigates. */
+  test("code that already answers a click is left alone", async () => {
+    await navigator.clipboard.writeText("untouched");
+    const view = mount(
+      "```ts\nconst a = 1;\n```\n\n[`a link`](https://pi.dev/)\n"
+    );
+
+    click(view.find("pre code"));
+    click(view.find("a code"));
+    await settle();
+
+    expect(await navigator.clipboard.readText()).toBe("untouched");
+  });
+
+  /** A click that ends a drag is where a selection stopped. */
+  test("a click that finishes a selection copies nothing", async () => {
+    await navigator.clipboard.writeText("untouched");
+    const view = mount("Run `bun run check` first.\n");
+    const code = view.find("code");
+    window.getSelection()?.selectAllChildren(code as Node);
+
+    click(code);
+    await settle();
+
+    expect(await navigator.clipboard.readText()).toBe("untouched");
+    expect(code?.hasAttribute("data-copied")).toBe(false);
   });
 });

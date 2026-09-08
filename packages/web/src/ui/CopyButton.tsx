@@ -1,11 +1,13 @@
 import { createSignal, Show } from "solid-js";
 
+import { copyText } from "./clipboard";
+
 const FLASH_MS = 1200;
 
 /**
- * Copy-to-clipboard, wrapped for the same reason the overlays are: the async
- * clipboard API needs a permission-denied path and a fallback, and feature
- * code should express "copy this" and nothing more.
+ * Copy-to-clipboard, wrapped for the same reason the overlays are: feature
+ * code should express "copy this" and nothing more, and the tick is only
+ * shown for a copy that actually happened.
  *
  * Always visible, per the mockup — a hover-only affordance does not exist on a
  * phone, and this one sits over code that is worth copying from either.
@@ -18,15 +20,13 @@ export function CopyButton(props: {
   const [copied, setCopied] = createSignal(false);
 
   const copy = async (): Promise<void> => {
-    try {
-      await navigator.clipboard.writeText(props.text());
-      setCopied(true);
-      setTimeout(() => {
-        setCopied(false);
-      }, FLASH_MS);
-    } catch {
-      setCopied(false);
+    if (!(await copyText(props.text()))) {
+      return;
     }
+    setCopied(true);
+    setTimeout(() => {
+      setCopied(false);
+    }, FLASH_MS);
   };
 
   return (
