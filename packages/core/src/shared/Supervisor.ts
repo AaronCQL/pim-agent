@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
 import { Fs } from "./Fs";
+import { Proc } from "./Proc";
 
 /**
  * Set by the units this file writes, and by nothing else: it is how a daemon
@@ -329,29 +330,19 @@ function launchdPlist(unit: Unit, at: Install): string {
 }
 
 async function lingerEnabled(): Promise<boolean> {
-  const proc = Bun.spawn(["loginctl", "show-user", "--property=Linger"], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const code = await proc.exited;
-  if (code !== 0) {
-    return false;
-  }
-  const out = await new Response(proc.stdout).text();
-  return out.includes("Linger=yes");
+  const { code, stdout } = await Proc.run([
+    "loginctl",
+    "show-user",
+    "--property=Linger",
+  ]);
+  return code === 0 && stdout.includes("Linger=yes");
 }
 
 async function runOrThrow(
   cmd: ReadonlyArray<string>,
   cwd?: string
 ): Promise<void> {
-  const proc = Bun.spawn([...cmd], {
-    cwd,
-    stdout: "inherit",
-    stderr: "pipe",
-  });
-  const stderr = await new Response(proc.stderr).text();
-  const code = await proc.exited;
+  const { code, stderr } = await Proc.run(cmd, { cwd, stdout: "inherit" });
   if (code !== 0) {
     throw new Error(
       `${cmd.join(" ")} exit ${code}: ${stderr.trim() || "(no stderr)"}`

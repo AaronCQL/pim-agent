@@ -3,10 +3,13 @@ import { join } from "node:path";
 
 import { Git } from "./Git";
 import { PimVersion } from "./PimVersion";
+import { Proc } from "./Proc";
 import { Supervisor, type Install } from "./Supervisor";
 
+const STAGING = "staging";
+
 /** Relative to `packages/web`, which is the vite root `build:web` cds into. */
-const STAGING_OUT_DIR = "dist/staging";
+const STAGING_OUT_DIR = `dist/${STAGING}`;
 
 type ClientDirs = {
   readonly staging: string;
@@ -65,7 +68,7 @@ export type UpdateOptions = {
 function clientDirs(packageRoot: string): ClientDirs {
   const dist = join(packageRoot, "packages", "web", "dist");
   return {
-    staging: join(dist, "staging"),
+    staging: join(dist, STAGING),
     client: join(dist, "client"),
     previous: join(dist, "previous"),
   };
@@ -198,13 +201,7 @@ async function runOrThrow(
   cmd: ReadonlyArray<string>,
   cwd: string | undefined
 ): Promise<void> {
-  const proc = Bun.spawn([...cmd], {
-    cwd,
-    stdout: "inherit",
-    stderr: "pipe",
-  });
-  const stderr = await new Response(proc.stderr).text();
-  const code = await proc.exited;
+  const { code, stderr } = await Proc.run(cmd, { cwd, stdout: "inherit" });
   if (code !== 0) {
     throw new Error(
       `exit ${code}: ${stderr.trim().split("\n").slice(-5).join("\n") || "(no stderr)"}`
