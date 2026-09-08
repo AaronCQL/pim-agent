@@ -237,19 +237,21 @@ export class SessionStream {
       !this.gitInFlight
     ) {
       this.gitInFlight = true;
-      void Git.fetchStatus(cwd).then((next) => {
-        this.gitInFlight = false;
-        this.gitReadAt = Date.now();
-        const changed =
-          next.branch !== this.git.branch ||
-          next.dirtyCount !== this.git.dirtyCount ||
-          next.ahead !== this.git.ahead ||
-          next.behind !== this.git.behind;
-        this.git = next;
-        if (changed) {
-          this.emit(this.sessionState());
-        }
-      });
+      void Git.fetchStatus(cwd)
+        .then((next) => {
+          this.gitInFlight = false;
+          this.gitReadAt = Date.now();
+          const changed =
+            next.branch !== this.git.branch ||
+            next.dirtyCount !== this.git.dirtyCount ||
+            next.ahead !== this.git.ahead ||
+            next.behind !== this.git.behind;
+          this.git = next;
+          if (changed) {
+            this.emit(this.sessionState());
+          }
+        })
+        .catch(() => {});
     }
     return this.git;
   }
@@ -280,28 +282,8 @@ export class SessionStream {
         const message = this.currentMessage();
         const text = MessageText.textOf(event.message.content);
         const thinking = MessageText.textOf(event.message.content, "thinking");
-        // Only ever a suffix: pi re-states the whole message on each update,
-        // so anything that is not an extension of what was sent is a rewrite
-        // the deltas cannot express, and the durable entry settles it.
-        if (
-          thinking.startsWith(message.thinking) &&
-          thinking !== message.thinking
-        ) {
-          this.emit({
-            type: "thinking_delta",
-            messageId: message.messageId,
-            delta: thinking.slice(message.thinking.length),
-          });
-          message.thinking = thinking;
-        }
-        if (text.startsWith(message.text) && text !== message.text) {
-          this.emit({
-            type: "text_delta",
-            messageId: message.messageId,
-            delta: text.slice(message.text.length),
-          });
-          message.text = text;
-        }
+        this.emitDelta(message, "thinking", thinking);
+        this.emitDelta(message, "text", text);
         return;
       }
       case "tool_execution_start": {
@@ -459,17 +441,44 @@ export class SessionStream {
     return message;
   }
 
+  /**
+   * Only ever a suffix: pi re-states the whole message on each update, so
+   * anything that is not an extension of what was sent is a rewrite the
+   * deltas cannot express, and the durable entry settles it.
+   */
+  private emitDelta(
+    message: LiveMessage,
+    channel: "text" | "thinking",
+    next: string
+  ): void {
+    const sent = message[channel];
+    if (!next.startsWith(sent) || next === sent) {
+      return;
+    }
+    this.emit({
+      type: channel === "text" ? "text_delta" : "thinking_delta",
+      messageId: message.messageId,
+      delta: next.slice(sent.length),
+    });
+    message[channel] = next;
+  }
+
   /** The live call with this id, wherever in the turn it was made. */
-  private findTool(callId: string): LiveTool | undefined {
+  private locate(
+    callId: string
+  ): { readonly message: LiveMessage; readonly at: number } | undefined {
     for (const message of this.liveTurn) {
-      const tool = message.tools.find(
-        (candidate) => candidate.callId === callId
-      );
-      if (tool) {
-        return tool;
+      const at = message.tools.findIndex((tool) => tool.callId === callId);
+      if (at !== -1) {
+        return { message, at };
       }
     }
     return undefined;
+  }
+
+  private findTool(callId: string): LiveTool | undefined {
+    const found = this.locate(callId);
+    return found === undefined ? undefined : found.message.tools[found.at];
   }
 
   /**
@@ -540,18 +549,16 @@ export class SessionStream {
    * call kept past its own result would reach it twice.
    */
   private settleLive(callId: string): void {
-    for (const message of this.liveTurn) {
-      const at = message.tools.findIndex((tool) => tool.callId === callId);
-      if (at === -1) {
-        continue;
-      }
-      message.tools.splice(at, 1);
-      // A retired message is held for its calls alone, so the last of them to
-      // be written down takes the shell with it.
-      if (message.retired && message.tools.length === 0) {
-        this.liveTurn = this.liveTurn.filter((held) => held !== message);
-      }
+    const found = this.locate(callId);
+    if (found === undefined) {
       return;
+    }
+    const { message } = found;
+    message.tools.splice(found.at, 1);
+    // A retired message is held for its calls alone, so the last of them to
+    // be written down takes the shell with it.
+    if (message.retired && message.tools.length === 0) {
+      this.liveTurn = this.liveTurn.filter((held) => held !== message);
     }
   }
 

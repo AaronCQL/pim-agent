@@ -49,7 +49,17 @@ export class SessionProjection {
   }
 
   public since(fromSeq: number): readonly DurableEvent[] {
-    return this.events.filter((event) => event.seq > fromSeq);
+    let low = 0;
+    let high = this.events.length;
+    while (low < high) {
+      const mid = (low + high) >>> 1;
+      if (this.events[mid]!.seq > fromSeq) {
+        high = mid;
+      } else {
+        low = mid + 1;
+      }
+    }
+    return this.events.slice(low);
   }
 
   /**
