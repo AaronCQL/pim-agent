@@ -114,15 +114,22 @@ function effectOf(toolName: string): ErasedToolEffect | undefined {
   return effects.get(toolName);
 }
 
-/**
- * The view model a registered tool paints itself with, or undefined for a
- * tool that has none (an MCP tool, or one not ported yet). Registration is
- * the only key-by-name map in the system: every frontend reads this instead
- * of keeping its own table of tool names.
- */
-function viewFor(toolName: string): ToolViewFactory | undefined {
-  return viewFactories.get(toolName);
+function baseView(
+  toolName: string,
+  call: {
+    readonly args: unknown;
+    readonly result?: AgentToolResult<unknown>;
+    readonly isPartial: boolean;
+    readonly cwd: string;
+  }
+): ToolView {
+  return (
+    viewFactories.get(toolName)?.(call) ?? genericView(toolName, call.args)
+  );
 }
+
+const branchesOf = (schema?: JsonSchema): readonly JsonSchema[] | undefined =>
+  schema?.anyOf ?? schema?.oneOf;
 
 /**
  * The view for one call, with a generic fallback for a tool that registered
@@ -147,12 +154,10 @@ function viewOf(input: {
   if (isError === true) {
     return errorView(name, rest, result);
   }
-  return (
-    viewFor(name)?.({
-      ...rest,
-      ...(result === undefined ? {} : { result }),
-    }) ?? genericView(name, input.args)
-  );
+  return baseView(name, {
+    ...rest,
+    ...(result === undefined ? {} : { result }),
+  });
 }
 
 /**
@@ -178,7 +183,7 @@ function errorView(
   },
   result: AgentToolResult<unknown> | undefined
 ): ToolView {
-  const view = viewFor(name)?.(call) ?? genericView(name, call.args);
+  const view = baseView(name, call);
   const text =
     result === undefined ? "" : Renderer.extractErrorText(result, "");
   if (text === "") {
@@ -432,7 +437,7 @@ function collapseAnyOf(
       return;
     }
     const node = walkSchema(schema, issue.path);
-    const branches = node?.anyOf ?? node?.oneOf;
+    const branches = branchesOf(node);
     if (!node || !branches) {
       return;
     }
@@ -704,8 +709,8 @@ function coerceQuotedEnums(
         mutated[key] = next;
       }
     }
-    if (schema.anyOf || schema.oneOf) {
-      const branches = (schema.anyOf ?? schema.oneOf) as readonly JsonSchema[];
+    const branches = branchesOf(schema);
+    if (branches) {
       const branch =
         matchDiscriminatedBranch(branches, mutated ?? value) ??
         branches.find((b) => b.type === "object" && b.properties);
@@ -749,7 +754,7 @@ function collectAllowedStrings(schema: JsonSchema): string[] | undefined {
   if (typeof schema.const === "string") {
     return [schema.const];
   }
-  const branches = schema.anyOf ?? schema.oneOf;
+  const branches = branchesOf(schema);
   if (branches) {
     const collected: string[] = [];
     for (const branch of branches) {
@@ -858,7 +863,7 @@ function collectSchemaTypes(schema: JsonSchema): string[] {
       }
     }
   }
-  const branches = schema.anyOf ?? schema.oneOf;
+  const branches = branchesOf(schema);
   if (branches) {
     for (const b of branches) {
       for (const t of collectSchemaTypes(b)) {
@@ -913,7 +918,6 @@ function closestKey(
 
 export const Tools = {
   effectOf,
-  viewFor,
   viewOf,
   wrap,
   register,
