@@ -7,6 +7,7 @@ import {
 } from "solid-js";
 
 import type { PickerItem } from "#core/picker/PickerItem";
+import { activeToken, applyCompletion, tokenKey } from "#core/picker/token";
 import { Format, type ContextFill } from "#core/shared/Format";
 import type { ModelCatalogue, SessionStore } from "../session/SessionStore";
 import { Combobox, createComboboxNavigation } from "../ui/Combobox";
@@ -14,7 +15,6 @@ import { createMediaQuery, KEYBOARD } from "../ui/media";
 import { Menu } from "../ui/Menu";
 import { Attachments, type AttachmentTile } from "../view/Attachments";
 import { ClankChip } from "./ClankChip";
-import { activeToken, applyCompletion, tokenKey } from "./token";
 
 const FILE_LIMIT = 50;
 const COMMAND_LIMIT = 20;

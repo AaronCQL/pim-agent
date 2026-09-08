@@ -14,8 +14,21 @@ export type PickerToken = {
   readonly start: number;
 };
 
-const AT_PREFIX = /(?:^|\s)@(\S*)$/;
-const SLASH_PREFIX = /^\/(\S*)$/;
+export const AT_PREFIX = /(?:^|\s)@(\S*)$/;
+export const SLASH_PREFIX = /^\/(\S*)$/;
+
+/**
+ * `AT_PREFIX` swallows the whitespace before the sigil when there is one, so
+ * the sigil itself sits one character further in than the match.
+ */
+export function sigilOffset(match: RegExpMatchArray): number {
+  const matched = match[0] ?? "";
+  return (match.index ?? 0) + (matched.startsWith("@") ? 0 : 1);
+}
+
+export function isDirectoryItem(item: { readonly label: string }): boolean {
+  return item.label.endsWith("/");
+}
 
 export function activeToken(
   text: string,
@@ -33,9 +46,11 @@ export function activeToken(
   if (!at) {
     return undefined;
   }
-  const matched = at[0] ?? "";
-  const offset = (at.index ?? 0) + (matched.startsWith("@") ? 0 : 1);
-  return { kind: "file", query: at[1] ?? "", start: lineStart + offset };
+  return {
+    kind: "file",
+    query: at[1] ?? "",
+    start: lineStart + sigilOffset(at),
+  };
 }
 
 /** A stable identity for a token, so a memo only fires when the query moves. */
@@ -59,13 +74,12 @@ export function applyCompletion(
   token: PickerToken,
   item: { readonly value: string; readonly label: string }
 ): Completion {
-  const isDirectory = item.label.endsWith("/");
   const inserted = token.kind === "file" ? `@${item.value}` : `${item.value} `;
   const head = text.slice(0, token.start);
   const tail = text.slice(caret);
   return {
     text: `${head}${inserted}${tail}`,
     caret: head.length + inserted.length,
-    keepOpen: token.kind === "file" && isDirectory,
+    keepOpen: token.kind === "file" && isDirectoryItem(item),
   };
 }
