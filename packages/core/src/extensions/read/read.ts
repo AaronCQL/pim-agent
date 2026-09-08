@@ -3,11 +3,6 @@ import { Lines } from "../../shared/Lines";
 import { OutputBudget } from "../../shared/OutputBudget";
 import type { ReadRange } from "./schema";
 
-type RenderedLine = {
-  readonly lineNumber: number;
-  readonly text: string;
-};
-
 export type ReadOutcome = {
   readonly body: string;
   readonly totalLines: number;
@@ -57,14 +52,14 @@ export async function readFile(
 
   const file = Bun.file(path);
 
-  let head: Uint8Array;
+  let binary: boolean;
   try {
-    head = new Uint8Array(await file.slice(0, 8192).arrayBuffer());
+    binary = await Lines.isBinary(file);
   } catch (error) {
     rethrowFsError(error, path, "read");
   }
 
-  if (head.includes(0)) {
+  if (binary) {
     throw new Error(
       `Read only supports UTF-8 text files but given path is a binary file. Use bash with 'file' or 'xxd' to inspect binary contents.`
     );
@@ -103,17 +98,31 @@ function renderText(
   }
 
   const lastLine = Math.min(range.end ?? totalLines, totalLines);
-  const rendered = renderLines(lines, range.start, lastLine);
-  const { visible, firstLineTooBig } = applyByteCap(rendered);
+  const visible: string[] = [];
+  let bytes = 0;
+  let lastVisibleLine = range.start;
 
-  if (firstLineTooBig !== undefined) {
-    throw new Error(
-      `Line ${firstLineTooBig.line} is ${formatBytes(firstLineTooBig.bytes)}, exceeds the ${formatBytes(OutputBudget.maxBytes)} read cap. Use bash: sed -n '${firstLineTooBig.line}p' ${path} | head -c ${OutputBudget.maxBytes}${range.start < totalLines ? `, or call read again with start=${range.start + 1} to skip this line.` : "."}`
-    );
+  for (let lineNumber = range.start; lineNumber <= lastLine; lineNumber += 1) {
+    const text = `${lineNumber}:${OutputBudget.truncateLine(lines[lineNumber - 1] ?? "")}`;
+    const separatorBytes = visible.length === 0 ? 0 : 1;
+    const lineBytes = Buffer.byteLength(text, "utf8");
+
+    if (visible.length === 0) {
+      if (lineBytes > OutputBudget.maxBytes) {
+        throw new Error(
+          `Line ${lineNumber} is ${formatBytes(lineBytes)}, exceeds the ${formatBytes(OutputBudget.maxBytes)} read cap. Use bash: sed -n '${lineNumber}p' ${path} | head -c ${OutputBudget.maxBytes}${range.start < totalLines ? `, or call read again with start=${range.start + 1} to skip this line.` : "."}`
+        );
+      }
+    } else if (bytes + separatorBytes + lineBytes > OutputBudget.maxBytes) {
+      break;
+    }
+
+    visible.push(text);
+    bytes += separatorBytes + lineBytes;
+    lastVisibleLine = lineNumber;
   }
 
-  const lastVisibleLine = visible.at(-1)?.lineNumber ?? range.start;
-  const body = visible.map((line) => line.text).join("\n");
+  const body = visible.join("\n");
   const truncatedByByteCap = lastVisibleLine < lastLine;
   const truncatedByEnd = lastVisibleLine < totalLines;
 
@@ -127,58 +136,6 @@ function renderText(
     hadBom,
     ...(truncatedByEnd ? { nextStart: lastVisibleLine + 1 } : {}),
   };
-}
-
-function renderLines(
-  lines: readonly string[],
-  start: number,
-  end: number
-): readonly RenderedLine[] {
-  const rendered: RenderedLine[] = [];
-
-  for (let lineNumber = start; lineNumber <= end; lineNumber += 1) {
-    const line = OutputBudget.truncateLine(lines[lineNumber - 1] ?? "");
-    rendered.push({
-      lineNumber,
-      text: `${lineNumber}:${line}`,
-    });
-  }
-
-  return rendered;
-}
-
-function applyByteCap(lines: readonly RenderedLine[]): {
-  readonly visible: readonly RenderedLine[];
-  readonly firstLineTooBig:
-    | { readonly line: number; readonly bytes: number }
-    | undefined;
-} {
-  const visible: RenderedLine[] = [];
-  let bytes = 0;
-
-  for (const line of lines) {
-    const separatorBytes = visible.length === 0 ? 0 : 1;
-    const lineBytes = Buffer.byteLength(line.text, "utf8");
-
-    if (visible.length === 0 && lineBytes > OutputBudget.maxBytes) {
-      return {
-        visible,
-        firstLineTooBig: { line: line.lineNumber, bytes: lineBytes },
-      };
-    }
-
-    if (
-      visible.length > 0 &&
-      bytes + separatorBytes + lineBytes > OutputBudget.maxBytes
-    ) {
-      break;
-    }
-
-    visible.push(line);
-    bytes += separatorBytes + lineBytes;
-  }
-
-  return { visible, firstLineTooBig: undefined };
 }
 
 function formatBytes(bytes: number): string {
