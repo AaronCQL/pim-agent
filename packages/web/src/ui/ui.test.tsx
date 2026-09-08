@@ -8,6 +8,7 @@ import { mountPoint } from "../test/dom";
 import { Combobox, createComboboxNavigation } from "./Combobox";
 import { Collapsible } from "./Collapsible";
 import { Drawer } from "./Drawer";
+import { Lightbox } from "./Lightbox";
 import { Menu } from "./Menu";
 import { Popover } from "./Popover";
 
@@ -423,6 +424,70 @@ describe("platform wrappers", () => {
     drawer.querySelector("button")!.click();
     flush();
     expect(drawer.open).toBe(false);
+    expect(closed).toEqual([1]);
+  });
+
+  function lightbox(): {
+    readonly dialog: HTMLDialogElement;
+    readonly closed: number[];
+  } {
+    const host = mountPoint();
+    const closed: number[] = [];
+    render(
+      () => (
+        <Lightbox
+          src="/files/shot.png"
+          alt="shot.png"
+          onClose={() => closed.push(1)}
+        />
+      ),
+      host
+    );
+    flush();
+    return { dialog: host.querySelector("dialog")!, closed };
+  }
+
+  // The regression this guards: the CSS reset zeroes `margin` on everything,
+  // including the `margin: auto` the UA sheet centres a modal dialog with, so
+  // a lightbox that does not name its own margin opens in the top-left corner.
+  test("the picture is centred and legible over its own controls", () => {
+    const { dialog } = lightbox();
+
+    expect(dialog.open).toBe(true);
+    expect(dialog.className).toContain("m-auto");
+    // Inline, the line box under it would leave a strip of dialog below the
+    // picture — backdrop to the eye, and to the click that closes it.
+    expect(dialog.querySelector("img")!.className).toContain("block");
+  });
+
+  // There is no zoom of our own, so the way to see the pixels is the file
+  // itself, in the viewer the browser already has.
+  test("the original is one control away, and closing is the other", () => {
+    const { dialog, closed } = lightbox();
+
+    const original = dialog.querySelector("a")!;
+    expect(original.getAttribute("href")).toBe("/files/shot.png");
+    expect(original.getAttribute("target")).toBe("_blank");
+    expect(original.getAttribute("aria-label")).toBe(
+      "Open shot.png at full size"
+    );
+
+    dialog.querySelector("button")!.click();
+    flush();
+    expect(dialog.open).toBe(false);
+    expect(closed).toEqual([1]);
+  });
+
+  // The phone gesture for "out of this". Without the pushed entry, Back leaves
+  // the session that the picture was opened from.
+  test("Back closes the lightbox rather than leaving the session", () => {
+    const { dialog, closed } = lightbox();
+    expect(history.state).toEqual({ pimModal: true });
+
+    globalThis.dispatchEvent(new Event("popstate"));
+    flush();
+
+    expect(dialog.open).toBe(false);
     expect(closed).toEqual([1]);
   });
 });

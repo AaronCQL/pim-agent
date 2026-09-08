@@ -9,7 +9,8 @@ import { Shell } from "../App";
 import { SessionStore } from "../session/SessionStore";
 import { mountPoint } from "../test/dom";
 import { GatewayHarness } from "../test/gateway";
-import { Sidebar } from "./Sidebar";
+import { Settings } from "./Settings";
+import { SettingsModal } from "./SettingsModal";
 
 let harness: GatewayHarness;
 let store: SessionStore;
@@ -38,10 +39,28 @@ afterEach(async () => {
   mock.restore();
 });
 
-function paint(shell = false): HTMLElement {
+/** The modal alone, which is where the install's one button now lives. */
+function paint(): HTMLElement {
   const host = mountPoint();
   dispose = render(
-    () => (shell ? <Shell store={store} /> : <Sidebar store={store} />),
+    () => (
+      <SettingsModal
+        open={true}
+        store={store}
+        settings={new Settings()}
+        onClose={() => {}}
+      />
+    ),
+    host
+  );
+  flush();
+  return host;
+}
+
+function shell(): HTMLElement {
+  const host = mountPoint();
+  dispose = render(
+    () => <Shell store={store} settings={new Settings()} />,
     host
   );
   flush();
@@ -50,11 +69,11 @@ function paint(shell = false): HTMLElement {
 
 function button(host: HTMLElement): HTMLButtonElement {
   return host.querySelector<HTMLButtonElement>(
-    '[aria-label="Update and restart"]'
+    '[aria-label="Update & Restart"]'
   )!;
 }
 
-test("the sidebar footer restarts once, shows progress, and recovers from failure", () => {
+test("settings restarts once, shows progress, and recovers from failure", () => {
   const host = paint();
   const restart = button(host);
   expect(restart.disabled).toBe(false);
@@ -73,7 +92,7 @@ test("the sidebar footer restarts once, shows progress, and recovers from failur
     label: "build the web client",
   });
   flush();
-  expect(restart.title).toBe("build the web client");
+  expect(restart.textContent).toContain("build the web client");
   store.ingest({
     type: "update_state",
     phase: "failed",
@@ -103,7 +122,7 @@ test("killing a turn in another session requires confirmation before force is se
   ]);
 });
 
-test("the footer cannot send a restart on a disconnected socket", () => {
+test("settings cannot send a restart on a disconnected socket", () => {
   const host = paint();
   store.client.close();
   flush();
@@ -112,8 +131,8 @@ test("the footer cannot send a restart on a disconnected socket", () => {
   expect(commands.some(({ type }) => type === "reload")).toBe(false);
 });
 
-test("the shell paints progress and a dismissible result outside the sidebar", () => {
-  const host = paint(true);
+test("the shell paints progress and a dismissible result outside the modal", () => {
+  const host = shell();
   store.ingest({ type: "update_state", phase: "step", label: "bun install" });
   flush();
   expect(host.querySelector('[role="status"]')?.textContent).toContain(
@@ -135,6 +154,30 @@ test("the shell paints progress and a dismissible result outside the sidebar", (
   expect(host.querySelector('[role="status"]')).toBeNull();
 });
 
+/**
+ * The one notice a reader can act on where they are reading it. Without the
+ * button the sentence is a dead end: the sidebar footer that used to carry
+ * the reload is gone, and nothing else on screen can fetch the page again.
+ */
+test("an outdated tab is offered the reload its notice asks for", () => {
+  const reloads: number[] = [];
+  store.dispose();
+  store = new SessionStore({
+    url: harness.url,
+    reloadPage: () => reloads.push(1),
+  });
+  const host = shell();
+  store.update.connection("outdated");
+  flush();
+  const toast = host.querySelector('[role="status"]')!;
+  expect(toast.textContent).toContain("This tab is outdated");
+  const reload = [...toast.querySelectorAll("button")].find(
+    (element) => element.textContent === "Reload"
+  )!;
+  reload.click();
+  expect(reloads).toHaveLength(1);
+});
+
 test("the reloaded shell toasts success only after attaching and consumes the intent", async () => {
   const key = `pim.reload:${harness.url}`;
   sessionStorage.setItem(
@@ -148,7 +191,7 @@ test("the reloaded shell toasts success only after attaching and consumes the in
   );
   store.dispose();
   store = new SessionStore({ url: harness.url });
-  const host = paint(true);
+  const host = shell();
   expect(host.querySelector('[role="status"]')?.textContent).toContain(
     "Waiting for server"
   );

@@ -6,6 +6,7 @@ import { flush } from "solid-js";
 
 import { Shell } from "../App";
 import { SessionStore } from "../session/SessionStore";
+import { Settings } from "../settings/Settings";
 import { mountPoint } from "../test/dom";
 import {
   CHILD_PATCH_LINE,
@@ -51,7 +52,7 @@ function connect(sessionId?: string): Promise<SessionStore> {
 
 function paint(target: SessionStore): HTMLElement {
   const host = mountPoint();
-  render(() => <Shell store={target} />, host);
+  render(() => <Shell store={target} settings={new Settings()} />, host);
   flush();
   return host;
 }

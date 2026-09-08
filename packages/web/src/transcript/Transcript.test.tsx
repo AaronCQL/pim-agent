@@ -7,6 +7,7 @@ import { flush } from "solid-js";
 import type { DurableEvent } from "#protocol/ServerEvent";
 import { clockTime } from "../format";
 import { FIXTURE_EVENTS } from "../replay/fixture";
+import { HideThinking } from "../settings/Settings";
 import { mountPoint } from "../test/dom";
 import { DIFF_ROW_CLASSES } from "../view/tokens";
 import { Transcript } from "./Transcript";
@@ -127,21 +128,53 @@ describe("rows", () => {
 });
 
 describe("row grouping", () => {
+  const call = (callId: string): DurableEvent => ({
+    seq: 1,
+    type: "tool_result",
+    callId,
+    name: "read",
+    view: { title: [{ kind: "text", text: callId }] },
+    isError: false,
+  });
+
   test("a run of tool calls is one group, so the calls stack with no gap", () => {
-    const call = (callId: string): DurableEvent => ({
-      seq: 1,
-      type: "tool_result",
-      callId,
-      name: "read",
-      view: { title: [{ kind: "text", text: callId }] },
-      isError: false,
-    });
     const host = replay([call("a"), call("b"), call("c")]);
 
     // One wrapper, three rows: only the wrappers are spaced by a blank line.
     const groups = [...host.querySelectorAll(":scope > div > div")];
     expect(groups).toHaveLength(1);
     expect(groups[0]?.querySelectorAll("article")).toHaveLength(3);
+  });
+
+  /**
+   * A step that only thought before calling the next tool is a row with
+   * nothing left in it once reasoning is hidden, and an empty row between two
+   * calls is a blank line between two calls: it must not be there at all.
+   */
+  test("a step that only thought leaves no gap once thinking is hidden", () => {
+    const host = mountPoint();
+    const thought: DurableEvent = {
+      seq: 2,
+      type: "message",
+      messageId: "m",
+      role: "assistant",
+      text: "",
+      thinking: "Now the other file.",
+      timestamp: 0,
+    };
+    render(
+      () => (
+        <HideThinking value={() => true}>
+          <Transcript events={[call("a"), thought, call("b")]} />
+        </HideThinking>
+      ),
+      host
+    );
+    flush();
+
+    const groups = [...host.querySelectorAll(":scope > div > div")];
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.querySelectorAll("article")).toHaveLength(2);
   });
 });
 

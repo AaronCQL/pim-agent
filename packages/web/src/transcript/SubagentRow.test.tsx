@@ -6,6 +6,7 @@ import { flush } from "solid-js";
 
 import { Shell } from "../App";
 import { SessionStore } from "../session/SessionStore";
+import { Settings } from "../settings/Settings";
 import { mountPoint } from "../test/dom";
 import {
   GatewayHarness,
@@ -46,7 +47,7 @@ afterEach(async () => {
 
 function paint(): HTMLElement {
   const host = mountPoint();
-  render(() => <Shell store={store} />, host);
+  render(() => <Shell store={store} settings={new Settings()} />, host);
   flush();
   return host;
 }

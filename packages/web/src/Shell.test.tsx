@@ -8,6 +8,7 @@ import { PROTOCOL_VERSION } from "#protocol/Protocol";
 import type { ServerEvent, SessionStatus } from "#protocol/ServerEvent";
 import { Shell } from "./App";
 import { SessionStore } from "./session/SessionStore";
+import { Settings } from "./settings/Settings";
 import { mountPoint } from "./test/dom";
 import { GatewayHarness, until } from "./test/gateway";
 
@@ -82,7 +83,7 @@ afterEach(() => {
 
 function paint(store: SessionStore): HTMLElement {
   const host = mountPoint();
-  render(() => <Shell store={store} />, host);
+  render(() => <Shell store={store} settings={new Settings()} />, host);
   flush();
   return host;
 }
@@ -255,10 +256,6 @@ describe("the shell, painted from events alone", () => {
     expect(composer.textContent).toContain("sonnet");
     expect(composer.textContent).toContain("medium");
     expect(host.textContent).toContain("$1.250");
-
-    // The connection is the sidebar's server row, tinted rather than spelled.
-    expect(host.textContent).toContain("127.0.0.1:1");
-    expect(host.innerHTML).toContain("text-rose-400");
 
     // Dropped with the footer: the status word, tok/s and the seq readout.
     expect(host.textContent).not.toContain("tok/s");

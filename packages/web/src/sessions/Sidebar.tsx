@@ -14,19 +14,12 @@ import type { SessionSummaryView } from "#protocol/ServerEvent";
 // Bun both inline the field; nothing else from the manifest is bundled.
 import { version } from "../../../../package.json";
 import type { SessionStore } from "../session/SessionStore";
-import type { ConnectionStatus } from "../ws/WsClient";
 import { abbreviateHome, relativeTime } from "../format";
 import { Spinner } from "../ui/Spinner";
 
-const CONNECTION_CLASSES: Record<ConnectionStatus, string> = {
-  connecting: "text-amber-400",
-  open: "text-emerald-400",
-  reconnecting: "text-amber-400",
-  closed: "text-rose-400",
-  // Not a fault of the connection and not repaired by waiting on one: this
-  // tab is the old thing in the room, so it greys out rather than alarms.
-  outdated: "text-slate-500",
-};
+/** The 32px square every piece of chrome in this app is pressed through. */
+const ICON =
+  "flex size-8 shrink-0 items-center justify-center rounded-lg text-neutral-350 hover:bg-neutral-850 hover:text-neutral-50";
 
 /**
  * One row, from either source: the server's listing or the unwritten session
@@ -66,6 +59,7 @@ type Row = {
 export function Sidebar(props: {
   readonly store: SessionStore;
   readonly onNavigate?: () => void;
+  readonly onOpenSettings?: () => void;
 }) {
   const [sessions, setSessions] = createSignal<readonly SessionSummaryView[]>(
     []
@@ -168,23 +162,6 @@ export function Sidebar(props: {
       ? undefined
       : relativeTime(row.listed.settledAt, now());
 
-  const restart = (): void => {
-    if (props.store.state.connection === "outdated") {
-      props.store.update.refresh();
-      return;
-    }
-    const busy = props.store.runningIds().length;
-    if (
-      busy > 0 &&
-      !window.confirm(
-        `Restarting will stop ${busy} running session${busy === 1 ? "" : "s"}. Update and restart anyway?`
-      )
-    ) {
-      return;
-    }
-    void props.store.reload(busy > 0);
-  };
-
   return (
     <div class="flex h-full flex-col bg-neutral-950">
       {/* Same height and rule as the topbar beside it, so the two headers
@@ -205,20 +182,34 @@ export function Sidebar(props: {
             {`v${props.store.update.state.pimVersion ?? version}`}
           </span>
         </div>
-        <button
-          type="button"
-          aria-label="New session"
-          title="New session"
-          class="flex size-8 items-center justify-center rounded-lg text-neutral-350 hover:bg-neutral-850 hover:text-neutral-50"
-          onClick={() => {
-            go(() => props.store.newSession());
-          }}
-        >
-          <span class="i-griddy-icons:chat-bubble-plus size-5" />
-        </button>
+        <div class="flex shrink-0 items-center">
+          <button
+            type="button"
+            aria-label="New session"
+            title="New session"
+            class={ICON}
+            onClick={() => {
+              go(() => props.store.newSession());
+            }}
+          >
+            <span class="i-griddy-icons:chat-bubble-plus size-5" />
+          </button>
+          {/* Rightmost, because it is the least pressed thing here — and
+              app-level rather than session-level, which is why it lives under
+              the wordmark instead of in the row above the transcript. */}
+          <button
+            type="button"
+            aria-label="Settings"
+            title="Settings"
+            class={ICON}
+            onClick={() => props.onOpenSettings?.()}
+          >
+            <span class="i-griddy-icons:settings size-5" />
+          </button>
+        </div>
       </div>
 
-      <ul class="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 pt-3">
+      <ul class="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
         <Show
           when={rows().length > 0}
           fallback={<li class="text-sm text-neutral-500">No sessions yet.</li>}
@@ -288,50 +279,6 @@ export function Sidebar(props: {
           </For>
         </Show>
       </ul>
-
-      <div class="flex shrink-0 items-center gap-1.5 border-t border-neutral-700 p-3 text-neutral-350">
-        <span
-          class={`i-griddy-icons:server size-4 ${CONNECTION_CLASSES[props.store.state.connection]}`}
-          aria-hidden="true"
-        />
-        <span class="min-w-0 flex-1 truncate text-sm leading-none">
-          {hostOf(props.store.client.httpUrl)}
-        </span>
-        <button
-          type="button"
-          aria-label={
-            props.store.state.connection === "outdated"
-              ? "Reload page"
-              : "Update and restart"
-          }
-          title={
-            props.store.update.state.pending
-              ? props.store.update.state.label
-              : props.store.state.connection === "outdated"
-                ? "Reload page"
-                : "Update and restart"
-          }
-          disabled={
-            props.store.update.state.pending ||
-            !["open", "outdated"].includes(props.store.state.connection)
-          }
-          class="flex size-8 shrink-0 items-center justify-center rounded-lg hover:bg-neutral-850 hover:text-neutral-50 disabled:opacity-50"
-          onClick={restart}
-        >
-          <Show
-            when={props.store.update.state.pending}
-            fallback={
-              <span class="i-solar:restart-bold size-4" aria-hidden="true" />
-            }
-          >
-            <Spinner />
-          </Show>
-        </button>
-      </div>
     </div>
   );
-}
-
-function hostOf(url: string): string {
-  return URL.parse(url)?.host ?? url;
 }

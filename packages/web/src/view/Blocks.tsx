@@ -402,7 +402,7 @@ function KvBlock(props: { readonly block: BlockOf<"kv"> }) {
 function LinkBlock(props: { readonly block: BlockOf<"link"> }) {
   return (
     <a
-      class="text-indigo-300 underline underline-offset-2"
+      class="text-indigo-300 hover:text-indigo-400 underline underline-offset-2"
       href={props.block.href}
       target="_blank"
       rel="noreferrer"

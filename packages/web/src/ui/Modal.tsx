@@ -1,9 +1,7 @@
-import { createEffect, onCleanup, type Element } from "solid-js";
+import { createEffect, type Element } from "solid-js";
 
+import { createBackGuard } from "./history";
 import { createMediaQuery, DESKTOP } from "./media";
-
-/** What a pushed entry is marked with, so only this modal's pop is ours. */
-const MODAL_ENTRY = { pimModal: true };
 
 /**
  * One thing read on top of everything else: a full-screen sheet on a phone, a
@@ -15,10 +13,7 @@ const MODAL_ENTRY = { pimModal: true };
  * the only part left, and which geometry is not state: it is the media query,
  * so a window dragged across the breakpoint changes shape without a remount.
  *
- * **Back closes it.** Opening pushes a history entry and closing pops it, so
- * the phone gesture for "out of this" leaves the modal rather than the
- * session behind it — a modal that Back cannot dismiss is a trap on the one
- * device that has no other way out.
+ * **Back closes it**, like every other overlay that covers the session.
  */
 export function Modal(props: {
   readonly open: boolean;
@@ -26,32 +21,20 @@ export function Modal(props: {
   readonly label: string;
   /** What the modal is, beside its close button. Nothing may mutate. */
   readonly header: Element;
+  /**
+   * How much there is to read. `wide` is a panel of fixed height for
+   * something browsable; `narrow` is a column that ends where its content
+   * does, for a handful of controls that would otherwise sit in a field of
+   * empty dialog. A phone gets the same full-screen sheet either way.
+   */
+  readonly size?: "wide" | "narrow";
   readonly children: Element;
 }) {
   const desktop = createMediaQuery(DESKTOP);
   let host!: HTMLDialogElement;
-  // Whether the entry on top of the history stack is this modal's.
-  let pushed = false;
-
-  const onPopState = (): void => {
-    // The reader popped it themselves, so there is nothing left to unwind.
-    pushed = false;
+  const back = createBackGuard(() => {
     props.onClose();
-  };
-
-  /**
-   * Give the history entry back, however the modal was closed — the close
-   * button, ESC, the backdrop, or the state behind it going away. Every one of
-   * those routes through the dialog's own `close` event, so this is the one
-   * place that has to know.
-   */
-  const release = (): void => {
-    globalThis.removeEventListener("popstate", onPopState);
-    if (pushed) {
-      pushed = false;
-      history.back();
-    }
-  };
+  });
 
   createEffect(
     () => props.open,
@@ -64,13 +47,9 @@ export function Modal(props: {
         return;
       }
       host.showModal();
-      pushed = true;
-      history.pushState(MODAL_ENTRY, "");
-      globalThis.addEventListener("popstate", onPopState);
+      back.arm();
     }
   );
-
-  onCleanup(release);
 
   return (
     <dialog
@@ -79,7 +58,7 @@ export function Modal(props: {
       }}
       aria-label={props.label}
       onClose={() => {
-        release();
+        back.release();
         props.onClose();
       }}
       onClick={(event: MouseEvent) => {
@@ -87,10 +66,14 @@ export function Modal(props: {
           host.close();
         }
       }}
-      class={`max-h-none max-w-none bg-neutral-925 p-0 text-neutral-100 backdrop:bg-black/60 ${
+      class={`max-w-none bg-neutral-925 p-0 text-neutral-100 backdrop:bg-black/60 ${
         desktop()
-          ? "m-auto h-[85dvh] w-[min(56rem,92vw)] rounded-lg ring-1 ring-neutral-700"
-          : "m-0 h-full w-full"
+          ? `m-auto rounded-lg ring-1 ring-neutral-700 ${
+              props.size === "narrow"
+                ? "max-h-[85dvh] w-[min(30rem,92vw)]"
+                : "h-[85dvh] max-h-none w-[min(56rem,92vw)]"
+            }`
+          : "m-0 h-full max-h-none w-full"
       }`}
     >
       <div class="flex h-full min-h-0 flex-col">

@@ -1,10 +1,11 @@
 import { Dynamic } from "@solidjs/web";
-import { createMemo, For, Show, type Component } from "solid-js";
+import { createMemo, For, Show, useContext, type Component } from "solid-js";
 
 import type { DurableEvent } from "#protocol/ServerEvent";
 import { clockTime } from "../format";
 import { Markdown } from "../markdown/Markdown";
 import type { LiveMessage, PendingMessage } from "../session/SessionStore";
+import { HideThinking } from "../settings/Settings";
 import { Attachments } from "../view/Attachments";
 import { ToolCards } from "../view/ToolCard";
 import { NOTICE_CLASSES } from "../view/tokens";
@@ -65,13 +66,20 @@ export function Transcript(props: {
   const rows = createMemo(() =>
     extendRows(durable(), props.trailing ?? [], props.live ?? [])
   );
-  const groups = createMemo(() => groupRuns(rows()));
+  const hidden = useContext(HideThinking);
+  const groups = createMemo(() =>
+    groupRuns(rows().filter((row) => draws(row, hidden())))
+  );
   // Built here rather than at module scope so the message row can be handed
   // the one thing a row is allowed to do. The body runs once per mount, so
   // the component identities are stable and `<Dynamic>` never remounts a row.
   const painters: RowMap = {
     message: (message) => (
-      <MessageBubble row={message.row} onEdit={props.onEdit} />
+      <MessageBubble
+        row={message.row}
+        hidden={hidden()}
+        onEdit={props.onEdit}
+      />
     ),
     tool: (tool) => (
       <ToolRowView row={tool.row} onOpenSubagent={props.onOpenSubagent} />
@@ -100,6 +108,24 @@ export function Transcript(props: {
 }
 
 type Group = { readonly id: string; readonly rows: readonly Row[] };
+
+/**
+ * Whether a row puts anything on screen. Only one ever fails to: a step whose
+ * entire body was reasoning — no prose, no files — once reasoning is hidden.
+ * Dropped here rather than skipped while painting, because a row that draws
+ * nothing is still a row, and it both ends a run of tool calls and takes a
+ * gap on either side of itself: a blank line between two calls that ran back
+ * to back.
+ */
+function draws(row: Row, hidden: boolean): boolean {
+  return !(
+    hidden &&
+    row.kind === "message" &&
+    row.thinking !== undefined &&
+    row.text === "" &&
+    row.attachments === undefined
+  );
+}
 
 /**
  * A run of consecutive tool rows is one group and gets no gaps inside it, the
@@ -137,6 +163,8 @@ const COLUMN = "flex max-w-[85%] min-w-0 flex-col items-end";
  */
 function MessageBubble(props: {
   readonly row: MessageRow;
+  /** Whether this reader has asked not to see reasoning. */
+  readonly hidden: boolean;
   readonly onEdit?: () => void;
 }) {
   return (
@@ -144,7 +172,7 @@ function MessageBubble(props: {
       when={props.row.role === "user"}
       fallback={
         <article class="min-w-0 space-y-[--line]">
-          <Show when={props.row.thinking}>
+          <Show when={!props.hidden && props.row.thinking}>
             {(thinking) => (
               // Thinking is markdown too, so it gets the same painter as the
               // answer; only weight and opacity say it is not the answer. Once

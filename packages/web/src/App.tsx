@@ -9,6 +9,8 @@ import {
 import { Composer } from "./input/Composer";
 import { SessionStore } from "./session/SessionStore";
 import { Sidebar } from "./sessions/Sidebar";
+import { HideThinking, Settings } from "./settings/Settings";
+import { SettingsModal } from "./settings/SettingsModal";
 import { Skeleton } from "./transcript/Skeleton";
 import { Splash } from "./transcript/Splash";
 import { SubagentModal } from "./transcript/SubagentModal";
@@ -18,23 +20,12 @@ import { createScrollAnchor, observeHeight } from "./ui/anchor";
 import { Drawer } from "./ui/Drawer";
 import { createMediaQuery, DESKTOP } from "./ui/media";
 
-const DEFAULT_PORT = 4319;
-
-/** Same origin in production, because `pim-server` serves this bundle itself. */
-function gatewayUrl(): string {
-  const override = import.meta.env.VITE_PIM_SERVER;
-  if (override !== undefined && override !== "") {
-    return override;
-  }
-  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-  const host = import.meta.env.DEV
-    ? `${location.hostname}:${DEFAULT_PORT}`
-    : location.host;
-  return `${protocol}//${host}`;
-}
-
 export function App() {
-  const store = new SessionStore({ url: gatewayUrl() });
+  // Read before the store exists, because which machine this tab drives is
+  // fixed at construction: the socket, the upload endpoint and every image
+  // URL are all derived from the one address.
+  const settings = new Settings();
+  const store = new SessionStore({ url: settings.gateway() });
   // Attaching is imperative IO whose first act is a status write, and a
   // component body may not write reactive state — dev Solid throws
   // REACTIVE_WRITE_IN_OWNED_SCOPE, which `connect()` then reports as a
@@ -50,7 +41,7 @@ export function App() {
     };
   });
 
-  return <Shell store={store} />;
+  return <Shell store={store} settings={settings} />;
 }
 
 /**
@@ -69,9 +60,13 @@ export function App() {
  * state — it is the media query — so it is tracked separately and decides the
  * signal's initial value: a phone must not start with the drawer open.
  */
-export function Shell(props: { readonly store: SessionStore }) {
+export function Shell(props: {
+  readonly store: SessionStore;
+  readonly settings: Settings;
+}) {
   const desktop = createMediaQuery(DESKTOP);
   const [sidebar, setSidebar] = createSignal(desktop());
+  const [configuring, setConfiguring] = createSignal(false);
   // Crossing the breakpoint hands the sidebar to the other host, and the two
   // want opposite defaults: a column is open, a modal drawer is not.
   createEffect(
@@ -153,168 +148,208 @@ export function Shell(props: { readonly store: SessionStore }) {
   });
 
   return (
-    <main
-      class="flex overflow-hidden bg-neutral-925 text-neutral-100"
-      style={{
-        height:
-          viewportHeight() === undefined ? "100dvh" : `${viewportHeight()}px`,
-      }}
-    >
-      <Show when={desktop() && sidebar()}>
-        <div class="w-xs shrink-0 border-r border-neutral-700">
-          <Sidebar store={props.store} onNavigate={jump} />
-        </div>
-      </Show>
-
-      <Drawer
-        open={!desktop() && sidebar()}
-        label="Sessions"
-        onClose={() => {
-          setSidebar(false);
+    <HideThinking value={() => props.settings.state.hideThinking}>
+      <main
+        class="flex overflow-hidden bg-neutral-925 text-neutral-100"
+        style={{
+          height:
+            viewportHeight() === undefined ? "100dvh" : `${viewportHeight()}px`,
         }}
       >
-        {/* Only the live host is mounted: two Sidebars would each query the
+        <Show when={desktop() && sidebar()}>
+          <div class="w-xs shrink-0 border-r border-neutral-700">
+            <Sidebar
+              store={props.store}
+              onNavigate={jump}
+              onOpenSettings={() => {
+                setConfiguring(true);
+              }}
+            />
+          </div>
+        </Show>
+
+        <Drawer
+          open={!desktop() && sidebar()}
+          label="Sessions"
+          onClose={() => {
+            setSidebar(false);
+          }}
+        >
+          {/* Only the live host is mounted: two Sidebars would each query the
             server and put the same list in the DOM twice. */}
-        <Show when={!desktop()}>
-          <Sidebar
+          <Show when={!desktop()}>
+            <Sidebar
+              store={props.store}
+              onNavigate={() => {
+                setSidebar(false);
+                jump();
+              }}
+              // The drawer is the modal's own backdrop's business otherwise:
+              // a settings dialog opened over a sheet is two layers deep on
+              // the device with the least room for either.
+              onOpenSettings={() => {
+                setSidebar(false);
+                setConfiguring(true);
+              }}
+            />
+          </Show>
+        </Drawer>
+
+        <div class="flex w-full min-w-0 flex-col">
+          <Topbar
             store={props.store}
-            onNavigate={() => {
-              setSidebar(false);
-              jump();
+            compact={!desktop()}
+            onToggleSidebar={() => {
+              setSidebar((open) => !open);
+            }}
+            onOpenSettings={() => {
+              setConfiguring(true);
             }}
           />
-        </Show>
-      </Drawer>
 
-      <div class="flex w-full min-w-0 flex-col">
-        <Topbar
-          store={props.store}
-          compact={!desktop()}
-          onToggleSidebar={() => {
-            setSidebar((open) => !open);
-          }}
-        />
-
-        <div class="relative min-h-0 flex-1">
-          <div
-            ref={anchor.mount}
-            class="h-full overflow-y-auto"
-            onScroll={anchor.onScroll}
-          >
+          <div class="relative min-h-0 flex-1">
             <div
-              // The same anchoring again, driven by the transcript's own
-              // height: a row is taller than the flush that appended it —
-              // markdown parses into the DOM, code blocks grow a copy button,
-              // images arrive — so a scroll written when the last event
-              // landed stops short of the bottom by whatever grew after it.
-              ref={(element: HTMLDivElement) => {
-                observeHeight(element, anchor.stick);
-              }}
-              class="mx-auto w-full max-w-3xl space-y-[--line] p-3 leading-[--line]"
-              style={{ "padding-bottom": `calc(${inset()}px + var(--line))` }}
+              ref={anchor.mount}
+              class="h-full overflow-y-auto"
+              onScroll={anchor.onScroll}
             >
-              {/* Whole or not at all: a conversation that paints itself row
+              <div
+                // The same anchoring again, driven by the transcript's own
+                // height: a row is taller than the flush that appended it —
+                // markdown parses into the DOM, code blocks grow a copy button,
+                // images arrive — so a scroll written when the last event
+                // landed stops short of the bottom by whatever grew after it.
+                ref={(element: HTMLDivElement) => {
+                  observeHeight(element, anchor.stick);
+                }}
+                class="mx-auto w-full max-w-3xl space-y-[--line] p-3 leading-[--line]"
+                style={{ "padding-bottom": `calc(${inset()}px + var(--line))` }}
+              >
+                {/* Whole or not at all: a conversation that paints itself row
                   by row as the log arrives is a flicker, not progress. */}
-              <Show when={!props.store.state.loading} fallback={<Skeleton />}>
-                <Show when={hasTranscript()}>
-                  <Transcript
-                    events={props.store.state.durable}
-                    trailing={props.store.trailing()}
-                    live={props.store.state.live}
-                    onEdit={recall}
-                    onOpenSubagent={(callId) => {
-                      void props.store.watch(callId);
-                    }}
-                  />
+                <Show when={!props.store.state.loading} fallback={<Skeleton />}>
+                  <Show when={hasTranscript()}>
+                    <Transcript
+                      events={props.store.state.durable}
+                      trailing={props.store.trailing()}
+                      live={props.store.state.live}
+                      onEdit={recall}
+                      onOpenSubagent={(callId) => {
+                        void props.store.watch(callId);
+                      }}
+                    />
+                  </Show>
                 </Show>
-              </Show>
+              </div>
             </div>
-          </div>
 
-          <div
-            ref={(element: HTMLDivElement) => {
-              observeHeight(element, setInset);
-            }}
-            class={{
-              "pointer-events-none flex": true,
-              // Stops at the scroller's scrollbar instead of at the
-              // container's edge: the transcript scrolls under this backdrop,
-              // so covering the scrollbar column would hide the thumb exactly
-              // where the reader is dragging it.
-              "absolute right-[--scrollbar] bottom-0 left-0 justify-center bg-neutral-925 px-3 pt-10 pb-[max(0.75rem,env(safe-area-inset-bottom))]":
-                !showSplash(),
-              "absolute inset-0 items-center justify-center overflow-hidden px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]":
-                showSplash(),
-            }}
-          >
             <div
+              ref={(element: HTMLDivElement) => {
+                observeHeight(element, setInset);
+              }}
               class={{
-                "w-full max-w-3xl": true,
-                "flex max-h-full flex-col": showSplash(),
+                "pointer-events-none flex": true,
+                // Stops at the scroller's scrollbar instead of at the
+                // container's edge: the transcript scrolls under this backdrop,
+                // so covering the scrollbar column would hide the thumb exactly
+                // where the reader is dragging it.
+                "absolute right-[--scrollbar] bottom-0 left-0 justify-center bg-neutral-925 px-3 pt-10 pb-[max(0.75rem,env(safe-area-inset-bottom))]":
+                  !showSplash(),
+                "absolute inset-0 items-center justify-center overflow-hidden px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]":
+                  showSplash(),
               }}
             >
-              <Show when={showSplash()}>
-                {/* The composer owns the scarce space. Once it grows past the
+              <div
+                class={{
+                  "w-full max-w-3xl": true,
+                  "flex max-h-full flex-col": showSplash(),
+                }}
+              >
+                <Show when={showSplash()}>
+                  {/* The composer owns the scarce space. Once it grows past the
                     room left by the keyboard, this viewport gives up the
                     bottom of the decorative splash rather than letting the
                     whole stack overflow behind the topbar. */}
-                <div class="min-h-0 overflow-hidden">
-                  <Splash />
+                  <div class="min-h-0 overflow-hidden">
+                    <Splash />
+                  </div>
+                </Show>
+                <div
+                  class={{
+                    "mt-[calc(var(--line)*2)] shrink-0": showSplash(),
+                  }}
+                >
+                  <Composer
+                    store={props.store}
+                    onSend={jump}
+                    recalled={recalled()}
+                  />
                 </div>
-              </Show>
-              <div
-                class={{
-                  "mt-[calc(var(--line)*2)] shrink-0": showSplash(),
-                }}
-              >
-                <Composer
-                  store={props.store}
-                  onSend={jump}
-                  recalled={recalled()}
-                />
               </div>
             </div>
           </div>
         </div>
-      </div>
-      <SubagentModal store={props.store} />
-
-      <Show
-        when={
-          props.store.update.state.pending || props.store.update.state.notice
-        }
-      >
-        <div
-          role="status"
-          class={{
-            "fixed right-3 bottom-3 z-50 flex max-w-sm items-start gap-3 rounded-lg bg-neutral-850 p-3 text-sm shadow-lg ring-1 ring-neutral-700": true,
-            "text-emerald-400":
-              props.store.update.state.notice?.tone === "success",
-            "text-amber-400":
-              props.store.update.state.notice?.tone === "warning",
-            "text-rose-400": props.store.update.state.notice?.tone === "error",
+        <SubagentModal store={props.store} />
+        <SettingsModal
+          open={configuring()}
+          store={props.store}
+          settings={props.settings}
+          onClose={() => {
+            setConfiguring(false);
           }}
+        />
+
+        <Show
+          when={
+            props.store.update.state.pending || props.store.update.state.notice
+          }
         >
-          <span>
-            {props.store.update.state.pending
-              ? props.store.update.state.label
-              : props.store.update.state.notice?.text}
-          </span>
-          <Show when={props.store.update.state.notice}>
-            <button
-              type="button"
-              aria-label="Dismiss notification"
-              class="flex size-5 shrink-0 items-center justify-center"
-              onClick={() => props.store.update.dismiss()}
-            >
-              <span
-                class="i-solar:close-circle-bold size-4"
-                aria-hidden="true"
-              />
-            </button>
-          </Show>
-        </div>
-      </Show>
-    </main>
+          <div
+            role="status"
+            class={{
+              "fixed right-3 bottom-3 z-50 flex max-w-sm items-start gap-3 rounded-lg bg-neutral-850 p-3 text-sm shadow-lg ring-1 ring-neutral-700": true,
+              "text-emerald-400":
+                props.store.update.state.notice?.tone === "success",
+              "text-amber-400":
+                props.store.update.state.notice?.tone === "warning",
+              "text-rose-400":
+                props.store.update.state.notice?.tone === "error",
+            }}
+          >
+            <span>
+              {props.store.update.state.pending
+                ? props.store.update.state.label
+                : props.store.update.state.notice?.text}
+            </span>
+            {/* The only notice that names something to do here rather than
+              somewhere else: a tab the server has moved on from is repaired
+              by fetching this page again, and the reader is already looking
+              at the sentence that says so. */}
+            <Show when={props.store.update.state.notice?.action === "reload"}>
+              <button
+                type="button"
+                class="shrink-0 rounded-lg bg-neutral-800 px-2 text-neutral-100 hover:bg-neutral-700"
+                onClick={() => props.store.update.refresh()}
+              >
+                Reload
+              </button>
+            </Show>
+            <Show when={props.store.update.state.notice}>
+              <button
+                type="button"
+                aria-label="Dismiss notification"
+                class="flex size-5 shrink-0 items-center justify-center"
+                onClick={() => props.store.update.dismiss()}
+              >
+                <span
+                  class="i-solar:close-circle-bold size-4"
+                  aria-hidden="true"
+                />
+              </button>
+            </Show>
+          </div>
+        </Show>
+      </main>
+    </HideThinking>
   );
 }

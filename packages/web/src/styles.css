@@ -70,6 +70,15 @@ body,
   overflow: hidden;
 }
 
+/* Selection in the brand indigo (#818cf8, the wordmark's) rather than the
+   engine's default blue, which is picked for a light page and reads as a
+   foreign slab on this one. Only the background is set, so highlighted code
+   keeps its syntax colours and a drag across a fence stays readable; at 35%
+   the tint sits under white text without dimming it. */
+::selection {
+  background: rgb(129 140 248 / 35%);
+}
+
 /* Every clickable in the UI is a real <button>, and every one of them wants
    the same cursor — so it is a base style rather than a utility copied onto
    each new one and forgotten on the one after that. Wind4's reset leaves

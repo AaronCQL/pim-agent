@@ -1,7 +1,8 @@
-import { createSignal, Show } from "solid-js";
+import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 
 import { abbreviateHome, baseName, splitTail } from "../format";
 import type { SessionStore } from "../session/SessionStore";
+import type { ConnectionStatus } from "../ws/WsClient";
 import { DirectoryModal } from "./DirectoryModal";
 
 /**
@@ -18,6 +19,14 @@ const CHIP =
   "flex h-8 min-w-0 max-w-[50%] items-center gap-1.5 rounded-lg bg-neutral-850 px-2 text-sm text-neutral-350";
 
 /**
+ * How long a socket may be down before it is worth saying so. `WsClient`
+ * retries on its own and a phone waking from sleep is usually back inside a
+ * few hundred milliseconds; a mark that painted on every one of those would
+ * be trained away long before the outage that matters.
+ */
+const GRACE_MS = 1500;
+
+/**
  * The row above the transcript: where the session is, and what its repository
  * is doing. Two chips rather than one, because they are different facts on
  * different clocks — the cwd moves only when something moves it, the git
@@ -30,14 +39,24 @@ const CHIP =
  * one: where the session works is the single fact up here that a reader can
  * change, so it is a button and the branch beside it stays a readout — what
  * git says is not settable by asking.
+ *
+ * It is also the only bar on screen at every width, which is why the
+ * disconnected mark lives here rather than in the sidebar: the socket most
+ * often dies on a phone, where the sidebar is a closed drawer.
  */
 export function Topbar(props: {
   readonly store: SessionStore;
   /** Phone-width, where only the chips' leading facts survive. */
   readonly compact: boolean;
   readonly onToggleSidebar: () => void;
+  readonly onOpenSettings?: () => void;
+  readonly graceMs?: number;
 }) {
   const [choosing, setChoosing] = createSignal(false);
+  const offline = createOffline(
+    () => props.store.state.connection,
+    () => props.graceMs ?? GRACE_MS
+  );
   // A phone gets the directory alone. The route to it is the first thing a
   // narrow row cannot afford and the last thing the reader needs there: the
   // question on a phone is which project this is, not where it sits on disk.
@@ -75,6 +94,23 @@ export function Topbar(props: {
       {/* Holds the branch chip against the right edge while there is room,
           and collapses to nothing before either chip is asked to shrink. */}
       <div class="flex-1" />
+
+      {/* Nothing at all while the socket is up: a reader who is connected
+          does not need to be told so every second they are. Opens the
+          settings, because the address is the only part of a connection that
+          will not come back that a reader can change. */}
+      <Show when={offline()}>
+        <button
+          type="button"
+          aria-label="Not connected"
+          title="Not connected — reconnecting"
+          class="flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-rose-500/10 px-2 text-sm text-rose-400 hover:bg-rose-500/20"
+          onClick={() => props.onOpenSettings?.()}
+        >
+          <span class="i-griddy-icons:link-off size-4 shrink-0" />
+          <Show when={!props.compact}>Not connected</Show>
+        </button>
+      </Show>
 
       {/* Nothing to draw outside a git repository. */}
       <Show when={props.store.state.branch}>
@@ -133,4 +169,38 @@ function Elided(props: { readonly text: string }) {
       <span class="shrink-0">{parts()[1]}</span>
     </span>
   );
+}
+
+/**
+ * Whether the socket has been down long enough to say so.
+ *
+ * `connecting` and `reconnecting` only. `outdated` is a healthy socket the
+ * server refused on protocol version — the toast says so in words and the fix
+ * is a reload, not a network — and `closed` is only ever set by teardown, so
+ * both would be marks that misdescribe what is wrong.
+ */
+function createOffline(
+  status: () => ConnectionStatus,
+  graceMs: () => number
+): () => boolean {
+  const [offline, setOffline] = createSignal(false);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  createEffect(
+    () => status(),
+    (state) => {
+      clearTimeout(timer);
+      timer = undefined;
+      if (state !== "connecting" && state !== "reconnecting") {
+        setOffline(false);
+        return;
+      }
+      timer = setTimeout(() => {
+        setOffline(true);
+      }, graceMs());
+    }
+  );
+  onCleanup(() => {
+    clearTimeout(timer);
+  });
+  return offline;
 }

@@ -40,7 +40,8 @@ const SESSIONS: readonly SessionSummaryView[] = [
  */
 function paint(
   onNavigate?: () => void,
-  unread: readonly string[] = []
+  unread: readonly string[] = [],
+  onOpenSettings?: () => void
 ): {
   readonly host: HTMLElement;
   readonly switched: string[];
@@ -69,7 +70,13 @@ function paint(
   };
   const host = mountPoint();
   render(
-    () => <Sidebar store={store} {...(onNavigate ? { onNavigate } : {})} />,
+    () => (
+      <Sidebar
+        store={store}
+        {...(onNavigate ? { onNavigate } : {})}
+        {...(onOpenSettings ? { onOpenSettings } : {})}
+      />
+    ),
     host
   );
   flush();
@@ -192,11 +199,26 @@ test("a row's age follows the clock, not the next render", async () => {
   expect(age()).toBe("1m");
 });
 
-test("the server row names the host and tints itself with the connection", () => {
-  const { host } = paint();
+/**
+ * Where the app's own controls are, as opposed to the session's: the row
+ * under the wordmark, with the least-pressed of them last. What the sidebar
+ * used to say about the connection is the topbar's mark and the settings
+ * dialog now — a bar that reported a healthy socket every second it was
+ * healthy was chrome nobody read.
+ */
+test("the header carries the app's two buttons and nothing about the socket", () => {
+  const opened: number[] = [];
+  const { host } = paint(undefined, [], () => opened.push(1));
+  const header = host.querySelector("h1")!.closest("div")!.parentElement!;
+  const labels = [...header.querySelectorAll("button")].map((button) =>
+    button.getAttribute("aria-label")
+  );
 
-  expect(host.textContent).toContain("127.0.0.1:1");
-  expect(host.innerHTML).toContain("text-rose-400");
+  expect(labels).toEqual(["New session", "Settings"]);
+  expect(host.textContent).not.toContain("127.0.0.1:1");
+
+  header.querySelector<HTMLButtonElement>('[aria-label="Settings"]')!.click();
+  expect(opened).toHaveLength(1);
 });
 
 test("a new chat is a row before it is a file, marked and ageless", async () => {

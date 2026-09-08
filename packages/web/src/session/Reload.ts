@@ -6,6 +6,12 @@ import type { AttachTarget, ConnectionStatus } from "../ws/WsClient";
 export type ReloadNotice = {
   readonly tone: "success" | "warning" | "error";
   readonly text: string;
+  /**
+   * The notice names a step the reader can take here. Only ever a reload:
+   * a tab the server has moved on from is repaired by fetching this page
+   * again, and nothing else on screen can do that for them.
+   */
+  readonly action?: "reload";
 };
 
 type Intent = {
@@ -107,6 +113,7 @@ export class Reload {
         this.finish({
           tone: "warning",
           text: "This tab is outdated. Reload the page to use the current client.",
+          action: "reload",
         });
       }
       return;
@@ -123,6 +130,7 @@ export class Reload {
         this.finish({
           tone: "warning",
           text: "Server reconnected. Reload the page to use the current client.",
+          action: "reload",
         });
       }
     }
