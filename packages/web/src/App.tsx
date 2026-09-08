@@ -8,6 +8,7 @@ import {
 
 import { Composer } from "./input/Composer";
 import { SessionStore } from "./session/SessionStore";
+import { Toast } from "./session/Toast";
 import { Sidebar } from "./sessions/Sidebar";
 import { HideThinking, Settings } from "./settings/Settings";
 import { SettingsModal } from "./settings/SettingsModal";
@@ -287,6 +288,12 @@ export function Shell(props: {
                 </div>
               </div>
             </div>
+
+            {/* Last, so it paints over both the transcript and the
+                composer's backdrop, and inside this container rather than the
+                page, so its top edge is the topbar's bottom edge on every
+                device. */}
+            <Toast update={props.store.update} desktop={desktop()} />
           </div>
         </div>
         <SubagentModal store={props.store} />
@@ -298,57 +305,6 @@ export function Shell(props: {
             setConfiguring(false);
           }}
         />
-
-        <Show
-          when={
-            props.store.update.state.pending || props.store.update.state.notice
-          }
-        >
-          <div
-            role="status"
-            class={{
-              "fixed right-3 bottom-3 z-50 flex max-w-sm items-start gap-3 rounded-lg bg-neutral-850 p-3 text-sm shadow-lg ring-1 ring-neutral-700": true,
-              "text-emerald-400":
-                props.store.update.state.notice?.tone === "success",
-              "text-amber-400":
-                props.store.update.state.notice?.tone === "warning",
-              "text-rose-400":
-                props.store.update.state.notice?.tone === "error",
-            }}
-          >
-            <span>
-              {props.store.update.state.pending
-                ? props.store.update.state.label
-                : props.store.update.state.notice?.text}
-            </span>
-            {/* The only notice that names something to do here rather than
-              somewhere else: a tab the server has moved on from is repaired
-              by fetching this page again, and the reader is already looking
-              at the sentence that says so. */}
-            <Show when={props.store.update.state.notice?.action === "reload"}>
-              <button
-                type="button"
-                class="shrink-0 rounded-lg bg-neutral-800 px-2 text-neutral-100 hover:bg-neutral-700"
-                onClick={() => props.store.update.refresh()}
-              >
-                Reload
-              </button>
-            </Show>
-            <Show when={props.store.update.state.notice}>
-              <button
-                type="button"
-                aria-label="Dismiss notification"
-                class="flex size-5 shrink-0 items-center justify-center"
-                onClick={() => props.store.update.dismiss()}
-              >
-                <span
-                  class="i-solar:close-circle-bold size-4"
-                  aria-hidden="true"
-                />
-              </button>
-            </Show>
-          </div>
-        </Show>
       </main>
     </HideThinking>
   );

@@ -27,6 +27,15 @@ type State = {
   pending: boolean;
   label: string;
   notice: ReloadNotice | undefined;
+  /**
+   * The reader has closed what was on screen. Kept apart from `notice` so a
+   * dismissal can also silence the progress line, which is not a notice and
+   * outlives any one of them: `pending` still gates the restart button while
+   * this is true. Every step the machine takes afterwards clears it, so the
+   * toast reporting how the update ended is not swallowed by a tap on the
+   * one that said it had started.
+   */
+  dismissed: boolean;
   pimVersion: string | undefined;
   piVersion: string | undefined;
 };
@@ -65,6 +74,7 @@ export class Reload {
       pending: this.intent !== undefined,
       label: this.intent ? "Waiting for server…" : "",
       notice: expired ? TIMEOUT_NOTICE : undefined,
+      dismissed: false,
       pimVersion: undefined,
       piVersion: undefined,
     });
@@ -210,6 +220,7 @@ export class Reload {
     this.dismissTimer = undefined;
     this.setState((state) => {
       state.notice = undefined;
+      state.dismissed = true;
     });
   }
 
@@ -225,6 +236,7 @@ export class Reload {
       state.pending = true;
       state.label = label;
       state.notice = undefined;
+      state.dismissed = false;
     });
   }
 
@@ -243,6 +255,7 @@ export class Reload {
       state.pending = false;
       state.label = "";
       state.notice = notice;
+      state.dismissed = false;
     });
     // Only a success is purely informational; a warning or an error names the
     // manual step still owed, so it stays until the reader dismisses it.

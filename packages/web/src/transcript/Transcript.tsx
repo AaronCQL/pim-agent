@@ -240,10 +240,11 @@ function MessageBubble(props: {
 function Card(props: { readonly row: MessageRow }) {
   return (
     <>
-      {/* Queued sits a step darker than a message that has landed, and rises
-          to the landed fill under the cursor. The fill is what says "not yet",
-          not a fade: dimming the whole card takes the text down with it, and
-          the one card here that is worth re-reading is the one still editable.
+      {/* Queued sits a step darker than a message that has landed — fill and
+          text both — and rises to the landed shade under the cursor. The dim
+          text is what says "not yet": unsent words should not read as
+          confidently as the ones pi has already heard, and pointing at the
+          card, which is what takes it back, brings them up to be re-read.
           A message of nothing but files draws no bubble at all: an empty one
           under a photo is a speech bubble with nothing said in it. */}
       <Show when={props.row.text !== ""}>
@@ -259,7 +260,7 @@ function Card(props: { readonly row: MessageRow }) {
           // the card fits the column and the path wraps inside it.
           class={`whitespace-pre-wrap wrap-anywhere rounded-lg px-4 py-3 ${
             props.row.queued
-              ? "bg-neutral-900 group-hover:bg-neutral-850"
+              ? "bg-neutral-900 text-neutral-400 group-hover:bg-neutral-850 group-hover:text-neutral-200"
               : "bg-neutral-850"
           }`}
         >
