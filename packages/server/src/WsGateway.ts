@@ -84,7 +84,10 @@ type StreamTarget = {
 /** Enough rows to fill a switcher; the catalogue is read newest-first. */
 const DEFAULT_SESSION_LIMIT = 50;
 
-const DEFAULT_PORT = 4319;
+export const DEFAULT_PORT = 4319;
+
+/** Loopback only: the server has full host access and no authentication. */
+export const DEFAULT_HOSTNAME = "127.0.0.1";
 
 /** A digest and the file state it was read from; a rewrite moves both. */
 type CachedDigest = SessionDigest & { readonly modifiedAt: number };
@@ -148,7 +151,7 @@ export class WsGateway {
 
   public constructor(deps: WsGatewayDeps) {
     this.registry = deps.registry;
-    this.hostname = deps.hostname ?? "127.0.0.1";
+    this.hostname = deps.hostname ?? DEFAULT_HOSTNAME;
     this.requestedPort = deps.port ?? DEFAULT_PORT;
     this.uploads = new AttachmentEndpoint(
       deps.attachmentsRoot === undefined ? {} : { root: deps.attachmentsRoot }
