@@ -16,8 +16,7 @@ export type Cli = {
 };
 
 export function parseArgs(args: ReadonlyArray<string>): Cli {
-  // PORT is honoured because a supervisor or container assigns it, but an
-  // explicit `--port` always wins.
+  // An explicit `--port` always wins over `PORT`.
   let port = process.env["PORT"] ?? String(DEFAULT_PORT);
   let hostname = DEFAULT_HOSTNAME;
   let cwd = process.cwd();
@@ -51,8 +50,6 @@ export async function start(args: ReadonlyArray<string>): Promise<void> {
     throw new Error(`--port must be a port number, got "${values.port}"`);
   }
 
-  // One root, both directions: what a browser uploads and what the agent
-  // sends back are the same kind of stored file, answered by the same route.
   const attachmentsRoot = defaultAttachmentsRoot();
   const store = new AttachmentStore(attachmentsRoot);
 
@@ -80,7 +77,6 @@ export async function start(args: ReadonlyArray<string>): Promise<void> {
     `pim-server listening on ${gateway.url} (web UI: http://${values.hostname}:${gateway.port})\n`
   );
 
-  // Resolves only on shutdown, so callers can `await start()` and then exit.
   await new Promise<void>((resolve) => {
     for (const signal of ["SIGINT", "SIGTERM"] as const) {
       process.once(signal, () => {

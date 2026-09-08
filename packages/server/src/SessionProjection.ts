@@ -20,16 +20,7 @@ type PendingCall = {
   readonly args: unknown;
 };
 
-/**
- * Projects pi's session file into the durable half of the wire protocol: one
- * line in, at most one `DurableEvent` out, tagged with that line's ordinal.
- *
- * Stateful because a tool result carries no arguments — only the assistant
- * message that requested it does — so rendering a result's `ToolView` requires
- * the call recorded earlier in the same file. That is also why a partial
- * replay still reads from ordinal 0 and filters afterwards: the arguments a
- * client needs may live behind its cursor.
- */
+/** Projects pi's session file into durable events: one line in, at most one `DurableEvent` out, tagged with that line's ordinal. */
 export class SessionProjection {
   private readonly log: EventLog;
   private readonly cwd: () => string;
@@ -43,7 +34,7 @@ export class SessionProjection {
     this.cwd = cwd;
   }
 
-  /** Highest line ordinal projected so far, whether or not it emitted. */
+  /** Highest line ordinal projected, whether or not it emitted. */
   public get head(): number {
     return this.highest;
   }
@@ -62,10 +53,7 @@ export class SessionProjection {
     return this.events.slice(low);
   }
 
-  /**
-   * Read whatever pi has appended since the last drain. Serialized against
-   * itself: two overlapping reads would double-project the same lines.
-   */
+  /** Read whatever pi has appended since the last drain; serialized, as overlapping reads double-project lines. */
   public async drain(): Promise<readonly DurableEvent[]> {
     const before = this.events.length;
     const done = this.draining.then(async () => {
@@ -96,16 +84,9 @@ export class SessionProjection {
       return undefined;
     }
     const message = entry.message;
-    // Pi stamps every entry as it appends it, so this is when the message was
-    // written, not when it was read: the client's `17:24` line and its
-    // "Clanked for" reading survive a reload because of it.
     const timestamp = Date.parse(entry.timestamp);
     switch (message.role) {
       case "user": {
-        // The files are pulled back out of the words: what the agent was told
-        // is a marker line naming a server path, and a reader has no use for
-        // either half of that. What is left is what was actually said, which
-        // for a photo sent on its own is nothing at all.
         const said = Attachments.parse(MessageText.textOf(message.content));
         const attachments: readonly AttachmentView[] = said.files.map(
           (file) => ({
@@ -143,10 +124,6 @@ export class SessionProjection {
           });
         }
         const thinking = MessageText.textOf(message.content, "thinking");
-        // A dead turn is a line in the log like any other: pi appends the
-        // assistant message it could not finish, so the client hears why the
-        // agent stopped from the projection rather than from a live frame no
-        // reload could replay.
         const error =
           message.stopReason === "error"
             ? (message.errorMessage ?? "The model call failed.")

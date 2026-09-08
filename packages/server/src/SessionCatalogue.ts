@@ -11,11 +11,7 @@ import type {
 
 export type SessionCatalogueDeps = {
   readonly registry: SessionRegistry;
-  /**
-   * Which sessions have been read, shared by every client: the mark is a
-   * property of the machine, so it is kept beside the sessions rather than
-   * in whichever browser happened to be reading.
-   */
+  /** Which sessions have been read, shared by every client. */
   readonly cursors: ReadCursors;
   readonly liveStatus: (sessionId: string) => SessionStatus | undefined;
   readonly liveSessionIds: () => Iterable<string>;
@@ -23,31 +19,14 @@ export type SessionCatalogueDeps = {
   readonly announce: (event: ServerEvent) => void;
 };
 
-/** Enough rows to fill a switcher; the catalogue is read newest-first. */
 const DEFAULT_SESSION_LIMIT = 50;
 
-/** A digest and the file state it was read from; a rewrite moves both. */
 type CachedDigest = SessionDigest & { readonly modifiedAt: number };
 
 export class SessionCatalogue {
   private readonly deps: SessionCatalogueDeps;
-  /**
-   * Naming a session costs a read of its whole file, and the sidebar re-lists
-   * after every turn — so a file that has not been appended to since the last
-   * listing is not read again.
-   */
   private readonly digests = new Map<string, CachedDigest>();
-  /**
-   * The status each session was last announced as. Kept because a stream
-   * emits its state on every tool call and every message, and a client only
-   * needs the edges — a row starts spinning once and stops once.
-   */
   private readonly activity = new Map<string, SessionStatus>();
-  /**
-   * When each session this server runs last settled, as its file read at the
-   * time. Held because that reading is only true of an idle session: see
-   * `answerTime`.
-   */
   private readonly settled = new Map<string, number>();
 
   public constructor(deps: SessionCatalogueDeps) {
@@ -58,10 +37,7 @@ export class SessionCatalogue {
     command: Command & { readonly type: "list_sessions" }
   ): Promise<readonly SessionSummaryView[]> {
     const summaries = await this.deps.registry.list(command.cwd);
-    // Only an unfiltered listing knows every session there is; pruning
-    // against one cut to a cwd would forget every other directory. The
-    // sessions this server holds open are alive too — a new chat has a mark
-    // before it has a file.
+    // Prune only on an unfiltered listing: a cwd-filtered one would forget every other directory.
     if (command.cwd === undefined) {
       await this.deps.cursors.prune(
         new Set([
@@ -70,21 +46,12 @@ export class SessionCatalogue {
         ])
       );
     }
-    // Only the page about to be sent is digested, so a thousand-session
-    // directory is not read to answer for fifty rows.
-    //
-    // Which is also why the *cut* is by modified time and the *order* is not:
-    // a session's settle time is in its digest, so ranking the whole
-    // directory by it would mean reading every session on disk to send fifty.
-    // A file is never modified before its agent settles, so the two disagree
-    // only inside the page, where the sort below has the real answer.
+    // Cut by modified time and digest only the page: ordering by settle time would read every session on disk.
     const page = await Promise.all(
       summaries
         .slice(0, command.limit ?? DEFAULT_SESSION_LIMIT)
         .map(async ({ sessionId, cwd, path, createdAt, modifiedAt }) => {
           const { title, settledAt } = await this.digestOf(path, modifiedAt);
-          // Only a session this server holds open has an agent to answer for
-          // it; anything else on disk is a file, and a file is never working.
           const status = this.deps.liveStatus(sessionId);
           const answeredAt = this.answerTime(sessionId, status, settledAt);
           const unread = await this.deps.cursors.isUnread(
@@ -95,15 +62,9 @@ export class SessionCatalogue {
             sessionId,
             cwd,
             createdAt,
-            // The last turn known to have finished; failing that whatever the
-            // file last had, which is all there is to date a session running
-            // its first one by; failing that, when it was made.
             settledAt: answeredAt ?? settledAt ?? createdAt,
             ...(title === undefined ? {} : { title }),
             ...(status === undefined || status === "idle" ? {} : { status }),
-            // Off the completed turn alone, so intermediate lines raise no
-            // mark: a row goes unread when its turn ends, which is also when
-            // it climbs to the top of this list.
             ...(unread ? { unread: true } : {}),
           };
         })
@@ -111,16 +72,7 @@ export class SessionCatalogue {
     return page.sort((a, b) => b.settledAt - a.settledAt);
   }
 
-  /**
-   * Says that a session's agent started or stopped working, to every client
-   * on the server, and only on the edges.
-   *
-   * A turn that ends under a client that is reading it is read, not unread —
-   * and the announcement goes first and synchronously, because it is a frame
-   * of the session's own stream and every client attached must see it in the
-   * same place. The mark trails it by a microtask, which no client can be
-   * inside of: the re-list that frame provokes is a whole round trip away.
-   */
+  /** Announces a status edge to every client; the announcement must precede the read mark. */
   public onStatus(sessionId: string, status: SessionStatus): void {
     if (this.activity.get(sessionId) === status) {
       return;
@@ -136,12 +88,7 @@ export class SessionCatalogue {
     this.activity.set(sessionId, status);
   }
 
-  /**
-   * Moves a session's read cursor to now and says so to every client. Said
-   * unconditionally, including for a session that was already read: the
-   * frame is a few bytes, it is idempotent at every receiver, and the price
-   * of skipping it is knowing whether some other client had a dot up.
-   */
+  /** Moves a session's read cursor to now and says so to every client. */
   public async markRead(sessionId: string): Promise<void> {
     await this.deps.cursors.mark(sessionId);
     this.deps.announce({ type: "session_read", sessionId });
@@ -157,38 +104,7 @@ export class SessionCatalogue {
     this.settled.clear();
   }
 
-  /**
-   * When this session's last *completed* turn ended, and — for an idle one —
-   * where that answer is remembered from. Absent when there is no such turn
-   * to point at: an agent that has never answered, or one whose turn began
-   * before any listing had seen it idle.
-   *
-   * The file's answer is the last thing the agent wrote, which is where it
-   * stopped only while nothing is running: mid-turn it is the message or
-   * tool result that just landed, and a row would climb to the top of the
-   * list — and go unread — on every one of them. So a running session is
-   * answered for out of what its file said while it was last idle, and the
-   * file takes over again the moment the turn ends.
-   *
-   * Which makes that freeze best-effort, a listing being the only thing that
-   * fills it: a session attached and prompted before anyone listed has
-   * nothing remembered, and its row falls back to the file for the length of
-   * that turn. Harmless where the sidebar stands, and deliberately not
-   * bought with a read on every attach — a running row paints a spinner
-   * instead of an age, so the drifting number is never shown, and the unread
-   * mark reads the `undefined` this returns rather than the caller's
-   * fallback, so it stays down. What is left is a running row sorted higher
-   * than it has earned, which is where a running row is expected anyway.
-   *
-   * Seeding the map where the stream opens is what would close it, and what
-   * either of those two changes would need: an age beside a spinner, or an
-   * unread mark taken from the listed `settledAt` instead of from here.
-   *
-   * A session another process is driving reports no status and is always
-   * answered for by its file, drifting while that process writes and correct
-   * again as soon as it stops: there is no liveness on disk to do better
-   * with, and nothing is remembered for it to be wrong about later.
-   */
+  // A running session must be answered for by its last idle reading: mid-turn the file's time is the line just written.
   private answerTime(
     sessionId: string,
     status: SessionStatus | undefined,

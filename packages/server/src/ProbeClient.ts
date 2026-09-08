@@ -41,11 +41,7 @@ type Pending = {
   readonly reject: (err: Error) => void;
 };
 
-/**
- * The reference client: it speaks the whole protocol and holds no opinions
- * about rendering. Both the CLI probe and the gateway's own tests drive the
- * server through this, so the transport is never validated by a mock.
- */
+/** The reference client: speaks the whole protocol, renders nothing. */
 export class ProbeClient {
   public sessionId: string | undefined;
   public seq: number;
@@ -153,12 +149,7 @@ export class ProbeClient {
     return itemsOf(response);
   }
 
-  /**
-   * Reads one subagent's transcript. Its events arrive enveloped in
-   * `subagent_events` and are deliberately left that way in `events`: a child
-   * message unwrapped into this list is a child message in the parent's
-   * transcript, which is the whole reason the envelope exists.
-   */
+  /** Reads one subagent's transcript; its events stay enveloped in `events`. */
   public watchSubagent(callId: string, fromSeq = 0): Promise<ResponseEvent> {
     return this.send({
       type: "watch_subagent",
@@ -186,10 +177,7 @@ export class ProbeClient {
     return response.sessions ?? [];
   }
 
-  /**
-   * The model catalogue, plus the thinking levels of the model this probe's
-   * session is on — empty for a probe that has not attached.
-   */
+  /** The model catalogue, plus this session's thinking levels; empty when unattached. */
   public async listModels(): Promise<{
     readonly models: readonly ModelView[];
     readonly thinkingLevels: readonly string[];
@@ -204,11 +192,7 @@ export class ProbeClient {
     };
   }
 
-  /**
-   * Transfers a client-local file into the server's world. The path given here
-   * is read locally and then forgotten — only the bytes and the bare filename
-   * are sent, and only the server's own path comes back.
-   */
+  /** Transfers a client-local file into the server's world; only the bytes and bare filename are sent. */
   public async upload(localPath: string): Promise<UploadedFile> {
     const file = Bun.file(localPath);
     const form = new FormData();

@@ -1,10 +1,6 @@
 import { join, resolve, sep } from "node:path";
 
-/**
- * The Vite bundle, resolved from this file rather than from `process.cwd()`:
- * the layout `packages/server/src/` → `packages/web/dist/client` is identical
- * in the repo and in the published tarball, so the same walk works installed.
- */
+/** The built Vite bundle, resolved relative to this file so it works installed. */
 export const DEFAULT_CLIENT_DIR = resolve(
   import.meta.dir,
   "..",
@@ -22,16 +18,12 @@ const BUILD_HINT =
 /** Vite fingerprints everything under `assets/`, so it can never go stale. */
 export const IMMUTABLE = "public, max-age=31536000, immutable";
 
-/** A trailing `.ext` on the last segment is what separates a file from a route. */
 function looksLikeAsset(pathname: string): boolean {
   const last = pathname.slice(pathname.lastIndexOf("/") + 1);
   return /\.[a-zA-Z0-9]+$/.test(last);
 }
 
-/**
- * Serves the built browser client as a static SPA: real files win, unknown
- * routes fall back to `index.html`, and everything else is a 404.
- */
+/** Serves the built browser client as a static SPA; unknown routes fall back to `index.html`. */
 export class StaticClient {
   private readonly root: string;
 
@@ -72,11 +64,7 @@ export class StaticClient {
     });
   }
 
-  /**
-   * Traversal gate. `new URL()` normalises literal `../`, but not its
-   * percent-encoded spelling, so the decoded path is re-resolved and rejected
-   * unless it is still under the root.
-   */
+  // `new URL()` normalises literal `../` but not its percent-encoded spelling: re-resolve the decoded path.
   private within(pathname: string): string | undefined {
     let decoded: string;
     try {

@@ -6,42 +6,19 @@ import { WebUnit } from "./WebUnit";
 export type ReloaderDeps = {
   /** To every connection: the restart takes all of them down together. */
   readonly announce: (event: ServerEvent) => void;
-  /**
-   * Runs the update, reporting each step as it starts. Injectable because the
-   * real one spawns `bun install` against the tree the caller is running from.
-   */
+  /** Runs the update, reporting each step as it starts. */
   readonly update?: (onStep: (label: string) => void) => Promise<UpdateOutcome>;
-  /**
-   * Takes this process down so the supervisor puts the new code up in its
-   * place. Injectable for the same reason: nothing under test may signal the
-   * runner or kick a real daemon.
-   */
+  /** Takes this process down so the supervisor puts the new code up in its place. */
   readonly shutdown?: () => Promise<void>;
 };
 
-/**
- * The other pim daemons run from the tree that was just replaced, so they go
- * first; this one goes by re-raising the signal it already shuts down on.
- *
- * Deliberately a signal and not `Supervisor.restart()`: exiting straight from
- * here would skip the handler that stops the gateway, and the read cursors
- * taken during the run are flushed by that stop. One shutdown path, whether
- * the operator asked for it or systemd did.
- */
+// Re-raise SIGTERM rather than exiting: the handler stops the gateway and flushes the read cursors.
 async function restartAndExit(): Promise<void> {
   await Supervisor.restartSiblings(WebUnit.descriptor);
   process.kill(process.pid, "SIGTERM");
 }
 
-/**
- * Runs the "update, restart, and come back" the operator asked for, and says
- * what it is doing while it does it.
- *
- * Its own object rather than more of the gateway: the gateway is about
- * sockets and sessions and knows nothing else about the machine it runs on,
- * whereas this spawns installs, restarts daemons and ends the process. The
- * one thing they share is fanout, which arrives here as a callback.
- */
+/** Runs the update-restart-return an operator asked for, announcing each phase. */
 export class Reloader {
   private readonly announce: (event: ServerEvent) => void;
   private readonly update: (
@@ -57,11 +34,7 @@ export class Reloader {
     this.running = undefined;
   }
 
-  /**
-   * The run already in flight, or a new one. Two operators clicking at once
-   * are one install: a second would race the first over the same tree, and
-   * both of them are asking for the same single thing — the latest code.
-   */
+  /** The run already in flight, or a new one; two callers share one install. */
   public start(): Promise<void> {
     this.running ??= this.run().finally(() => {
       this.running = undefined;
@@ -84,9 +57,7 @@ export class Reloader {
       return;
     }
     const { from, to, skipped } = outcome;
-    // Nothing is watching this process, so exiting would end it rather than
-    // replace it: the new code is on disk, the old code is still the code
-    // answering, and only the operator can close that gap.
+    // Unsupervised, exiting would end this process rather than replace it.
     if (!Supervisor.isSupervised()) {
       this.announce({
         type: "update_state",
@@ -107,10 +78,7 @@ export class Reloader {
     try {
       await this.shutdown();
     } catch (err) {
-      // After the restarting frame on purpose: a client has just been told
-      // its socket is about to drop, and now it is not going to, so the
-      // correction has to reach it before it settles in to wait for a server
-      // that is never coming.
+      // Must follow the `restarting` frame: it corrects a client already told to expect the drop.
       this.failed(messageOf(err));
     }
   }
