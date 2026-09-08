@@ -26,7 +26,6 @@ export type ResolvedEditMetadata = {
 
 export type EditOutcome = {
   readonly editCount: number;
-  readonly warnings: readonly string[];
   readonly noops: readonly NoopEdit[];
   readonly ranges: readonly string[];
   readonly resolvedEdits: readonly ResolvedEditMetadata[];
@@ -58,7 +57,7 @@ type Mutation = {
 const CONTEXT_LINES = 2;
 const MAX_EDIT_BYTES = 8 * 1024 * 1024;
 
-const editQueues = new Map<string, Promise<void>>();
+const editQueues = new Map<string, Promise<unknown>>();
 
 export async function editFile(
   absolutePath: string,
@@ -188,7 +187,6 @@ async function performEdit(
 
   return {
     editCount: edits.length,
-    warnings: [],
     noops,
     ranges: effectiveMutations.map((mutation) => lineRange(mutation.range)),
     resolvedEdits,
@@ -327,34 +325,20 @@ async function writeFileAtomic(
   content: string,
   metadata: Stats
 ): Promise<void> {
-  if (metadata.nlink > 1) {
-    await Bun.write(canonicalPath, content);
-    return;
-  }
-  await Fs.writeAtomic(canonicalPath, content, Number(metadata.mode));
+  await Fs.writeKeepingLinks(canonicalPath, content, {
+    mode: Number(metadata.mode),
+    nlink: metadata.nlink,
+  });
 }
 
 async function enqueue<T>(key: string, task: () => Promise<T>): Promise<T> {
   const previous = editQueues.get(key) ?? Promise.resolve();
-  let release!: () => void;
-  const current = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-
-  const queued = previous.then(
-    () => current,
-    () => current
-  );
-
+  const queued = previous.then(task, task);
   editQueues.set(key, queued);
 
-  await previous.catch(() => undefined);
-
   try {
-    return await task();
+    return await queued;
   } finally {
-    release();
-
     if (editQueues.get(key) === queued) {
       editQueues.delete(key);
     }
