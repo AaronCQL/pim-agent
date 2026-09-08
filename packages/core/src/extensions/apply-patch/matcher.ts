@@ -1,3 +1,9 @@
+const MATCHERS: ReadonlyArray<(a: string, b: string) => boolean> = [
+  (a, b) => a === b,
+  (a, b) => a.trimEnd() === b.trimEnd(),
+  (a, b) => a.trim() === b.trim(),
+];
+
 /**
  * Faithful port of Codex's `seek_sequence`. Locates `pattern` within `lines`
  * at or after `start`, advancing strictness in three passes: exact, then
@@ -6,18 +12,9 @@
  * would land flush against the end of the file.
  *
  * Special cases (matching Codex):
- *  - empty `pattern` -> returns `start` (no-op match).
- *  - `pattern.length > lines.length` -> returns `undefined`.
+ *  - empty `pattern` -> returns `[start]` (no-op match).
+ *  - `pattern.length > lines.length` -> returns `[]`.
  */
-export function seekSequence(
-  lines: readonly string[],
-  pattern: readonly string[],
-  start: number,
-  eof: boolean
-): number | undefined {
-  return seekSequenceMatches(lines, pattern, start, eof)[0];
-}
-
 export function seekSequenceMatches(
   lines: readonly string[],
   pattern: readonly string[],
@@ -37,13 +34,7 @@ export function seekSequenceMatches(
       : start;
   const last = lines.length - pattern.length;
 
-  const matchers: ReadonlyArray<(a: string, b: string) => boolean> = [
-    (a, b) => a === b,
-    (a, b) => a.trimEnd() === b.trimEnd(),
-    (a, b) => a.trim() === b.trim(),
-  ];
-
-  for (const eq of matchers) {
+  for (const eq of MATCHERS) {
     const matches: number[] = [];
     for (let i = searchStart; i <= last; i += 1) {
       let ok = true;

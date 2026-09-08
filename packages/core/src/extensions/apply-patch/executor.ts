@@ -436,7 +436,7 @@ function applyChunks(
   replacements.sort((a, b) => a.start - b.start);
 
   const lines = [...originalLines];
-  for (const { start, oldLen, newLines } of [...replacements].reverse()) {
+  for (const { start, oldLen, newLines } of replacements.reverse()) {
     lines.splice(start, oldLen, ...newLines);
   }
   return lines;
@@ -479,7 +479,6 @@ function joinLines(
 
 type ReadFile = {
   readonly content: string;
-  readonly lines: readonly string[];
   readonly hadBom: boolean;
   readonly lineEnding: "\n" | "\r\n";
 };
@@ -504,7 +503,6 @@ async function readTextFile(
 
   return {
     content,
-    lines: Lines.splitWithTrailingNewline(content).lines,
     hadBom,
     lineEnding,
   };
@@ -512,11 +510,10 @@ async function readTextFile(
 
 async function writeFile(write: FileWrite): Promise<void> {
   try {
-    if (write.nlink > 1) {
-      await Bun.write(write.path, write.content);
-      return;
-    }
-    await Fs.writeAtomic(write.path, write.content, write.mode);
+    await Fs.writeKeepingLinks(write.path, write.content, {
+      ...(write.mode === undefined ? {} : { mode: write.mode }),
+      nlink: write.nlink,
+    });
   } catch (error) {
     throw new Error(formatWriteFailure(write, error));
   }

@@ -34,13 +34,9 @@ export function computeActiveTools(
   }
 
   const desired =
-    canEdit && !canApplyPatch
-      ? EDIT_TOOL
-      : canApplyPatch && !canEdit
-        ? APPLY_PATCH_TOOL
-        : preferApplyPatch
-          ? APPLY_PATCH_TOOL
-          : EDIT_TOOL;
+    canApplyPatch && (preferApplyPatch || !canEdit)
+      ? APPLY_PATCH_TOOL
+      : EDIT_TOOL;
   const drop = desired === EDIT_TOOL ? APPLY_PATCH_TOOL : EDIT_TOOL;
 
   if (active.includes(desired) && !active.includes(drop)) {
