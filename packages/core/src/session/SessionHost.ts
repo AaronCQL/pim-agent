@@ -253,6 +253,7 @@ export class SessionHost {
     if (!this.cached || !this.cached.isStreaming) {
       return { cancelled: false, restored: [] };
     }
+    // Take the queue back *before* aborting: anything left in pi is delivered to the next turn.
     const restored = this.takeBack();
     await this.cached.abort();
     return { cancelled: true, restored };

@@ -52,6 +52,7 @@ export function Composer(props: {
   let card!: HTMLDivElement;
   let generation = 0;
 
+  // Every user write to the box goes through here: a bare `setText` leaves the store's draft stale and loses the message on the next session switch.
   function edit(next: string): void {
     setText(next);
     props.store.setDraftText(next);

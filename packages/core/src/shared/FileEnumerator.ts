@@ -260,6 +260,8 @@ async function processDir(
   }
 }
 
+// Refill from the shared stack on each completion; N worker loops would exit on the root-only
+// stack before any child was pushed and silently return a partial listing.
 function drain(ctx: WalkContext): Promise<void> {
   let inFlight = 0;
   return new Promise<void>((resolve, reject) => {
