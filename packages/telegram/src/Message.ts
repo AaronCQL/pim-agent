@@ -86,34 +86,29 @@ async function download(
   configDir: string,
   sessionId: SessionId
 ): Promise<ReadonlyArray<StoredAttachment>> {
-  const refs = refsOf(ctx);
-  if (refs.length === 0) {
+  const ref = refOf(ctx);
+  if (!ref) {
     return [];
   }
-
-  const store = new AttachmentStore(join(configDir, "attachments"));
-  const out: StoredAttachment[] = [];
-  for (const ref of refs) {
-    const telegramFile = await ctx.api.getFile(ref.fileId);
-    if (!telegramFile.file_path) {
-      continue;
-    }
-    const url = `https://api.telegram.org/file/bot${token}/${telegramFile.file_path}`;
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Telegram file download failed: ${response.status}`);
-    }
-    out.push(
-      await store.store(String(sessionId.chatId), {
-        bytes: await response.arrayBuffer(),
-        mimeType: ref.mimeType,
-        stem: ref.uniqueId ?? ref.fileId,
-        ext:
-          extname(telegramFile.file_path) || extname(ref.name ?? "") || ref.ext,
-      })
-    );
+  const telegramFile = await ctx.api.getFile(ref.fileId);
+  if (!telegramFile.file_path) {
+    return [];
   }
-  return out;
+  const url = `https://api.telegram.org/file/bot${token}/${telegramFile.file_path}`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Telegram file download failed: ${response.status}`);
+  }
+  const store = new AttachmentStore(join(configDir, "attachments"));
+  return [
+    await store.store(String(sessionId.chatId), {
+      bytes: await response.arrayBuffer(),
+      mimeType: ref.mimeType,
+      stem: ref.uniqueId ?? ref.fileId,
+      ext:
+        extname(telegramFile.file_path) || extname(ref.name ?? "") || ref.ext,
+    }),
+  ];
 }
 
 const MEDIA_KINDS = [
@@ -127,18 +122,16 @@ const MEDIA_KINDS = [
   { key: "voice", defaultMime: "audio/ogg", defaultExt: ".ogg" },
 ] as const;
 
-function refsOf(ctx: Filter<Context, "message">): ReadonlyArray<FileRef> {
+function refOf(ctx: Filter<Context, "message">): FileRef | undefined {
   const message = ctx.message;
   if ("photo" in message && message.photo) {
     const photo = message.photo.at(-1)!;
-    return [
-      {
-        fileId: photo.file_id,
-        uniqueId: photo.file_unique_id,
-        mimeType: "image/jpeg",
-        ext: ".jpg",
-      },
-    ];
+    return {
+      fileId: photo.file_id,
+      uniqueId: photo.file_unique_id,
+      mimeType: "image/jpeg",
+      ext: ".jpg",
+    };
   }
   for (const { key, defaultMime, defaultExt } of MEDIA_KINDS) {
     const file = key in message ? message[key] : undefined;
@@ -146,17 +139,15 @@ function refsOf(ctx: Filter<Context, "message">): ReadonlyArray<FileRef> {
       continue;
     }
     const name = "file_name" in file ? file.file_name : undefined;
-    return [
-      {
-        fileId: file.file_id,
-        uniqueId: file.file_unique_id,
-        name,
-        mimeType: file.mime_type ?? defaultMime,
-        ext: extname(name ?? "") || defaultExt,
-      },
-    ];
+    return {
+      fileId: file.file_id,
+      uniqueId: file.file_unique_id,
+      name,
+      mimeType: file.mime_type ?? defaultMime,
+      ext: extname(name ?? "") || defaultExt,
+    };
   }
-  return [];
+  return undefined;
 }
 
 export const Message = { toPrompt };
