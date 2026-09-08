@@ -1,21 +1,13 @@
-import { relative } from "node:path";
-import { Paths } from "./Paths";
-
 function compile(exclude: readonly string[] | undefined): readonly Bun.Glob[] {
   return (exclude ?? []).map((pattern) => new Bun.Glob(pattern));
 }
 
-function ignores(
-  globs: readonly Bun.Glob[],
-  root: string,
-  path: string
-): boolean {
+function ignores(globs: readonly Bun.Glob[], relativePath: string): boolean {
   if (globs.length === 0) {
     return false;
   }
 
-  const candidate = Paths.toForwardSlashes(relative(root, path));
-  return globs.some((glob) => glob.match(candidate));
+  return globs.some((glob) => glob.match(relativePath));
 }
 
 export const GlobExclusions = { compile, ignores };

@@ -27,11 +27,10 @@ async function scan(
     if (!matcher.match(relativePath)) {
       continue;
     }
-    const absolutePath = join(absoluteRoot, relativePath);
-    if (GlobExclusions.ignores(excludes, absoluteRoot, absolutePath)) {
+    if (GlobExclusions.ignores(excludes, relativePath)) {
       continue;
     }
-    files.push(absolutePath);
+    files.push(join(absoluteRoot, relativePath));
   }
 
   return files;

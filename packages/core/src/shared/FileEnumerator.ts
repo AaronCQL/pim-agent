@@ -19,10 +19,6 @@ export type EnumerateOptions = {
    * Include gitignored / normally-ignored paths such as `node_modules`. Default false.
    */
   readonly includeIgnored?: boolean;
-  /**
-   * Emit directories as well as files, each marked with a trailing `/`. Default false.
-   */
-  readonly includeDirectories?: boolean;
 };
 
 type StackEntry = {
@@ -71,7 +67,6 @@ const EMPTY_MATCHER = ignore();
  */
 type WalkContext = {
   includeDotfiles: boolean;
-  includeDirectories: boolean;
   useIgnore: boolean;
   globalGitIgnore: string | undefined;
   stack: StackEntry[];
@@ -340,10 +335,6 @@ async function processDir(
         continue;
       }
 
-      if (ctx.includeDirectories) {
-        ctx.result.push(`${relPath}/`);
-      }
-
       ctx.stack.push({
         abs: childAbs,
         rel: relPath,
@@ -412,7 +403,6 @@ async function enumerate(
 ): Promise<string[]> {
   const includeDotfiles = opts?.includeDotfiles ?? false;
   const includeIgnored = opts?.includeIgnored ?? false;
-  const includeDirectories = opts?.includeDirectories ?? false;
   const useIgnore = !includeIgnored;
 
   // Global excludes (core.excludesFile / XDG). Read once; applies only within
@@ -468,7 +458,6 @@ async function enumerate(
 
   const ctx: WalkContext = {
     includeDotfiles,
-    includeDirectories,
     useIgnore,
     globalGitIgnore,
     stack: [

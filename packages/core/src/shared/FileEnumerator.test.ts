@@ -86,13 +86,6 @@ describe("FileEnumerator.enumerate", () => {
     expect(paths).not.toContain("src/util");
   });
 
-  it("emits directories with a trailing slash when requested", async () => {
-    const paths = await enumerate(root, { includeDirectories: true });
-    expect(paths).toContain("src/");
-    expect(paths).toContain("src/util/");
-    expect(paths).toContain("a.ts");
-  });
-
   it("excludes dotfiles by default, includes them with includeDotfiles", async () => {
     const def = await enumerate(root);
     expect(def).not.toContain(".env");
