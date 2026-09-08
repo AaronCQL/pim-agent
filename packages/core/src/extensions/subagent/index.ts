@@ -17,9 +17,6 @@ export default function (pi: ExtensionAPI): void {
       "Subagent output returned to the main agent is capped at 32KB.",
     parameters: subagentSchema,
     renderShell: "self",
-    // The subagent builds its own AgentSession and runs whatever tools it
-    // likes inside it, so nothing about this call's arguments bounds what it
-    // touches.
     effect: { kind: "unbounded" },
     executionMode: "parallel",
     async execute(toolCallId, params, signal, onUpdate, ctx) {

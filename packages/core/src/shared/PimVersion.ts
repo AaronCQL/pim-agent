@@ -31,12 +31,12 @@ async function current(): Promise<string> {
   return (await self()).version;
 }
 
-/** The npm package this pim was published as, and so the one to reinstall. */
+/** The npm package this pim was published as. */
 async function name(): Promise<string> {
   return (await self()).name;
 }
 
-/** Pi ships inside pim's install tree, so this is the pi a user actually runs. */
+/** The pi that ships inside pim's install tree. */
 async function pi(): Promise<string> {
   return (
     await read(
@@ -89,7 +89,6 @@ function isNewer(candidate: string, installed: string): boolean {
       return part > right[index]!;
     }
   }
-  // Same core: the only step forward left is a prerelease reaching its release.
   return installed.includes("-") && !candidate.includes("-");
 }
 

@@ -9,8 +9,6 @@ const FILE_MARKERS = [
   UPDATE_FILE_MARKER,
 ] as const;
 
-// The first affected path, without building the full per-file summary — for
-// callers that only need a title (e.g. a tool-call header on the render path).
 function firstPath(input: string): string | undefined {
   for (const raw of input.split("\n")) {
     const line = raw.trim();
@@ -38,9 +36,5 @@ export function cleanPath(raw: string): string {
   return path;
 }
 
-/**
- * Lightweight, fault-tolerant scan of V4A patch text into a per-file summary.
- * For renderers that need to label a patch without depending on the apply-patch
- * grammar parser; unrecognized lines are ignored rather than throwing.
- */
+/** Fault-tolerant scan of V4A patch text for renderers; unrecognized lines are ignored. */
 export const PatchSummary = { firstPath };

@@ -38,42 +38,23 @@ export type ModelChoice = {
 
 export type SessionRegistryDeps = {
   readonly defaults: { readonly cwd: string; readonly model?: string };
-  /**
-   * Where auth, models, settings, and sessions live. Must agree with pi's own
-   * `getAgentDir()` — pi resolves the directory for a *new* session itself, and
-   * only `PI_CODING_AGENT_DIR` moves it.
-   */
+  /** Where auth, models, settings and sessions live; must agree with pi's own `getAgentDir()`. */
   readonly agentDir?: string;
   readonly capacity?: number;
   readonly customTools?: (
     context: CustomToolContext
   ) => readonly ToolDefinition[];
-  /** Appended to every session's system prompt; see `SessionHostDeps`. */
+  /** Appended to every session's system prompt. */
   readonly systemInstruction?: () => Promise<string | undefined>;
 };
 
 export type SessionCreateOptions = {
   readonly cwd?: string;
-  /**
-   * Open the new session like this one: its model and thinking level carry
-   * over, and its directory does when none is given.
-   *
-   * The model copied is the one that session is *running* rather than the one
-   * explicitly set on it — a session resumed onto a model pi recorded has
-   * chosen it as surely as one switched by hand, and a model id means the
-   * same thing in every directory. The thinking level is only copied when it
-   * was chosen, because that one is defaulted per directory: carrying an old
-   * directory's default into a new one would shadow its answer with a choice
-   * nobody made.
-   */
+  /** Open the new session like this one: model, chosen thinking level, and cwd when none is given. */
   readonly like?: SessionHost;
 };
 
-/**
- * Keys live sessions on pi's own session UUID — never a chat id, never a cwd. The catalogue is pi's sessions directory itself, read
- * on demand; there is no metadata store, index, or cache of our own, so a
- * session created by the TUI shows up here with no synchronisation at all.
- */
+/** Live sessions keyed on pi's session UUID; the catalogue is pi's sessions directory, read on demand. */
 export class SessionRegistry {
   private readonly deps: SessionRegistryDeps;
   private readonly agentDir: string;
@@ -101,10 +82,7 @@ export class SessionRegistry {
     this.modelRegistry ??= new ModelRegistry(this.modelRuntime);
   }
 
-  /**
-   * Sessions on disk, newest first. Reads only each file's header line, so
-   * listing stays cheap no matter how long the conversations are.
-   */
+  /** Sessions on disk, newest first; reads only each file's header line. */
   public async list(cwd?: string): Promise<readonly SessionSummary[]> {
     const root = this.sessionsRoot;
     if (!(await stat(root).catch(() => undefined))?.isDirectory()) {
@@ -129,10 +107,7 @@ export class SessionRegistry {
     return this.hosts.get(sessionId);
   }
 
-  /**
-   * Every model this machine has credentials for, qualified the way
-   * `SessionHost.setModel` resolves them.
-   */
+  /** Every model this machine has credentials for, qualified as `SessionHost.setModel` takes them. */
   public models(): readonly ModelChoice[] {
     const registry = this.modelRegistry;
     if (!registry) {
@@ -145,7 +120,6 @@ export class SessionRegistry {
     }));
   }
 
-  /** Resume an existing session by pi's UUID. */
   public async open(sessionId: string): Promise<SessionHost> {
     const cached = this.hosts.get(sessionId);
     if (cached) {
@@ -165,16 +139,7 @@ export class SessionRegistry {
     );
   }
 
-  /**
-   * Start a new session. Pi assigns the UUID and picks the file name inside its
-   * own cwd-encoded directory, so the agent is built eagerly — the identity
-   * does not exist before it does.
-   *
-   * The directory is checked first, and a bad one is refused rather than
-   * created in: pi encodes the cwd into the path it writes the log to, so a
-   * session made in a directory that does not exist is a conversation whose
-   * every tool call fails.
-   */
+  /** Start a new session; the agent is built eagerly because pi assigns the UUID and file. */
   public async create(
     options: SessionCreateOptions = {}
   ): Promise<SessionHost> {
@@ -221,7 +186,6 @@ export class SessionRegistry {
       modelRuntime,
       modelRegistry,
       settingsManagerFor: (cwd) => this.settingsManagerFor(cwd),
-      // Pi's JSONL is the only store; nothing here needs a second one.
       persistSettings: async () => {},
       customTools: this.deps.customTools,
       ...(this.deps.systemInstruction === undefined

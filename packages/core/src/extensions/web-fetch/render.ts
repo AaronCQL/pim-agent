@@ -22,8 +22,6 @@ export function webFetchView({ args, result }: WebFetchViewInput): ToolView {
   return {
     label: "Web Fetch",
     icon: "globe",
-    // A `link` block would paint the URL in link colours; the title has always
-    // been plain, so it stays a text block.
     title: [
       { kind: "text", text: input.url ?? "..." },
       {
@@ -36,7 +34,6 @@ export function webFetchView({ args, result }: WebFetchViewInput): ToolView {
   };
 }
 
-/** The size half of the title only appears once both fields have landed. */
 function titleOutcome(
   result: WebFetchViewInput["result"]
 ): TitleOutcome | undefined {
@@ -52,7 +49,6 @@ function formatBody(result: WebFetchViewInput["result"]): readonly ViewBlock[] {
   return text === "" ? [] : [{ kind: "text", text }];
 }
 
-/** Set back from the URL by its own block rather than by parentheses. */
 function formatDetail(
   format: WebFetchFormat | undefined,
   outcome: TitleOutcome | undefined

@@ -172,7 +172,7 @@ function safeClose(view: WebViewLike): void {
   try {
     view.close();
   } catch {
-    // close() throws if already closed; treat as idempotent.
+    // close() throws if already closed.
   }
 }
 

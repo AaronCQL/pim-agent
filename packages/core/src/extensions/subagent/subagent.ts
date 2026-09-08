@@ -22,11 +22,6 @@ import { formatTopLine } from "./render";
 export const PER_TASK_OUTPUT_CAP = 32 * 1024;
 export const SUBAGENT_TOOL_NAME = "subagent";
 
-/**
- * How long text may accumulate before the parent is told. Time, not a
- * character count: a short answer that never reaches a byte threshold would
- * otherwise sit invisible until the call settled.
- */
 export const UPDATE_INTERVAL_MS = 100;
 
 const inSubagent = new AsyncLocalStorage<true>();
@@ -42,11 +37,7 @@ export type SubagentUsage = {
 };
 
 export type SubagentSnapshot = {
-  /**
-   * The child's own session id, for a human reading a log. Nothing may resolve
-   * the child's transcript through it: a failed run persists no details at
-   * all, so its log is found by deriving the path from the call id instead.
-   */
+  /** The child's session id, for a log reader; a transcript is found from the call id, not this. */
   readonly sessionId: string | undefined;
   readonly usage: SubagentUsage;
   readonly stopReason: string | undefined;
@@ -55,11 +46,7 @@ export type SubagentSnapshot = {
   readonly contextWindow: number | undefined;
 };
 
-/**
- * `returnedOutput` is the child's answer, capped for the parent model;
- * `fullOutput` is every word it wrote, which is what a reader opens the row
- * to see.
- */
+/** `returnedOutput` is the capped answer for the parent model; `fullOutput` is every word written. */
 export type SubagentDetails = SubagentSnapshot & {
   readonly returnedOutput: string;
   readonly fullOutput: string;
@@ -100,11 +87,7 @@ export function childToolNames(
   return activeToolNames.filter((name) => name !== SUBAGENT_TOOL_NAME);
 }
 
-/**
- * The child builds its own session, so it inherits none of the parent's
- * registrations: without the roster it would see pi's built-in tools alone
- * and silently lose every pim tool the `tools` allowlist goes on to name.
- */
+// The child inherits no registrations: without this roster its `tools` allowlist loses every pim tool.
 export function childLoaderOptions(cwd: string): {
   readonly cwd: string;
   readonly agentDir: string;
@@ -138,13 +121,7 @@ export async function createSdkSubagentSession(
   return session;
 }
 
-/**
- * The child writes to a path a reader can derive from the parent session id
- * and the call id alone, which is why the file is opened rather than created:
- * `SessionManager.create` names the file itself, while `open` on a path that
- * does not exist yet is how pi is told one. Losing the log costs the run
- * nothing — the child then works in memory, as it always did.
- */
+// `open`, not `create`: the log path must be derivable from the parent session id and call id.
 async function childSessionManager(
   parentCtx: ExtensionContext,
   callId: string | undefined
@@ -247,17 +224,6 @@ export async function runSubagent(
 }
 
 export class SubagentEventCapture {
-  /**
-   * What the child said, one entry per assistant message, in order — and only
-   * what it said, never the tools it reached for.
-   *
-   * Private, and it stays private: `details` is re-serialised into the
-   * parent's log and re-shipped on every partial update, `fullOutput` already
-   * carries every word of this, and nothing may ride along that no one reads.
-   * A roster of the child's tool calls would be a transcript with the
-   * substance taken out; the child's own log has every call in full, and that
-   * is what its row opens.
-   */
   private readonly entries: string[] = [];
   private pendingText = "";
   private updateTimer: ReturnType<typeof setTimeout> | undefined;
@@ -320,10 +286,7 @@ export class SubagentEventCapture {
     };
   }
 
-  /**
-   * Everything the child wrote, one paragraph per assistant message. A
-   * message still streaming reads as the entry it is about to become.
-   */
+  /** Everything the child wrote, one paragraph per assistant message, including a streaming one. */
   public narration(): string {
     const said =
       this.pendingText === ""
@@ -343,7 +306,6 @@ export class SubagentEventCapture {
     };
   }
 
-  /** The child's last word, which is the answer the parent model asked for. */
   private answer(): string {
     return this.pendingText === ""
       ? (this.entries.at(-1) ?? "")

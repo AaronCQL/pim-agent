@@ -53,7 +53,6 @@ function cleanup(cacheDir = dir(), now = Date.now()): void {
   }
 }
 
-/** Each tool that writes spills calls this in its setup. */
 function installSweeper(): void {
   Sweeper.install({ cleanup, intervalMs: SWEEP_INTERVAL_MS });
 }

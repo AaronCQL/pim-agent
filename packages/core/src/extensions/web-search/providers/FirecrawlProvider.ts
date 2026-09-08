@@ -20,12 +20,7 @@ export type FirecrawlProviderOptions = {
 const defaultEndpoint = "https://api.firecrawl.dev/v2/search";
 const defaultTimeoutMs = 20_000;
 
-/**
- * Firecrawl's search endpoint works with no credentials at all: the keyless
- * tier is the same URL with the `Authorization` header omitted, metered per IP
- * per day. It sends no rate-limit headers, so exhaustion is only observable as
- * a 429 on the call that trips it.
- */
+/** Firecrawl search; omitting `Authorization` is the keyless tier, whose exhaustion shows only as a 429. */
 export class FirecrawlProvider implements SearchProvider {
   public readonly name = "firecrawl";
 
@@ -79,8 +74,7 @@ export class FirecrawlProvider implements SearchProvider {
       quotaStatuses: [429],
       quotaMessage:
         "Firecrawl rejected the request: keyless daily limit reached.",
-      // Firecrawl meters a rolling 24h window, not a calendar day, and
-      // reports the remainder in the body rather than a Retry-After header.
+      // Firecrawl meters a rolling 24h window and reports the remainder in the body, not Retry-After.
       readRetryAfterMs,
     });
   }

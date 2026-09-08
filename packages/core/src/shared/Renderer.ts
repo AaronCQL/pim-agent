@@ -74,11 +74,6 @@ class ToolTitle implements Component {
   public invalidate(): void {}
 }
 
-/**
- * A title whose text is markdown. It cannot reuse `ToolTitle`: markdown wraps
- * itself, so the wrap width is the room left after the marker and label rather
- * than the full width, and the rendered text carries its own colours.
- */
 class MarkdownTitle implements Component {
   private prefix = "";
   private title = "";
@@ -168,10 +163,6 @@ function markerColorFor(isPartial: boolean, isError: boolean): MarkerStatus {
   return "success";
 }
 
-/**
- * The text of a result's first content item, or "" when the result, its
- * content, or the text is missing — the body every text-shaped tool renders.
- */
 function firstText(
   result:
     | {
@@ -204,7 +195,6 @@ function extractErrorText(
   return text || fallback;
 }
 
-/** The marker + bold label + title text of a tool row, without the shell. */
 function toolTitleText(args: {
   readonly label: string;
   readonly title: string;
@@ -229,7 +219,6 @@ function titleHead(args: {
   );
 }
 
-/** Wraps title text in the component that pads and re-indents on overflow. */
 function makeTitleBlock(args: {
   readonly text: string;
   readonly theme: Theme;
@@ -249,7 +238,6 @@ function renderToolCallTitle(args: {
   readonly theme: Theme;
   readonly context: RenderContext;
   readonly labelColor?: ThemeColor;
-  /** Renders `title` as markdown instead of as pre-painted text. */
   readonly markdown?: boolean;
 }): Component {
   const { theme, context } = args;
@@ -301,7 +289,6 @@ function makePrefixedBlock(args: {
   };
 }
 
-/** Markdown lines at a fixed width, trimmed the way the tool rows expect. */
 function markdownLines(args: {
   readonly text: string;
   readonly theme: Theme;
@@ -313,7 +300,6 @@ function markdownLines(args: {
     .map((line) => line.trimEnd());
 }
 
-/** A gutter block whose text is markdown, wrapped at the render-time width. */
 function makeMarkdownBlock(args: {
   readonly text: string;
   readonly theme: Theme;
@@ -336,12 +322,6 @@ function makeMarkdownBlock(args: {
   };
 }
 
-/**
- * The gutter body of a failed call. Like every other row it stays shut until
- * the row is expanded, and once opened it shows the failure whole: an error is
- * read to be acted on, and a stack trace cut off at its tenth line is the part
- * that says least.
- */
 function renderErrorResult(args: {
   readonly result: AgentToolResult<unknown>;
   readonly options: ToolRenderResultOptions;

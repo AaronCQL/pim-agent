@@ -1,16 +1,4 @@
-/**
- * What language a file is written in, by name or by extension.
- *
- * pi ships `getLanguageFromPath`, but it lives behind the agent's node-only
- * entry point, so a browser bundle cannot have it — and a second table copied
- * into the web client would be a table free to drift, with the TUI and the web
- * quietly highlighting the same `.tsx` two different ways. So the table is
- * owned here, in a module with no imports, and both surfaces read it.
- *
- * The values are highlight.js language ids, which is what both surfaces
- * ultimately highlight with: the TUI through pi's `highlightCode`, the web
- * through its own lazily loaded grammars.
- */
+// Values are highlight.js language ids; keep this module import-free, the web bundle needs it.
 
 const ALIASES: Readonly<Record<string, string>> = {
   ts: "typescript",
@@ -87,15 +75,9 @@ const ALIASES: Readonly<Record<string, string>> = {
   patch: "diff",
 };
 
-/** Every id the table can produce, so a canonical name resolves to itself. */
 const CANONICAL: ReadonlySet<string> = new Set(Object.values(ALIASES));
 
-/**
- * The language behind a name, extension or alias — `tsx`, `typescript` and
- * `TS` all being the same language — or undefined when it is not one we know.
- * Never guessed: pi's note holds here too, that auto-detection reads prose as
- * AppleScript and colours ordinary English as keywords.
- */
+// Never guess a language: auto-detection paints ordinary prose as keywords.
 function resolve(name: string | undefined): string | undefined {
   if (name === undefined) {
     return undefined;
@@ -105,10 +87,6 @@ function resolve(name: string | undefined): string | undefined {
   return CANONICAL.has(key) ? key : ALIASES[key];
 }
 
-/**
- * The language a path is in. Extensionless names are looked up whole, so a
- * bare `Dockerfile` or `Makefile` is recognised by its own name.
- */
 function fromPath(path: string): string | undefined {
   const base = path.split(/[/\\]/).pop() ?? "";
   return resolve(base.includes(".") ? base.split(".").pop() : base);

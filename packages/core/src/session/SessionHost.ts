@@ -27,10 +27,7 @@ import { EventLog } from "./EventLog";
 /** What the agent is doing right now. */
 export type SessionStatus = "idle" | "thinking" | "streaming" | "tool";
 
-/**
- * Everything the host persists about a session. Frontend-specific settings
- * (Telegram's log verbosity, say) stay with the adapter.
- */
+/** Everything the host persists about a session; frontend-specific settings stay with the adapter. */
 export type HostSettings = {
   readonly cwd?: string;
   readonly model?: string;
@@ -56,11 +53,7 @@ export type SessionCompactResult = {
   readonly activeMessages: number;
 };
 
-/**
- * What a `cancel` did. `cancelled` is false when there was no turn to stop;
- * `restored` is what pi was still holding for the one there was, which the
- * caller owns from here.
- */
+/** What a `cancel` did; `restored` messages are the caller's from here on. */
 export type CancelResult = {
   readonly cancelled: boolean;
   readonly restored: readonly string[];
@@ -91,12 +84,7 @@ export type SessionHostDeps = {
 export type CustomToolContext = {
   /** Where this session's tools resolve relative paths. */
   readonly cwd: string;
-  /**
-   * Pi's session uuid, read at call time rather than passed by value: tools
-   * are built *with* the agent, and pi only assigns the id once it exists.
-   * Undefined until then, which no tool can observe — a tool cannot run
-   * before the session it belongs to.
-   */
+  /** Pi's session uuid, undefined until the agent exists. */
   readonly sessionId: () => string | undefined;
 };
 
@@ -117,12 +105,7 @@ function isOutput(event: AssistantMessageEvent): boolean {
   }
 }
 
-/**
- * Owns one in-process `createAgentSession()` and everything around it: cwd,
- * model resolution, thinking level, compaction, cumulative cost, abort, and a
- * serialized turn queue. Frontend-agnostic — Telegram, the web server, and any
- * future adapter drive the same object.
- */
+/** Owns one in-process `createAgentSession()`, its settings and a serialized turn queue. */
 export class SessionHost {
   public readonly label: string;
   public lastUsed = Date.now();
@@ -149,12 +132,10 @@ export class SessionHost {
     return this.currentSettings;
   }
 
-  /** Where auth, models, skills, and sessions live for this host. */
   public get agentDir(): string {
     return this.deps.agentDir;
   }
 
-  /** Where this session's tools resolve relative paths, session override first. */
   public get cwd(): string {
     return this.currentSettings.cwd ?? this.deps.defaults.cwd;
   }
@@ -163,7 +144,6 @@ export class SessionHost {
     return this.cached;
   }
 
-  /** Pi's own session UUID — the only identity a session has. */
   public get sessionId(): string | undefined {
     return this.cached?.sessionId;
   }
@@ -209,11 +189,7 @@ export class SessionHost {
     return model ? qualifiedModelId(model) : undefined;
   }
 
-  /**
-   * The model's display name — "Claude Opus 5.0", not `anthropic/claude-opus-5`.
-   * The id is what `setModel` takes and what a client compares against the
-   * catalogue; this is what a reader should be shown.
-   */
+  /** The model's display name — "Claude Opus 5.0", not `anthropic/claude-opus-5`. */
   public get currentModelLabel(): string | undefined {
     return (this.cached?.model ?? this.resolveDefaultModel())?.name;
   }
@@ -232,30 +208,12 @@ export class SessionHost {
     return (sm.getDefaultThinkingLevel() as ThinkingLevel) ?? "medium";
   }
 
-  /**
-   * The level this session was told to think at, as against the one its
-   * directory merely defaults to — absent when nothing has said. What one
-   * session copies from another: a default belongs to the place, so carrying
-   * it to another directory would shadow that directory's own answer with a
-   * choice nobody made.
-   */
+  /** The level this session was told to think at, absent when only its directory has a default. */
   public get chosenThinkingLevel(): ThinkingLevel | undefined {
     return this.currentSettings.thinkingLevel ?? this.cached?.thinkingLevel;
   }
 
-  /**
-   * Run `work` as a turn against this session's agent. Serialized: turns
-   * execute one at a time in submission order, so callers can fire-and-forget
-   * without races.
-   *
-   * Default (`isolated: false`): work runs against the cached `AgentSession`,
-   * built on first call and reused across turns (history persists, the system
-   * instruction is re-read between turns).
-   *
-   * `isolated: true`: work runs against a fresh `AgentSession` on a throwaway
-   * file, disposed and unlinked when the work resolves. No history, no shared
-   * state with the cached agent.
-   */
+  /** Run `work` as a turn, serialized in submission order; `isolated` uses a throwaway agent and file. */
   public run(
     work: (agent: AgentSession) => Promise<void>,
     opts?: { readonly isolated?: boolean }
@@ -280,10 +238,7 @@ export class SessionHost {
     });
   }
 
-  /**
-   * Build (or reuse) the cached agent inside the turn queue. Once this
-   * resolves, pi has assigned the session's identity and file.
-   */
+  /** Build or reuse the cached agent inside the turn queue; its id and file exist once this resolves. */
   public ensureAgent(): Promise<AgentSession> {
     return this.enqueue(() => this.ensureCached());
   }
@@ -293,14 +248,7 @@ export class SessionHost {
     return this.enqueue(work);
   }
 
-  /**
-   * Stop the turn in flight and hand back whatever it was still holding.
-   *
-   * The queue is emptied *before* the abort, the way pi's own interactive
-   * mode does it: a message queued for a turn that is being killed is a
-   * message that will never be said, and leaving it in pi would deliver it to
-   * whatever turn came next.
-   */
+  /** Stop the turn in flight; empty the queue before aborting or pi delivers it to the next turn. */
   public async cancel(): Promise<CancelResult> {
     if (!this.cached || !this.cached.isStreaming) {
       return { cancelled: false, restored: [] };
@@ -310,14 +258,7 @@ export class SessionHost {
     return { cancelled: true, restored };
   }
 
-  /**
-   * Take back every message queued behind the turn in flight, leaving the
-   * turn running. Both of pi's queues, because this host is shared: nothing
-   * here queues a follow-up, but a TUI on the same session can.
-   *
-   * Not serialized through the turn queue — the turn holding that queue is
-   * exactly the one whose messages are being reclaimed.
-   */
+  /** Take back every message queued behind the running turn; not serialized, the turn holds the queue. */
   public takeBack(): readonly string[] {
     if (!this.cached || !this.cached.isStreaming) {
       return [];
@@ -391,8 +332,7 @@ export class SessionHost {
 
   private enqueue<T>(work: () => Promise<T>): Promise<T> {
     const next = this.queue.then(work);
-    // Only the stored tail swallows, so the chain never rejects while callers
-    // still see their own failure.
+    // Only the stored tail swallows: the chain must never reject, callers still see their own failure.
     this.queue = next.catch((err: unknown) => {
       console.error(`[${this.label}] work failed:`, err);
     });
@@ -423,11 +363,6 @@ export class SessionHost {
     return agent;
   }
 
-  /**
-   * Drives everything the frontends read as state: `status`, `tps`, and
-   * cumulative cost. Only the cached agent gets this — an isolated run has
-   * its own file and must not move this session's status.
-   */
   private observe(agent: AgentSession): () => void {
     const stopCostTracking = this.observeCost(agent);
     const stop = agent.subscribe((event: AgentSessionEvent) => {
@@ -475,7 +410,6 @@ export class SessionHost {
     };
   }
 
-  /** Cumulative spend follows every agent this host builds, isolated or not. */
   private observeCost(agent: AgentSession): () => void {
     let last = agent.getSessionStats().cost ?? 0;
     return agent.subscribe((event) => {
@@ -533,10 +467,7 @@ export class SessionHost {
       cwd,
       agentDir: this.deps.agentDir,
       settingsManager,
-      // Core tools load in-process here, not from disk: a disk-loaded copy
-      // (jiti) would register its views into a second `Tools` instance and
-      // every frontend reading the native one would fall back to the generic
-      // view.
+      // Load core tools in-process: a disk-loaded copy registers views into a second `Tools`.
       extensionFactories: CoreExtensions.gated(),
       appendSystemPromptOverride: (base) => {
         return promptRef.wrapped ? [...base, promptRef.wrapped] : base;
@@ -575,8 +506,7 @@ export class SessionHost {
       ],
     });
 
-    // Emits session_start, which extensions (e.g. MCP adapters) rely on to
-    // initialize. Without it their tools are registered but never usable.
+    // Emits session_start; without it extension tools are registered but never usable.
     await agent.bindExtensions({
       mode: "print",
       onError: (err) => {

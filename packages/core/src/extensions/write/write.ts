@@ -4,8 +4,7 @@ import { FsErrors } from "../../shared/FsErrors";
 
 const CONTEXT_LINES = 3;
 
-// Diff.diffLines is O(n*d); skip rendering for multi-MB writes. The write
-// itself still happens — only the diff is omitted.
+// Diff.diffLines is O(n*d): above this only the diff is skipped, never the write.
 const MAX_DIFF_BYTES = 2 * 1024 * 1024;
 
 export type WriteOutcome = {
@@ -17,7 +16,6 @@ export type WriteOutcome = {
     readonly thresholdBytes: number;
     readonly comparedBytes: number;
   };
-  // Surfaced in the result text since the renderer doesn't visualize EOF state.
   readonly trailingNewlineChange?: "added" | "removed";
 };
 

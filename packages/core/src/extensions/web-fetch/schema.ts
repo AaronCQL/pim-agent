@@ -22,7 +22,6 @@ export const webFetchSchema = Type.Object({
 
 export type WebFetchInput = Static<typeof webFetchSchema>;
 
-/** Structured result payload the view model renders from. */
 export type WebFetchDetails = {
   readonly url: string;
   readonly title: string;

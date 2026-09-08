@@ -1,12 +1,4 @@
-/**
- * Which picker the caret is sitting in, if any.
- *
- * The two patterns are the ones the TUI pickers already use — `@` anywhere
- * after whitespace, `/` only at the start of a line — so the same draft
- * produces the same completions in a terminal and in a browser. Only the
- * cursor model differs: one caret offset into a whole textarea here, a
- * `(line, column)` pair there.
- */
+/** Which picker the caret is sitting in, if any. */
 export type PickerToken = {
   readonly kind: "file" | "command";
   readonly query: string;
@@ -17,10 +9,7 @@ export type PickerToken = {
 export const AT_PREFIX = /(?:^|\s)@(\S*)$/;
 export const SLASH_PREFIX = /^\/(\S*)$/;
 
-/**
- * `AT_PREFIX` swallows the whitespace before the sigil when there is one, so
- * the sigil itself sits one character further in than the match.
- */
+/** Offset of the sigil in an `AT_PREFIX` match, which also swallows the whitespace before it. */
 export function sigilOffset(match: RegExpMatchArray): number {
   const matched = match[0] ?? "";
   return (match.index ?? 0) + (matched.startsWith("@") ? 0 : 1);
@@ -53,7 +42,6 @@ export function activeToken(
   };
 }
 
-/** A stable identity for a token, so a memo only fires when the query moves. */
 export function tokenKey(token: PickerToken | undefined): string {
   return token === undefined ? "" : `${token.kind}\u0000${token.query}`;
 }
@@ -61,10 +49,7 @@ export function tokenKey(token: PickerToken | undefined): string {
 export type Completion = {
   readonly text: string;
   readonly caret: number;
-  /**
-   * A directory keeps the picker open so the next segment can be drilled into
-   * — the browser equivalent of the TUI's re-entered Tab.
-   */
+  /** A directory keeps the picker open so the next segment can be drilled into. */
   readonly keepOpen: boolean;
 };
 

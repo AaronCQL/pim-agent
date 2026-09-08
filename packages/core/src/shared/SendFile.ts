@@ -1,7 +1,6 @@
 import { FsErrors } from "./FsErrors";
 import { Paths } from "./Paths";
 
-/** Telegram's document ceiling, borrowed so one number governs every send. */
 const MAX_BYTES = 50 * 1024 * 1024;
 
 async function validate(

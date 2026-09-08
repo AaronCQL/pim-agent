@@ -14,7 +14,7 @@ export type FormatChecklistOptions = {
   readonly activeOnly?: boolean;
 };
 
-/** Identity key for the per-session state slot; only its identity is ever used. */
+/** Identity key for the per-session state slot. */
 export type TodoSessionKey = ExtensionContext["sessionManager"];
 
 const itemsBySession = new WeakMap<TodoSessionKey, TodoItem[]>();

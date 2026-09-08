@@ -164,9 +164,7 @@ class RelativeRankingIndex {
         substringHits.push(candidate);
       }
 
-      // Prefix hits always outrank substring hits, so we can stop only once we
-      // have enough prefixes to fill the limit; otherwise a late-sorting prefix
-      // could be dropped for an earlier substring match.
+      // Only prefix hits may end the scan early: a late prefix must not lose to an earlier substring.
       if (prefixHits.length >= limitSize) {
         break;
       }

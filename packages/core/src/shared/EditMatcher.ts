@@ -441,9 +441,7 @@ function unicodeNormalized({
   content,
   oldString,
 }: MatchInput): readonly Candidate[] {
-  // Substitutions in normalizeUnicode must be 1:1 by UTF-16 code unit so offsets in
-  // normalizedContent index into the original content. Adding multi-codepoint mappings
-  // (e.g. `…` → `...`) here would silently corrupt range math.
+  // normalizeUnicode substitutions must stay 1:1 by UTF-16 code unit, or offsets desync.
   const normalizedContent = normalizeUnicode(content);
   const normalizedOld = normalizeUnicode(oldString);
   const candidates: Candidate[] = [];
@@ -479,7 +477,7 @@ function blockAnchor(input: MatchInput): readonly Candidate[] {
         ) / middleCount;
     }
 
-    // 0.3 floor filters anchor coincidence on unrelated blocks that happen to share first/last line text.
+    // 0.3 floor filters anchor coincidence on unrelated blocks sharing first/last line text.
     return similarity >= 0.3;
   });
 }

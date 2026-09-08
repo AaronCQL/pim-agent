@@ -15,14 +15,7 @@ export type PickerServiceDeps = {
 
 const DEFAULT_LIMIT = 50;
 
-/**
- * Answers one session's picker queries against the machine the agent runs on.
- *
- * Both halves are deliberately server-side. `@` names a file the *agent* must
- * open, and a skill is a capability loaded from the agent's disk — neither
- * means anything on a client, so neither is ever shipped there. What crosses
- * the wire is one query and at most `limit` ranked rows.
- */
+/** Answers one session's picker queries against the machine the agent runs on. */
 export class PickerService {
   private readonly deps: PickerServiceDeps;
   private fileCache:
@@ -56,10 +49,6 @@ export class PickerService {
     return rankCommands(query, this.commandItems(), { limit });
   }
 
-  /**
-   * Drop everything derived from the filesystem. The cwd moved, or something
-   * wrote to it — either way the catalog and the skill list are now stale.
-   */
   public invalidate(): void {
     this.fileCache = undefined;
     this.commandCache = undefined;
@@ -87,11 +76,6 @@ export class PickerService {
     return [...this.commandCache.items, ...this.extensionItems()];
   }
 
-  /**
-   * Project-local `.agents/skills` hangs off the session cwd, so the skill
-   * list is a function of cwd and nothing else — which is why it is cached
-   * beside it rather than read from a live agent.
-   */
   private loadSkillItems(cwd: string): readonly PickerItem[] {
     try {
       const { skills } = loadSkills({

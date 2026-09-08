@@ -67,7 +67,6 @@ export type TitleOptions = {
   readonly cwd: string;
 };
 
-/** The subject only; the match count trails it as its own muted block. */
 export function formatTitle(options: TitleOptions): string {
   return SearchRender.subjectTitle({
     subject: formatPattern(options.pattern),
@@ -125,12 +124,6 @@ export function buildView({
   };
 }
 
-/**
- * `files_with_matches` rows are whole paths, so they model as `file` blocks.
- * `content` and `count` pack a path and a per-row payload (`:line:text`,
- * `:count`, plus context markers and `--` separators) into a single line, which
- * no block kind expresses inline, so those keep the pre-rendered text.
- */
 function bodyBlocks(
   body: string,
   outputMode: GrepOutputMode | undefined

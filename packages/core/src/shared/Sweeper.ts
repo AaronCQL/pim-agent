@@ -1,10 +1,5 @@
 const installed = new Set<() => void>();
 
-/**
- * Idempotent per cleanup function: registers the retention lifecycle (startup
- * sweep, periodic sweep, and cleanup on exit/termination) once, however many
- * times it is called.
- */
 function install(options: {
   readonly cleanup: () => void;
   readonly intervalMs: number;
@@ -23,9 +18,7 @@ function install(options: {
     cleanup();
   });
 
-  // Signal-induced termination skips the "exit" handler, so sweep here too.
-  // Re-raise after our once-handler is gone so the default termination still
-  // happens — merely registering a signal listener otherwise suppresses it.
+  // Signals skip the "exit" handler; re-raise after the once-handler, or the default exit is suppressed.
   for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
     process.once(sig, () => {
       try {

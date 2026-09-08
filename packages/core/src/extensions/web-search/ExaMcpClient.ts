@@ -28,8 +28,7 @@ class ExaSearchError extends Error {
 
 const defaultEndpoint = "https://mcp.exa.ai/mcp";
 const toolName = "web_search_exa";
-// The keyless endpoint enforces a sliding window of 2 requests per second;
-// stay strictly under it so a 429 reliably means the daily cap, not QPS.
+// Stay under the keyless endpoint's 2 req/s window, or a 429 no longer means the daily cap.
 const maxRequestsPerWindow = 2;
 const windowMs = 1100;
 
@@ -41,7 +40,7 @@ export class ExaMcpClient {
       options.apiKey === undefined || options.apiKey.length === 0
         ? undefined
         : options.apiKey;
-    // Throttle only on the free tier; an API key lifts the request rate limit.
+    // Throttle only on the free tier; an API key lifts the rate limit.
     const rateLimiter =
       apiKey !== undefined
         ? undefined

@@ -217,9 +217,7 @@ export class McpClient {
         },
         rateLimited: false,
       });
-    } catch {
-      // abort already surfaces; cancel is best-effort
-    }
+    } catch {}
   }
 
   private async postJson(

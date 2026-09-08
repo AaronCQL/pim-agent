@@ -25,11 +25,7 @@ const defaultReaderEndpoint = "https://r.jina.ai";
 const defaultSearchEndpoint = "https://lite.duckduckgo.com/lite/";
 const defaultTimeoutMs = 30_000;
 
-/**
- * DuckDuckGo blocks direct API access with a 202 anti-bot challenge, so this
- * reads the Lite SERP through Jina's keyless reader instead. Last-resort tier:
- * no credentials anywhere in the path, but also no stability guarantee.
- */
+/** Reads the Lite SERP through Jina: DuckDuckGo answers direct API calls with a 202 anti-bot challenge. */
 export class DuckDuckGoProvider implements SearchProvider {
   public readonly name = "duckduckgo";
 
@@ -47,8 +43,7 @@ export class DuckDuckGoProvider implements SearchProvider {
     this.timeoutMs = options.timeoutMs ?? defaultTimeoutMs;
     this.headers = {
       Accept: "application/json",
-      // Reader caches aggressively; a stale SERP snapshot is worse than a slow
-      // one for a search tool.
+      // The reader caches aggressively and would serve a stale SERP.
       "x-no-cache": "true",
       ...(options.apiKey === undefined || options.apiKey.length === 0
         ? {}
@@ -166,9 +161,7 @@ export class DuckDuckGoProvider implements SearchProvider {
   }
 }
 
-/**
- * Lite SERP links are wrapped as `duckduckgo.com/l/?uddg=<encoded target>`.
- */
+// Lite SERP links are wrapped as `duckduckgo.com/l/?uddg=<encoded target>`.
 function resolveRedirect(href: string): string | undefined {
   let parsed: URL;
 
@@ -187,9 +180,7 @@ function resolveRedirect(href: string): string | undefined {
   return parsed.hostname.endsWith("duckduckgo.com") ? undefined : href;
 }
 
-/**
- * The last snippet line of a Lite result is the display URL, not prose.
- */
+// The last snippet line of a Lite result is the display URL, not prose.
 function joinSnippet(lines: readonly string[]): string {
   const last = lines.at(-1);
   const body =

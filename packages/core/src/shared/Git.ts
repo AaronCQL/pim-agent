@@ -53,9 +53,7 @@ function watchDir(cwd: string, onChange: () => void): () => void {
   try {
     watcher = watch(join(cwd, ".git"), { persistent: false }, fire);
     watcher.on("error", () => {});
-  } catch {
-    // not a git repo, .git missing, or .git is a worktree gitfile — skip
-  }
+  } catch {}
   return (): void => {
     if (timer !== null) {
       clearTimeout(timer);
@@ -87,9 +85,5 @@ async function fetchStatus(cwd: string): Promise<GitState> {
   }
 }
 
-/**
- * The cwd's git state, for the TUI footer and the web's branch chip. Shells
- * out rather than reading `.git` itself: worktrees, submodules and detached
- * heads are git's business, and `git status` already knows all three.
- */
+/** The cwd's git state, for the TUI footer and the web's branch chip. */
 export const Git = { EMPTY, parseStatus, watchDir, fetchStatus };

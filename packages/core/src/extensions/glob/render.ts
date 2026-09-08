@@ -60,10 +60,6 @@ export function globView({ args, result, cwd }: GlobViewInput): ToolView {
   };
 }
 
-/**
- * The rendered listing is already baked into the result content by `execute`,
- * so replaying a persisted entry never re-resolves paths.
- */
 function formatBody(result: GlobViewInput["result"]): readonly ViewBlock[] {
   const text = Renderer.firstText(result);
   if (text === "") {

@@ -27,12 +27,7 @@ export type GrepMatch = {
 export type GrepMatcher = {
   readonly regex: RegExp;
   readonly matchAcrossLines: boolean;
-  /**
-   * Raw-byte needle for the literal fast path: present only when the pattern is
-   * a pure literal, case-sensitive, and single-line, so `matchFile` can reject a
-   * non-matching file with `Buffer.indexOf` before decoding it. Undefined
-   * otherwise, in which case the regex path runs unchanged.
-   */
+  /** Raw-byte needle for the literal fast path; undefined leaves the regex path unchanged. */
   readonly literal: Buffer | undefined;
 };
 
@@ -40,9 +35,7 @@ export type GrepScanOptions = FileScanOptions & {
   readonly retainFileLines?: boolean;
 };
 
-// Characters that stand for themselves in both a default-flag regex and raw
-// UTF-8 bytes (all ASCII, so they never alias a multibyte sequence). A pattern
-// made only of these is a literal we can scan on bytes.
+// ASCII-only: these stand for themselves in both a default-flag regex and raw UTF-8 bytes.
 const PURE_LITERAL = /^[A-Za-z0-9_ \-/]+$/;
 
 function literalNeedle(
@@ -102,14 +95,7 @@ export async function findMatches(
   return scanned.filter((match) => match !== undefined);
 }
 
-/**
- * A scan enumerates symlinks without resolving them (matching `fd`, which lists
- * a symlinked directory without descending into it), so an entry here may not
- * be a readable regular file: a symlink to a directory fails with EISDIR, a
- * broken symlink with ENOENT, and an unreadable file with EACCES. None of those
- * should abort the whole search, so treat any unreadable entry as a non-match —
- * the same way `grep` and `rg` warn and continue.
- */
+// An entry may not be a readable regular file: an unreadable one is a non-match, never a failure.
 async function matchFile(
   filePath: string,
   matcher: GrepMatcher,
@@ -119,15 +105,12 @@ async function matchFile(
 
   let text: string;
   try {
-    // Binary skip reads only the first 8KB, so a binary file is never fully read.
     if (await Lines.isBinary(file)) {
       return undefined;
     }
 
     if (matcher.literal !== undefined) {
-      // Literal fast path: scan raw bytes and bail on a miss without decoding. An
-      // ASCII literal can't match across a normalized newline or alias a
-      // multibyte char, so a raw-byte hit/miss matches the decoded result.
+      // Literal fast path: an ASCII needle's raw-byte hit/miss matches the decoded result.
       const bytes = Buffer.from(await file.arrayBuffer());
       if (bytes.indexOf(matcher.literal) < 0) {
         return undefined;

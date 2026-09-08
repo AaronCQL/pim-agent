@@ -149,8 +149,6 @@ async function tryGitListFiles(
 }
 
 async function scanWithGlob(root: string): Promise<readonly string[]> {
-  // FileEnumerator already returns ignore-respecting, root-relative POSIX file
-  // paths; directories are recovered from prefixes in finalizeRelative.
   return FileEnumerator.enumerate(root, {
     includeDotfiles: false,
     includeIgnored: false,

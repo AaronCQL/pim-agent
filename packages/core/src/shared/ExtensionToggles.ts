@@ -2,9 +2,7 @@ import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 import { PimSettings } from "./PimSettings";
 
-// Pi filters `enabled` over disk paths only, and inline factories are appended
-// after that filter (resource-loader.js:406/415), so `pim config` can never
-// reach these. Pim owns the roster and the toggle instead.
+// Pi's `enabled` filter covers disk paths only, never inline factories: pim owns this roster.
 const EXTENSIONS = {
   _init: "Splash screen, runtime guard, /clear",
   "apply-patch": "apply_patch tool",
@@ -33,10 +31,6 @@ const NAMES = Object.keys(EXTENSIONS) as readonly PimExtensionName[];
 
 const DEFAULT_DISABLED: readonly PimExtensionName[] = ["todo", "tps"];
 
-/**
- * `_init` carries the Bun runtime guard and the splash.
- * `pim` is the only in-session way back from a disable.
- */
 const REQUIRED: readonly PimExtensionName[] = ["_init", "pim"];
 
 function isRequired(name: string): boolean {
@@ -51,11 +45,7 @@ function describe(name: PimExtensionName): string {
   return EXTENSIONS[name];
 }
 
-/**
- * Wraps a factory so a disabled extension registers nothing. Pi re-invokes
- * every factory on `ctx.reload()`, which is what makes a toggle land without
- * a restart — filtering the roster before `main` could not.
- */
+// Gate inside the factory, not around the roster: pi re-invokes factories on `ctx.reload()`.
 function gate(
   name: PimExtensionName,
   factory: ExtensionFactory
@@ -81,8 +71,7 @@ async function isDisabled(name: string): Promise<boolean> {
   return !enabled(name, toggles);
 }
 
-/** Serialized: the menu fires one of these per keypress, and each is a
- * read-modify-write of the same record. */
+// Serialized: each call is a read-modify-write of the same record.
 async function setDisabled(name: string, isOff: boolean): Promise<void> {
   if (!isKnown(name)) {
     throw new Error(`Unknown pim extension "${name}"`);

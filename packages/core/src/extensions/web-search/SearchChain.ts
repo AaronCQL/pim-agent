@@ -18,15 +18,7 @@ export type SearchChainOptions = {
   readonly breaker: SearchBreaker;
 };
 
-/**
- * Tries providers in order until one answers.
- *
- * Two rules make this safe to run against metered free tiers:
- * an empty result set is a legitimate answer and terminates the chain (a query
- * with genuinely no hits must not burn every provider's quota), and a quota
- * rejection additionally sidelines the provider via the breaker so later
- * searches skip it outright.
- */
+/** Tries providers in order until one answers; an empty result set is an answer and ends the chain. */
 export class SearchChain {
   private readonly providers: readonly SearchProvider[];
   private readonly breaker: SearchBreaker;

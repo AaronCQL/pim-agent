@@ -4,26 +4,17 @@ import { dirname, join } from "node:path";
 import { Paths } from "./Paths";
 import { Sweeper } from "./Sweeper";
 
-/**
- * The charset a pi session id and a provider tool call id share. Both become
- * path segments here, so anything outside it is refused rather than escaped:
- * a path built from an id is only safe if the id cannot be a path.
- */
+// Ids become path segments: anything outside this charset is refused, never escaped.
 const ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 
 const TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 
-/**
- * Deliberately not under pi's sessions root: `SessionRegistry` lists the
- * catalogue by globbing that root, and a subagent run is not a session anyone
- * may resume.
- */
+// Must stay outside pi's sessions root, which `SessionRegistry` globs as the session catalogue.
 function dir(): string {
   return join(Paths.pimHomeDir(), "subagents");
 }
 
-/** Null when either id is not usable as a path segment. */
 function pathFor(parentSessionId: string, callId: string): string | null {
   if (!ID_RE.test(parentSessionId) || !ID_RE.test(callId)) {
     return null;
@@ -31,11 +22,7 @@ function pathFor(parentSessionId: string, callId: string): string | null {
   return join(dir(), parentSessionId, `${callId}.jsonl`);
 }
 
-/**
- * Creates the child log empty so pi appends to a file with our modes rather
- * than creating one with the process umask. A child log holds whatever the
- * child read.
- */
+// Create the log empty with explicit modes: a file pi creates takes the process umask.
 async function create(
   parentSessionId: string,
   callId: string
@@ -53,11 +40,7 @@ async function create(
   }
 }
 
-/**
- * Expires a parent's children together, by the newest mtime under its
- * directory, so a long-running parent never has its earlier subagents swept
- * out from under it.
- */
+// Expire a parent's children together by newest mtime, or a long run loses its earlier subagents.
 function cleanup(root = dir(), now = Date.now()): void {
   let names: string[];
   try {

@@ -1,9 +1,4 @@
-/**
- * Tolerant on purpose: the same argv reaches every mode through `pim --mode x`,
- * so unknown flags and the mode positional must not be fatal. `take()` accepts
- * both `--k v` and `--k=v`; whether a key consumes a value is the caller's
- * decision, made by calling `take` or not.
- */
+// Never throw on an unknown flag or positional: the same argv reaches every mode.
 function scan(
   args: ReadonlyArray<string>,
   visit: (key: string, take: () => string | undefined) => void

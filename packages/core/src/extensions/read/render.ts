@@ -46,10 +46,6 @@ function titleBlock(
   return { kind: "file", path, range: [input.start ?? 1, input.end] };
 }
 
-/**
- * The settled range wins over the requested one so an overlarge `end` (or a
- * byte-capped read) reports what was actually shown.
- */
 function visibleRange(details: unknown): readonly [number, number] | undefined {
   if (typeof details !== "object" || details === null) {
     return undefined;

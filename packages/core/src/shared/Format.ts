@@ -14,10 +14,6 @@ function formatTokens(tokens: number): string {
   return `${Math.round(tokens / 1_000_000)}M`;
 }
 
-/**
- * A duration as the running indicator says it: `32s`, `1m 32s`, `1h 1m 32s`.
- * Shared because the TUI's `Clanking…` line and the web's are the same line.
- */
 function formatElapsed(ms: number): string {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const hours = Math.floor(totalSeconds / 3600);
@@ -33,10 +29,6 @@ function formatElapsed(ms: number): string {
 /** How full the context window reads, as a verdict each frontend colours. */
 export type ContextFill = "ok" | "warn" | "full";
 
-/**
- * Shared so the TUI footer and the web's context pill turn amber at the same
- * fill; the two palettes differ, the thresholds must not.
- */
 function contextFill(percent: number): ContextFill {
   if (percent >= 70) {
     return "full";
@@ -44,7 +36,6 @@ function contextFill(percent: number): ContextFill {
   return percent > 40 ? "warn" : "ok";
 }
 
-/** `1 file` / `3 files`, for the counts that trail a tool title. */
 function count(value: number, noun: string): string {
   return `${value} ${noun}${value === 1 ? "" : "s"}`;
 }

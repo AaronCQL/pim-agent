@@ -18,11 +18,7 @@ export type SearchProvider = {
   search(input: ProviderSearchInput): Promise<readonly SearchResult[]>;
 };
 
-/**
- * A provider refused the call because its quota or rate limit is exhausted.
- * Distinct from a generic failure: the chain fails over on any error, but only
- * a quota error opens the circuit breaker and sidelines the provider.
- */
+/** Quota or rate limit exhausted; only this error opens the breaker and sidelines a provider. */
 export class ProviderQuotaError extends Error {
   public readonly provider: string;
   public readonly retryAfterMs: number | undefined;
@@ -47,11 +43,7 @@ export class ProviderSearchError extends Error {
 
 const MAX_SNIPPET_LENGTH = 500;
 
-/**
- * Providers disagree wildly on snippet size: Firecrawl returns whole scraped
- * pages in `description`, DuckDuckGo returns two lines. Normalize so a
- * fallback does not blow up the context window relative to the primary.
- */
+/** Caps a provider snippet; Firecrawl returns whole scraped pages where others return two lines. */
 export function normalizeSnippet(value: string | undefined): string {
   const collapsed = (value ?? "").replaceAll(/\s+/gu, " ").trim();
 
