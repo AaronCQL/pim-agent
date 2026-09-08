@@ -34,6 +34,18 @@ type SubagentWatch = {
 /** Bytes queued inside the socket before this client is treated as lagging. */
 const HIGH_WATER_MARK = 1 << 20;
 
+const FRAMES = new WeakMap<object, string>();
+
+export function frame(event: object): string {
+  const cached = FRAMES.get(event);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const text = JSON.stringify(event);
+  FRAMES.set(event, text);
+  return text;
+}
+
 /**
  * One WebSocket client, attached to at most one session.
  *
@@ -116,7 +128,7 @@ export class ClientConnection {
     if (this.closed) {
       return;
     }
-    this.ws.send(JSON.stringify(event));
+    this.ws.send(frame(event));
   }
 
   public onDrain(): void {
@@ -222,16 +234,8 @@ export class ClientConnection {
     if (fresh.length === 0) {
       return;
     }
-    const status = this.ws.send(
-      JSON.stringify({ type: "replay", events: fresh })
-    );
-    if (status === 0) {
-      this.paused = true;
-      return;
-    }
-    this.cursor = cursor;
-    if (this.ws.getBufferedAmount() > HIGH_WATER_MARK) {
-      this.paused = true;
+    if (this.deliver(JSON.stringify({ type: "replay", events: fresh }))) {
+      this.cursor = cursor;
     }
   }
 
@@ -289,21 +293,29 @@ export class ClientConnection {
     if (!last) {
       return;
     }
-    const status = this.ws.send(
-      JSON.stringify({
-        type: "subagent_events",
-        callId: watch.callId,
-        events,
-      })
-    );
+    const payload = JSON.stringify({
+      type: "subagent_events",
+      callId: watch.callId,
+      events,
+    });
+    if (this.deliver(payload)) {
+      watch.cursor = last.seq;
+    }
+  }
+
+  private deliver(payload: string): boolean {
+    if (this.closed || this.paused) {
+      return false;
+    }
+    const status = this.ws.send(payload);
     if (status === 0) {
       this.paused = true;
-      return;
+      return false;
     }
-    watch.cursor = last.seq;
     if (this.ws.getBufferedAmount() > HIGH_WATER_MARK) {
       this.paused = true;
     }
+    return true;
   }
 
   private write(event: ServerEvent): void {
@@ -314,16 +326,8 @@ export class ClientConnection {
     if (durable && event.seq <= this.cursor) {
       return;
     }
-    const status = this.ws.send(JSON.stringify(event));
-    if (status === 0) {
-      this.paused = true;
-      return;
-    }
-    if (durable) {
+    if (this.deliver(frame(event)) && durable) {
       this.cursor = event.seq;
-    }
-    if (this.ws.getBufferedAmount() > HIGH_WATER_MARK) {
-      this.paused = true;
     }
   }
 }

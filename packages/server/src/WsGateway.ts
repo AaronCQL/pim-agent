@@ -7,8 +7,6 @@ import { Attachments } from "#core/attachments/Attachments";
 import type { PickerItem } from "#core/picker/PickerItem";
 import { Directories } from "#core/shared/Directories";
 import type { DirectoryListing } from "#core/shared/Directories";
-import { EventLog } from "#core/session/EventLog";
-import type { SessionDigest } from "#core/session/EventLog";
 import { ReadCursors } from "#core/session/ReadCursors";
 import type { SessionHost } from "#core/session/SessionHost";
 import type { SessionRegistry } from "#core/session/SessionRegistry";
@@ -20,11 +18,11 @@ import { CLOSE_PROTOCOL_MISMATCH, PROTOCOL_VERSION } from "#protocol/Protocol";
 import type {
   ModelView,
   ServerEvent,
-  SessionStatus,
   SessionSummaryView,
 } from "#protocol/ServerEvent";
 import { ClientConnection } from "./ClientConnection";
 import { Reloader } from "./Reloader";
+import { SessionCatalogue } from "./SessionCatalogue";
 import { SessionProjection } from "./SessionProjection";
 import { SessionStream } from "./SessionStream";
 import { StaticClient } from "./StaticClient";
@@ -81,16 +79,10 @@ type StreamTarget = {
   readonly like?: SessionHost;
 };
 
-/** Enough rows to fill a switcher; the catalogue is read newest-first. */
-const DEFAULT_SESSION_LIMIT = 50;
-
 export const DEFAULT_PORT = 4319;
 
 /** Loopback only: the server has full host access and no authentication. */
 export const DEFAULT_HOSTNAME = "127.0.0.1";
-
-/** A digest and the file state it was read from; a rewrite moves both. */
-type CachedDigest = SessionDigest & { readonly modifiedAt: number };
 
 /**
  * How long `stop()` waits for open sockets to drain. Bounded because Bun
@@ -110,33 +102,10 @@ export class WsGateway {
   private readonly hostname: string;
   private readonly requestedPort: number;
   private readonly uploads: AttachmentEndpoint;
-  /**
-   * Which sessions have been read, shared by every client: the mark is a
-   * property of the machine, so it is kept beside the sessions rather than
-   * in whichever browser happened to be reading.
-   */
-  private readonly cursors: ReadCursors;
+  private readonly catalogue: SessionCatalogue;
   private readonly client: StaticClient;
   private readonly streams = new Map<string, SessionStream>();
   private readonly opening = new Map<string, Promise<SessionStream>>();
-  /**
-   * Naming a session costs a read of its whole file, and the sidebar re-lists
-   * after every turn — so a file that has not been appended to since the last
-   * listing is not read again.
-   */
-  private readonly digests = new Map<string, CachedDigest>();
-  /**
-   * The status each session was last announced as. Kept because a stream
-   * emits its state on every tool call and every message, and a client only
-   * needs the edges — a row starts spinning once and stops once.
-   */
-  private readonly activity = new Map<string, SessionStatus>();
-  /**
-   * When each session this server runs last settled, as its file read at the
-   * time. Held because that reading is only true of an idle session: see
-   * `settleTime`.
-   */
-  private readonly settled = new Map<string, number>();
   private readonly connections = new Map<
     ServerWebSocket<undefined>,
     ClientConnection
@@ -156,7 +125,16 @@ export class WsGateway {
     this.uploads = new AttachmentEndpoint(
       deps.attachmentsRoot === undefined ? {} : { root: deps.attachmentsRoot }
     );
-    this.cursors = new ReadCursors(deps.readCursorsPath);
+    this.catalogue = new SessionCatalogue({
+      registry: deps.registry,
+      cursors: new ReadCursors(deps.readCursorsPath),
+      liveStatus: (sessionId) => this.streams.get(sessionId)?.host.status,
+      liveSessionIds: () => this.streams.keys(),
+      isBeingRead: (sessionId) => this.isBeingRead(sessionId),
+      announce: (event) => {
+        this.broadcast(event);
+      },
+    });
     this.client = new StaticClient(deps.clientDir);
     this.reloader = new Reloader({
       announce: (event) => {
@@ -165,7 +143,6 @@ export class WsGateway {
       update: deps.update,
       shutdown: deps.shutdown,
     });
-    this.versionsRead = undefined;
   }
 
   public get port(): number {
@@ -225,11 +202,11 @@ export class WsGateway {
       stream.dispose();
     }
     this.streams.clear();
-    this.activity.clear();
-    this.settled.clear();
+    this.opening.clear();
+    this.catalogue.clear();
     // The marks taken during the run are written behind their callers, so a
     // stop is where the last of them lands.
-    await this.cursors.flush();
+    await this.catalogue.flush();
     for (const connection of this.connections.values()) {
       connection.close();
     }
@@ -300,63 +277,49 @@ export class WsGateway {
     connection: ClientConnection,
     command: Command
   ): Promise<Outcome> {
-    if (command.type === "attach") {
-      return await this.attach(connection, command);
-    }
-    // The catalogue is what a client reads *before* it has a session, so it
-    // answers without one.
-    if (command.type === "list_sessions") {
-      return { sessions: await this.listSessions(command) };
-    }
-    if (command.type === "list_models") {
-      return {
-        models: this.registry.models(),
-        // The levels belong to the model this connection is on, so a client
-        // with no session yet gets the catalogue and nothing else.
-        thinkingLevels:
-          (connection.sessionId
-            ? this.streams.get(connection.sessionId)?.host
-                .supportedThinkingLevels
-            : undefined) ?? [],
-      };
-    }
-    // A fact about the machine's disk, so it answers without a session too:
-    // reading where a session could be opened is not opening one, and a
-    // reader who browses and then closes the modal has asked for nothing.
-    if (command.type === "list_dirs") {
-      return { directory: await Directories.list(command.path) };
-    }
-    // Answered without a session because it is about a watch this connection
-    // holds, and a connection that has lost its session has lost that too:
-    // closing a modal must never fail.
-    if (command.type === "unwatch_subagent") {
-      connection.unwatchSubagent(command.callId);
-      return {};
-    }
-    // A fact about the machine, like the two above it: what a reload restarts
-    // is the server, so it is answered for a client attached to nothing on it.
-    if (command.type === "reload") {
-      return this.reload(command.force === true);
-    }
-    const stream = connection.sessionId
-      ? this.streams.get(connection.sessionId)
-      : undefined;
-    if (!stream) {
-      return { error: "not attached: send `attach` first" };
-    }
-    const host = stream.host;
     switch (command.type) {
+      case "attach":
+        return await this.attach(connection, command);
+      // The catalogue is what a client reads *before* it has a session, so it
+      // answers without one.
+      case "list_sessions":
+        return { sessions: await this.catalogue.list(command) };
+      case "list_models":
+        return {
+          models: this.registry.models(),
+          // The levels belong to the model this connection is on, so a client
+          // with no session yet gets the catalogue and nothing else.
+          thinkingLevels:
+            this.streamFor(connection)?.host.supportedThinkingLevels ?? [],
+        };
+      // A fact about the machine's disk, so it answers without a session too:
+      // reading where a session could be opened is not opening one, and a
+      // reader who browses and then closes the modal has asked for nothing.
+      case "list_dirs":
+        return { directory: await Directories.list(command.path) };
+      // Answered without a session because it is about a watch this connection
+      // holds, and a connection that has lost its session has lost that too:
+      // closing a modal must never fail.
+      case "unwatch_subagent":
+        connection.unwatchSubagent(command.callId);
+        return {};
+      // A fact about the machine, like the two above it: what a reload restarts
+      // is the server, so it is answered for a client attached to nothing on it.
+      case "reload":
+        return this.reload(command.force === true);
       case "user_message":
-        this.promptWithAttachments(stream, command);
+        this.promptWithAttachments(this.requireStream(connection), command);
         return {};
       case "cancel": {
-        const { cancelled, restored } = await host.cancel();
+        const { cancelled, restored } =
+          await this.requireStream(connection).host.cancel();
         return cancelled ? { restored } : { error: "nothing to cancel" };
       }
       case "dequeue":
-        return { restored: host.takeBack() };
+        return { restored: this.requireStream(connection).host.takeBack() };
       case "set_cwd": {
-        const result = await host.setCwd(command.value);
+        const stream = this.requireStream(connection);
+        const result = await stream.host.setCwd(command.value);
         stream.push(stream.sessionState());
         if (!result.ok) {
           return { error: result.error };
@@ -365,7 +328,8 @@ export class WsGateway {
         return {};
       }
       case "set_model": {
-        const result = await host.setModel(command.value);
+        const stream = this.requireStream(connection);
+        const result = await stream.host.setModel(command.value);
         stream.push(stream.sessionState());
         return result.ok
           ? {}
@@ -373,21 +337,49 @@ export class WsGateway {
               error: `${result.kind} model "${command.value}"; candidates: ${result.candidates.join(", ")}`,
             };
       }
-      case "set_thinking":
-        await host.setThinkingLevel(command.value as ThinkingLevel);
+      case "set_thinking": {
+        const stream = this.requireStream(connection);
+        await stream.host.setThinkingLevel(command.value as ThinkingLevel);
         stream.push(stream.sessionState());
         return {};
+      }
       case "pick_files":
         return {
-          items: await stream.picker.files(command.query, command.limit),
+          items: await this.requireStream(connection).picker.files(
+            command.query,
+            command.limit
+          ),
         };
       case "pick_commands":
-        return { items: stream.picker.commands(command.query, command.limit) };
+        return {
+          items: this.requireStream(connection).picker.commands(
+            command.query,
+            command.limit
+          ),
+        };
       case "watch_subagent":
-        return await this.watchSubagent(connection, stream, command);
+        return await this.watchSubagent(
+          connection,
+          this.requireStream(connection),
+          command
+        );
       default:
+        this.requireStream(connection);
         return { error: `unknown command: ${(command as Command).type}` };
     }
+  }
+
+  private streamFor(connection: ClientConnection): SessionStream | undefined {
+    const sessionId = connection.sessionId;
+    return sessionId ? this.streams.get(sessionId) : undefined;
+  }
+
+  private requireStream(connection: ClientConnection): SessionStream {
+    const stream = this.streamFor(connection);
+    if (!stream) {
+      throw new Error("not attached: send `attach` first");
+    }
+    return stream;
   }
 
   /**
@@ -439,14 +431,16 @@ export class WsGateway {
       command.like === undefined
         ? undefined
         : this.streams.get(command.like)?.host;
-    const stream = await this.ensureStream({
-      ...(command.sessionId === undefined
-        ? {}
-        : { sessionId: command.sessionId }),
-      ...(command.cwd === undefined ? {} : { cwd: command.cwd }),
-      ...(like === undefined ? {} : { like }),
-    });
-    const [pimVersion, piVersion] = await this.versions();
+    const [stream, [pimVersion, piVersion]] = await Promise.all([
+      this.ensureStream({
+        ...(command.sessionId === undefined
+          ? {}
+          : { sessionId: command.sessionId }),
+        ...(command.cwd === undefined ? {} : { cwd: command.cwd }),
+        ...(like === undefined ? {} : { like }),
+      }),
+      this.versions(),
+    ]);
     connection.send({
       type: "attached",
       protocolVersion: PROTOCOL_VERSION,
@@ -459,7 +453,7 @@ export class WsGateway {
     await connection.attach(stream, command.fromSeq);
     // Opening a session is reading it, and there is one mark for all of
     // them, so this is also where every other client's dot goes out.
-    await this.markRead(stream.sessionId);
+    await this.catalogue.markRead(stream.sessionId);
     return {};
   }
 
@@ -472,9 +466,9 @@ export class WsGateway {
    * only ones a restart here would kill.
    */
   private reload(force: boolean): Outcome {
-    const busy = [...this.activity.entries()]
-      .filter(([, status]) => status !== "idle")
-      .map(([sessionId]) => sessionId);
+    const busy = [...this.streams.values()]
+      .filter((stream) => stream.host.status !== "idle")
+      .map((stream) => stream.sessionId);
     if (!force && busy.length > 0) {
       const many = busy.length > 1;
       return {
@@ -493,145 +487,13 @@ export class WsGateway {
     return this.versionsRead;
   }
 
-  private async listSessions(
-    command: Command & { readonly type: "list_sessions" }
-  ): Promise<readonly SessionSummaryView[]> {
-    const summaries = await this.registry.list(command.cwd);
-    // Only an unfiltered listing knows every session there is; pruning
-    // against one cut to a cwd would forget every other directory. The
-    // sessions this server holds open are alive too — a new chat has a mark
-    // before it has a file.
-    if (command.cwd === undefined) {
-      await this.cursors.prune(
-        new Set([
-          ...summaries.map((summary) => summary.sessionId),
-          ...this.streams.keys(),
-        ])
-      );
-    }
-    // Only the page about to be sent is digested, so a thousand-session
-    // directory is not read to answer for fifty rows.
-    //
-    // Which is also why the *cut* is by modified time and the *order* is not:
-    // a session's settle time is in its digest, so ranking the whole
-    // directory by it would mean reading every session on disk to send fifty.
-    // A file is never modified before its agent settles, so the two disagree
-    // only inside the page, where the sort below has the real answer.
-    const page = await Promise.all(
-      summaries
-        .slice(0, command.limit ?? DEFAULT_SESSION_LIMIT)
-        .map(async ({ sessionId, cwd, path, createdAt, modifiedAt }) => {
-          const { title, settledAt } = await this.digestOf(path, modifiedAt);
-          // Only a session this server holds open has an agent to answer for
-          // it; anything else on disk is a file, and a file is never working.
-          const status = this.streams.get(sessionId)?.host.status;
-          const answeredAt = this.answerTime(sessionId, status, settledAt);
-          const unread = await this.cursors.isUnread(sessionId, answeredAt);
-          return {
-            sessionId,
-            cwd,
-            createdAt,
-            // The last turn known to have finished; failing that whatever the
-            // file last had, which is all there is to date a session running
-            // its first one by; failing that, when it was made.
-            settledAt: answeredAt ?? settledAt ?? createdAt,
-            ...(title === undefined ? {} : { title }),
-            ...(status === undefined || status === "idle" ? {} : { status }),
-            // Off the completed turn alone, so intermediate lines raise no
-            // mark: a row goes unread when its turn ends, which is also when
-            // it climbs to the top of this list.
-            ...(unread ? { unread: true } : {}),
-          };
-        })
-    );
-    return page.sort((a, b) => b.settledAt - a.settledAt);
-  }
-
-  /**
-   * When this session's last *completed* turn ended, and — for an idle one —
-   * where that answer is remembered from. Absent when there is no such turn
-   * to point at: an agent that has never answered, or one whose turn began
-   * before any listing had seen it idle.
-   *
-   * The file's answer is the last thing the agent wrote, which is where it
-   * stopped only while nothing is running: mid-turn it is the message or
-   * tool result that just landed, and a row would climb to the top of the
-   * list — and go unread — on every one of them. So a running session is
-   * answered for out of what its file said while it was last idle, and the
-   * file takes over again the moment the turn ends.
-   *
-   * Which makes that freeze best-effort, a listing being the only thing that
-   * fills it: a session attached and prompted before anyone listed has
-   * nothing remembered, and its row falls back to the file for the length of
-   * that turn. Harmless where the sidebar stands, and deliberately not
-   * bought with a read on every attach — a running row paints a spinner
-   * instead of an age, so the drifting number is never shown, and the unread
-   * mark reads the `undefined` this returns rather than the caller's
-   * fallback, so it stays down. What is left is a running row sorted higher
-   * than it has earned, which is where a running row is expected anyway.
-   *
-   * Seeding the map where the stream opens is what would close it, and what
-   * either of those two changes would need: an age beside a spinner, or an
-   * unread mark taken from the listed `settledAt` instead of from here.
-   *
-   * A session another process is driving reports no status and is always
-   * answered for by its file, drifting while that process writes and correct
-   * again as soon as it stops: there is no liveness on disk to do better
-   * with, and nothing is remembered for it to be wrong about later.
-   */
-  private answerTime(
-    sessionId: string,
-    status: SessionStatus | undefined,
-    fromFile: number | undefined
-  ): number | undefined {
-    if (status === undefined) {
-      return fromFile;
-    }
-    if (status !== "idle") {
-      return this.settled.get(sessionId);
-    }
-    if (fromFile !== undefined) {
-      this.settled.set(sessionId, fromFile);
-    }
-    return fromFile;
-  }
-
-  /**
-   * Says that a session's agent started or stopped working, to every client
-   * on the server, and only on the edges.
-   *
-   * A turn that ends under a client that is reading it is read, not unread —
-   * and the announcement goes first and synchronously, because it is a frame
-   * of the session's own stream and every client attached must see it in the
-   * same place. The mark trails it by a microtask, which no client can be
-   * inside of: the re-list that frame provokes is a whole round trip away.
-   */
-  private onSessionState(sessionId: string, status: SessionStatus): void {
-    if (this.activity.get(sessionId) === status) {
-      return;
-    }
-    this.activity.set(sessionId, status);
-    this.broadcast({ type: "session_activity", sessionId, status });
-    if (status === "idle" && this.isBeingRead(sessionId)) {
-      void this.markRead(sessionId);
-    }
-  }
-
   private isBeingRead(sessionId: string): boolean {
-    return [...this.connections.values()].some(
-      (connection) => connection.sessionId === sessionId
-    );
-  }
-
-  /**
-   * Moves a session's read cursor to now and says so to every client. Said
-   * unconditionally, including for a session that was already read: the
-   * frame is a few bytes, it is idempotent at every receiver, and the price
-   * of skipping it is knowing whether some other client had a dot up.
-   */
-  private async markRead(sessionId: string): Promise<void> {
-    await this.cursors.mark(sessionId);
-    this.broadcast({ type: "session_read", sessionId });
+    for (const connection of this.connections.values()) {
+      if (connection.sessionId === sessionId) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -643,19 +505,6 @@ export class WsGateway {
     for (const connection of this.connections.values()) {
       connection.send(event);
     }
-  }
-
-  private async digestOf(
-    path: string,
-    modifiedAt: number
-  ): Promise<SessionDigest> {
-    const cached = this.digests.get(path);
-    if (cached?.modifiedAt === modifiedAt) {
-      return cached;
-    }
-    const digest = await new EventLog(path).digest();
-    this.digests.set(path, { ...digest, modifiedAt });
-    return digest;
   }
 
   private async ensureStream(target: StreamTarget): Promise<SessionStream> {
@@ -708,10 +557,10 @@ export class WsGateway {
     // The gateway listens to every stream it opens, not only to the ones with
     // a client on them: a turn runs to the end with nobody attached, and the
     // session list is drawn from every session at once.
-    this.activity.set(id, host.status);
+    this.catalogue.track(id, host.status);
     stream.subscribe((event) => {
       if (event.type === "session_state") {
-        this.onSessionState(id, event.status);
+        this.catalogue.onStatus(id, event.status);
       }
     });
     this.streams.set(id, stream);

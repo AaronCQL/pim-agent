@@ -20,7 +20,7 @@ const BUILD_HINT =
   "(Installed copies ship the bundle; a git checkout has to build it once.)\n";
 
 /** Vite fingerprints everything under `assets/`, so it can never go stale. */
-const IMMUTABLE = "public, max-age=31536000, immutable";
+export const IMMUTABLE = "public, max-age=31536000, immutable";
 
 /** A trailing `.ext` on the last segment is what separates a file from a route. */
 function looksLikeAsset(pathname: string): boolean {

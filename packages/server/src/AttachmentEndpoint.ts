@@ -5,6 +5,7 @@ import {
   type StoredAttachment,
 } from "#core/attachments/AttachmentStore";
 import { Paths } from "#core/shared/Paths";
+import { IMMUTABLE } from "./StaticClient";
 
 export type AttachmentEndpointDeps = {
   /** Defaults to `~/.pim/attachments`. */
@@ -14,9 +15,6 @@ export type AttachmentEndpointDeps = {
 
 /** Big enough for a phone photo or a log dump, small enough to refuse a disk. */
 const DEFAULT_MAX_BYTES = 25 * 1024 * 1024;
-
-/** A stored name carries a stamp, so the bytes under it can never change. */
-const IMMUTABLE = "public, max-age=31536000, immutable";
 
 const PREFIX = "/attachment/";
 
