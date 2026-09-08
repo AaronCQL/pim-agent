@@ -1,4 +1,4 @@
-import { createStore, type Store, type StoreSetter } from "solid-js";
+import { createStore, untrack, type Store, type StoreSetter } from "solid-js";
 
 import type { PickerItem } from "#core/picker/PickerItem";
 import { rankCommands } from "#core/picker/commandRanker";
@@ -614,8 +614,11 @@ export class SessionStore {
    * a watch left behind one is a projection growing for nobody.
    */
   public unwatch(): void {
-    const watched = this.state.subagent;
-    if (!watched) {
+    // Untracked, like every read an imperative method makes of its own
+    // state: the answer wanted is the one true when it was called, and the
+    // caller is as often an effect's callback as an event handler.
+    const callId = untrack(() => this.state.subagent?.callId);
+    if (callId === undefined) {
       return;
     }
     this.setState((draft) => {
@@ -624,7 +627,7 @@ export class SessionStore {
     // Whether or not the server still holds one: closing a modal over a
     // connection that has since dropped is not a failure anyone need hear.
     void this.client
-      .send({ type: "unwatch_subagent", callId: watched.callId })
+      .send({ type: "unwatch_subagent", callId })
       .catch(() => undefined);
   }
 
@@ -873,7 +876,10 @@ export class SessionStore {
    * the composer is one box shared by every session.
    */
   public setDraftText(text: string): void {
-    this.putDraft(this.state.sessionId, text);
+    this.putDraft(
+      untrack(() => this.state.sessionId),
+      text
+    );
   }
 
   private putDraft(sessionId: string, text: string): void {

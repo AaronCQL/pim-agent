@@ -17,6 +17,14 @@ let stream: SessionStream;
 let seen: ServerEvent[];
 let emit: (event: AgentSessionEvent) => void;
 
+/**
+ * A name this file owns. Tool views are registered process-wide by name, and
+ * the suite is one process: a name another test file registers a view for
+ * would paint these synthetic calls with that file's view, which reads a
+ * `details` shape the events here have no reason to carry.
+ */
+const TOOL = "stream_probe";
+
 /** Enough of a host for the stream to read a cwd and a status off. */
 function host(): SessionHost {
   return {
@@ -73,7 +81,7 @@ async function persistToolResult(callId: string): Promise<void> {
   await persist(`r-${callId}`, {
     role: "toolResult",
     toolCallId: callId,
-    toolName: "ping",
+    toolName: TOOL,
     content: [],
     isError: false,
   });
@@ -204,7 +212,7 @@ test("retires the step an entry belongs to, not the oldest live message", async 
     agentEvent({
       type: "tool_execution_start",
       toolCallId: "call_1",
-      toolName: "ping",
+      toolName: TOOL,
       args: {},
     })
   );
@@ -212,7 +220,7 @@ test("retires the step an entry belongs to, not the oldest live message", async 
     agentEvent({
       type: "tool_execution_end",
       toolCallId: "call_1",
-      toolName: "ping",
+      toolName: TOOL,
       result: { content: [] },
       isError: false,
     })
@@ -256,12 +264,12 @@ test("keeps a retired step's calls, and drops each on its durable result", async
     agentEvent({
       type: "tool_execution_start",
       toolCallId: "call_1",
-      toolName: "ping",
+      toolName: TOOL,
       args: {},
     })
   );
   await persistAssistant("a1", [
-    { type: "toolCall", id: "call_1", name: "ping", arguments: {} },
+    { type: "toolCall", id: "call_1", name: TOOL, arguments: {} },
   ]);
   emit(agentEvent({ type: "message_end", message: thinkingMessage("") }));
   await until(
@@ -273,7 +281,7 @@ test("keeps a retired step's calls, and drops each on its durable result", async
     agentEvent({
       type: "tool_execution_end",
       toolCallId: "call_1",
-      toolName: "ping",
+      toolName: TOOL,
       result: { content: [] },
       isError: false,
     })

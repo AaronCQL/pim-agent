@@ -1,4 +1,11 @@
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  Show,
+  untrack,
+} from "solid-js";
 
 import type { DirectoryListing } from "#core/shared/Directories";
 import { abbreviateHome } from "../format";
@@ -98,7 +105,7 @@ export function DirectoryModal(props: {
       // Opens on the current directory's contents rather than on an empty
       // box: the question is nearly always "somewhere near here", and a
       // reader who wants to type over it has the whole line selected.
-      setInput(`${here()}/`);
+      setInput(`${untrack(here)}/`);
       setFailure("");
       void props.store
         .recentDirectories()
@@ -106,7 +113,7 @@ export function DirectoryModal(props: {
         .catch(() => undefined);
       // A phone would answer an autofocus with the software keyboard over
       // the list, which is the half of this the reader came to look at.
-      if (typing() && box) {
+      if (untrack(typing) && box) {
         box.focus();
         box.setSelectionRange(0, box.value.length);
       }

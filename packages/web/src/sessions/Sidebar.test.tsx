@@ -9,7 +9,7 @@ import {
   setSystemTime,
   test,
 } from "bun:test";
-import { flush } from "solid-js";
+import { flush, untrack } from "solid-js";
 
 import { PROTOCOL_VERSION } from "#protocol/Protocol";
 import type { SessionSummaryView } from "#protocol/ServerEvent";
@@ -57,7 +57,10 @@ function paint(
       // A real listing says what each session is doing, so this one does
       // too: the spinner is read off the status, and a row answered for as
       // idle would stop one mid-turn on the next re-list.
-      const status = store.state.activity[session.sessionId];
+      // Untracked: the server this stands in for is answering a request,
+      // not deriving a value, and this runs from inside the effect that
+      // asked.
+      const status = untrack(() => store.state.activity[session.sessionId]);
       return {
         ...session,
         ...(unread.includes(session.sessionId) ? { unread: true } : {}),

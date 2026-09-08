@@ -1,5 +1,5 @@
 import { render } from "@solidjs/web";
-import { createEffect, onCleanup } from "solid-js";
+import { createEffect, onCleanup, untrack } from "solid-js";
 import * as smd from "streaming-markdown";
 
 import { Languages } from "#core/shared/Languages";
@@ -166,7 +166,12 @@ function highlightFences(host: HTMLElement, complete: boolean): void {
     }
 
     const lang = Languages.resolve(code.className);
-    const lines = Highlight.tokenize(code.textContent ?? "", lang);
+    // Untracked because the subscription is already held where it can act:
+    // the effect below tracks the grammar generation and repaints every
+    // fence, and this runs from its callback, where nothing is listening.
+    const lines = untrack(() =>
+      Highlight.tokenize(code.textContent ?? "", lang)
+    );
     code.setAttribute("data-hl", "");
     code.replaceChildren(
       ...lines.flatMap((tokens, index) => {
@@ -206,7 +211,7 @@ export function Markdown(props: {
   let parser: smd.Parser | undefined;
   let disposeButtons = (): void => {};
   /** The grammar generation the fences on screen were painted against. */
-  let painted = Highlight.version();
+  let painted = untrack(Highlight.version);
 
   onCleanup(() => {
     disposeButtons();

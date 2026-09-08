@@ -97,7 +97,10 @@ export function SubagentRow(props: {
             beside the floated label rather than flowing around it. */}
         <span class="block truncate text-rose-400">
           failed
-          <Show when={failure()}>{(reason) => ` · ${reason()}`}</Show>
+          {/* The reason is read in JSX rather than interpolated into a
+              string: the children callback runs once and untracked, so a
+              reason that arrives later would never reach the page. */}
+          <Show when={failure()}>{(reason) => <> · {reason()}</>}</Show>
         </span>
       </Show>
     </button>

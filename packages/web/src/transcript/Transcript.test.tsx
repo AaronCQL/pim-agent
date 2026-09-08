@@ -277,8 +277,9 @@ describe("painting", () => {
     ]);
     const notice = host.querySelector("p.text-rose-400");
 
-    expect(notice?.textContent).toBe(
-      "[ERROR]rate_limit_error: too many requests"
+    expect(notice?.querySelector("span")?.textContent).toBe("ERROR");
+    expect(notice?.textContent).toContain(
+      "rate_limit_error: too many requests"
     );
     expect(notice?.getAttribute("role")).toBe("alert");
   });

@@ -79,9 +79,7 @@ export function SubagentModal(props: { readonly store: SessionStore }) {
         <div
           // The child's rows grow after the flush that appended them, exactly
           // as the conversation's do, so the same observer holds the end.
-          ref={(element: HTMLDivElement) => {
-            observeHeight(element, anchor.stick);
-          }}
+          ref={observeHeight(anchor.stick)}
           class="mx-auto w-full max-w-3xl space-y-[--line] p-3 leading-[--line]"
         >
           <Show when={watched()}>

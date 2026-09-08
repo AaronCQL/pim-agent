@@ -1,4 +1,4 @@
-import { onCleanup } from "solid-js";
+import { getOwner, onCleanup, runWithOwner } from "solid-js";
 
 /** How far off the end still counts as reading the end, in pixels. */
 const SLACK = 40;
@@ -98,7 +98,7 @@ export function createScrollAnchor(): ScrollAnchor {
 }
 
 /**
- * An element's own height, reported as it changes.
+ * A `ref` that reports an element's own height as it changes.
  *
  * A `ResizeObserver` rather than a keystroke handler because the things that
  * push a transcript around have several ways to change height that are not
@@ -108,16 +108,25 @@ export function createScrollAnchor(): ScrollAnchor {
  *
  * A DOM with no layout engine — the one the tests run in — reports zero
  * forever, which is the right answer there: nothing overlaps anything.
+ *
+ * Called for its ref during setup, not from inside the ref: a `ref` callback
+ * runs with no owner, so an `onCleanup` registered there is dropped and the
+ * observer outlives every element it was ever given. Taking the owner here,
+ * where there is one, is what disconnects it with the component.
  */
 export function observeHeight(
-  element: HTMLElement,
   report: (height: number) => void
-): void {
-  const observer = new ResizeObserver(() => {
-    report(element.offsetHeight);
-  });
-  observer.observe(element);
-  onCleanup(() => {
-    observer.disconnect();
-  });
+): (element: HTMLElement) => void {
+  const owner = getOwner();
+  return (element) => {
+    const observer = new ResizeObserver(() => {
+      report(element.offsetHeight);
+    });
+    observer.observe(element);
+    runWithOwner(owner, () => {
+      onCleanup(() => {
+        observer.disconnect();
+      });
+    });
+  };
 }

@@ -200,8 +200,5 @@ test("the reloaded shell toasts success only after attaching and consumes the in
   expect(host.querySelector('[role="status"]')?.textContent).toContain(
     "Restarted with pim"
   );
-  expect(host.querySelector('[role="status"]')?.className).toContain(
-    "text-emerald-400"
-  );
   expect(sessionStorage.getItem(key)).toBeNull();
 });

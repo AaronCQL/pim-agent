@@ -2,8 +2,8 @@ import {
   createEffect,
   createMemo,
   createSignal,
-  onCleanup,
   Show,
+  untrack,
 } from "solid-js";
 
 import {
@@ -139,7 +139,12 @@ export function Menu(props: {
       props.onOpen?.();
       // The current value is where the keyboard starts, so opening the menu
       // lands on what the chip already says.
-      const at = shown().findIndex((option) => option.value === props.value);
+      // Untracked because it is a snapshot taken at the open: this callback
+      // is not a tracking scope, and the list changing later is the filter
+      // doing its job, not a reason to re-run the open.
+      const at = untrack(() =>
+        shown().findIndex((option) => option.value === props.value)
+      );
       navigation.setActiveIndex(at === -1 ? 0 : at);
       // Only where the keyboard is already out. A soft one is drawn over the
       // page when a field takes focus, and the panel opens upward from a chip
@@ -147,7 +152,7 @@ export function Menu(props: {
       // with the keys, for a reader who tapped to browse rather than to type.
       // The panel is shown by an effect of its own, and a hidden field cannot
       // take focus: the microtask waits for that to have happened.
-      if (keyboard()) {
+      if (untrack(keyboard)) {
         queueMicrotask(() => {
           field?.focus();
         });
@@ -160,9 +165,12 @@ export function Menu(props: {
         }
       };
       document.addEventListener("pointerdown", dismiss, true);
-      onCleanup(() => {
+      // Returned rather than registered with `onCleanup`: an effect callback
+      // is not an owner, so a cleanup asked for there is never run at all and
+      // every open leaves another dismiss listener on the document.
+      return () => {
         document.removeEventListener("pointerdown", dismiss, true);
-      });
+      };
     }
   );
 

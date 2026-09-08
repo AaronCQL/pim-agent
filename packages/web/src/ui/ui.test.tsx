@@ -122,23 +122,29 @@ describe("combobox keyboard navigation", () => {
   });
 
   test("type-to-refine drops the active row back to the top", () => {
-    createRoot(() => {
+    // Built inside the root and driven outside it: a keypress is imperative,
+    // and a root's body is a pure scope, where a write is a defect the dev
+    // runtime throws on.
+    const { nav, setCount } = createRoot(() => {
       const [count, setCount] = createSignal(5);
-      const nav = createComboboxNavigation({
-        count,
-        open: () => true,
-        onSelect: () => undefined,
-        onDismiss: () => undefined,
-      });
-
-      nav.onKeyDown(key("End"));
-      flush();
-      expect(nav.activeIndex()).toBe(4);
-
-      setCount(2);
-      flush();
-      expect(nav.activeIndex()).toBe(0);
+      return {
+        nav: createComboboxNavigation({
+          count,
+          open: () => true,
+          onSelect: () => undefined,
+          onDismiss: () => undefined,
+        }),
+        setCount,
+      };
     });
+
+    nav.onKeyDown(key("End"));
+    flush();
+    expect(nav.activeIndex()).toBe(4);
+
+    setCount(2);
+    flush();
+    expect(nav.activeIndex()).toBe(0);
   });
 });
 
@@ -669,5 +675,59 @@ describe("chip menu", () => {
     flush();
 
     expect(host.querySelector('input[type="text"]')).toBeNull();
+  });
+
+  // The regression this guards: both panels registered their listeners from
+  // inside an effect's callback and asked for `onCleanup` there, which is not
+  // an owner — so nothing was ever released, and every open left another
+  // listener on the document behind it.
+  test("a panel releases every listener it took when it closes", () => {
+    let outstanding = 0;
+    for (const target of [window, document]) {
+      const add = target.addEventListener.bind(target);
+      const remove = target.removeEventListener.bind(target);
+      target.addEventListener = (
+        type: string,
+        listener: EventListenerOrEventListenerObject,
+        options?: boolean | AddEventListenerOptions
+      ) => {
+        outstanding += 1;
+        add(type, listener, options);
+      };
+      target.removeEventListener = (
+        type: string,
+        listener: EventListenerOrEventListenerObject,
+        options?: boolean | EventListenerOptions
+      ) => {
+        outstanding -= 1;
+        remove(type, listener, options);
+      };
+    }
+
+    const host = mountPoint();
+    const trigger = document.createElement("div");
+    host.append(trigger);
+    const [open, setOpen] = createSignal(false);
+    render(
+      () => (
+        <Popover open={open()} anchor={() => trigger}>
+          rows
+        </Popover>
+      ),
+      host
+    );
+    const menu = paint();
+    const chip = menu.host.querySelector("button")!;
+
+    for (let opened = 0; opened < 3; opened += 1) {
+      setOpen(true);
+      chip.click();
+      flush();
+      setOpen(false);
+      chip.click();
+      flush();
+    }
+
+    expect(outstanding).toBe(0);
   });
 });

@@ -1,4 +1,10 @@
-import { createEffect, createMemo, createSignal, Show } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  Show,
+  untrack,
+} from "solid-js";
 
 import type { PickerItem } from "#core/picker/PickerItem";
 import { Format, type ContextFill } from "#core/shared/Format";
@@ -207,7 +213,10 @@ export function Composer(props: {
   createEffect(
     () => props.store.state.sessionId,
     (sessionId) => {
-      const held = props.store.draftText(sessionId);
+      // A snapshot, not a subscription: this callback is not a tracking
+      // scope, and the draft it reads is the one belonging to the session
+      // being switched to. What is typed after this is the box's own.
+      const held = untrack(() => props.store.draftText(sessionId));
       setText(held);
       setCaret(held.length);
       setItems([]);
@@ -223,7 +232,7 @@ export function Composer(props: {
       setItems([]);
       return;
     }
-    const active = token();
+    const active = untrack(token);
     if (!active) {
       return;
     }
@@ -349,7 +358,9 @@ export function Composer(props: {
     if (restored === "") {
       return;
     }
-    const next = [restored, text()].filter((part) => part.trim()).join("\n\n");
+    const next = [restored, untrack(text)]
+      .filter((part) => part.trim())
+      .join("\n\n");
     edit(next);
     setCaret(next.length);
     input.value = next;

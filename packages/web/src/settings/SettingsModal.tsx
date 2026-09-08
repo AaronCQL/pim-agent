@@ -1,4 +1,10 @@
-import { createEffect, createSignal, Show, type Element } from "solid-js";
+import {
+  createEffect,
+  createSignal,
+  Show,
+  untrack,
+  type Element,
+} from "solid-js";
 
 import type { SessionStore } from "../session/SessionStore";
 import { Modal } from "../ui/Modal";
@@ -31,12 +37,13 @@ export function SettingsModal(props: {
   // The saved address is the field's value, not its default: reopening after
   // a half-typed hostname should show what is in force, not what was
   // abandoned.
-  const [draft, setDraft] = createSignal(props.settings.state.serverUrl);
+  const saved = (): string => props.settings.state.serverUrl;
+  const [draft, setDraft] = createSignal(untrack(saved));
   createEffect(
     () => props.open,
     (open) => {
       if (open) {
-        setDraft(props.settings.state.serverUrl);
+        setDraft(untrack(saved));
       }
     }
   );

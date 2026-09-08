@@ -1,4 +1,4 @@
-import { createEffect, createSignal, onCleanup, type Element } from "solid-js";
+import { createEffect, createSignal, type Element } from "solid-js";
 import type { JSX } from "@solidjs/web/jsx-runtime";
 
 /** Breathing room between the panel and its trigger, and the viewport edge. */
@@ -61,11 +61,7 @@ export function Popover(props: {
    * the viewport, and `left` is clamped so a trigger near the right edge
    * pulls its panel back into view rather than off it.
    */
-  const place = (): void => {
-    const trigger = props.anchor?.();
-    if (trigger === undefined) {
-      return;
-    }
+  const place = (trigger: HTMLElement): void => {
     const rect = trigger.getBoundingClientRect();
     const left = Math.max(
       EDGE,
@@ -88,8 +84,12 @@ export function Popover(props: {
   };
 
   createEffect(
-    () => props.open,
-    (open) => {
+    // The trigger is read here rather than at placement time: measuring is
+    // imperative work driven by scrolls and resizes, and a prop read from one
+    // of those is a read nothing is subscribed to — the panel would go on
+    // measuring an element the caller had already replaced.
+    () => ({ open: props.open, trigger: props.anchor?.() }),
+    ({ open, trigger }) => {
       try {
         // Absent on engines without the attribute, and on the DOM the tests
         // run in; those fall back to an ordinary positioned element, which
@@ -102,28 +102,28 @@ export function Popover(props: {
       } catch {
         // Toggling to the state it is already in throws; nothing to do.
       }
-      if (!open) {
+      if (!open || trigger === undefined) {
         return;
       }
       // After the show, so the panel has been laid out and can be measured.
-      place();
+      place(trigger);
       const reflow = (): void => {
-        place();
+        place(trigger);
       };
       // Scroll in the capture phase: the transcript that moves the composer
       // scrolls itself, not the window.
       window.addEventListener("resize", reflow);
       window.addEventListener("scroll", reflow, true);
-      const trigger = props.anchor?.();
       const observer = new ResizeObserver(reflow);
-      if (trigger !== undefined) {
-        observer.observe(trigger);
-      }
-      onCleanup(() => {
+      observer.observe(trigger);
+      // Returned rather than registered with `onCleanup`: an effect callback
+      // is not an owner, so a cleanup asked for there is never run at all and
+      // every open leaks its listeners and its observer.
+      return () => {
         window.removeEventListener("resize", reflow);
         window.removeEventListener("scroll", reflow, true);
         observer.disconnect();
-      });
+      };
     }
   );
 

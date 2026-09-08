@@ -102,19 +102,16 @@ const TASKS: readonly Task[] = [
   },
   {
     name: "web",
-    // `--conditions=browser` is why this cannot share a process with `agent`:
-    // under the default `node` condition `solid-js`/`@solidjs/web` resolve to
-    // the SSR build, whose `template` throws on sight.
+    // `--isolate` is why this cannot share a process with `agent`: happy-dom
+    // registers a whole environment into the globals, and pi keeps state at
+    // module scope, so a file that follows another sees the first one's
+    // document and its deleted temp directory. Nothing else is needed —
+    // `bunfig.toml` prunes this directory from a scan, not from a path named
+    // outright, which is what the argument below is.
     argv: [
       "bun",
       "test",
       "./packages/web",
-      "--conditions=browser",
-      // Overrides `bunfig.toml`, which keeps these tests out of a bare
-      // `bun test` for the reason above. A CLI list replaces the config's
-      // rather than adding to it, so this says "ignore nothing" in the only
-      // vocabulary the flag has: bun never walks `node_modules` anyway.
-      "--path-ignore-patterns=**/node_modules/**",
       "--isolate",
       "--only-failures",
       "--parallel",

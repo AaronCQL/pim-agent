@@ -4,6 +4,7 @@ import {
   onCleanup,
   onSettled,
   Show,
+  untrack,
 } from "solid-js";
 
 import { Composer } from "./input/Composer";
@@ -66,7 +67,7 @@ export function Shell(props: {
   readonly settings: Settings;
 }) {
   const desktop = createMediaQuery(DESKTOP);
-  const [sidebar, setSidebar] = createSignal(desktop());
+  const [sidebar, setSidebar] = createSignal(untrack(desktop));
   const [configuring, setConfiguring] = createSignal(false);
   // Crossing the breakpoint hands the sidebar to the other host, and the two
   // want opposite defaults: a column is open, a modal drawer is not.
@@ -220,9 +221,7 @@ export function Shell(props: {
                 // markdown parses into the DOM, code blocks grow a copy button,
                 // images arrive — so a scroll written when the last event
                 // landed stops short of the bottom by whatever grew after it.
-                ref={(element: HTMLDivElement) => {
-                  observeHeight(element, anchor.stick);
-                }}
+                ref={observeHeight(anchor.stick)}
                 class="mx-auto w-full max-w-3xl space-y-[--line] p-3 leading-[--line]"
                 style={{ "padding-bottom": `calc(${inset()}px + var(--line))` }}
               >
@@ -245,9 +244,7 @@ export function Shell(props: {
             </div>
 
             <div
-              ref={(element: HTMLDivElement) => {
-                observeHeight(element, setInset);
-              }}
+              ref={observeHeight(setInset)}
               class={{
                 "pointer-events-none flex": true,
                 // Stops at the scroller's scrollbar instead of at the

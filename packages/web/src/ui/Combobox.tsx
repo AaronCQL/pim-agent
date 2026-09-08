@@ -47,9 +47,10 @@ export function createComboboxNavigation(
   createEffect(
     () => options.count(),
     (count) => {
-      if (activeIndex() >= count) {
-        setActiveIndex(0);
-      }
+      // The updater form for the same reason `move` uses it, and because a
+      // read here would be one this callback is not subscribed to: the row
+      // to clamp is whichever one is current when the write lands.
+      setActiveIndex((previous) => (previous >= count ? 0 : previous));
     }
   );
 
