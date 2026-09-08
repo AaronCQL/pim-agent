@@ -84,6 +84,16 @@ export function buildSystemPrompt(opts: BuildOptions): string {
 }
 
 export function describeOs(options: OsDescriptionOptions = {}): string {
+  if (options.platform === undefined && options.runCommand === undefined) {
+    cachedOs ??= computeOs(options);
+    return cachedOs;
+  }
+  return computeOs(options);
+}
+
+let cachedOs: string | undefined;
+
+function computeOs(options: OsDescriptionOptions): string {
   const platform = options.platform ?? process.platform;
   const runCommand =
     options.runCommand ??
@@ -105,32 +115,15 @@ export function describeOs(options: OsDescriptionOptions = {}): string {
   if (platform === "linux") {
     const osRelease = runCommand(["cat", "/etc/os-release"]);
     if (osRelease) {
-      const fields = new Map<string, string>();
-      for (const line of osRelease.split(/\r?\n/)) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith("#")) {
-          continue;
-        }
-
-        const equalsIndex = trimmed.indexOf("=");
-        if (equalsIndex <= 0) {
-          continue;
-        }
-
-        const key = trimmed.slice(0, equalsIndex);
-        if (/^[A-Z0-9_]+$/.test(key)) {
-          fields.set(key, unquoteValue(trimmed.slice(equalsIndex + 1)));
-        }
-      }
-
-      const prettyName = fields.get("PRETTY_NAME")?.trim();
+      const parsed = fields(osRelease, parseOsReleaseLine);
+      const prettyName = parsed.get("PRETTY_NAME")?.trim();
       if (prettyName) {
         return prettyName;
       }
 
-      const name = fields.get("NAME")?.trim();
+      const name = parsed.get("NAME")?.trim();
       const version =
-        fields.get("VERSION")?.trim() ?? fields.get("VERSION_ID")?.trim();
+        parsed.get("VERSION")?.trim() ?? parsed.get("VERSION_ID")?.trim();
       const described = [name, version].filter(Boolean).join(" ");
       if (described) {
         return described;
@@ -141,37 +134,59 @@ export function describeOs(options: OsDescriptionOptions = {}): string {
     if (lsbRelease) {
       return unquoteValue(lsbRelease.trim());
     }
-
-    return unixName() ?? platform;
-  }
-
-  if (platform === "darwin") {
+  } else if (platform === "darwin") {
     const swVers = runCommand(["sw_vers"]);
     if (swVers) {
-      const fields = new Map<string, string>();
-      for (const line of swVers.split(/\r?\n/)) {
-        const match = line.match(/^([^:]+):\s*(.+)$/);
-        const key = match?.[1]?.trim();
-        const value = match?.[2]?.trim();
-        if (key && value) {
-          fields.set(key, value);
-        }
-      }
-
-      const name = fields.get("ProductName") ?? "macOS";
-      const version = fields.get("ProductVersion");
+      const parsed = fields(swVers, parseColonLine);
+      const name = parsed.get("ProductName") ?? "macOS";
+      const version = parsed.get("ProductVersion");
       return [name, version].filter(Boolean).join(" ") || platform;
     }
-
-    return unixName() ?? platform;
-  }
-
-  if (platform === "win32") {
+  } else if (platform === "win32") {
     const ver = runCommand(["cmd.exe", "/d", "/s", "/c", "ver"]);
     return ver?.replace(/\s+/g, " ").trim() || platform;
   }
 
   return unixName() ?? platform;
+}
+
+type FieldParser = (line: string) => readonly [string, string] | undefined;
+
+function fields(text: string, parse: FieldParser): Map<string, string> {
+  const parsed = new Map<string, string>();
+  for (const line of text.split(/\r?\n/)) {
+    const entry = parse(line);
+    if (entry) {
+      parsed.set(entry[0], entry[1]);
+    }
+  }
+  return parsed;
+}
+
+function parseOsReleaseLine(
+  line: string
+): readonly [string, string] | undefined {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith("#")) {
+    return undefined;
+  }
+
+  const equalsIndex = trimmed.indexOf("=");
+  if (equalsIndex <= 0) {
+    return undefined;
+  }
+
+  const key = trimmed.slice(0, equalsIndex);
+  return /^[A-Z0-9_]+$/.test(key)
+    ? [key, unquoteValue(trimmed.slice(equalsIndex + 1))]
+    : undefined;
+}
+
+function parseColonLine(line: string): readonly [string, string] | undefined {
+  const match = line.match(/^([^:]+):\s*(.+)$/);
+  const key = match?.[1]?.trim();
+  const value = match?.[2]?.trim();
+  return key && value ? [key, value] : undefined;
 }
 
 function unquoteValue(value: string): string {
