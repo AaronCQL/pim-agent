@@ -118,14 +118,6 @@ function compact<T>(items: readonly (T | null)[]): T[] {
   return items.filter((x): x is T => x !== null);
 }
 
-function totalWidth(
-  left: readonly Segment[],
-  right: readonly Segment[]
-): number {
-  const gap = left.length > 0 && right.length > 0 ? 1 : 0;
-  return groupWidth(left) + groupWidth(right) + gap;
-}
-
 function fitLine(line: string, width: number): string {
   if (width <= 0) {
     return "";
@@ -169,7 +161,6 @@ export function renderFooterLine(
   const model = modelSegment(ctx);
 
   const fullLeft = compact([cwd, branch]);
-  const fullLeftWidth = groupWidth(fullLeft);
   const candidates: readonly { left: Segment[]; right: Segment[] }[] = [
     { left: fullLeft, right: compact([costSeg, ctxSeg, model]) },
     { left: fullLeft, right: compact([costSeg, ctxSeg]) },
@@ -178,24 +169,17 @@ export function renderFooterLine(
     { left: [cwd], right: [] },
   ];
 
-  let chosen = candidates[candidates.length - 1]!;
-  let chosenLeftWidth = groupWidth(chosen.left);
-  let chosenRightWidth = groupWidth(chosen.right);
-  for (const c of candidates) {
-    const lw = c.left === fullLeft ? fullLeftWidth : groupWidth(c.left);
-    const rw = groupWidth(c.right);
-    const gapWidth = c.left.length > 0 && c.right.length > 0 ? 1 : 0;
-    if (lw + rw + gapWidth <= width) {
-      chosen = c;
-      chosenLeftWidth = lw;
-      chosenRightWidth = rw;
-      break;
-    }
-  }
+  const gapOf = (c: { left: Segment[]; right: Segment[] }): number =>
+    c.left.length > 0 && c.right.length > 0 ? 1 : 0;
+  const fits = (c: { left: Segment[]; right: Segment[] }): boolean =>
+    groupWidth(c.left) + groupWidth(c.right) + gapOf(c) <= width;
+
+  const chosen = candidates.find(fits) ?? candidates.at(-1)!;
+  const rightWidth = groupWidth(chosen.right);
 
   let left = chosen.left;
-  let leftWidth = chosenLeftWidth;
-  const requiredWidth = totalWidth(left, chosen.right);
+  let leftWidth = groupWidth(left);
+  const requiredWidth = leftWidth + rightWidth + gapOf(chosen);
   if (requiredWidth > width && left.length > 0) {
     const overflow = requiredWidth - width;
     const newCwdWidth = Math.max(0, visibleWidth(left[0]!.text) - overflow);
@@ -204,15 +188,12 @@ export function renderFooterLine(
       text: truncateToWidth(left[0]!.text, newCwdWidth, "…"),
     };
     left = [truncated, ...left.slice(1)];
-    leftWidth =
-      leftWidth -
-      visibleWidth(chosen.left[0]!.text) +
-      visibleWidth(truncated.text);
+    leftWidth = groupWidth(left);
   }
 
   const gap =
     left.length > 0 && chosen.right.length > 0
-      ? Math.max(1, width - leftWidth - chosenRightWidth)
+      ? Math.max(1, width - leftWidth - rightWidth)
       : 0;
   return fitLine(
     renderLeftGroup(left) + " ".repeat(gap) + renderRightGroup(chosen.right),
