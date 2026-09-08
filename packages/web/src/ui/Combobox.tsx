@@ -1,4 +1,11 @@
-import { createEffect, createSignal, For, Show, type Accessor } from "solid-js";
+import {
+  createEffect,
+  createSignal,
+  For,
+  Show,
+  type Accessor,
+  type Element,
+} from "solid-js";
 
 import { Popover } from "./Popover";
 
@@ -100,7 +107,36 @@ export type ComboboxItem = {
   readonly description?: string;
   /** A short qualifier — a model's provider — parked at the row's right edge. */
   readonly tag?: string;
+  /**
+   * Whether this row is the one in force — the model the session is on, the
+   * level it thinks at. Distinct from the active row, which is only where the
+   * keyboard is standing: a list where the two were the same mark could not
+   * say what would happen if you walked away without choosing. Left
+   * `undefined` by lists that have no such thing, which is every completion
+   * over a draft.
+   */
+  readonly selected?: boolean;
 };
+
+const ROW = "flex cursor-pointer items-baseline gap-1ch rounded-lg px-2 py-1";
+
+/**
+ * How brightly a row is written. In a list with a choice in force, the rows
+ * that are not it are stepped back to the chrome grey: the tick alone is one
+ * small mark to find in a list of forty models, and a page of equally bright
+ * names is what makes it hard to find. A row the keyboard is standing on
+ * comes back up part of the way, so the highlight still reads as a place the
+ * reader is rather than as the choice they have made.
+ *
+ * A completion over a draft has no choice in force — nothing is `selected`
+ * there — so every row stays as bright as the next.
+ */
+function tone(selected: boolean | undefined, active: boolean): string {
+  if (selected === false) {
+    return active ? "text-neutral-100" : "text-neutral-350";
+  }
+  return active || selected === true ? "text-neutral-50" : "";
+}
 
 /**
  * The list half. Presentation only: the active row and every key that moves it
@@ -116,6 +152,12 @@ export function Combobox(props: {
   /** Hold the list to the anchor's width; see `Popover`. */
   readonly match?: boolean;
   readonly emptyLabel?: string;
+  /**
+   * Drawn inside the panel, above the rows — a filter box, and so far
+   * nothing else. It belongs to whoever owns the query it edits, which is
+   * never this component: the list is told what to show, not asked.
+   */
+  readonly header?: Element;
 }) {
   let list!: HTMLUListElement;
 
@@ -136,8 +178,9 @@ export function Combobox(props: {
       open={props.open}
       {...(props.anchor === undefined ? {} : { anchor: props.anchor })}
       match={props.match ?? false}
-      class="z-50 flex rounded-lg bg-neutral-850 p-1 text-sm ring-1 ring-neutral-700"
+      class="z-50 flex flex-col rounded-lg bg-neutral-850 p-1 text-sm ring-1 ring-neutral-700"
     >
+      {props.header}
       {/* The scroller is inside the panel, not the panel itself: the panel's
           own height is whatever room the viewport left above the trigger, and
           a flex child with `min-h-0` shrinks to that before this cap. */}
@@ -154,46 +197,60 @@ export function Combobox(props: {
           </li>
         </Show>
         <For each={props.items}>
-          {(item, index) => (
-            <li
-              data-index={index()}
-              role="option"
-              aria-selected={index() === props.activeIndex ? "true" : "false"}
-              class={{
-                "flex cursor-pointer items-baseline gap-1ch rounded-lg px-2 py-1": true,
-                "bg-neutral-800 text-neutral-50": index() === props.activeIndex,
-              }}
-              onMouseEnter={() => {
-                props.onActivate(index());
-              }}
-              onMouseDown={(event: MouseEvent) => {
-                // Commit before the input loses focus, or the caret position
-                // the completion is applied at is already gone.
-                event.preventDefault();
-                props.onSelect(index());
-              }}
-            >
-              {/* The label holds its width and the description gives way
-                  first, so what is being completed stays readable; the cap is
-                  the last resort for a label that is itself wider than the
-                  row. */}
-              <span class="max-w-full shrink-0 truncate">{item.label}</span>
-              <Show when={item.description}>
-                {(description) => (
-                  <span class="min-w-0 truncate text-neutral-500">
-                    {description()}
-                  </span>
-                )}
-              </Show>
-              <Show when={item.tag}>
-                {(tag) => (
-                  <span class="ml-auto shrink-0 pl-2ch text-xs text-neutral-500">
-                    {tag()}
-                  </span>
-                )}
-              </Show>
-            </li>
-          )}
+          {(item, index) => {
+            const active = (): boolean => index() === props.activeIndex;
+            return (
+              <li
+                data-index={index()}
+                role="option"
+                aria-selected={active() ? "true" : "false"}
+                // One expression rather than two class keys: both halves want
+                // to name a text colour, and which of two equal utilities wins
+                // is the stylesheet's order to decide, not this element's.
+                class={`${ROW} ${active() ? "bg-neutral-800" : ""} ${tone(item.selected, active())}`}
+                onMouseEnter={() => {
+                  props.onActivate(index());
+                }}
+                onMouseDown={(event: MouseEvent) => {
+                  // Commit before the input loses focus, or the caret position
+                  // the completion is applied at is already gone.
+                  event.preventDefault();
+                  props.onSelect(index());
+                }}
+              >
+                {/* The label holds its width and the description gives way
+                    first, so what is being completed stays readable; the cap
+                    is the last resort for a label that is itself wider than
+                    the row. */}
+                <span class="max-w-full shrink-0 truncate">{item.label}</span>
+                <Show when={item.description}>
+                  {(description) => (
+                    <span class="min-w-0 truncate text-neutral-500">
+                      {description()}
+                    </span>
+                  )}
+                </Show>
+                {/* Against the name it marks, not in a gutter of its own: the
+                    rows without one give the space back to their label rather
+                    than holding a column open for the single row that has it.
+                    Before the tag, which is parked at the far edge — the tick
+                    belongs to the title, the provider belongs to the row. */}
+                <Show when={item.selected === true}>
+                  <span
+                    class="i-griddy-icons:check size-4 shrink-0 self-center text-emerald-400"
+                    aria-hidden="true"
+                  />
+                </Show>
+                <Show when={item.tag}>
+                  {(tag) => (
+                    <span class="ml-auto shrink-0 pl-2ch text-xs text-neutral-500">
+                      {tag()}
+                    </span>
+                  )}
+                </Show>
+              </li>
+            );
+          }}
         </For>
       </ul>
     </Popover>

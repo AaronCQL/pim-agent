@@ -970,6 +970,21 @@ export class SessionStore {
     await this.set("set_thinking", level);
   }
 
+  /**
+   * The level after the one in force, wrapping at the end — what Shift+Tab
+   * does here and in the TUI. The order is the catalogue's, so the cycle
+   * climbs the way the menu reads; a session whose level is not in the list
+   * starts at the top of it rather than nowhere.
+   */
+  public async cycleThinking(): Promise<void> {
+    const { thinkingLevels } = await this.listModels();
+    const at = thinkingLevels.indexOf(this.state.thinking);
+    const next = thinkingLevels[(at + 1) % thinkingLevels.length];
+    if (next !== undefined) {
+      await this.setThinking(next);
+    }
+  }
+
   /** True when the session has answered since anything last read it. */
   public isUnread(sessionId: string): boolean {
     return this.state.unread[sessionId] ?? false;

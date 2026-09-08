@@ -30,6 +30,28 @@ beforeEach(() => {
 });
 
 let realMatchMedia: typeof globalThis.matchMedia | undefined;
+const realVisualViewport = Object.getOwnPropertyDescriptor(
+  globalThis,
+  "visualViewport"
+);
+
+function resizableViewport(initialHeight: number): {
+  readonly resize: (height: number) => void;
+} {
+  let height = initialHeight;
+  const viewport = new EventTarget();
+  Object.defineProperty(viewport, "height", { get: () => height });
+  Object.defineProperty(globalThis, "visualViewport", {
+    configurable: true,
+    value: viewport,
+  });
+  return {
+    resize: (next) => {
+      height = next;
+      viewport.dispatchEvent(new Event("resize"));
+    },
+  };
+}
 
 /**
  * A device whose only keyboard is the one drawn over the page: no hover and
@@ -50,6 +72,11 @@ afterEach(() => {
   if (realMatchMedia) {
     globalThis.matchMedia = realMatchMedia;
     realMatchMedia = undefined;
+  }
+  if (realVisualViewport) {
+    Object.defineProperty(globalThis, "visualViewport", realVisualViewport);
+  } else {
+    Reflect.deleteProperty(globalThis, "visualViewport");
   }
 });
 
@@ -121,6 +148,17 @@ function message(seq: number, text: string): ServerEvent {
 }
 
 describe("the shell, painted from events alone", () => {
+  test("fits inside the visual viewport when the software keyboard opens", () => {
+    const viewport = resizableViewport(800);
+    const host = paint(offline());
+    const shell = host.querySelector("main")!;
+    expect(shell.style.height).toBe("800px");
+
+    viewport.resize(460);
+    flush();
+    expect(shell.style.height).toBe("460px");
+  });
+
   test("a new session opens with the basic controls", () => {
     const store = offline();
     const host = paint(store);
@@ -135,10 +173,22 @@ describe("the shell, painted from events alone", () => {
     expect(splash.textContent).toContain("/<command>");
     expect(splash.textContent).toContain("@<path>");
     expect(splash.textContent).toContain("Ctrl/⌘ + Enter");
-    expect(splash.parentElement?.parentElement?.className).toContain("inset-0");
+    const splashViewport = splash.parentElement!;
+    const emptyStack = splashViewport.parentElement!;
+    const emptyState = emptyStack.parentElement!;
+    expect(splashViewport.className).toContain("min-h-0");
+    expect(splashViewport.className).toContain("overflow-hidden");
+    expect(emptyStack.className).toContain("max-h-full");
+    expect(emptyStack.lastElementChild?.className).toContain("shrink-0");
+    expect(emptyState.className).toContain("inset-0");
 
     const composer = host.querySelector("textarea")!;
     type(composer, "hello");
+    flush();
+    expect(host.querySelector("[aria-label='Pim controls']")).toBe(splash);
+    expect(host.querySelector("textarea")).toBe(composer);
+
+    store.ingest(message(2, "hello"));
     flush();
     expect(host.querySelector("[aria-label='Pim controls']")).toBeNull();
     expect(host.querySelector("textarea")).toBe(composer);
@@ -303,6 +353,63 @@ describe("the shell, painted from events alone", () => {
     store.ingest(state());
     flush();
     expect(host.textContent).toContain("anthropic/claude-opus-5");
+  });
+
+  /**
+   * The TUI's own gesture, on the key the fingers already use for it. The
+   * catalogue is the server's, so the step is up the order the menu reads,
+   * and the chip only changes once the server says the level did.
+   */
+  test("Shift+Tab in the box steps the thinking level and wraps", async () => {
+    const store = offline();
+    const asked: string[] = [];
+    store.client.send = (async (command: {
+      readonly type: string;
+      readonly value?: string;
+    }) => {
+      if (command.type === "set_thinking" && command.value !== undefined) {
+        asked.push(command.value);
+      }
+      return {
+        type: "response",
+        id: "1",
+        success: true,
+        models: [],
+        thinkingLevels: ["off", "medium", "high"],
+      };
+    }) as typeof store.client.send;
+    const host = paint(store);
+    store.ingest(attached());
+    store.ingest({
+      type: "session_state",
+      cwd: "/repo",
+      model: "sonnet",
+      thinking: "medium",
+      cost: 0,
+      status: "idle",
+    });
+    flush();
+    const input = host.querySelector("textarea")!;
+
+    expect(press(input, "Tab", { shiftKey: true }).defaultPrevented).toBe(true);
+    await until(() => asked.length === 1, "the level after medium");
+    expect(asked).toEqual(["high"]);
+
+    // The chip follows the server, not the keypress: until a state frame
+    // says otherwise the session is still thinking at the old level, and the
+    // next step is measured from that.
+    store.ingest({
+      type: "session_state",
+      cwd: "/repo",
+      model: "sonnet",
+      thinking: "high",
+      cost: 0,
+      status: "idle",
+    });
+    flush();
+    press(input, "Tab", { shiftKey: true });
+    await until(() => asked.length === 2, "the wrap back to the first level");
+    expect(asked).toEqual(["high", "off"]);
   });
 
   test("the clank chip times the whole turn, not the last thing in it", () => {

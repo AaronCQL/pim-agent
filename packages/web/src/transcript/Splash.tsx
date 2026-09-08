@@ -6,6 +6,7 @@ const shortcuts = [
   ["Escape", "Cancel autocomplete / abort turn"],
   ["/<command>", "Slash commands"],
   ["@<path>", "Reference a file"],
+  ["Shift + Tab", "Cycle thinking level"],
   ["Ctrl/⌘ + Enter", "Send message"],
 ] as const;
 

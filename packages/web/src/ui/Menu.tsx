@@ -1,6 +1,17 @@
-import { createEffect, createSignal, onCleanup } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+  Show,
+} from "solid-js";
 
-import { Combobox, createComboboxNavigation } from "./Combobox";
+import {
+  Combobox,
+  createComboboxNavigation,
+  type ComboboxItem,
+} from "./Combobox";
+import { createMediaQuery, KEYBOARD } from "./media";
 
 export type MenuOption = {
   readonly value: string;
@@ -8,6 +19,27 @@ export type MenuOption = {
   /** Right-aligned qualifier on the row, e.g. a model's provider. */
   readonly tag?: string;
 };
+
+/**
+ * Substring, case-insensitive, over the label and its tag, and in the order
+ * the caller gave. Not the fuzzy ranker the `@` and `/` pickers use: that one
+ * scores a query against thousands of paths, and it would earn a browser
+ * bundle for its trouble here to reorder a list a reader is already looking
+ * at — a menu that resorted itself under the second keystroke is harder to
+ * hit than one that only got shorter.
+ */
+function matching(
+  options: readonly MenuOption[],
+  query: string
+): readonly MenuOption[] {
+  const needle = query.trim().toLowerCase();
+  if (needle === "") {
+    return options;
+  }
+  return options.filter((option) =>
+    `${option.label} ${option.tag ?? ""}`.toLowerCase().includes(needle)
+  );
+}
 
 /**
  * A chip that opens a list of choices above itself: the composer's model and
@@ -37,15 +69,33 @@ export function Menu(props: {
   readonly options: readonly MenuOption[];
   readonly value?: string;
   readonly title?: string;
+  /**
+   * Places a filter box at the top of the list, with this as its placeholder.
+   * Given only to a list too long to read down: a server's models run past
+   * the panel's height, while the levels a model thinks at are four rows
+   * nobody would type at.
+   */
+  readonly search?: string;
   readonly onOpen?: () => void;
   readonly onSelect: (value: string) => void;
 }) {
   const [open, setOpen] = createSignal(false);
+  const [query, setQuery] = createSignal("");
+  const keyboard = createMediaQuery(KEYBOARD);
   let root!: HTMLDivElement;
   let chip!: HTMLButtonElement;
+  let field: HTMLInputElement | undefined;
+
+  const shown = createMemo(() => matching(props.options, query()));
+  const rows = createMemo<readonly ComboboxItem[]>(() =>
+    shown().map((option) => ({
+      ...option,
+      selected: option.value === props.value,
+    }))
+  );
 
   const choose = (index: number): void => {
-    const option = props.options[index];
+    const option = shown()[index];
     setOpen(false);
     if (option) {
       props.onSelect(option.value);
@@ -53,7 +103,7 @@ export function Menu(props: {
   };
 
   const navigation = createComboboxNavigation({
-    count: () => props.options.length,
+    count: () => shown().length,
     open,
     onSelect: choose,
     onDismiss: () => {
@@ -65,15 +115,43 @@ export function Menu(props: {
     () => open(),
     (isOpen) => {
       if (!isOpen) {
+        // Cleared on the way out rather than on the way in, so the list the
+        // next open lands on is the whole one before any of it is read: a
+        // reset written as the menu opens has not been applied yet when the
+        // active row below is chosen from it.
+        setQuery("");
+        // The box itself is uncontrolled: the signal above is what the rows
+        // obey, and the element keeps whatever was typed into it until it is
+        // told otherwise — so the next open would read as a filtered list
+        // that is showing everything.
+        if (field) {
+          field.value = "";
+        }
+        // The filter box is inside the panel that just went away, so a
+        // keyboard left standing on it would be typing at nothing: the chip
+        // is where the focus was before it, and where the next Tab is
+        // measured from.
+        if (document.activeElement === field) {
+          chip.focus();
+        }
         return;
       }
       props.onOpen?.();
       // The current value is where the keyboard starts, so opening the menu
       // lands on what the chip already says.
-      const at = props.options.findIndex(
-        (option) => option.value === props.value
-      );
+      const at = shown().findIndex((option) => option.value === props.value);
       navigation.setActiveIndex(at === -1 ? 0 : at);
+      // Only where the keyboard is already out. A soft one is drawn over the
+      // page when a field takes focus, and the panel opens upward from a chip
+      // at the bottom of the screen — so focusing here would cover the list
+      // with the keys, for a reader who tapped to browse rather than to type.
+      // The panel is shown by an effect of its own, and a hidden field cannot
+      // take focus: the microtask waits for that to have happened.
+      if (keyboard()) {
+        queueMicrotask(() => {
+          field?.focus();
+        });
+      }
       const dismiss = (event: PointerEvent): void => {
         // The panel is in the top layer but still a DOM child of the root,
         // so one containment test covers both halves.
@@ -118,11 +196,35 @@ export function Menu(props: {
       <Combobox
         open={open()}
         anchor={() => chip}
-        items={props.options}
+        items={rows()}
         activeIndex={navigation.activeIndex()}
         onActivate={navigation.setActiveIndex}
         onSelect={choose}
-        emptyLabel="nothing to choose"
+        emptyLabel={query() === "" ? "nothing to choose" : "no matches"}
+        header={
+          <Show when={props.search}>
+            {(placeholder) => (
+              <input
+                ref={(element: HTMLInputElement) => {
+                  field = element;
+                }}
+                type="text"
+                placeholder={placeholder()}
+                aria-label={placeholder()}
+                class="mb-1 w-full rounded-lg bg-neutral-900 px-2 py-1 outline-none ring-1 ring-neutral-700 placeholder:text-neutral-500 focus:ring-neutral-600"
+                onInput={(event: InputEvent) => {
+                  setQuery((event.target as HTMLInputElement).value);
+                  // The rows underneath are a different list now, and the
+                  // one the keyboard was standing on is not in it.
+                  navigation.setActiveIndex(0);
+                }}
+                onKeyDown={(event: KeyboardEvent) => {
+                  navigation.onKeyDown(event);
+                }}
+              />
+            )}
+          </Show>
+        }
       />
     </div>
   );

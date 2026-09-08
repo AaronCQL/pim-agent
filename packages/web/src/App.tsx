@@ -112,9 +112,7 @@ export function Shell(props: { readonly store: SessionStore }) {
   const hasTranscript = (): boolean =>
     props.store.state.durable.length > 0 ||
     props.store.trailing().length > 0 ||
-    props.store.liveSize() > 0 ||
-    props.store.draftText(props.store.state.sessionId) !== "" ||
-    props.store.attachmentsOf(props.store.state.sessionId).length > 0;
+    props.store.liveSize() > 0;
   const showSplash = (): boolean =>
     !props.store.state.loading && !hasTranscript();
 
@@ -138,14 +136,30 @@ export function Shell(props: { readonly store: SessionStore }) {
     }
   );
 
+  // `dvh` follows browser chrome but, notably on iOS, not the software
+  // keyboard: only the visual viewport shrinks. Mirroring that measurement is
+  // what keeps the composer inside the pixels that remain visible. The
+  // viewport meta tag makes the same thing happen without this fallback in
+  // browsers that implement `interactive-widget=resizes-content`.
   const viewport = globalThis.visualViewport;
-  viewport?.addEventListener("resize", anchor.stick);
+  const [viewportHeight, setViewportHeight] = createSignal(viewport?.height);
+  const resizeViewport = (): void => {
+    setViewportHeight(viewport?.height);
+    anchor.stick();
+  };
+  viewport?.addEventListener("resize", resizeViewport);
   onCleanup(() => {
-    viewport?.removeEventListener("resize", anchor.stick);
+    viewport?.removeEventListener("resize", resizeViewport);
   });
 
   return (
-    <main class="flex h-[100dvh] overflow-hidden bg-neutral-925 text-neutral-100">
+    <main
+      class="flex overflow-hidden bg-neutral-925 text-neutral-100"
+      style={{
+        height:
+          viewportHeight() === undefined ? "100dvh" : `${viewportHeight()}px`,
+      }}
+    >
       <Show when={desktop() && sidebar()}>
         <div class="w-xs shrink-0 border-r border-neutral-700">
           <Sidebar store={props.store} onNavigate={jump} />
@@ -229,14 +243,30 @@ export function Shell(props: { readonly store: SessionStore }) {
               // where the reader is dragging it.
               "absolute right-[--scrollbar] bottom-0 left-0 justify-center bg-neutral-925 px-3 pt-10 pb-[max(0.75rem,env(safe-area-inset-bottom))]":
                 !showSplash(),
-              "absolute inset-0 items-center justify-center px-3": showSplash(),
+              "absolute inset-0 items-center justify-center overflow-hidden px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]":
+                showSplash(),
             }}
           >
-            <div class="w-full max-w-3xl">
+            <div
+              class={{
+                "w-full max-w-3xl": true,
+                "flex max-h-full flex-col": showSplash(),
+              }}
+            >
               <Show when={showSplash()}>
-                <Splash />
+                {/* The composer owns the scarce space. Once it grows past the
+                    room left by the keyboard, this viewport gives up the
+                    bottom of the decorative splash rather than letting the
+                    whole stack overflow behind the topbar. */}
+                <div class="min-h-0 overflow-hidden">
+                  <Splash />
+                </div>
               </Show>
-              <div class={{ "mt-[calc(var(--line)*2)]": showSplash() }}>
+              <div
+                class={{
+                  "mt-[calc(var(--line)*2)] shrink-0": showSplash(),
+                }}
+              >
                 <Composer
                   store={props.store}
                   onSend={jump}

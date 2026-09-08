@@ -428,7 +428,7 @@ describe("platform wrappers", () => {
 });
 
 describe("chip menu", () => {
-  function paint(): {
+  function paint(search?: string): {
     readonly host: HTMLElement;
     readonly chosen: string[];
     readonly opened: number[];
@@ -442,6 +442,7 @@ describe("chip menu", () => {
           label="claude/opus-5"
           icon="i-griddy-icons:robot"
           value="claude/opus-5"
+          {...(search === undefined ? {} : { search })}
           options={[
             { value: "claude/opus-5", label: "Opus 5" },
             { value: "openai/gpt-6", label: "GPT-6" },
@@ -528,5 +529,80 @@ describe("chip menu", () => {
     row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     flush();
     expect(chosen).toEqual(["openai/gpt-6"]);
+  });
+
+  // Which row is in force and which row the keyboard is on are two different
+  // facts, and the reader needs both: the arrow key moves one of them.
+  test("the value in force is ticked, wherever the keyboard is standing", () => {
+    const { host } = paint();
+    const chip = host.querySelector("button")!;
+    chip.click();
+    flush();
+
+    const ticked = (): readonly boolean[] =>
+      options(host).map((row) =>
+        row.innerHTML.includes("i-griddy-icons:check")
+      );
+    expect(ticked()).toEqual([true, false]);
+
+    // And the rows it is not are written back in the chrome grey, so one
+    // small mark is not the only thing saying which row is in force.
+    expect(options(host)[0]?.className).toContain("text-neutral-50");
+    expect(options(host)[1]?.className).toContain("text-neutral-350");
+
+    chip.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })
+    );
+    flush();
+    expect(options(host)[1]?.getAttribute("aria-selected")).toBe("true");
+    expect(ticked()).toEqual([true, false]);
+    // Standing on a dimmed row lifts it, but not to the chosen row's white:
+    // where the keyboard is and what is in force stay two readings.
+    expect(options(host)[1]?.className).toContain("text-neutral-100");
+  });
+
+  test("a searchable menu filters its rows and chooses from what is left", async () => {
+    const { host, chosen } = paint("Search models");
+    host.querySelector("button")!.click();
+    flush();
+
+    const field = host.querySelector<HTMLInputElement>('input[type="text"]')!;
+    // The panel is shown by an effect of its own, so the focus that follows
+    // it is a microtask behind the flush that opened the menu.
+    await Promise.resolve();
+    expect(document.activeElement).toBe(field);
+
+    field.value = "gpt";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    flush();
+    expect(options(host).map((row) => row.textContent)).toEqual(["GPT-6"]);
+
+    // The one row left is the one Enter takes, and the index it arrives as
+    // is an index into the rows on screen.
+    field.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true })
+    );
+    flush();
+    expect(chosen).toEqual(["openai/gpt-6"]);
+    // The box the keys were going to has gone with the panel, so the chip
+    // takes them back rather than the page losing focus altogether.
+    expect(document.activeElement).toBe(host.querySelector("button"));
+
+    // Re-opening starts from the whole list and an empty box, not from what
+    // was typed last.
+    host.querySelector("button")!.click();
+    flush();
+    expect(options(host)).toHaveLength(2);
+    expect(
+      host.querySelector<HTMLInputElement>('input[type="text"]')!.value
+    ).toBe("");
+  });
+
+  test("a menu without a search prop has no box to type into", () => {
+    const { host } = paint();
+    host.querySelector("button")!.click();
+    flush();
+
+    expect(host.querySelector('input[type="text"]')).toBeNull();
   });
 });

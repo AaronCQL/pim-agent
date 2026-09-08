@@ -187,7 +187,9 @@ export function Sidebar(props: {
 
   return (
     <div class="flex h-full flex-col bg-neutral-950">
-      <div class="flex h-12 shrink-0 items-center justify-between gap-2 px-3">
+      {/* Same height and rule as the topbar beside it, so the two headers
+          read as one line across the seam of the sidebar's right border. */}
+      <div class="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-neutral-700 px-3">
         <div class="flex items-center gap-2">
           <h1 class="shrink-0">
             <img src="/wordmark.svg" alt="PIM" class="block h-5" />
@@ -216,7 +218,7 @@ export function Sidebar(props: {
         </button>
       </div>
 
-      <ul class="min-h-0 flex-1 space-y-2 overflow-y-auto px-3">
+      <ul class="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 pt-3">
         <Show
           when={rows().length > 0}
           fallback={<li class="text-sm text-neutral-500">No sessions yet.</li>}

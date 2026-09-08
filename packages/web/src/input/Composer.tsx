@@ -453,6 +453,15 @@ export function Composer(props: {
             if (navigation.onKeyDown(event)) {
               return;
             }
+            // The TUI's cycle, on the same key. Scoped to the box rather
+            // than the window because Shift+Tab is also how a page is walked
+            // backwards: it is only ours where the fingers already are, and
+            // the composer is where a turn is aimed from.
+            if (event.key === "Tab" && event.shiftKey) {
+              event.preventDefault();
+              void props.store.cycleThinking();
+              return;
+            }
             // Nothing left to dismiss, so Escape means the turn — whatever
             // is in the box. What pi was holding for it comes back here.
             if (event.key === "Escape" && props.store.isBusy()) {
@@ -518,6 +527,7 @@ export function Composer(props: {
                 label={props.store.state.modelLabel}
                 title="Model"
                 icon="i-griddy-icons:robot"
+                search="Search models"
                 value={model()}
                 options={modelOptions()}
                 onOpen={loadCatalogue}

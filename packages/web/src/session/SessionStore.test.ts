@@ -1017,3 +1017,74 @@ describe("drafts", () => {
     expect(target.localTitle("fresh")).toBe("still typed");
   });
 });
+
+describe("the thinking cycle", () => {
+  /** A catalogue answered once, and every level a step is asked for. */
+  function levelled(
+    target: SessionStore,
+    levels: readonly string[]
+  ): readonly string[] {
+    const asked: string[] = [];
+    target.client.send = (async (command: {
+      readonly type: string;
+      readonly value?: string;
+    }) => {
+      if (command.type === "set_thinking" && command.value !== undefined) {
+        asked.push(command.value);
+      }
+      return {
+        type: "response",
+        id: "1",
+        success: true,
+        models: [],
+        thinkingLevels: levels,
+      };
+    }) as typeof target.client.send;
+    return asked;
+  }
+
+  function thinkingAt(target: SessionStore, level: string): void {
+    feed(target, {
+      type: "session_state",
+      cwd: "/repo",
+      model: "sonnet",
+      thinking: level,
+      cost: 0,
+      status: "idle",
+    });
+  }
+
+  test("steps up the catalogue's order and wraps at the end", async () => {
+    const target = store();
+    const asked = levelled(target, ["off", "medium", "high"]);
+    feed(target, attached("s1"));
+
+    thinkingAt(target, "medium");
+    await target.cycleThinking();
+    thinkingAt(target, "high");
+    await target.cycleThinking();
+
+    expect(asked).toEqual(["high", "off"]);
+  });
+
+  // A model whose levels changed under a session, or a state frame that has
+  // not landed yet: there is no "next" to take, so the cycle starts over.
+  test("a level the catalogue does not list starts at the top", async () => {
+    const target = store();
+    const asked = levelled(target, ["off", "medium"]);
+    feed(target, attached("s1"));
+    thinkingAt(target, "ultra");
+
+    await target.cycleThinking();
+    expect(asked).toEqual(["off"]);
+  });
+
+  test("a model with nothing to choose between is left alone", async () => {
+    const target = store();
+    const asked = levelled(target, []);
+    feed(target, attached("s1"));
+
+    await target.cycleThinking();
+    expect(asked).toEqual([]);
+  });
+});
