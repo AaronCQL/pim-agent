@@ -4,7 +4,7 @@ import type { Tone, ToolView, ViewBlock } from "#core/view/ViewBlock";
 import { Markdown } from "../markdown/Markdown";
 import { Caret, Collapsible } from "../ui/Collapsible";
 import { Blocks, Body } from "./Blocks";
-import { caretClass, toneClass } from "./tokens";
+import { caretClass, spineClass, toneClass } from "./tokens";
 
 /**
  * One tool row. The mockup supplies the shape; the TUI supplies the semantics,
@@ -15,14 +15,25 @@ import { caretClass, toneClass } from "./tokens";
  *   on error — so `view.icon` goes unpainted on the web.
  * - `label` is what the row is called (`ToolRow.name` only when the view omits
  *   it), then a muted `":"` and the `title` blocks as one run of text that
- *   wraps under itself rather than being cut off: a shell pipeline or a long
- *   pattern is the row's subject, and a phone is narrow. A lone `markdown`
- *   title goes through `Markdown`, as it does in
- *   `Renderer.renderToolCallTitle`. The label reads at the body colour — it
- *   names the row, it is not a heading over it — and only `labelTone` moves
- *   it off that, which is how a subagent shows its run state.
+ *   wraps to the row's own `2ch` gutter rather than being cut off or indented
+ *   under the label: a shell pipeline or a long pattern is the row's subject,
+ *   a phone is narrow, and `apply_patch: ` would otherwise spend a third of
+ *   every continuation line naming what the first line already named. The
+ *   label floats out of the run's way so the text flows past it, which is
+ *   what makes that true of a `markdown` title too — it is a block, and a
+ *   flex row would have stranded it. A lone `markdown` title goes through
+ *   `Markdown`, as it does in `Renderer.renderToolCallTitle`. The label reads
+ *   at the body colour — it names the row, it is not a heading over it —
+ *   until the row has news: amber in flight and rose once it has failed, the
+ *   caret's own hues, so the one word a reader is scanning for down the left
+ *   edge carries the state rather than making them find a 1ch glyph beside
+ *   it. The subject stays neutral throughout; it is what the row *did*, and
+ *   it does not change because the row is still doing it. A view that sets
+ *   `labelTone` outranks all of that, which is how a subagent paints its own
+ *   run state.
  * - `summary` renders in every state — streaming, collapsed, expanded — so it
- *   sits outside the disclosure.
+ *   rides in the `<summary>` alongside the head rather than in the payload,
+ *   which is also the order `BodyRenderer` draws the two in.
  * - `body` is expand-only, and **every** row starts closed — a failure and a
  *   diff included, exactly as in the TUI. A transcript you scroll on a phone
  *   is a list of what happened; what a row
@@ -60,6 +71,27 @@ export function ToolCard(props: {
   const dimmed = () =>
     !body().some((block) => block.kind === "diff" || block.kind === "markdown");
 
+  // The same state the caret and the spine read, in the tones that map onto
+  // their hues. A view that paints its own label has already said something
+  // more specific than "running" — a subagent's indigo — so it wins.
+  const tone = (): Tone | undefined =>
+    props.view.labelTone ??
+    (error() ? "error" : props.isPartial === true ? "warning" : undefined);
+
+  // The whole visible face of the row: what it is called and what it is
+  // doing. Both branches below draw it, and only one of them ever runs, so
+  // this is a call rather than a shared node.
+  const head = () => (
+    <>
+      <Head view={props.view} name={props.name} tone={tone()} />
+      <Show when={(props.view.summary?.length ?? 0) > 0}>
+        <div class="text-neutral-400">
+          <Body blocks={props.view.summary ?? []} />
+        </div>
+      </Show>
+    </>
+  );
+
   return (
     // A row recedes until hovered; an open one is the thing you asked to look
     // at, so it stays at full strength — that is *this* disclosure's own
@@ -80,28 +112,27 @@ export function ToolCard(props: {
       <Show
         when={body().length > 0}
         fallback={
-          <span class="flex min-w-0 items-start">
+          // The same gutter a disclosure indents by, so a row with nothing to
+          // open keeps the column its neighbours are in — with or without the
+          // caret that only a partial or failed call earns. `flow-root` for
+          // the same reason the disclosure's summary has it: the label floats.
+          <div class="relative min-w-0 flow-root pl-2ch">
             <Show when={props.isPartial === true || error()}>
               <Caret class={caretClass(props.isPartial === true, error())} />
             </Show>
-            <Head view={props.view} name={props.name} />
-          </span>
+            {head()}
+          </div>
         }
       >
         <Collapsible
-          summary={<Head view={props.view} name={props.name} />}
+          summary={head()}
           caret={caretClass(props.isPartial === true, error())}
-          spine={error() ? "bg-rose-400" : "bg-neutral-750"}
+          spine={spineClass(props.isPartial === true, error())}
         >
           <div class={dimmed() ? "opacity-60" : ""}>
             <Body blocks={body()} />
           </div>
         </Collapsible>
-      </Show>
-      <Show when={(props.view.summary?.length ?? 0) > 0}>
-        <div class="pl-2ch text-neutral-400">
-          <Body blocks={props.view.summary ?? []} />
-        </div>
       </Show>
     </article>
   );
@@ -134,6 +165,12 @@ export function ToolCards(props: {
  * to its subject. Shared rather than copied, because the subagent row is a
  * `<button>` that draws no disclosure and still has to sit on the same left
  * edge as the tool rows above and below it.
+ *
+ * It floats: the subject then starts after the label on the first line and
+ * flows back to the row's own left edge on every line after it, which is what
+ * the terminal's `│` gutter does and what a flex row cannot do. Floating the
+ * pair as one box rather than each span keeps `Bash` and its colon from ever
+ * being split across two lines.
  */
 export function RowLabel(props: {
   readonly label: string;
@@ -141,10 +178,10 @@ export function RowLabel(props: {
 }) {
   return (
     <Show when={props.label}>
-      <span class={`shrink-0 font-bold ${toneClass(props.tone)}`}>
-        {props.label}
+      <span class="float-left">
+        <span class={`font-bold ${toneClass(props.tone)}`}>{props.label}</span>
+        <span class="pr-1ch text-neutral-400">:</span>
       </span>
-      <span class="shrink-0 pr-1ch text-neutral-400">:</span>
     </Show>
   );
 }
@@ -191,7 +228,11 @@ function isDrawn(block: ViewBlock): boolean {
     : true;
 }
 
-function Head(props: { readonly view: ToolView; readonly name?: string }) {
+function Head(props: {
+  readonly view: ToolView;
+  readonly name?: string;
+  readonly tone?: Tone;
+}) {
   const label = () => props.view.label ?? props.name ?? "";
   const subject = () => props.view.title.slice(0, 1);
   const details = () => props.view.title.slice(1);
@@ -202,11 +243,11 @@ function Head(props: { readonly view: ToolView; readonly name?: string }) {
   };
 
   return (
-    // Top-aligned, not centred: a `spans` title keeps its newlines and wraps,
-    // and `Bash:` naming a four-line pipeline belongs on the pipeline's first
-    // line rather than floating halfway down it.
-    <span class="flex min-w-0 grow items-start">
-      <RowLabel label={label()} tone={props.view.labelTone} />
+    // One run of text with the label floated into it, so `Bash:` naming a
+    // four-line pipeline sits on the pipeline's first line and the other
+    // three keep the row's left edge.
+    <>
+      <RowLabel label={label()} tone={props.tone} />
       <Show
         when={prose()}
         fallback={
@@ -214,19 +255,18 @@ function Head(props: { readonly view: ToolView; readonly name?: string }) {
           // subject and anything after it is an aside that reads right behind
           // it and wraps with it — `Grep: /foo/ (2 files)`. `Blocks` paints
           // text as `<p>`, so the run inlines those to keep it one paragraph.
-          <span class="min-w-0 break-words [&_p]:inline">
+          <span class="break-words [&_p]:inline">
             <Blocks blocks={subject()} />
             <For each={details()}>{(block) => <Detail block={block} />}</For>
           </span>
         }
       >
-        {(text) => (
-          <span class="min-w-0">
-            <Markdown text={text()} />
-          </span>
-        )}
+        {/* No wrapper: `Markdown` is a block, and it is the float it has to
+            flow around — a box of its own would be pushed clear of the label
+            entirely and take the whole title with it. */}
+        {(text) => <Markdown text={text()} />}
       </Show>
-    </span>
+    </>
   );
 }
 

@@ -89,8 +89,8 @@ export function Modal(props: {
       }}
       class={`max-h-none max-w-none bg-neutral-925 p-0 text-neutral-100 backdrop:bg-black/60 ${
         desktop()
-          ? "m-auto h-[85dvh] w-[min(56rem,92vw)] rounded-lg border border-neutral-700"
-          : "m-0 h-full w-full border-none"
+          ? "m-auto h-[85dvh] w-[min(56rem,92vw)] rounded-lg ring-1 ring-neutral-700"
+          : "m-0 h-full w-full"
       }`}
     >
       <div class="flex h-full min-h-0 flex-col">

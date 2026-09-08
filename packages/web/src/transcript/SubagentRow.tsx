@@ -59,37 +59,47 @@ export function SubagentRow(props: {
       // what the row says. The row's own text is its name, and this is the
       // one word missing from it.
       aria-haspopup="dialog"
-      // The recession every tool row has, and it lifts on hover for the same
-      // reason theirs do: there is something behind this one to reach.
-      class="flex w-full min-w-0 items-start text-left opacity-80 focus-visible:opacity-100 hover:opacity-100"
+      // `pl-2ch` and `relative` are the tool row's grid: the caret hangs in
+      // the gutter and the text keeps one left edge however far it wraps, and
+      // `flow-root` holds the floated label inside the row on the run that
+      // has yet to spend anything. The recession every tool row has comes
+      // with it, and it lifts on hover for the same reason theirs do: there
+      // is something behind this one to reach.
+      class="relative w-full min-w-0 flow-root pl-2ch text-left opacity-80 focus-visible:opacity-100 hover:opacity-100"
       onClick={() => {
         props.onOpen(props.row.id);
       }}
     >
       <Caret class={caretClass(props.row.isPartial, props.row.isError)} />
       <RowLabel label="Subagent" tone={props.row.view.labelTone} />
-      {/* `flex-wrap` is for the narrowest phone, where the spinner drops to
-          the next row intact rather than squeezing the accounting. */}
-      <span class="flex min-w-0 grow flex-wrap items-center gap-1ch">
-        <Show
-          when={props.row.isError}
-          fallback={
-            <>
-              <Show when={stats() !== ""}>
-                <span class="min-w-0 break-words">{stats()}</span>
-              </Show>
-              <Show when={props.row.isPartial}>
+      <Show
+        when={props.row.isError}
+        fallback={
+          <>
+            <Show when={stats() !== ""}>
+              <span class="break-words">{stats()}</span>
+            </Show>
+            {/* The spinner is a sized box in what is now a run of text, and a
+                bare inline box would drop its own width and height; the
+                wrapper blockifies it and sits it on the text's middle. On the
+                narrowest phone it wraps to the next line intact rather than
+                squeezing the accounting. */}
+            <Show when={props.row.isPartial}>
+              <span class="ml-1ch inline-flex align-middle">
                 <Spinner />
-              </Show>
-            </>
-          }
-        >
-          <span class="min-w-0 truncate text-rose-400">
-            failed
-            <Show when={failure()}>{(reason) => ` · ${reason()}`}</Show>
-          </span>
-        </Show>
-      </span>
+              </span>
+            </Show>
+          </>
+        }
+      >
+        {/* `block` so the reason can be clipped to the one line that fits:
+            it establishes a formatting context of its own and so is laid out
+            beside the floated label rather than flowing around it. */}
+        <span class="block truncate text-rose-400">
+          failed
+          <Show when={failure()}>{(reason) => ` · ${reason()}`}</Show>
+        </span>
+      </Show>
     </button>
   );
 }

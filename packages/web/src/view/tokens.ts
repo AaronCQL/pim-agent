@@ -121,6 +121,31 @@ export function caretClass(isPartial: boolean, isError: boolean): string {
   return isError ? "bg-rose-400" : "bg-neutral-300";
 }
 
+/**
+ * The rule that hangs off that caret, and its hover. It reads the same state
+ * the caret does and in the same hues: a call still in flight is amber all the
+ * way down, a failed one rose, so a row that wraps or opens says what it is
+ * with its whole height rather than with one glyph at the top of it.
+ *
+ * The resting colour is the exception. A settled row's caret is `neutral-300`
+ * and its spine is far dimmer, because the two are not doing the same job:
+ * the caret marks a row in a list of rows, the rule only shows how far one of
+ * them reaches, and a transcript of them at caret strength would be a page of
+ * ruled lines.
+ *
+ * The hover is `group-hover`, not `hover`: the grip lights when the pointer
+ * is anywhere on the row, which is the same reach the row already brightens
+ * over.
+ */
+export function spineClass(isPartial: boolean, isError: boolean): string {
+  if (isPartial) {
+    return "text-amber-400 group-hover:text-amber-300";
+  }
+  return isError
+    ? "text-rose-400 group-hover:text-rose-300"
+    : "text-neutral-750 group-hover:text-neutral-500";
+}
+
 export type FrameGroup = {
   readonly frame: Frame;
   readonly blocks: readonly ViewBlock[];

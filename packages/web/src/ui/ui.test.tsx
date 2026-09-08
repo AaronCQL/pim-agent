@@ -339,13 +339,16 @@ describe("platform wrappers", () => {
     expect(host.querySelector("details")?.open).toBe(true);
   });
 
-  // The spine hangs clear of the caret and only exists while open, so a
-  // wrapped summary is threaded by it and a closed row promises nothing.
-  test("the rule is a spine from below the caret down, drawn only when open", () => {
+  // The spine hangs clear of the caret and is drawn in every state: starting
+  // one `--line` down, it is zero-height on a closed row that fits, and beside
+  // exactly the lines that overspilled on one that wraps. So it means "this
+  // continues the row above" rather than "this row is open", and the caret is
+  // left to say which.
+  test("the rule is a spine from below the caret down, open or closed", () => {
     const host = mountPoint();
     render(
       () => (
-        <Collapsible summary={<span>head</span>} spine="bg-rose-400" open>
+        <Collapsible summary={<span>head</span>} spine="text-rose-400">
           <p>body</p>
         </Collapsible>
       ),
@@ -353,11 +356,44 @@ describe("platform wrappers", () => {
     );
     flush();
 
-    const spine = host.querySelector("details > span")!;
+    const spine = host.querySelector("summary > span + span")!;
     expect(spine.className).toContain("top-[--line]");
-    expect(spine.className).toContain("hidden");
-    expect(spine.className).toContain("group-open:block");
-    expect(spine.className).toContain("bg-rose-400");
+    expect(spine.className).toContain("text-rose-400");
+    expect(spine.className).not.toContain("group-open:");
+    expect(host.querySelector("details")?.open).toBe(false);
+  });
+
+  // 1.5px is not a hit target, so the grip is the whole 2ch gutter — and it
+  // lives inside the `<summary>`, which is what makes the click the
+  // platform's own rather than a handler of ours.
+  test("the spine is a second grip on the disclosure, and says so on hover", () => {
+    const host = mountPoint();
+    render(
+      () => (
+        <Collapsible summary={<span>head</span>}>
+          <p>body</p>
+        </Collapsible>
+      ),
+      host
+    );
+    flush();
+
+    const details = host.querySelector("details")!;
+    const spine = host.querySelector("summary > span + span") as HTMLElement;
+    expect(spine.className).toContain("w-2ch");
+    expect(spine.className).toContain("cursor-pointer");
+    // `group-hover`, so the grip lights from anywhere on the row — pointing
+    // at the title and pointing at the rule are one gesture.
+    expect(spine.className).toContain("group-hover:text-neutral-500");
+    // Announced by the summary it grips, not twice over.
+    expect(spine.getAttribute("aria-hidden")).toBe("true");
+
+    spine.click();
+    flush();
+    expect(details.open).toBe(true);
+    spine.click();
+    flush();
+    expect(details.open).toBe(false);
   });
 
   test("the drawer opens modally, hosts its content and closes on select", () => {

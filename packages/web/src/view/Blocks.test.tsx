@@ -286,12 +286,17 @@ describe("ToolCard", () => {
     body: [SAMPLES.diff],
   };
 
-  test("summary renders outside the disclosure, body inside it", () => {
+  // The summary is the row's status, not its payload, so it rides in the
+  // `<summary>` — visible in every state, and above the body when open, the
+  // order `BodyRenderer` draws the two in.
+  test("summary renders in the head, body behind the disclosure", () => {
     const host = paintTool(view);
     const details = host.querySelector("details");
     expect(details).not.toBeNull();
     expect(details?.textContent).toContain(" 2 + new");
-    expect(host.textContent).toContain("+2");
+    expect(host.querySelector("details > summary")?.textContent).toContain(
+      "+2"
+    );
     expect(host.querySelector("details > div")?.textContent).not.toContain(
       "+2"
     );
@@ -335,6 +340,43 @@ describe("ToolCard", () => {
     const host = paintTool(view, true);
     expect(host.querySelector("details")).not.toBeNull();
     expect(host.textContent).toContain("+2");
+  });
+
+  // The caret is not the only mark that carries state. A row that wraps or is
+  // open hangs a rule the whole way down, so the rule reads what the caret
+  // reads: amber in flight, rose once it has failed, and a quiet neutral —
+  // not the caret's own — once there is no news in it.
+  test("the spine carries the caret's state, in the caret's hues", () => {
+    expect(paintTool(view, true).innerHTML).toContain("text-amber-400");
+    expect(paintTool(view).innerHTML).toContain("text-neutral-750");
+  });
+
+  // So does the one word a reader scans for down the left edge — but only the
+  // label. What the row did is not restated in the state's colour.
+  test("the label reads the state too, and the subject never does", () => {
+    const running = paintTool({ ...view, labelTone: undefined }, true);
+    expect(running.querySelector(".float-left")?.innerHTML).toContain(
+      "text-amber-400"
+    );
+    expect(running.querySelector(".break-words")?.innerHTML).not.toContain(
+      "text-amber-400"
+    );
+
+    const host = mountPoint();
+    render(
+      () => <ToolCard view={{ ...view, labelTone: undefined }} isError />,
+      host
+    );
+    flush();
+    expect(host.querySelector(".float-left")?.innerHTML).toContain(
+      "text-rose-400"
+    );
+  });
+
+  // A view that paints its own label has already said something more specific
+  // than "running": a subagent's indigo survives its own run.
+  test("a view's own labelTone outranks the state", () => {
+    expect(paintTool(view, true).innerHTML).toContain("text-indigo-300");
   });
 
   test("a body of blank blocks is no body: an unstarted call has no disclosure", () => {
