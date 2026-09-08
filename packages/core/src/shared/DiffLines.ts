@@ -64,7 +64,7 @@ function buildToolDiff(
 
 function fromText(text: string): ToolDiffSide {
   if (text.length === 0) {
-    return { lines: [], hasTrailingNewline: false };
+    return emptySide;
   }
 
   const hasTrailingNewline = text.endsWith("\n");
@@ -301,4 +301,6 @@ function partLines(value: string): readonly string[] {
   return lines;
 }
 
-export const DiffLines = { buildToolDiff, fromText };
+const emptySide: ToolDiffSide = { lines: [], hasTrailingNewline: false };
+
+export const DiffLines = { buildToolDiff, fromText, emptySide };

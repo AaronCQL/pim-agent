@@ -126,7 +126,7 @@ async function planAdd(
   const newSide = DiffLines.fromText(contents);
   const diff = DiffLines.buildToolDiff(
     rawPath,
-    { lines: [], hasTrailingNewline: false },
+    DiffLines.emptySide,
     newSide,
     CONTEXT_LINES
   );
@@ -155,7 +155,7 @@ async function planDelete(
   const diff = DiffLines.buildToolDiff(
     rawPath,
     DiffLines.fromText(original.content),
-    { lines: [], hasTrailingNewline: false },
+    DiffLines.emptySide,
     CONTEXT_LINES
   );
 
