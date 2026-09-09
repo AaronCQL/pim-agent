@@ -3,7 +3,7 @@
 Handcrafted Sprout pixel lettering in indigo-400 (`#818cf8`).
 
 ```sh
-bun run brand
+bun run gen:brand
 ```
 
 Only three assets are generated in `assets/brand/`:

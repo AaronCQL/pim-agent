@@ -1,7 +1,7 @@
 {
   "name": "pim-agent",
   "version": "0.9.0",
-  "description": "A Bun-native distribution of Pi: revamped core tools, web access, subagents, themes, fzf-style completions, plus Telegram and web frontends.",
+  "description": "An opinionated, Bun-native distro of Pi - one agent, reachable from your terminal, browser, or Telegram.",
   "license": "MIT",
   "type": "module",
   "keywords": [
@@ -48,7 +48,8 @@
     "prepack": "bun run web:build",
     "probe": "bun packages/server/src/probe.ts",
     "check": "bun scripts/check.ts",
-    "brand": "bun scripts/brand/generate.ts",
+    "gen:brand": "bun scripts/brand/generate.ts",
+    "gen:hero": "bun scripts/hero/generate.ts",
     "web:build": "cd packages/web && vite build",
     "web:dev": "cd packages/web && vite"
   },
@@ -57,6 +58,7 @@
     "@happy-dom/global-registrator": "^20.14.0",
     "@iconify-json/griddy-icons": "^1.2.0",
     "@iconify-json/solar": "^1.2.10",
+    "@jsquash/webp": "^1.5.0",
     "@resvg/resvg-js": "^2.6.2",
     "@solidjs/vite-plugin": "3.0.0-next.40",
     "@solidjs/web": "^2.0.0-rc.7",

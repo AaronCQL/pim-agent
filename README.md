@@ -6,9 +6,13 @@
 [![license](https://img.shields.io/npm/l/pim-agent?style=flat-square)](./LICENSE)
 [![Bun](https://img.shields.io/badge/runtime-Bun-black?logo=bun&style=flat-square)](https://bun.com)
 
-_**Pim is to Pi what Vim is to Vi.**_
+An opinionated, Bun-native distro of Pi - one agent, reachable from your terminal, browser, or Telegram.
 
-An opinionated distro of [Pi](https://pi.dev/): built-in web access, subagents, revamped core tools, ANSI-compatible themes, fzf-style completions, alternate frontends (Web & Telegram), and compatible with other Pi extensions. Preliminary score of [37.8% on Terminal-Bench 2.0](#terminal-bench-20) with locally hosted Qwen3.6-35B, rivalling Claude Code + Sonnet 4.5.
+- **For the agent:** revamped `bash`/`read`/`write`/`edit`, plus `glob`, `grep`, `web_search`, `web_fetch` and `subagent`, behind a ~3K system prompt that adapts its toolset to the model.
+- **For you:** ANSI-compatible themes, fzf-style autocomplete, and git-aware status with sessions shared across frontends, so work started at your desk continues from your phone.
+- **Full Pi compatibility:** your Pi extensions, CLI, sessions and config all keep working, and vanilla `pi` is untouched.
+
+![Pim Demo](https://raw.githubusercontent.com/AaronCQL/pim-agent/refs/heads/main/assets/demo.webp)
 
 - [Quick Start](#quick-start)
   - [Toggling Features](#toggling-features)
@@ -22,14 +26,14 @@ An opinionated distro of [Pi](https://pi.dev/): built-in web access, subagents, 
 - [Agent Tools](#agent-tools)
 - [Terminal UI](#terminal-ui)
 - [Web UI](#web-ui)
-- [Telegram Bot](#telegram-bot)
   - [Setup](#setup)
+  - [Remote Access](#remote-access)
+- [Telegram Bot](#telegram-bot)
+  - [Setup](#setup-1)
   - [Commands](#commands)
   - [Features](#features)
 - [Changelog](#changelog)
 - [Developing](#developing)
-
-![Pim Demo](https://raw.githubusercontent.com/AaronCQL/pim-agent/refs/heads/main/assets/demo.webp)
 
 ## Quick Start
 
@@ -39,7 +43,7 @@ Ensure that you have [Bun](https://bun.com/docs/installation) already installed:
 # Install pim:
 bun install -g pim-agent
 
-# Launch pim:
+# Launch pim TUI:
 pim
 
 # Update pim (pi comes along with it):
@@ -167,9 +171,9 @@ Pim revamps Pi's default tools (`bash`, `read`, `write`, `edit`) so they produce
 - **`apply_patch`** - V4A patch editing, dynamically exposed instead of `edit` for OpenAI and select Claude models
 - **`glob`** - file enumeration by glob pattern, sorted newest-first, respects `.gitignore`
 - **`grep`** - regex search across files with context lines, multiline matching, respects `.gitignore`
-- **`web_search`** - search the web via [Exa](https://exa.ai) with ranked results and snippets
+- **`web_search`** - search the web via [Exa](https://exa.ai)/[Firecrawl](https://www.firecrawl.dev/)/[DuckDuckGo](https://duckduckgo.com/) with ranked results and snippets
 - **`web_fetch`** - fetch websites as Markdown via [Jina](https://jina.ai/reader/), with browser-rendered fallback via [`Bun.WebView`](https://bun.com/docs/runtime/webview)
-- **`subagent`** - delegate complex work to isolated sub-sessions with full tool access, each keeping its own transcript under `~/.pim/subagents` for 30 days
+- **`subagent`** - delegate complex work to isolated sub-sessions with full tool access
 
 ## Terminal UI
 
@@ -183,7 +187,46 @@ Pim also ships with quality of life improvements for the TUI:
 
 ## Web UI
 
-<!-- TODO -->
+Run Pim in the browser, on any device. Hosted on a machine you can reach remotely, this lets you start work at your desk and carry on from your phone.
+
+### Setup
+
+Install and run as a persistent daemon (_recommended_):
+
+```sh
+# Supports Linux (systemd) and macOS (launchd)
+pim --mode web --install
+
+# Tear down
+pim --mode web --uninstall
+```
+
+Supported arguments:
+
+- `--port`: defaults to `4319`
+- `--hostname`: defaults to `127.0.0.1` (localhost)
+- `--cwd`: defaults to current working directory
+
+These are frozen into the daemon's unit file at install time, so re-run `--install` to change them. The daemon auto-restarts on failure, and allows for manual updates on the web UI: **Settings → Update & Restart**.
+
+After installing with the default settings, the web UI is at <http://localhost:4319>.
+
+### Remote Access
+
+> [!WARNING]
+> Web mode has no built-in authentication, and the agent runs shell commands as you: anything that can reach the port has full access to the host. Bind it to a private network, never to `0.0.0.0`.
+
+[Tailscale](https://tailscale.com/) is the recommended way to do this. Binding to your tailnet IP keeps the server off your LAN and off the public internet, while every device on your tailnet can still reach it:
+
+```sh
+# Look up this machine's tailnet IP:
+tailscale ip -4
+
+# Install with --hostname set to it:
+pim --mode web --install --hostname=100.115.46.15 # Replace with your actual tailscale IP
+```
+
+The web UI is then at `http://<tailnet-ip>:4319`; `localhost` no longer serves it. Since the address is baked into the unit file, re-run `--install` if your tailnet IP ever changes.
 
 ## Telegram Bot
 
