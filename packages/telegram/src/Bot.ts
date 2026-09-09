@@ -61,14 +61,7 @@ export class Bot {
           sessionId
         );
       } catch (err) {
-        const msg = (err as Error).message ?? String(err);
-        console.error(`[recv] attachment download failed:`, err);
-        await this.grammy.api
-          .sendMessage(sessionId.chatId, `⚠️ ${msg}`, {
-            message_thread_id: sessionId.threadId,
-            link_preview_options: { is_disabled: true },
-          })
-          .catch((e) => console.error(`[send] plain failed:`, e));
+        await this.reportFailure(sessionId, "attachment download failed", err);
         return;
       }
       if (!prompt) {
@@ -85,10 +78,14 @@ export class Bot {
         return;
       }
 
-      void session.run(
-        (agent) => this.handleTurn(session, agent, prompt),
-        session.temporary ? { isolated: true } : undefined
-      );
+      void session
+        .run(
+          (agent) => this.handleTurn(session, agent, prompt),
+          session.temporary ? { isolated: true } : undefined
+        )
+        .catch((err: unknown) =>
+          this.reportFailure(sessionId, "turn setup failed", err)
+        );
     });
 
     this.grammy.catch((err) => {
@@ -121,10 +118,32 @@ export class Bot {
     };
     const prompt: Prompt = { text: task.prompt, options: {} };
     const session = this.registry.get(sessionId);
-    await session.run(
-      (agent) => this.handleTurn(session, agent, prompt),
-      task.isolatedSession ? { isolated: true } : undefined
-    );
+    await session
+      .run(
+        (agent) => this.handleTurn(session, agent, prompt),
+        task.isolatedSession ? { isolated: true } : undefined
+      )
+      .catch((err: unknown) =>
+        this.reportFailure(sessionId, `scheduled task ${task.id} failed`, err)
+      );
+  }
+
+  private async reportFailure(
+    sessionId: SessionId,
+    label: string,
+    err: unknown
+  ): Promise<void> {
+    console.error(`[bot] ${label}:`, err);
+    await this.grammy.api
+      .sendMessage(
+        sessionId.chatId,
+        `⚠️ ${(err as Error).message ?? String(err)}`,
+        {
+          message_thread_id: sessionId.threadId,
+          link_preview_options: { is_disabled: true },
+        }
+      )
+      .catch((e: unknown) => console.error(`[send] plain failed:`, e));
   }
 
   private async processBootUpdateConfirm(): Promise<void> {
