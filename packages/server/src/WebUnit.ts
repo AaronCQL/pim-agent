@@ -53,14 +53,14 @@ async function buildClient(): Promise<void> {
     return;
   }
   console.log("[install] building the web client");
-  const proc = Bun.spawn(["bun", "run", "build:web"], {
+  const proc = Bun.spawn(["bun", "run", "web:build"], {
     cwd: at.packageRoot,
     stdout: "inherit",
     stderr: "inherit",
   });
   const code = await proc.exited;
   if (code !== 0) {
-    throw new Error(`bun run build:web exited ${code}`);
+    throw new Error(`bun run web:build exited ${code}`);
   }
 }
 

@@ -12,7 +12,7 @@ export const DEFAULT_CLIENT_DIR = resolve(
 
 const BUILD_HINT =
   "The pim web client has not been built.\n\n" +
-  "Run `bun run build:web` in the pim checkout, then restart `pim --mode web`.\n" +
+  "Run `bun run web:build` in the pim checkout, then restart `pim --mode web`.\n" +
   "(Installed copies ship the bundle; a git checkout has to build it once.)\n";
 
 /** Vite fingerprints everything under `assets/`, so it can never go stale. */

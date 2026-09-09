@@ -8,7 +8,7 @@ import { Supervisor, type Install } from "./Supervisor";
 
 const STAGING = "staging";
 
-// Relative to `packages/web`: the vite root `build:web` cds into.
+// Relative to `packages/web`: the vite root `web:build` cds into.
 const STAGING_OUT_DIR = `dist/${STAGING}`;
 
 type ClientDirs = {
@@ -107,7 +107,7 @@ function plan(facts: UpdateFacts): UpdatePlan {
     });
     steps.push({
       label: "build the web client",
-      command: ["bun", "run", "build:web", "--", "--outDir", STAGING_OUT_DIR],
+      command: ["bun", "run", "web:build", "--", "--outDir", STAGING_OUT_DIR],
       cwd: at.packageRoot,
     });
     steps.push({

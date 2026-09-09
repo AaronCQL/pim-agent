@@ -109,6 +109,6 @@ describe("the published tarball", () => {
 
 if (builtClient.length === 0) {
   console.warn(
-    "packaging.test.ts: no packages/web/dist/client in the tarball — `prepack` (bun run build:web) did not produce one; skipping the built-client assertions."
+    "packaging.test.ts: no packages/web/dist/client in the tarball — `prepack` (bun run web:build) did not produce one; skipping the built-client assertions."
   );
 }

@@ -40,7 +40,7 @@ describe("plan for a dev checkout", () => {
     expect(argv(steps)).toEqual([
       ["git", "pull", "--ff-only"],
       ["bun", "install"],
-      ["bun", "run", "build:web", "--", "--outDir", "dist/staging"],
+      ["bun", "run", "web:build", "--", "--outDir", "dist/staging"],
     ]);
     expect(steps.map((step) => "command" in step)).toEqual([
       true,
@@ -59,7 +59,7 @@ describe("plan for a dev checkout", () => {
 
     expect(argv(steps)).toEqual([
       ["bun", "install"],
-      ["bun", "run", "build:web", "--", "--outDir", "dist/staging"],
+      ["bun", "run", "web:build", "--", "--outDir", "dist/staging"],
     ]);
     expect(skipped).toEqual([
       {
