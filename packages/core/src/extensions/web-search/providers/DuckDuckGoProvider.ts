@@ -63,7 +63,6 @@ export class DuckDuckGoProvider implements SearchProvider {
       response = await this.ky(url, {
         headers: this.headers,
         timeout: this.timeoutMs,
-        retry: 0,
         ...(input.signal === undefined ? {} : { signal: input.signal }),
       });
     } catch (error) {

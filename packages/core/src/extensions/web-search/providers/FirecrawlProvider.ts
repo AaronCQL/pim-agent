@@ -54,7 +54,6 @@ export class FirecrawlProvider implements SearchProvider {
           sources: ["web"],
         },
         timeout: this.timeoutMs,
-        retry: 0,
         ...(input.signal === undefined ? {} : { signal: input.signal }),
       });
     } catch (error) {

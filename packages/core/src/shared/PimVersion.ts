@@ -1,6 +1,5 @@
-import ky from "ky";
-
 import { Fs } from "./Fs";
+import { createKy } from "./Http";
 
 const REGISTRY = "https://registry.npmjs.org";
 const DEFAULT_TIMEOUT_MS = 5_000;
@@ -51,13 +50,12 @@ async function latest(
   options: LatestOptions = {}
 ): Promise<string | undefined> {
   const pkg = await self();
-  const client = options.fetch ? ky.create({ fetch: options.fetch }) : ky;
+  const client = createKy(options.fetch);
   try {
     const release = await client(
       `${REGISTRY}/${pkg.name.replace("/", "%2f")}/latest`,
       {
         timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        retry: 0,
         headers: { accept: "application/json" },
       }
     ).json<{ readonly version?: unknown }>();
