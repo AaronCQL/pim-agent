@@ -180,7 +180,7 @@ function Card(props: { readonly row: MessageRow }) {
     <>
       <Show when={props.row.text !== ""}>
         <div
-          class={`rounded-lg px-4 py-3 ${
+          class={`max-w-full rounded-lg px-4 py-3 ${
             props.row.queued
               ? "bg-neutral-900 text-neutral-400 group-hover:bg-neutral-850 group-hover:text-neutral-200"
               : "bg-neutral-850"

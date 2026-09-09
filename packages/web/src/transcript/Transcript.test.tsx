@@ -284,6 +284,23 @@ describe("painting", () => {
     expect(card?.querySelector("strong")?.textContent).toBe("bold");
   });
 
+  test("a fenced block in a user message scrolls instead of widening the card", () => {
+    const host = replay([
+      {
+        seq: 1,
+        type: "message",
+        messageId: "m",
+        role: "user",
+        text: "I like this:\n\n```\nAn opinionated distro of Pi, reachable from your terminal, browser, or Telegram.\n```",
+        timestamp: 0,
+      },
+    ]);
+    const card = host.querySelector(".bg-neutral-850");
+
+    expect(card?.className).toContain("max-w-full");
+    expect(card?.querySelector("pre")).not.toBeNull();
+  });
+
   test("a dead turn is a tagged rose line where the answer would have been", () => {
     const host = replay([
       {
