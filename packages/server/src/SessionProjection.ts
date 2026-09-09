@@ -153,7 +153,7 @@ export class SessionProjection {
             args: call?.args ?? {},
             isError: message.isError,
             result: {
-              content: message.content,
+              content: withoutImages(message.content),
               details: message.details,
             } as AgentToolResult<unknown>,
             isPartial: false,
@@ -172,6 +172,22 @@ type MessageEntry = {
   readonly timestamp: string;
   readonly message: AgentMessage;
 };
+
+type ToolResultContent = Extract<
+  AgentMessage,
+  { role: "toolResult" }
+>["content"];
+
+/** No base64 crosses the websocket: a view reaches its picture through `details.sha256` instead. */
+function withoutImages(content: ToolResultContent): ToolResultContent {
+  return content.some((part) => part.type === "image")
+    ? content.map((part) =>
+        part.type === "image"
+          ? { type: "text" as const, text: "[image]" }
+          : part
+      )
+    : content;
+}
 
 function isMessageEntry(entry: FileEntry): entry is FileEntry & MessageEntry {
   return entry.type === "message";

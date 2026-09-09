@@ -374,6 +374,36 @@ describe("AnsiPainter attachment", () => {
   });
 });
 
+describe("AnsiPainter image", () => {
+  test("stands in for the picture with its shape, format and size", () => {
+    expect(
+      paint({
+        kind: "image",
+        sha256: "a".repeat(64),
+        mimeType: "image/png",
+        width: 1200,
+        height: 800,
+        bytes: 245_760,
+        alt: "docs/shot.png",
+      })
+    ).toEqual(["<muted>[image 1200×800 png · 240 KB]</muted>"]);
+  });
+
+  test("names the format the resize left it in, not the one it was read as", () => {
+    expect(
+      paint({
+        kind: "image",
+        sha256: "b".repeat(64),
+        mimeType: "image/jpeg",
+        width: 10,
+        height: 20,
+        bytes: 512,
+        alt: "shot.png",
+      })
+    ).toEqual(["<muted>[image 10×20 jpg · 512 bytes]</muted>"]);
+  });
+});
+
 describe("AnsiPainter notice", () => {
   test("maps severity to theme colors", () => {
     expect(

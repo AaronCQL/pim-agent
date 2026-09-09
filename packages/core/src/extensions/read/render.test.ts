@@ -1,7 +1,30 @@
 import { describe, expect, test } from "bun:test";
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { AnsiPainter } from "../../view/AnsiPainter";
+import type { ToolView } from "../../view/ViewBlock";
 import { readView, type ReadViewInput } from "./render";
+
+/** What a call site hands the view: streamed args, and details a legacy session may have written untagged. */
+type Case = {
+  readonly args: Partial<ReadViewInput["args"]> | undefined;
+  readonly result?: {
+    readonly content: readonly {
+      readonly type: string;
+      readonly text: string;
+    }[];
+    readonly details?: Record<string, unknown>;
+  };
+  readonly cwd: string;
+};
+
+function view(input: Case): ToolView {
+  return readView({
+    args: input.args as ReadViewInput["args"],
+    result: input.result as ReadViewInput["result"],
+    cwd: input.cwd,
+    isPartial: false,
+  });
+}
 
 function tracingTheme(): {
   readonly theme: Theme;
@@ -21,36 +44,50 @@ function tracingTheme(): {
 
 const cwd = "/work/repo";
 
-function paintTitle(
-  input: ReadViewInput,
-  theme: Theme = tracingTheme().theme
-): string {
-  return AnsiPainter.paint(readView(input).title, theme).join(" ");
+function paintTitle(input: Case, theme: Theme = tracingTheme().theme): string {
+  return AnsiPainter.paint(view(input).title, theme).join(" ");
 }
 
-function paintBody(input: ReadViewInput): string {
-  return AnsiPainter.paint(
-    readView(input).body ?? [],
-    tracingTheme().theme
-  ).join("\n");
+function paintBody(input: Case): string {
+  return AnsiPainter.paint(view(input).body ?? [], tracingTheme().theme).join(
+    "\n"
+  );
 }
 
 function settled(
   visibleStart: number,
   visibleEnd: number,
   body = ""
-): ReadViewInput["result"] {
+): Case["result"] {
   return {
     content: [{ type: "text", text: body }],
-    details: { visibleStart, visibleEnd },
+    details: { kind: "text", visibleStart, visibleEnd },
+  };
+}
+
+function settledImage(overrides: Record<string, unknown> = {}): Case["result"] {
+  return {
+    content: [],
+    details: {
+      kind: "image",
+      absolutePath: "/work/repo/docs/shot.png",
+      sha256: "a".repeat(64),
+      mimeType: "image/png",
+      width: 2000,
+      height: 500,
+      bytes: 262144,
+      resized: false,
+      frames: 1,
+      ...overrides,
+    },
   };
 }
 
 describe("readView", () => {
   test("supplies the title-cased display label", () => {
-    expect(
-      readView({ args: { path: "/work/repo/src/foo.ts" }, cwd }).label
-    ).toBe("Read");
+    expect(view({ args: { path: "/work/repo/src/foo.ts" }, cwd }).label).toBe(
+      "Read"
+    );
   });
 });
 
@@ -175,5 +212,84 @@ describe("readView body", () => {
     expect(paintBody({ args: { path: "/work/repo/src/foo.ts" }, cwd })).toBe(
       ""
     );
+  });
+});
+
+describe("readView on an image", () => {
+  test("drops the line range from the title", () => {
+    expect(
+      paintTitle({
+        args: { path: "/work/repo/docs/shot.png", start: 1, end: 40 },
+        result: settledImage(),
+        cwd,
+      })
+    ).toBe("docs/shot.png");
+  });
+
+  test("addresses the cached picture and repeats its dimensions and size", () => {
+    expect(
+      paintBody({
+        args: { path: "/work/repo/docs/shot.png" },
+        result: settledImage(),
+        cwd,
+      })
+    ).toBe(
+      [
+        "<muted>[image 2000×500 png · 256 KB]</muted>",
+        "<muted>dimensions: </muted>2000x500",
+        "<muted>size:       </muted>256 KB",
+      ].join("\n")
+    );
+  });
+
+  test("serves the picture under its post-resize extension, not the path's", () => {
+    const [picture] = view({
+      args: { path: "/work/repo/docs/shot.png" },
+      result: settledImage({ mimeType: "image/jpeg", resized: true }),
+      cwd,
+    }).body!;
+
+    expect(picture).toEqual({
+      kind: "image",
+      sha256: "a".repeat(64),
+      mimeType: "image/jpeg",
+      width: 2000,
+      height: 500,
+      bytes: 262144,
+      alt: "docs/shot.png",
+    });
+  });
+
+  test("says when the picture was downscaled to fit", () => {
+    expect(
+      paintBody({
+        args: { path: "/work/repo/docs/shot.png" },
+        result: settledImage({ resized: true }),
+        cwd,
+      })
+    ).toContain("2000x500 (downscaled)");
+  });
+
+  test("still draws a deduped picture, and says it was not re-sent", () => {
+    const body = paintBody({
+      args: { path: "/work/repo/docs/shot.png" },
+      result: settledImage({ deduped: true }),
+      cwd,
+    });
+
+    expect(body).toContain("[image 2000×500 png · 256 KB]");
+    expect(body).toContain(
+      "<muted>reused:     </muted>unchanged since the earlier read"
+    );
+  });
+
+  test("says how many frames the still left behind", () => {
+    expect(
+      paintBody({
+        args: { path: "/work/repo/docs/shot.gif" },
+        result: settledImage({ mimeType: "image/gif", frames: 24 }),
+        cwd,
+      })
+    ).toContain("<muted>frames:     </muted>24 (frame 1 shown)");
   });
 });

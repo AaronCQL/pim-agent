@@ -27,6 +27,7 @@ import { SessionProjection } from "./SessionProjection";
 import { SessionStream } from "./SessionStream";
 import { StaticClient } from "./StaticClient";
 import { AttachmentEndpoint } from "./AttachmentEndpoint";
+import { ImageEndpoint } from "./ImageEndpoint";
 
 export type WsGatewayDeps = {
   readonly registry: SessionRegistry;
@@ -36,6 +37,8 @@ export type WsGatewayDeps = {
   readonly port?: number;
   /** Where uploaded bytes are kept; defaults to `~/.pim/attachments`. */
   readonly attachmentsRoot?: string;
+  /** Where `read` spilled the pictures it showed the model; defaults to `~/.pim/cache`. */
+  readonly imagesRoot?: string;
   /** Where the read cursors live; defaults to `~/.pim/read.json`. */
   readonly readCursorsPath?: string;
   /** The built web client; defaults to the bundle shipped beside this package. */
@@ -76,6 +79,7 @@ export class WsGateway {
   private readonly hostname: string;
   private readonly requestedPort: number;
   private readonly uploads: AttachmentEndpoint;
+  private readonly images: ImageEndpoint;
   private readonly catalogue: SessionCatalogue;
   private readonly client: StaticClient;
   private readonly streams = new Map<string, SessionStream>();
@@ -94,6 +98,9 @@ export class WsGateway {
     this.requestedPort = deps.port ?? DEFAULT_PORT;
     this.uploads = new AttachmentEndpoint(
       deps.attachmentsRoot === undefined ? {} : { root: deps.attachmentsRoot }
+    );
+    this.images = new ImageEndpoint(
+      deps.imagesRoot === undefined ? {} : { root: deps.imagesRoot }
     );
     this.catalogue = new SessionCatalogue({
       registry: deps.registry,
@@ -142,6 +149,9 @@ export class WsGateway {
         }
         if (AttachmentEndpoint.owns(pathname)) {
           return this.uploads.handle(req);
+        }
+        if (ImageEndpoint.owns(pathname)) {
+          return this.images.handle(req);
         }
         // Try the upgrade first: the socket must answer on every path.
         return server.upgrade(req) ? undefined : this.client.handle(req);

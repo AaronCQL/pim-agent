@@ -1,4 +1,5 @@
 import type { ToolDiffHunk } from "../shared/DiffLines";
+import type { ImageMimeType } from "../shared/Images";
 
 export type DiffHunk = ToolDiffHunk;
 
@@ -35,6 +36,8 @@ export type Span = {
 };
 
 export type NoticeSeverity = "info" | "warn" | "error";
+
+export type KvPair = readonly [string, string];
 
 export type ViewBlock =
   | { readonly kind: "text"; readonly text: string; readonly tone?: Tone }
@@ -74,7 +77,7 @@ export type ViewBlock =
     }
   | {
       readonly kind: "kv";
-      readonly pairs: ReadonlyArray<readonly [string, string]>;
+      readonly pairs: readonly KvPair[];
     }
   | { readonly kind: "link"; readonly href: string; readonly label: string }
   /** A file delivered to the reader, not a path on the agent's machine; `url` is server-relative. */
@@ -84,6 +87,16 @@ export type ViewBlock =
       readonly name: string;
       readonly url: string;
       readonly isImage: boolean;
+    }
+  /** A picture the model was shown, addressed by digest; the bytes never ride the wire, and the client that fetches them builds the URL. */
+  | {
+      readonly kind: "image";
+      readonly sha256: string;
+      readonly mimeType: ImageMimeType;
+      readonly width: number;
+      readonly height: number;
+      readonly bytes: number;
+      readonly alt: string;
     }
   | {
       readonly kind: "notice";

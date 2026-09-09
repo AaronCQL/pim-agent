@@ -1,5 +1,6 @@
 import { createMemo, For, Show } from "solid-js";
 
+import { Painting } from "#core/view/Painting";
 import type { Tone, ToolView, ViewBlock } from "#core/view/ViewBlock";
 import { Markdown } from "../markdown/Markdown";
 import { Collapsible, Marker, Spine } from "../ui/Collapsible";
@@ -19,8 +20,9 @@ export function ToolCard(props: {
   const partial = () => props.isPartial === true;
   const caret = () => caretClass(partial(), error());
   const spine = () => spineClass(partial(), error());
+  // A body holding the tool's own result keeps its colour; chrome alone is quoted down.
   const dimmed = () =>
-    !body().some((block) => block.kind === "diff" || block.kind === "markdown");
+    !body().some((block) => Painting.WEIGHT[block.kind] === "payload");
 
   const tone = (): Tone | undefined =>
     props.view.labelTone ??

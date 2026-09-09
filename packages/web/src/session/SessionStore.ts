@@ -696,8 +696,13 @@ export class SessionStore {
     }
   }
 
+  /** What this browser resolves the gateway's own paths against: its uploads, and the pictures a tool view names. */
+  public get httpUrl(): string {
+    return this.client.httpUrl;
+  }
+
   private absolute(url: string): string {
-    return url.startsWith("/") ? `${this.client.httpUrl}${url}` : url;
+    return url.startsWith("/") ? `${this.httpUrl}${url}` : url;
   }
 
   private readonly toAbsolute = (url: string): string => this.absolute(url);

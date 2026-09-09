@@ -62,3 +62,66 @@ describe("layer boundaries", () => {
     expect(violations).toEqual([]);
   });
 });
+
+// Vite stubs Node built-ins for the browser, so a value import of one is not a
+// build error — it is a blank page the first time the module body runs.
+const aliases: Record<string, string> = {
+  core: "core/src/",
+  protocol: "protocol/src/",
+  server: "server/src/",
+  tui: "tui/src/",
+  telegram: "telegram/src/",
+  web: "web/src/",
+};
+
+const nodeOnly = (specifier: string) =>
+  specifier.startsWith("node:") || specifier.startsWith("@earendil-works/");
+
+function resolveModule(file: string, specifier: string): string | undefined {
+  const aliased = /^#([a-z]+)\/(.+)$/.exec(specifier);
+  const base = aliased
+    ? resolve(packagesRoot, aliases[aliased[1]!] ?? "", aliased[2]!)
+    : specifier.startsWith(".")
+      ? resolve(dirname(file), specifier)
+      : undefined;
+  if (base === undefined) {
+    return undefined;
+  }
+  const candidates = [`${base}.ts`, `${base}.tsx`, `${base}/index.ts`, base];
+  return candidates.find(
+    (path) => /\.tsx?$/.test(path) && Bun.file(path).size > 0
+  );
+}
+
+/** Imports left after type erasure — the ones that actually reach the bundle. */
+async function valueImportsOf(file: string): Promise<readonly string[]> {
+  const loader = file.endsWith(".tsx") ? "tsx" : "ts";
+  const source = await Bun.file(file).text();
+  return new Bun.Transpiler({ loader })
+    .scanImports(source)
+    .map((record) => record.path);
+}
+
+describe("browser safety", () => {
+  test("nothing the web entry loads reaches Node", async () => {
+    const entry = resolve(packagesRoot, "web/src/main.tsx");
+    const seen = new Set([entry]);
+    const queue = [entry];
+    const violations: string[] = [];
+    while (queue.length > 0) {
+      const file = queue.pop()!;
+      for (const specifier of await valueImportsOf(file)) {
+        if (nodeOnly(specifier)) {
+          violations.push(`${relative(packagesRoot, file)}: "${specifier}"`);
+          continue;
+        }
+        const next = resolveModule(file, specifier);
+        if (next !== undefined && !seen.has(next)) {
+          seen.add(next);
+          queue.push(next);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+});

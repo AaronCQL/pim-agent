@@ -1,9 +1,18 @@
 import { describe, expect, test } from "bun:test";
+import { PNG_MAGIC } from "../../shared/fixtures/images";
+import { Images } from "../../shared/Images";
 import { StreamCapture } from "./capture";
 import { STREAM_HEAD_BYTES, STREAM_TAIL_BYTES } from "./schema";
 
 const enc = new TextEncoder();
 const u8 = (s: string) => enc.encode(s);
+
+/** Header plus filler: the capture only ever looks at the leading bytes. */
+function pngish(totalBytes: number): Uint8Array {
+  const bytes = new Uint8Array(totalBytes).fill(0x41);
+  bytes.set(PNG_MAGIC);
+  return bytes;
+}
 
 describe("StreamCapture", () => {
   test("empty capture", () => {
@@ -111,5 +120,45 @@ describe("StreamCapture", () => {
     const snap = c.snapshot();
     expect(snap.truncated).toBe(false);
     expect(snap.totalBytes).toBe(STREAM_HEAD_BYTES + STREAM_TAIL_BYTES);
+  });
+});
+
+describe("StreamCapture opaque streams", () => {
+  test("an over-budget picture is kept whole instead of truncated", () => {
+    const c = new StreamCapture();
+    const bytes = pngish(STREAM_HEAD_BYTES + STREAM_TAIL_BYTES + 500);
+    c.push(bytes);
+
+    const snap = c.snapshot(true);
+    expect(snap.truncated).toBe(false);
+    expect(snap.text).toBe("");
+    expect(snap.totalBytes).toBe(bytes.byteLength);
+    expect(c.full().byteLength).toBe(bytes.byteLength);
+  });
+});
+
+describe("StreamCapture.lead", () => {
+  test("reads a signature across chunk boundaries", () => {
+    const c = new StreamCapture();
+    const bytes = pngish(64);
+    for (let at = 0; at < bytes.byteLength; at += 3) {
+      c.push(bytes.subarray(at, at + 3));
+    }
+    expect(c.lead(Images.SNIFF_BYTES)).toEqual(
+      bytes.subarray(0, Images.SNIFF_BYTES)
+    );
+  });
+
+  test("stops at the bytes there are", () => {
+    const c = new StreamCapture();
+    c.push(PNG_MAGIC);
+    expect(c.lead(Images.SNIFF_BYTES)).toEqual(PNG_MAGIC);
+  });
+
+  test("still reads once the chunks have been concatenated", () => {
+    const c = new StreamCapture();
+    c.push(pngish(64));
+    c.full();
+    expect(c.lead(4)).toEqual(PNG_MAGIC.subarray(0, 4));
   });
 });

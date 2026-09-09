@@ -185,6 +185,10 @@ function paintAttachment(
   return [`${theme.fg("muted", "sent")} ${block.name}`];
 }
 
+function paintImage(block: BlockOf<"image">, theme: Theme): readonly string[] {
+  return [theme.fg("muted", Painting.imageSummary(block))];
+}
+
 function paintMarkdown(block: BlockOf<"markdown">): readonly string[] {
   return block.text.split("\n");
 }
@@ -209,6 +213,7 @@ const PAINTERS: PainterMap<readonly string[], [Theme]> = {
   kv: paintKv,
   link: paintLink,
   attachment: paintAttachment,
+  image: paintImage,
   notice: paintNotice,
 };
 

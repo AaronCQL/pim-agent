@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test";
 import type { AgentToolResult, Theme } from "@earendil-works/pi-coding-agent";
 import { AnsiPainter } from "../../view/AnsiPainter";
 import { webFetchView } from "./render";
-import type { WebFetchDetails, WebFetchInput } from "./schema";
+import type {
+  WebFetchDetails,
+  WebFetchImageDetails,
+  WebFetchInput,
+} from "./schema";
 
 const stubTheme = {
   bold: (text: string) => text,
@@ -139,5 +143,55 @@ describe("webFetchView body", () => {
 
   test("omits an empty body", () => {
     expect(body(result(""))).toEqual([]);
+  });
+});
+
+describe("webFetchView on an image", () => {
+  function settledImage(
+    overrides: Partial<WebFetchImageDetails> = {}
+  ): AgentToolResult<WebFetchDetails> {
+    return {
+      content: [{ type: "image", data: "…", mimeType: "image/png" }],
+      details: {
+        kind: "image",
+        url: "https://example.com/chart.png",
+        sha256: "a".repeat(64),
+        mimeType: "image/png",
+        width: 1200,
+        height: 800,
+        bytes: 262_144,
+        resized: false,
+        frames: 1,
+        path: "/home/me/.pim/cache/img-abc.png",
+        withheld: false,
+        ...overrides,
+      },
+    };
+  }
+
+  test("labels the row by what was served, not the requested format", () => {
+    expect(
+      title(
+        { url: "https://example.com/chart.png", format: "html" },
+        settledImage()
+      )
+    ).toBe("https://example.com/chart.png 256KB PNG");
+  });
+
+  test("addresses the cached picture and repeats its dimensions and size", () => {
+    expect(body(settledImage())).toEqual([
+      "[image 1200×800 png · 256 KB]",
+      "dimensions: 1200x800",
+      "size:       256 KB",
+    ]);
+  });
+
+  test("says so when the picture never reached the model", () => {
+    expect(body(settledImage({ withheld: true, resized: true }))).toEqual([
+      "[image 1200×800 png · 256 KB]",
+      "dimensions: 1200x800 (downscaled)",
+      "size:       256 KB",
+      "not sent:   the current model has no vision input",
+    ]);
   });
 });

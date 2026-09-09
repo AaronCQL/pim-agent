@@ -1,38 +1,36 @@
 import { Paths } from "../../shared/Paths";
+import { Renderer } from "../../shared/Renderer";
+import type { ToolViewInput } from "../../shared/Tools";
+import { Painting } from "../../view/Painting";
 import type { ToolView, ViewBlock } from "../../view/ViewBlock";
-import type { ReadInput } from "./schema";
+import type { ReadDetails, ReadInput, readSchema } from "./schema";
 
-type ReadResultLike = {
-  readonly content?: ReadonlyArray<{
-    readonly type: string;
-    readonly text?: string;
-  }>;
-  readonly details?: unknown;
-};
-
-export type ReadViewInput = {
-  /** Partially streamed while the call is in flight; every field is optional. */
-  readonly args: Partial<ReadInput> | undefined;
-  readonly result?: ReadResultLike;
-  readonly cwd: string;
-};
+export type ReadViewInput = ToolViewInput<typeof readSchema, ReadDetails>;
 
 export function readView({ args, result, cwd }: ReadViewInput): ToolView {
-  const input = args ?? {};
+  const input: Partial<ReadInput> = args ?? {};
+  const details = result?.details;
+  const image = details?.kind === "image" ? details : undefined;
+  const path = Paths.titleOr(input.path, cwd);
   return {
     label: "Read",
     icon: "file",
-    title: [titleBlock(input, result?.details, cwd)],
-    body: [{ kind: "text", text: bodyText(result) }],
+    title: [image ? { kind: "file", path } : titleBlock(input, details, path)],
+    body: image
+      ? Painting.imageBlocks(
+          image,
+          path,
+          image.deduped ? [["reused", "unchanged since the earlier read"]] : []
+        )
+      : [{ kind: "text", text: Renderer.firstText(result) }],
   };
 }
 
 function titleBlock(
   input: Partial<ReadInput>,
-  details: unknown,
-  cwd: string
+  details: ReadDetails | undefined,
+  path: string
 ): ViewBlock {
-  const path = Paths.titleOr(input.path, cwd);
   const visible = visibleRange(details);
 
   if (visible) {
@@ -46,22 +44,15 @@ function titleBlock(
   return { kind: "file", path, range: [input.start ?? 1, input.end] };
 }
 
-function visibleRange(details: unknown): readonly [number, number] | undefined {
-  if (typeof details !== "object" || details === null) {
+/** Legacy sessions predate the tag, so an untagged result is read for the range it may still carry. */
+function visibleRange(
+  details: ReadDetails | undefined
+): readonly [number, number] | undefined {
+  if (details === undefined || details.kind === "image") {
     return undefined;
   }
-
-  const { visibleStart, visibleEnd } = details as {
-    readonly visibleStart?: unknown;
-    readonly visibleEnd?: unknown;
-  };
-
+  const { visibleStart, visibleEnd } = details;
   return typeof visibleStart === "number" && typeof visibleEnd === "number"
     ? [visibleStart, visibleEnd]
     : undefined;
-}
-
-function bodyText(result: ReadResultLike | undefined): string {
-  const first = result?.content?.[0];
-  return first?.text ?? "";
 }

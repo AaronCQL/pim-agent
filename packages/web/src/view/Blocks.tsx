@@ -1,13 +1,25 @@
 import { Dynamic } from "@solidjs/web";
-import { createMemo, For, Show, type Component, type Element } from "solid-js";
+import {
+  createMemo,
+  createSignal,
+  For,
+  Show,
+  useContext,
+  type Component,
+  type Element,
+} from "solid-js";
 
 import type { IntraLineRange, ToolDiffLine } from "#core/shared/DiffLines";
+import { ImageMime } from "#core/shared/ImageMime";
 import { Languages } from "#core/shared/Languages";
 import { DiffLayout } from "#core/view/DiffLayout";
 import { Painting } from "#core/view/Painting";
 import type { BlockOf, DiffHunk, Span, ViewBlock } from "#core/view/ViewBlock";
+import { ImageRoute } from "#protocol/ImageRoute";
 import { Markdown } from "../markdown/Markdown";
+import { GatewayOrigin } from "../session/Gateway";
 import { CopyButton } from "../ui/CopyButton";
+import { ImageTile } from "../ui/ImageTile";
 import { Attachments } from "./Attachments";
 import { Highlight, type Token } from "./highlight";
 import {
@@ -389,6 +401,37 @@ function AttachmentBlock(props: { readonly block: BlockOf<"attachment"> }) {
   );
 }
 
+function ImageBlock(props: { readonly block: BlockOf<"image"> }) {
+  const origin = useContext(GatewayOrigin);
+  // The cache sweep takes the bytes after a week; the summary is what the row keeps saying.
+  const [swept, setSwept] = createSignal(false);
+  const src = () =>
+    `${origin()}${ImageRoute.url(
+      props.block.sha256,
+      ImageMime.extensionOf(props.block.mimeType)
+    )}`;
+
+  return (
+    <Show
+      when={!swept()}
+      fallback={
+        <p class="text-neutral-400">{Painting.imageSummary(props.block)}</p>
+      }
+    >
+      <ImageTile
+        src={src()}
+        alt={props.block.alt}
+        width={props.block.width}
+        height={props.block.height}
+        class="h-auto max-h-64 w-auto max-w-full object-contain"
+        onError={() => {
+          setSwept(true);
+        }}
+      />
+    </Show>
+  );
+}
+
 const PAINTERS: PainterMap = {
   text: TextBlock,
   markdown: MarkdownBlock,
@@ -401,5 +444,6 @@ const PAINTERS: PainterMap = {
   kv: KvBlock,
   link: LinkBlock,
   attachment: AttachmentBlock,
+  image: ImageBlock,
   notice: NoticeBlock,
 };

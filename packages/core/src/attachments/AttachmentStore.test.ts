@@ -89,7 +89,7 @@ test("traversal in the scope is refused outright", async () => {
 
   expect(
     store.store("..", { bytes: bytes("x"), mimeType: "text/plain" })
-  ).rejects.toThrow(/refusing attachment path/);
+  ).rejects.toThrow(/refusing path outside/);
 });
 
 test("an explicit stem and extension are kept verbatim", async () => {
@@ -137,6 +137,6 @@ test("a delivered file is scoped and named like any other", async () => {
   expect(stored.mimeType).toBe("application/octet-stream");
 
   expect(store.storeFile("..", source)).rejects.toThrow(
-    /refusing attachment path/
+    /refusing path outside/
   );
 });

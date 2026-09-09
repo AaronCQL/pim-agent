@@ -34,7 +34,7 @@
     "packages/protocol/src/",
     "packages/server/src/",
     "packages/web/dist/client/",
-    "!packages/core/src/session/fixtures/",
+    "!packages/core/src/**/fixtures/",
     "!packages/**/*.test.ts"
   ],
   "engines": {

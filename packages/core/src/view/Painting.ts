@@ -1,4 +1,7 @@
-import type { BlockOf, ViewBlock } from "./ViewBlock";
+import { Format } from "../shared/Format";
+import { ImageMime } from "../shared/ImageMime";
+import type { ImageDetails } from "../shared/Images";
+import type { BlockOf, KvPair, ViewBlock } from "./ViewBlock";
 
 export type PainterMap<TOut, TArgs extends readonly unknown[] = []> = {
   readonly [TKind in ViewBlock["kind"]]: (
@@ -34,8 +37,28 @@ const FRAMES = {
   kv: "flow",
   link: "flow",
   attachment: "flow",
+  image: "flow",
   notice: "flow",
 } as const satisfies Record<ViewBlock["kind"], BlockFrame>;
+
+/** What a block is to the tool that emitted it: its result, or the chrome around one. */
+export type BlockWeight = "payload" | "chrome";
+
+const WEIGHT = {
+  text: "chrome",
+  markdown: "payload",
+  spans: "chrome",
+  section: "chrome",
+  code: "chrome",
+  diff: "payload",
+  file: "chrome",
+  list: "chrome",
+  kv: "chrome",
+  link: "chrome",
+  attachment: "chrome",
+  image: "payload",
+  notice: "chrome",
+} as const satisfies Record<ViewBlock["kind"], BlockWeight>;
 
 export type FrameGroup<TFrame> = {
   readonly frame: TFrame;
@@ -84,6 +107,44 @@ function linkLabel(block: {
     : block.label;
 }
 
+/** What a painter that cannot draw the picture says instead: `[image 1200×800 png · 240 KB]`. */
+function imageSummary(block: BlockOf<"image">): string {
+  return `[image ${block.width}×${block.height} ${ImageMime.extensionOf(block.mimeType)} · ${Format.bytes(block.bytes)}]`;
+}
+
+/** The picture plus what it cannot show about itself; `extra` is whatever only the calling tool knows. */
+function imageBlocks(
+  details: ImageDetails,
+  alt: string,
+  extra: readonly KvPair[] = []
+): readonly ViewBlock[] {
+  return [
+    {
+      kind: "image",
+      sha256: details.sha256,
+      mimeType: details.mimeType,
+      width: details.width,
+      height: details.height,
+      bytes: details.bytes,
+      alt,
+    },
+    {
+      kind: "kv",
+      pairs: [
+        [
+          "dimensions",
+          `${details.width}x${details.height}${details.resized ? " (downscaled)" : ""}`,
+        ],
+        ...(details.frames >= 2
+          ? [["frames", `${details.frames} (frame 1 shown)`] as KvPair]
+          : []),
+        ["size", Format.bytes(details.bytes)],
+        ...extra,
+      ],
+    },
+  ];
+}
+
 function lineNumberWidth(start: number, count: number): number {
   return String(start + Math.max(0, count - 1)).length;
 }
@@ -108,11 +169,14 @@ function hangingList(
 
 export const Painting = {
   FRAMES,
+  WEIGHT,
   dispatch,
   groupByFrame,
   formatRange,
   fileSuffix,
   linkLabel,
+  imageSummary,
+  imageBlocks,
   lineNumberWidth,
   hangingList,
 };

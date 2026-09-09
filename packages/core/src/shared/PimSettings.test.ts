@@ -57,6 +57,9 @@ describe("PimSettings", () => {
     await expect(PimSettings.get("exa")).resolves.toEqual({});
     await expect(PimSettings.get("jina")).resolves.toEqual({});
     await expect(PimSettings.get("firecrawl")).resolves.toEqual({});
+    await expect(PimSettings.get("read")).resolves.toEqual({
+      dedupImages: true,
+    });
   });
 
   test("writes settings with private directory and file modes", async () => {
@@ -71,6 +74,7 @@ describe("PimSettings", () => {
       exa: { apiKey: "exa-test" },
       jina: { apiKey: "jina-test" },
       firecrawl: { apiKey: "firecrawl-test" },
+      read: { dedupImages: true },
     });
 
     expect((await stat(testPimHomeDir!)).mode & 0o777).toBe(0o700);

@@ -9,6 +9,7 @@ import {
 } from "solid-js";
 
 import { Composer } from "./input/Composer";
+import { GatewayOrigin } from "./session/Gateway";
 import { SessionStore } from "./session/SessionStore";
 import { Toast } from "./session/Toast";
 import { Sidebar } from "./sessions/Sidebar";
@@ -103,136 +104,145 @@ export function Shell(props: {
   });
 
   return (
-    <HideThinking value={() => props.settings.state.hideThinking}>
-      <main
-        class="flex overflow-hidden bg-neutral-925 text-neutral-100"
-        style={{
-          height:
-            viewportHeight() === undefined ? "100dvh" : `${viewportHeight()}px`,
-        }}
-      >
-        <Show when={desktop() && sidebar()}>
-          <div class="w-xs shrink-0 border-r border-neutral-700">
-            <Sidebar
-              store={props.store}
-              onNavigate={jump}
-              onOpenSettings={() => {
-                setConfiguring(true);
-              }}
-            />
-          </div>
-        </Show>
-
-        <Drawer
-          open={!desktop() && sidebar()}
-          label="Sessions"
-          onClose={() => {
-            setSidebar(false);
+    <GatewayOrigin value={() => props.store.httpUrl}>
+      <HideThinking value={() => props.settings.state.hideThinking}>
+        <main
+          class="flex overflow-hidden bg-neutral-925 text-neutral-100"
+          style={{
+            height:
+              viewportHeight() === undefined
+                ? "100dvh"
+                : `${viewportHeight()}px`,
           }}
         >
-          {/* Only the live host is mounted: two Sidebars would each query the server. */}
-          <Show when={!desktop()}>
-            <Sidebar
+          <Show when={desktop() && sidebar()}>
+            <div class="w-xs shrink-0 border-r border-neutral-700">
+              <Sidebar
+                store={props.store}
+                onNavigate={jump}
+                onOpenSettings={() => {
+                  setConfiguring(true);
+                }}
+              />
+            </div>
+          </Show>
+
+          <Drawer
+            open={!desktop() && sidebar()}
+            label="Sessions"
+            onClose={() => {
+              setSidebar(false);
+            }}
+          >
+            {/* Only the live host is mounted: two Sidebars would each query the server. */}
+            <Show when={!desktop()}>
+              <Sidebar
+                store={props.store}
+                onNavigate={() => {
+                  setSidebar(false);
+                  jump();
+                }}
+                onOpenSettings={() => {
+                  setSidebar(false);
+                  setConfiguring(true);
+                }}
+              />
+            </Show>
+          </Drawer>
+
+          <div class="flex w-full min-w-0 flex-col">
+            <Topbar
               store={props.store}
-              onNavigate={() => {
-                setSidebar(false);
-                jump();
+              compact={!desktop()}
+              onToggleSidebar={() => {
+                setSidebar((open) => !open);
               }}
               onOpenSettings={() => {
-                setSidebar(false);
                 setConfiguring(true);
               }}
             />
-          </Show>
-        </Drawer>
 
-        <div class="flex w-full min-w-0 flex-col">
-          <Topbar
-            store={props.store}
-            compact={!desktop()}
-            onToggleSidebar={() => {
-              setSidebar((open) => !open);
-            }}
-            onOpenSettings={() => {
-              setConfiguring(true);
-            }}
-          />
-
-          <div class="relative min-h-0 flex-1">
-            <div
-              ref={anchor.mount}
-              class="h-full overflow-y-auto"
-              onScroll={anchor.onScroll}
-            >
+            <div class="relative min-h-0 flex-1">
               <div
-                ref={observeHeight(anchor.stick)}
-                class="mx-auto w-full max-w-3xl space-y-[--line] p-3 leading-[--line]"
-                style={{ "padding-bottom": `calc(${inset()}px + var(--line))` }}
+                ref={anchor.mount}
+                class="h-full overflow-y-auto"
+                onScroll={anchor.onScroll}
               >
-                <Show when={!props.store.state.loading} fallback={<Skeleton />}>
-                  <Show when={hasTranscript()}>
-                    <Transcript
-                      events={props.store.state.durable}
-                      trailing={props.store.trailing()}
-                      live={props.store.state.live}
-                      onEdit={recall}
-                      onOpenSubagent={(callId) => {
-                        void props.store.watch(callId);
-                      }}
-                    />
-                  </Show>
-                </Show>
-              </div>
-            </div>
-
-            <div
-              ref={observeHeight(setInset)}
-              class={{
-                "pointer-events-none flex": true,
-                "absolute right-[--scrollbar] bottom-0 left-0 justify-center bg-neutral-925 px-3 pt-10 pb-[max(0.75rem,env(safe-area-inset-bottom))]":
-                  !showSplash(),
-                "absolute inset-0 items-center justify-center overflow-hidden px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]":
-                  showSplash(),
-              }}
-            >
-              <div
-                class={{
-                  "w-full max-w-3xl": true,
-                  "flex max-h-full flex-col": showSplash(),
-                }}
-              >
-                <Show when={showSplash()}>
-                  <div class="min-h-0 overflow-hidden">
-                    <Splash />
-                  </div>
-                </Show>
                 <div
-                  class={{
-                    "mt-[calc(var(--line)*2)] shrink-0": showSplash(),
+                  ref={observeHeight(anchor.stick)}
+                  class="mx-auto w-full max-w-3xl space-y-[--line] p-3 leading-[--line]"
+                  style={{
+                    "padding-bottom": `calc(${inset()}px + var(--line))`,
                   }}
                 >
-                  <Composer
-                    store={props.store}
-                    onSend={jump}
-                    recalled={recalled()}
-                  />
+                  <Show
+                    when={!props.store.state.loading}
+                    fallback={<Skeleton />}
+                  >
+                    <Show when={hasTranscript()}>
+                      <Transcript
+                        events={props.store.state.durable}
+                        trailing={props.store.trailing()}
+                        live={props.store.state.live}
+                        onEdit={recall}
+                        onOpenSubagent={(callId) => {
+                          void props.store.watch(callId);
+                        }}
+                      />
+                    </Show>
+                  </Show>
                 </div>
               </div>
-            </div>
 
-            <Toast update={props.store.update} desktop={desktop()} />
+              <div
+                ref={observeHeight(setInset)}
+                class={{
+                  "pointer-events-none flex": true,
+                  "absolute right-[--scrollbar] bottom-0 left-0 justify-center bg-neutral-925 px-3 pt-10 pb-[max(0.75rem,env(safe-area-inset-bottom))]":
+                    !showSplash(),
+                  "absolute inset-0 items-center justify-center overflow-hidden px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]":
+                    showSplash(),
+                }}
+              >
+                <div
+                  class={{
+                    "w-full max-w-3xl": true,
+                    "flex max-h-full flex-col": showSplash(),
+                  }}
+                >
+                  <Show when={showSplash()}>
+                    <div class="min-h-0 overflow-hidden">
+                      <Splash />
+                    </div>
+                  </Show>
+                  <div
+                    class={{
+                      "mt-[calc(var(--line)*2)] shrink-0": showSplash(),
+                    }}
+                  >
+                    <Composer
+                      store={props.store}
+                      onSend={jump}
+                      recalled={recalled()}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <Toast update={props.store.update} desktop={desktop()} />
+            </div>
           </div>
-        </div>
-        <SubagentModal store={props.store} />
-        <SettingsModal
-          open={configuring()}
-          store={props.store}
-          settings={props.settings}
-          onClose={() => {
-            setConfiguring(false);
-          }}
-        />
-      </main>
-    </HideThinking>
+          <SubagentModal store={props.store} />
+          <SettingsModal
+            open={configuring()}
+            store={props.store}
+            settings={props.settings}
+            onClose={() => {
+              setConfiguring(false);
+            }}
+          />
+        </main>
+      </HideThinking>
+    </GatewayOrigin>
   );
 }

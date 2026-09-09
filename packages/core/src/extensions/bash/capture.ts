@@ -22,38 +22,54 @@ export class StreamCapture {
     return this.totalBytesAccum;
   }
 
-  get truncated(): boolean {
-    return this.totalBytesAccum > STREAM_HEAD_BYTES + STREAM_TAIL_BYTES;
+  /** The first `n` bytes, read across however many chunks the kernel split them into. */
+  lead(n: number): Uint8Array {
+    if (this.fullBytes) {
+      return this.fullBytes.subarray(0, n);
+    }
+    const lead = new Uint8Array(Math.min(n, this.totalBytesAccum));
+    let at = 0;
+    for (const chunk of this.chunks) {
+      if (at === lead.byteLength) {
+        break;
+      }
+      const take = chunk.subarray(0, lead.byteLength - at);
+      lead.set(take, at);
+      at += take.byteLength;
+    }
+    return lead;
   }
 
   full(): Uint8Array {
     if (!this.fullBytes) {
       this.fullBytes = Buffer.concat(this.chunks, this.totalBytesAccum);
+      this.chunks = [];
     }
     return this.fullBytes;
   }
 
-  snapshot(): CapturedStream {
-    if (this.totalBytesAccum === 0) {
+  /** Opaque bytes are not text: a half-image is worthless, so they are neither cut nor decoded. */
+  snapshot(opaque = false): CapturedStream {
+    if (this.totalBytesAccum === 0 || opaque) {
       return {
         text: "",
-        totalBytes: 0,
-        truncated: false,
-        path: null,
-        nextStart: null,
-      };
-    }
-    const dec = new TextDecoder();
-    if (!this.truncated) {
-      return {
-        text: dec.decode(this.full()),
         totalBytes: this.totalBytesAccum,
         truncated: false,
         path: null,
         nextStart: null,
       };
     }
+    const dec = new TextDecoder();
     const all = this.full();
+    if (this.totalBytesAccum <= STREAM_HEAD_BYTES + STREAM_TAIL_BYTES) {
+      return {
+        text: dec.decode(all),
+        totalBytes: this.totalBytesAccum,
+        truncated: false,
+        path: null,
+        nextStart: null,
+      };
+    }
     const headText = dec.decode(all.subarray(0, STREAM_HEAD_BYTES));
     const tailText = dec.decode(
       all.subarray(all.byteLength - STREAM_TAIL_BYTES)

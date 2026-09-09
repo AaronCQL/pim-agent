@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "bun:test";
 import { OutputBudget } from "../../shared/OutputBudget";
-import { buildReadRange, readFile } from "./read";
+import { buildReadRange, readFile, type TextReadOutcome } from "./read";
+import type { ReadRange } from "./schema";
 
 const MAX_LINE_LENGTH = OutputBudget.maxLineLength;
 
@@ -14,6 +15,17 @@ const tempRoot = async (): Promise<string> => {
   tempRoots.push(root);
   return root;
 };
+
+async function readText(
+  path: string,
+  range: ReadRange
+): Promise<TextReadOutcome> {
+  const outcome = await readFile(path, range);
+  if (outcome.kind !== "text") {
+    throw new Error(`expected a text read, got ${outcome.kind}`);
+  }
+  return outcome;
+}
 
 afterAll(async () => {
   await Promise.all(
@@ -27,7 +39,7 @@ describe("readFile", () => {
     const path = join(root, "notes.txt");
     await writeFile(path, "alpha\nbeta\ngamma", "utf8");
 
-    const outcome = await readFile(path, buildReadRange(2, 2));
+    const outcome = await readText(path, buildReadRange(2, 2));
     expect(outcome.body).toBe("2:beta");
     expect(outcome.totalLines).toBe(3);
     expect(outcome.visibleStart).toBe(2);
@@ -42,7 +54,7 @@ describe("readFile", () => {
     const path = join(root, "notes.txt");
     await writeFile(path, "alpha\nbeta\ngamma\n", "utf8");
 
-    const outcome = await readFile(path, buildReadRange(undefined, undefined));
+    const outcome = await readText(path, buildReadRange(undefined, undefined));
     expect(outcome.body).toBe(["1:alpha", "2:beta", "3:gamma"].join("\n"));
     expect(outcome.totalLines).toBe(3);
     expect(outcome.truncatedByEnd).toBe(false);
@@ -53,7 +65,7 @@ describe("readFile", () => {
     const path = join(root, "notes.txt");
     await writeFile(path, "alpha\nbeta\ngamma", "utf8");
 
-    const outcome = await readFile(path, buildReadRange(undefined, 999));
+    const outcome = await readText(path, buildReadRange(undefined, 999));
     expect(outcome.body).toBe(["1:alpha", "2:beta", "3:gamma"].join("\n"));
     expect(outcome.totalLines).toBe(3);
     expect(outcome.visibleEnd).toBe(3);
@@ -65,7 +77,7 @@ describe("readFile", () => {
     const path = join(root, "bom.txt");
     await writeFile(path, "\uFEFFalpha\nbeta", "utf8");
 
-    const outcome = await readFile(path, buildReadRange(undefined, undefined));
+    const outcome = await readText(path, buildReadRange(undefined, undefined));
     expect(outcome.body).toBe("1:alpha\n2:beta");
     expect(outcome.hadBom).toBe(true);
   });
@@ -75,7 +87,7 @@ describe("readFile", () => {
     const path = join(root, "long-line.txt");
     await writeFile(path, `${"x".repeat(MAX_LINE_LENGTH + 10)}\nshort`, "utf8");
 
-    const outcome = await readFile(path, buildReadRange(1, 1));
+    const outcome = await readText(path, buildReadRange(1, 1));
     expect(outcome.body).toBe(
       `1:${"x".repeat(MAX_LINE_LENGTH)}... (line truncated to ${MAX_LINE_LENGTH} chars)`
     );
@@ -154,7 +166,7 @@ describe("readFile", () => {
     );
     await writeFile(path, lines.join("\n"), "utf8");
 
-    const outcome = await readFile(path, buildReadRange(undefined, undefined));
+    const outcome = await readText(path, buildReadRange(undefined, undefined));
     expect(Buffer.byteLength(outcome.body, "utf8")).toBeLessThanOrEqual(
       32 * 1024
     );

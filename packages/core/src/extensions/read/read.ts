@@ -1,9 +1,20 @@
+import { Format } from "../../shared/Format";
 import { FsErrors } from "../../shared/FsErrors";
+import type { VisionModel } from "../../shared/Images";
 import { Lines } from "../../shared/Lines";
 import { OutputBudget } from "../../shared/OutputBudget";
+import {
+  assertImageReadable,
+  type ImageReadOutcome,
+  isImageRead,
+  readImage,
+  type UnchangedImageReadOutcome,
+} from "./image";
+import type { ImageMemory } from "./ImageMemory";
 import type { ReadRange } from "./schema";
 
-export type ReadOutcome = {
+export type TextReadOutcome = {
+  readonly kind: "text";
   readonly body: string;
   readonly totalLines: number;
   readonly visibleStart: number;
@@ -12,6 +23,17 @@ export type ReadOutcome = {
   readonly truncatedByEnd: boolean;
   readonly hadBom: boolean;
   readonly nextStart?: number;
+};
+
+export type ReadOutcome =
+  | TextReadOutcome
+  | ImageReadOutcome
+  | UnchangedImageReadOutcome;
+
+export type ReadOptions = {
+  readonly model?: VisionModel;
+  /** The pictures this session has already sent; absent when the caller keeps none. */
+  readonly memory?: ImageMemory;
 };
 
 export function buildReadRange(
@@ -40,7 +62,8 @@ export function buildReadRange(
 
 export async function readFile(
   path: string,
-  range: ReadRange
+  range: ReadRange,
+  options: ReadOptions = {}
 ): Promise<ReadOutcome> {
   const metadata = await FsErrors.statOrThrow(path);
 
@@ -52,30 +75,46 @@ export async function readFile(
 
   const file = Bun.file(path);
 
-  let binary: boolean;
-  try {
-    binary = await Lines.isBinary(file);
-  } catch (error) {
-    rethrowFsError(error, path, "read");
+  // One head serves both verdicts: the signature is in its first bytes, a NUL anywhere in it.
+  const head = await bytesOf(file.slice(0, Lines.binarySniffBytes), path);
+
+  if (isImageRead(head, path)) {
+    assertImageReadable(path, metadata.size, options.model);
+
+    const stamp = { mtimeMs: metadata.mtimeMs, size: metadata.size };
+    const remembered = await options.memory?.recall(path, stamp);
+
+    if (remembered !== undefined) {
+      return {
+        kind: "image-unchanged",
+        details: { ...remembered, deduped: true },
+      };
+    }
+
+    const outcome = await readImage(await bytesOf(file, path), path);
+    options.memory?.remember(path, stamp, outcome.details);
+    return outcome;
   }
 
-  if (binary) {
+  if (Lines.isBinaryBytes(head)) {
     throw new Error(
       `Read only supports UTF-8 text files but given path is a binary file. Use bash with 'file' or 'xxd' to inspect binary contents.`
     );
   }
 
-  let bytes: Uint8Array;
-  try {
-    bytes = await file.bytes();
-  } catch (error) {
-    rethrowFsError(error, path, "read");
-  }
-
+  const bytes = await bytesOf(file, path);
   const hadBom = Lines.hasUtf8Bom(bytes);
   const text = new TextDecoder("utf-8").decode(bytes);
 
   return renderText(Lines.stripUtf8Bom(text), range, path, hadBom);
+}
+
+async function bytesOf(file: Bun.BunFile, path: string): Promise<Uint8Array> {
+  try {
+    return await file.bytes();
+  } catch (error) {
+    rethrowFsError(error, path, "read");
+  }
 }
 
 function renderText(
@@ -83,7 +122,7 @@ function renderText(
   range: ReadRange,
   path: string,
   hadBom: boolean
-): ReadOutcome {
+): TextReadOutcome {
   const lines = Lines.split(content);
   const totalLines = lines.length;
 
@@ -110,7 +149,7 @@ function renderText(
     if (visible.length === 0) {
       if (lineBytes > OutputBudget.maxBytes) {
         throw new Error(
-          `Line ${lineNumber} is ${formatBytes(lineBytes)}, exceeds the ${formatBytes(OutputBudget.maxBytes)} read cap. Use bash: sed -n '${lineNumber}p' ${path} | head -c ${OutputBudget.maxBytes}${range.start < totalLines ? `, or call read again with start=${range.start + 1} to skip this line.` : "."}`
+          `Line ${lineNumber} is ${Format.bytes(lineBytes)}, exceeds the ${Format.bytes(OutputBudget.maxBytes)} read cap. Use bash: sed -n '${lineNumber}p' ${path} | head -c ${OutputBudget.maxBytes}${range.start < totalLines ? `, or call read again with start=${range.start + 1} to skip this line.` : "."}`
         );
       }
     } else if (bytes + separatorBytes + lineBytes > OutputBudget.maxBytes) {
@@ -127,6 +166,7 @@ function renderText(
   const truncatedByEnd = lastVisibleLine < totalLines;
 
   return {
+    kind: "text",
     body,
     totalLines,
     visibleStart: range.start,
@@ -136,18 +176,6 @@ function renderText(
     hadBom,
     ...(truncatedByEnd ? { nextStart: lastVisibleLine + 1 } : {}),
   };
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) {
-    return `${bytes} B`;
-  }
-
-  if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(1)} KiB`;
-  }
-
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
 function rethrowFsError(error: unknown, path: string, action: string): never {

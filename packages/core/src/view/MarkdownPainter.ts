@@ -66,14 +66,25 @@ function paintTool(view: ToolView): PaintedTool {
     .map((blocks) => paintInline(blocks))
     .filter((text) => text !== "")
     .join(" ");
-  const outline = paintBody(view.body ?? [])
-    .filter((group) => group.frame === "heading")
-    .flatMap((group) => group.lines);
+  const outline = outlined(view.body ?? []).flatMap((block) =>
+    paintBlock(block, "block")
+  );
 
   return {
     icon: icon(view.icon),
     lines: [head, ...outline].filter((line) => line !== ""),
   };
+}
+
+/** A chat row carries a body's headings and any payload that fits a line; an embedded one needs a screen. */
+function outlined(blocks: readonly ViewBlock[]): readonly ViewBlock[] {
+  return blocks.filter((block) => {
+    const frame = Painting.FRAMES[block.kind];
+    return (
+      frame === "heading" ||
+      (frame === "flow" && Painting.WEIGHT[block.kind] === "payload")
+    );
+  });
 }
 
 const ICONS = {
@@ -260,6 +271,10 @@ function paintAttachment(
   return [escapeIn(block.name, mode)];
 }
 
+function paintImage(block: BlockOf<"image">, mode: Mode): readonly string[] {
+  return [escapeIn(Painting.imageSummary(block), mode)];
+}
+
 function paintMarkdown(
   block: BlockOf<"markdown">,
   mode: Mode
@@ -284,6 +299,7 @@ const PAINTERS: PainterMap<readonly string[], [Mode]> = {
   kv: paintKv,
   link: paintLink,
   attachment: paintAttachment,
+  image: paintImage,
   notice: paintNotice,
 };
 

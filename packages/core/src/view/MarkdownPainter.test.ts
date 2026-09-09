@@ -247,6 +247,20 @@ describe("MarkdownPainter kv, link and notice", () => {
     ).toEqual(["a&amp;b.png"]);
   });
 
+  test("summarises an image it cannot draw", () => {
+    expect(
+      paint({
+        kind: "image",
+        sha256: "a".repeat(64),
+        mimeType: "image/png",
+        width: 1200,
+        height: 800,
+        bytes: 245_760,
+        alt: "docs/shot.png",
+      })
+    ).toEqual(["[image 1200×800 png · 240 KB]"]);
+  });
+
   test("prefixes a notice by severity", () => {
     expect(paint({ kind: "notice", text: "fyi", severity: "info" })).toEqual([
       "fyi",
@@ -307,6 +321,31 @@ describe("MarkdownPainter.paintTool", () => {
     expect(MarkdownPainter.paintTool({ title: [] })).toEqual({
       icon: "⚙️",
       lines: [],
+    });
+  });
+
+  test("names a picture in the body without repeating its kv", () => {
+    expect(
+      MarkdownPainter.paintTool({
+        label: "Read",
+        icon: "file",
+        title: [{ kind: "file", path: "docs/shot.png" }],
+        body: [
+          {
+            kind: "image",
+            sha256: "a".repeat(64),
+            mimeType: "image/png",
+            width: 1200,
+            height: 800,
+            bytes: 245_760,
+            alt: "docs/shot.png",
+          },
+          { kind: "kv", pairs: [["dimensions", "1200x800"]] },
+        ],
+      })
+    ).toEqual({
+      icon: "📄",
+      lines: ["<code>shot.png</code>", "[image 1200×800 png · 240 KB]"],
     });
   });
 });

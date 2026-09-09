@@ -50,6 +50,23 @@ describe("SpillCache.write", () => {
   });
 });
 
+describe("SpillCache.writeNamed", () => {
+  test("keeps the name it was given and re-writing is a no-op", async () => {
+    const name = `img-${"a".repeat(64)}.png`;
+    const first = await SpillCache.writeNamed(name, "first");
+    const second = await SpillCache.writeNamed(name, "second");
+
+    expect(first).toBe(join(SpillCache.dir(), name));
+    expect(second).toBe(first);
+    expect((await stat(first!)).mode & 0o777).toBe(0o600);
+    expect(await Bun.file(first!).text()).toBe("first");
+  });
+
+  test("reports a name it cannot write", async () => {
+    expect(await SpillCache.writeNamed("nested/img.png", "x")).toBeNull();
+  });
+});
+
 describe("SpillCache.cleanup", () => {
   test("deletes only expired spill files across prefixes", async () => {
     const root = await mkdtemp(join(tmpdir(), "pim-spill-cleanup-"));
@@ -60,17 +77,20 @@ describe("SpillCache.cleanup", () => {
       "fetch-0192ce11-26d5-7dc3-9305-1426de888c5b.md"
     );
     const recent = join(root, "bash-0192ce11-26d5-7dc4-8894-bc88d506d6ee.err");
+    const oldImage = join(root, `img-${"b".repeat(64)}.png`);
     const invalidName = join(root, "bash-not-a-uuid.out");
     const unrelated = join(root, "other-old.out");
     try {
       await writeFile(oldBash, "old");
       await writeFile(oldFetch, "old");
       await writeFile(recent, "recent");
+      await writeFile(oldImage, "old");
       await writeFile(invalidName, "invalid");
       await writeFile(unrelated, "unrelated");
       const oldDate = new Date(now - SpillCache.TTL_MS - 1000);
       await utimes(oldBash, oldDate, oldDate);
       await utimes(oldFetch, oldDate, oldDate);
+      await utimes(oldImage, oldDate, oldDate);
       await utimes(invalidName, oldDate, oldDate);
       await utimes(unrelated, oldDate, oldDate);
 
@@ -78,6 +98,7 @@ describe("SpillCache.cleanup", () => {
 
       expect(await Bun.file(oldBash).exists()).toBe(false);
       expect(await Bun.file(oldFetch).exists()).toBe(false);
+      expect(await Bun.file(oldImage).exists()).toBe(false);
       expect(await Bun.file(recent).exists()).toBe(true);
       expect(await Bun.file(invalidName).exists()).toBe(true);
       expect(await Bun.file(unrelated).exists()).toBe(true);

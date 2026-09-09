@@ -2,8 +2,14 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Images } from "../../shared/Images";
 import { SpillCache } from "../../shared/SpillCache";
-import { killAllActiveBashGroups, runBashCommand } from "./run";
+import { StreamCapture } from "./capture";
+import {
+  killAllActiveBashGroups,
+  runBashCommand,
+  sniffStdoutImage,
+} from "./run";
 import {
   DRAIN_GRACE_MS,
   KILL_GRACE_MS,
@@ -258,5 +264,57 @@ describe("runBashCommand (integration)", () => {
     expect(r.exitCode).toBe(0);
     expect(r.stdout.path).toBeNull();
     expect(r.stderr.path).toBeNull();
+  });
+});
+
+const PNG_MAGIC = Uint8Array.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+]);
+
+/** Header plus filler: the verdict only ever looks at the leading bytes. */
+function captureOf(...chunks: readonly Uint8Array[]): StreamCapture {
+  const cap = new StreamCapture();
+  for (const chunk of chunks) {
+    cap.push(chunk);
+  }
+  return cap;
+}
+
+function pngish(totalBytes: number): Uint8Array {
+  const bytes = new Uint8Array(totalBytes).fill(0x41);
+  bytes.set(PNG_MAGIC);
+  return bytes;
+}
+
+describe("sniffStdoutImage", () => {
+  test("names the format the leading bytes carry", () => {
+    expect(sniffStdoutImage(captureOf(pngish(64)))).toBe("image/png");
+  });
+
+  test("stdout shorter than the signature is text", () => {
+    expect(
+      sniffStdoutImage(captureOf(PNG_MAGIC.subarray(0, Images.SNIFF_BYTES - 1)))
+    ).toBeNull();
+  });
+
+  test("only the leading bytes decide, never bytes that arrive later", () => {
+    const cap = captureOf(new TextEncoder().encode("building...\n"), PNG_MAGIC);
+    expect(sniffStdoutImage(cap)).toBeNull();
+  });
+
+  test("binary that is not one of the four formats stays text", () => {
+    const zip = Uint8Array.from([
+      0x50, 0x4b, 0x03, 0x04, 0, 0, 0, 0, 0, 0, 0, 0,
+    ]);
+    expect(sniffStdoutImage(captureOf(zip))).toBeNull();
+  });
+
+  test("over the source cap it degrades to text again", () => {
+    const cap = captureOf(
+      pngish(Images.SNIFF_BYTES),
+      new Uint8Array(Images.MAX_SOURCE_BYTES)
+    );
+    expect(sniffStdoutImage(cap)).toBeNull();
+    expect(cap.snapshot().truncated).toBe(true);
   });
 });

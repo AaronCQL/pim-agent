@@ -1,8 +1,10 @@
 import { Errors } from "../../shared/Errors";
 import { isIP } from "node:net";
+import type { HttpFetch } from "../../shared/Http";
 import { Lines } from "../../shared/Lines";
 import { OutputBudget } from "../../shared/OutputBudget";
 import { SpillCache } from "../../shared/SpillCache";
+import { fetchImage, type WebFetchImageOutcome } from "./image";
 import type { JinaReaderClient } from "./JinaReaderClient";
 import {
   WEB_FETCH_INLINE_BYTES,
@@ -17,7 +19,8 @@ export type WebFetchPage = {
   readonly content: string;
 };
 
-export type WebFetchOutcome = {
+export type WebFetchPageOutcome = {
+  readonly kind: "page";
   readonly text: string;
   readonly title: string;
   readonly url: string;
@@ -27,6 +30,8 @@ export type WebFetchOutcome = {
   readonly truncated: boolean;
   readonly path: string | null;
 };
+
+export type WebFetchOutcome = WebFetchPageOutcome | WebFetchImageOutcome;
 
 export function truncationFooter(
   returnedBytes: number,
@@ -69,7 +74,7 @@ export function validatePublicUrl(value: string): string {
 export async function formatOutcome(
   page: WebFetchPage,
   format: WebFetchResolvedFormat
-): Promise<WebFetchOutcome> {
+): Promise<WebFetchPageOutcome> {
   const { body, returnedBytes, totalBytes, truncated } =
     OutputBudget.truncateUtf8(page.content, WEB_FETCH_INLINE_BYTES);
   const path = truncated
@@ -97,6 +102,7 @@ export async function formatOutcome(
   }
 
   return {
+    kind: "page",
     text: lines.join("\n"),
     title: page.title,
     url: page.url,
@@ -114,6 +120,8 @@ export type ExecuteFetchInput = {
   readonly url: string;
   readonly format: WebFetchFormat;
   readonly signal?: AbortSignal;
+  /** Only the image probe takes it; the readers own their own transports. */
+  readonly fetch?: HttpFetch;
 };
 
 export async function executeFetch(
@@ -124,6 +132,15 @@ export async function executeFetch(
     url,
     ...(signal === undefined ? {} : { signal }),
   };
+
+  const image = await fetchImage({
+    ...fetchInput,
+    fetch: input.fetch,
+  });
+
+  if (image !== null) {
+    return { kind: "image", url, image };
+  }
 
   if (format === "html") {
     const page = await webView.fetchHtml(fetchInput);

@@ -797,6 +797,42 @@ describe("stored files", () => {
       durable?.type === "message" ? durable.toolCalls?.[0]?.view : undefined;
     expect(carried?.summary?.[0]).toMatchObject({ url });
   });
+
+  // A delivery can sit inside a section in the body, so the resolver has to
+  // reach the blocks behind the disclosure too.
+  test("so is one nested in a body section", () => {
+    const target = store();
+    feed(target, attached("s1"), {
+      seq: 3,
+      type: "tool_result",
+      callId: "c2",
+      name: "send_file",
+      isError: false,
+      view: {
+        title: [{ kind: "file", path: "docs/revenue.png" }],
+        body: [
+          {
+            kind: "section",
+            label: "revenue",
+            content: [
+              {
+                kind: "attachment",
+                name: "revenue.png",
+                url: "/attachment/s1/revenue-1.png",
+                isImage: true,
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const section = toolRow(target, "c2")?.view.body?.[0];
+    expect(section?.kind === "section" && section.content[0]).toMatchObject({
+      kind: "attachment",
+      url,
+    });
+  });
 });
 
 describe("drafts", () => {

@@ -1,5 +1,7 @@
 import { mkdir } from "node:fs/promises";
-import { basename, extname, resolve, sep } from "node:path";
+import { basename, extname } from "node:path";
+
+import { SafePath } from "../shared/SafePath";
 
 /** A file the store has taken a copy of, under a name it chose. */
 export type StoredFile = {
@@ -75,33 +77,23 @@ export class AttachmentStore {
   ): Promise<{ readonly id: string; readonly path: string }> {
     const dir = this.scopeDir(scope);
     await mkdir(dir, { recursive: true });
-    const id = safeName(`${stem || Bun.randomUUIDv7()}-${Date.now()}${ext}`);
-    return { id, path: contain(dir, id) };
+    const id = SafePath.safeName(
+      `${stem || Bun.randomUUIDv7()}-${Date.now()}${ext}`
+    );
+    return { id, path: SafePath.contain(dir, id) };
   }
 
   private scopeDir(scope: string): string {
-    return contain(this.root, safeName(scope));
+    return SafePath.contain(this.root, SafePath.safeName(scope));
   }
 
   /** Where `store` put this id; the id is re-sanitised, so it can never name a file outside its scope. */
   public locate(scope: string, id: string): string {
-    return contain(this.scopeDir(scope), safeName(id));
+    return SafePath.contain(this.scopeDir(scope), SafePath.safeName(id));
   }
 }
 
 function extensionOf(input: AttachmentInput): string {
   const fromName = extname(basename(input.name ?? ""));
   return fromName || input.ext || "";
-}
-
-function safeName(name: string): string {
-  return basename(name).replace(/[^a-zA-Z0-9._-]/g, "_");
-}
-
-function contain(parent: string, child: string): string {
-  const path = resolve(parent, child);
-  if (!path.startsWith(`${resolve(parent)}${sep}`)) {
-    throw new Error(`refusing attachment path outside ${parent}: ${child}`);
-  }
-  return path;
 }

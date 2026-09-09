@@ -1,4 +1,5 @@
 import { type Static, Type } from "typebox";
+import type { ImageDetails } from "../../shared/Images";
 
 export const readSchema = Type.Object({
   path: Type.String({
@@ -25,3 +26,24 @@ export type ReadRange = {
   readonly start: number;
   readonly end?: number;
 };
+
+export type ReadTextDetails = {
+  readonly kind: "text";
+  readonly absolutePath: string;
+  readonly totalLines: number;
+  readonly visibleStart: number;
+  readonly visibleEnd: number;
+  readonly truncatedByByteCap: boolean;
+  readonly truncatedByEnd: boolean;
+  readonly hadBom: boolean;
+  readonly nextStart?: number;
+};
+
+export type ReadImageDetails = ImageDetails & {
+  readonly kind: "image";
+  readonly absolutePath: string;
+  /** Sent earlier in this conversation and unchanged since, so only the note went to the model. */
+  readonly deduped?: boolean;
+};
+
+export type ReadDetails = ReadTextDetails | ReadImageDetails;
