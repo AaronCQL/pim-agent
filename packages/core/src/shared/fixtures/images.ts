@@ -5,6 +5,14 @@ export const PNG_MAGIC = Uint8Array.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
 ]);
 
+/**
+ * A real downscale spins pi's Photon worker, which compiles its WASM on first
+ * use — seconds on a cold CI runner, and `bun test` runs files in parallel
+ * processes, so every suite that resizes pays it again. Bun's 5s default is
+ * not enough; only tests that actually resize need this.
+ */
+export const RESIZE_TIMEOUT_MS = 30_000;
+
 const encoder = new TextEncoder();
 
 function joined(...parts: readonly Uint8Array[]): Uint8Array<ArrayBuffer> {

@@ -1,6 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { usePimHome } from "../../shared/fixtures/home";
-import { animatedGif, png } from "../../shared/fixtures/images";
+import {
+  animatedGif,
+  png,
+  RESIZE_TIMEOUT_MS,
+} from "../../shared/fixtures/images";
 import { Images } from "../../shared/Images";
 import { executeFetch, type WebFetchOutcome } from "./fetch";
 import { fetchImage, imageContent, imageDetails, noVisionNote } from "./image";
@@ -170,16 +174,20 @@ describe("image result", () => {
     ]);
   });
 
-  test("keeps the resize note ahead of the picture", async () => {
-    const picture = image(await fetchPage("/wide.png"));
-    const content = imageContent(picture);
+  test(
+    "keeps the resize note ahead of the picture",
+    async () => {
+      const picture = image(await fetchPage("/wide.png"));
+      const content = imageContent(picture);
 
-    expect(content[0]).toEqual({
-      type: "text",
-      text: "image resized from 2400x600 to 2000x500; multiply coordinates by 1.20 to map to the original.",
-    });
-    expect(content[1]?.type).toBe("image");
-  });
+      expect(content[0]).toEqual({
+        type: "text",
+        text: "image resized from 2400x600 to 2000x500; multiply coordinates by 1.20 to map to the original.",
+      });
+      expect(content[1]?.type).toBe("image");
+    },
+    RESIZE_TIMEOUT_MS
+  );
 
   test("names the frames of an animation it fetched, and counts them in details", async () => {
     const picture = image(await fetchPage("/spin.gif"));

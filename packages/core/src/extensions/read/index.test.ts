@@ -8,7 +8,11 @@ import type {
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { usePimHome } from "../../shared/fixtures/home";
-import { animatedGif, png } from "../../shared/fixtures/images";
+import {
+  animatedGif,
+  png,
+  RESIZE_TIMEOUT_MS,
+} from "../../shared/fixtures/images";
 import { Images } from "../../shared/Images";
 import { PimSettings } from "../../shared/PimSettings";
 import registerRead from "./index";
@@ -100,35 +104,39 @@ describe("read tool on text", () => {
 });
 
 describe("read tool on images", () => {
-  test("returns the resize note ahead of the picture", async () => {
-    const path = join(home.path, "wide.png");
-    await Bun.write(path, png(2400, 600));
+  test(
+    "returns the resize note ahead of the picture",
+    async () => {
+      const path = join(home.path, "wide.png");
+      await Bun.write(path, png(2400, 600));
 
-    const result = await call(path);
-    expect(result.content).toHaveLength(2);
-    expect(result.content[0]).toEqual({
-      type: "text",
-      text: "image resized from 2400x600 to 2000x500; multiply coordinates by 1.20 to map to the original.",
-    });
-    expect(result.content[1]?.type).toBe("image");
+      const result = await call(path);
+      expect(result.content).toHaveLength(2);
+      expect(result.content[0]).toEqual({
+        type: "text",
+        text: "image resized from 2400x600 to 2000x500; multiply coordinates by 1.20 to map to the original.",
+      });
+      expect(result.content[1]?.type).toBe("image");
 
-    const details = result.details;
-    expect(details?.kind).toBe("image");
-    if (details?.kind !== "image") {
-      return;
-    }
-    expect(details).toEqual({
-      kind: "image",
-      absolutePath: path,
-      sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
-      mimeType: expect.stringMatching(/^image\//),
-      width: 2000,
-      height: 500,
-      bytes: expect.any(Number),
-      resized: true,
-      frames: 1,
-    });
-  });
+      const details = result.details;
+      expect(details?.kind).toBe("image");
+      if (details?.kind !== "image") {
+        return;
+      }
+      expect(details).toEqual({
+        kind: "image",
+        absolutePath: path,
+        sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+        mimeType: expect.stringMatching(/^image\//),
+        width: 2000,
+        height: 500,
+        bytes: expect.any(Number),
+        resized: true,
+        frames: 1,
+      });
+    },
+    RESIZE_TIMEOUT_MS
+  );
 
   test("sends a small picture on its own, with no note", async () => {
     const path = join(home.path, "icon.png");

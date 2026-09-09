@@ -7,6 +7,7 @@ import {
   apng,
   normalised,
   png,
+  RESIZE_TIMEOUT_MS,
 } from "./fixtures/images";
 import { Images } from "./Images";
 import { SpillCache } from "./SpillCache";
@@ -127,20 +128,24 @@ describe("Images.looksLikeImageName", () => {
 });
 
 describe("Images.normalise", () => {
-  test("shrinks an oversized image onto the long-edge cap", async () => {
-    const image = await Images.normalise(png(3000, 1200), "/tmp/wide.png");
+  test(
+    "shrinks an oversized image onto the long-edge cap",
+    async () => {
+      const image = await Images.normalise(png(3000, 1200), "/tmp/wide.png");
 
-    expect(image.originalWidth).toBe(3000);
-    expect(image.originalHeight).toBe(1200);
-    expect(image.width).toBe(2000);
-    expect(image.height).toBe(800);
-    expect(image.resized).toBe(true);
-    expect(image.bytes).toBe(Buffer.from(image.base64, "base64").byteLength);
-    expect(Images.isSupported(image.mimeType)).toBe(true);
-    expect(Images.noteOf(image)).toBe(
-      "image resized from 3000x1200 to 2000x800; multiply coordinates by 1.50 to map to the original."
-    );
-  });
+      expect(image.originalWidth).toBe(3000);
+      expect(image.originalHeight).toBe(1200);
+      expect(image.width).toBe(2000);
+      expect(image.height).toBe(800);
+      expect(image.resized).toBe(true);
+      expect(image.bytes).toBe(Buffer.from(image.base64, "base64").byteLength);
+      expect(Images.isSupported(image.mimeType)).toBe(true);
+      expect(Images.noteOf(image)).toBe(
+        "image resized from 3000x1200 to 2000x800; multiply coordinates by 1.50 to map to the original."
+      );
+    },
+    RESIZE_TIMEOUT_MS
+  );
 
   test("passes a small image through untouched", async () => {
     const source = png(64, 48);
