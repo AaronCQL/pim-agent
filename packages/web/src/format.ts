@@ -34,12 +34,26 @@ export function baseName(path: string): string {
   return trimmed.slice(trimmed.lastIndexOf("/") + 1) || path;
 }
 
-/** Cuts a path or branch into the part that may be elided and the part that must survive. */
-export function splitTail(text: string): readonly [string, string] {
-  const slash = text.lastIndexOf("/") + 1;
-  const centred = slash * 3 >= text.length && slash * 3 <= text.length * 2;
-  const cut = centred ? slash : Math.ceil(text.length / 2);
-  return [text.slice(0, cut), text.slice(cut)];
+const ELLIPSIS = "…";
+
+/** `text` in `columns` character cells, the middle spent first so both ends survive, the odd cell to the head. */
+export function elide(text: string, columns: number): string {
+  if (text.length <= columns) {
+    return text;
+  }
+  if (columns < 1) {
+    return "";
+  }
+  const head = Math.ceil((columns - 1) / 2);
+  return `${text.slice(0, head)}${ELLIPSIS}${text.slice(text.length - columns + 1 + head)}`;
+}
+
+/** The first of `texts` — widest first — that `columns` cells hold whole, elided when none of them do. */
+export function fit(texts: readonly string[], columns: number): string {
+  return (
+    texts.find((text) => text.length <= columns) ??
+    elide(texts.at(-1) ?? "", columns)
+  );
 }
 
 /** Wall-clock `17:24` for an epoch stamp, in the reader's own timezone. */

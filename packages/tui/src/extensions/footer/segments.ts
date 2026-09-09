@@ -32,7 +32,7 @@ function gitSegment(state: GitState): Segment | null {
   }
   let text = `${GIT_ICON} ${branch}`;
   if (dirtyCount > 0) {
-    text += ` ${GIT_DIRTY_ICON}`;
+    text += ` ${GIT_DIRTY_ICON}${dirtyCount}`;
   }
   if (ahead > 0 || behind > 0) {
     let arrows = " ";

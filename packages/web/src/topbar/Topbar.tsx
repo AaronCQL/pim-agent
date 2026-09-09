@@ -1,14 +1,20 @@
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 
-import { abbreviateHome, baseName, splitTail } from "../format";
+import { abbreviateHome, baseName, fit } from "../format";
 import type { SessionStore } from "../session/SessionStore";
 import type { ConnectionStatus } from "../ws/WsClient";
 import { DirectoryModal } from "./DirectoryModal";
 
 const CHIP =
-  "flex h-8 min-w-0 max-w-[50%] items-center gap-1.5 rounded-lg bg-neutral-850 px-2 text-sm text-neutral-350";
+  "flex h-8 max-w-max min-w-0 flex-1 items-center gap-1.5 rounded-lg bg-neutral-850 px-2 text-sm text-neutral-350";
+
+// Not the footer's U+F069: that is a Nerd Font glyph, and no browser has the font.
+const DIRTY_MARK = "\u2736";
 
 const GRACE_MS = 1500;
+
+// Sub-pixel slack, or a box a hair under its own text elides a text that fits.
+const SLACK = 0.02;
 
 /** The row above the transcript: where the session is, and what its repository is doing. */
 export function Topbar(props: {
@@ -23,8 +29,8 @@ export function Topbar(props: {
     () => props.store.state.connection,
     () => props.graceMs ?? GRACE_MS
   );
-  const path = (cwd: string): string =>
-    props.compact ? baseName(cwd) : abbreviateHome(cwd);
+  const paths = (cwd: string): readonly string[] =>
+    props.compact ? [baseName(cwd)] : [abbreviateHome(cwd), baseName(cwd)];
 
   return (
     <div class="flex h-12 shrink-0 items-center gap-2 border-b border-neutral-700 px-3">
@@ -42,19 +48,19 @@ export function Topbar(props: {
           <button
             type="button"
             class={`${CHIP} hover:bg-neutral-800 hover:text-neutral-50`}
-            aria-label={`Working directory ${path(cwd())}, open another`}
+            aria-label={`Working directory ${abbreviateHome(cwd())}, open another`}
             title={cwd()}
             onClick={() => {
               setChoosing(true);
             }}
           >
             <span class="i-griddy-icons:folder size-4 shrink-0" />
-            <Elided text={path(cwd())} />
+            <Fitted texts={paths(cwd())} />
           </button>
         )}
       </Show>
 
-      <div class="flex-1" />
+      <div class="ml-auto" />
 
       <Show when={offline()}>
         <button
@@ -73,26 +79,34 @@ export function Topbar(props: {
         {(branch) => (
           <div class={CHIP} title={branch()}>
             <span class="i-griddy-icons:code-branch size-4 shrink-0" />
-            <Elided text={branch()} />
+            <Fitted texts={[branch()]} />
             <Show when={props.store.state.dirtyCount > 0}>
               <span
                 class="shrink-0 text-amber-400"
                 title={`${props.store.state.dirtyCount} changed files`}
               >
-                ●{props.store.state.dirtyCount}
+                {DIRTY_MARK}
+                {props.store.state.dirtyCount}
               </span>
             </Show>
-            <Show when={!props.compact}>
-              <Show when={props.store.state.ahead > 0}>
-                <span class="shrink-0" title="Commits to push">
-                  ↑{props.store.state.ahead}
-                </span>
-              </Show>
-              <Show when={props.store.state.behind > 0}>
-                <span class="shrink-0 text-rose-400" title="Commits to pull">
-                  ↓{props.store.state.behind}
-                </span>
-              </Show>
+            <Show
+              when={
+                !props.compact &&
+                (props.store.state.ahead > 0 || props.store.state.behind > 0)
+              }
+            >
+              <span class="flex shrink-0 items-center">
+                <Show when={props.store.state.ahead > 0}>
+                  <span title="Commits to push">
+                    ↑{props.store.state.ahead}
+                  </span>
+                </Show>
+                <Show when={props.store.state.behind > 0}>
+                  <span class="text-rose-400" title="Commits to pull">
+                    ↓{props.store.state.behind}
+                  </span>
+                </Show>
+              </span>
             </Show>
           </div>
         )}
@@ -109,12 +123,42 @@ export function Topbar(props: {
   );
 }
 
-function Elided(props: { readonly text: string }) {
-  const parts = (): readonly [string, string] => splitTail(props.text);
+function Fitted(props: { readonly texts: readonly string[] }) {
+  const [share, setShare] = createSignal(1);
+  const widest = (): string => props.texts[0] ?? "";
+  const columns = (): number => Math.floor(widest().length * share() + SLACK);
+
+  let box!: HTMLSpanElement;
+  let ghost!: HTMLSpanElement;
+  const observer = new ResizeObserver(() => {
+    const full = ghost.getBoundingClientRect().width;
+    setShare(full > 0 ? box.getBoundingClientRect().width / full : 1);
+  });
+  onCleanup(() => {
+    observer.disconnect();
+  });
+
   return (
-    <span class="flex min-w-0">
-      <span class="truncate">{parts()[0]}</span>
-      <span class="shrink-0">{parts()[1]}</span>
+    <span
+      ref={(element: HTMLSpanElement) => {
+        box = element;
+        observer.observe(element);
+      }}
+      class="relative min-w-0 overflow-hidden whitespace-pre"
+    >
+      {/* The chip is `max-w-max`, so measure a copy no cut touches, or the box
+          shrinks onto its own ellipsis. `inline-block`: inline boxes go unobserved. */}
+      <span
+        ref={(element: HTMLSpanElement) => {
+          ghost = element;
+          observer.observe(element);
+        }}
+        aria-hidden="true"
+        class="invisible inline-block"
+      >
+        {widest()}
+      </span>
+      <span class="absolute inset-0">{fit(props.texts, columns())}</span>
     </span>
   );
 }

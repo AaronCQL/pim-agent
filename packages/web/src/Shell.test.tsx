@@ -291,7 +291,7 @@ describe("the shell, painted from events alone", () => {
     expect(host.innerHTML).toContain("i-griddy-icons:code-branch");
     expect(host.textContent).toContain("feat/new-stuff");
     // Dirt is a count, not a flag, and divergence rides along beside it.
-    expect(host.textContent).toContain("●3");
+    expect(host.textContent).toContain("✶3");
     expect(host.textContent).toContain("↑2");
     expect(host.textContent).toContain("↓1");
 
@@ -320,7 +320,7 @@ describe("the shell, painted from events alone", () => {
 
     expect(host.innerHTML).not.toContain("code-branch");
     // A clean tree says nothing rather than saying zero.
-    expect(host.textContent).not.toContain("●");
+    expect(host.textContent).not.toContain("✶");
   });
 
   /**

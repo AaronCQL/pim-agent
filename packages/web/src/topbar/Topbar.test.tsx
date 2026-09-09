@@ -139,9 +139,9 @@ describe("the topbar's chips", () => {
 
     expect(host.textContent).toContain("~/src/pim-agent");
     expect(host.textContent).toContain("main");
-    expect(host.textContent).toContain("●3");
-    expect(host.textContent).toContain("↑2");
-    expect(host.textContent).toContain("↓1");
+    expect(host.textContent).toContain("✶3");
+    // The pair reads as one drift, unsplit by the chip's gap, as in the footer.
+    expect(host.textContent).toContain("↑2↓1");
   });
 
   test("a phone gets the directory and the state, not the route there", () => {
@@ -151,23 +151,29 @@ describe("the topbar's chips", () => {
     expect(host.textContent).not.toContain("~/src");
     // Which branch and how dirty survive; how far it has drifted does not.
     expect(host.textContent).toContain("main");
-    expect(host.textContent).toContain("●3");
+    expect(host.textContent).toContain("✶3");
     expect(host.textContent).not.toContain("↑2");
     expect(host.textContent).not.toContain("↓1");
   });
 
   /**
-   * Nothing counts characters: the head is a shrinking box under an ellipsis
-   * and the tail a fixed one, so a row with room paints the text whole and a
-   * tight one elides exactly its overflow, at whatever width that happens.
+   * Cutting is measured, not guessed: a copy of the whole text is what the row
+   * lays out, and the line the reader gets is painted over it and sliced to the
+   * share of that copy the row granted. A DOM with no layout — this one — grants
+   * all of it; `fit` is tested on its own arithmetic.
    */
-  test("text is cut so a squeeze takes the middle and spares the end", () => {
+  test("every chip lays out its whole text and paints the fitting one over it", () => {
     const host = paint(stocked("/home/ada/src/pim-agent", "feat/chips"), false);
 
-    const heads = [...host.querySelectorAll("span.truncate")].map(
-      (node) => node.textContent
-    );
-    expect(heads).toEqual(["~/src/", "feat/"]);
-    expect(host.textContent).toContain("~/src/pim-agent");
+    const laid = [...host.querySelectorAll("span.invisible")];
+    expect(laid.map((node) => node.textContent)).toEqual([
+      "~/src/pim-agent",
+      "feat/chips",
+    ]);
+    const painted = [...host.querySelectorAll("span.absolute")];
+    expect(painted.map((node) => node.textContent)).toEqual([
+      "~/src/pim-agent",
+      "feat/chips",
+    ]);
   });
 });
