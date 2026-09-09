@@ -133,7 +133,7 @@ test("the header uses the compact pixel wordmark with an accessible name", () =>
   expect(logo?.classList.contains("h-5")).toBe(true);
 });
 
-test("one flat row per session: name, cwd and how long ago", async () => {
+test("one flat row per session: name, directory and how long ago", async () => {
   const { host } = paint();
   await Bun.sleep(0);
   flush();
@@ -143,8 +143,11 @@ test("one flat row per session: name, cwd and how long ago", async () => {
   expect(rows[0]?.textContent).toContain("Modernise the string building");
   // A session with nothing written to it yet has only its id for a name.
   expect(rows[1]?.textContent).toContain("bbbbbbbb");
-  expect(rows[0]?.textContent).toContain("~/dev/pim");
-  expect(rows[1]?.textContent).toContain("/srv/other");
+  // The directory only; the full path is the row's tooltip.
+  expect(rows[0]?.textContent).toContain("pim");
+  expect(rows[0]?.textContent).not.toContain("~/dev/pim");
+  expect(rows[0]?.querySelector('[title="~/dev/pim"]')).not.toBeNull();
+  expect(rows[1]?.textContent).toContain("other");
 });
 
 test("the dot marks a session that has answered since anything read it", async () => {

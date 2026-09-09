@@ -139,7 +139,7 @@ describe("the topbar's chips", () => {
 
     expect(host.textContent).toContain("~/src/pim-agent");
     expect(host.textContent).toContain("main");
-    expect(host.textContent).toContain("✶3");
+    expect(host.textContent).toContain("*3");
     // The pair reads as one drift, unsplit by the chip's gap, as in the footer.
     expect(host.textContent).toContain("↑2↓1");
   });
@@ -151,7 +151,7 @@ describe("the topbar's chips", () => {
     expect(host.textContent).not.toContain("~/src");
     // Which branch and how dirty survive; how far it has drifted does not.
     expect(host.textContent).toContain("main");
-    expect(host.textContent).toContain("✶3");
+    expect(host.textContent).toContain("*3");
     expect(host.textContent).not.toContain("↑2");
     expect(host.textContent).not.toContain("↓1");
   });

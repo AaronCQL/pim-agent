@@ -138,6 +138,9 @@ function highlightFences(host: HTMLElement, open: Element | undefined): void {
 export function Markdown(props: {
   readonly text: string;
   readonly complete?: boolean;
+  /** Wrapping, replaced rather than appended: two `overflow-wrap` utilities
+      on one element resolve by stylesheet order, not by who wrote them. */
+  readonly wrap?: string;
 }) {
   let host!: HTMLDivElement;
   let written = "";
@@ -191,7 +194,7 @@ export function Markdown(props: {
         host = element;
       }}
       onClick={onCodeClick}
-      class="pim-markdown min-w-0 break-words"
+      class={`pim-markdown min-w-0 ${props.wrap ?? "break-words"}`}
     />
   );
 }

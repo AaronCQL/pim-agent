@@ -9,7 +9,7 @@ const CHIP =
   "flex h-8 max-w-max min-w-0 flex-1 items-center gap-1.5 rounded-lg bg-neutral-850 px-2 text-sm text-neutral-350";
 
 // Not the footer's U+F069: that is a Nerd Font glyph, and no browser has the font.
-const DIRTY_MARK = "\u2736";
+const DIRTY_MARK = "*";
 
 const GRACE_MS = 1500;
 

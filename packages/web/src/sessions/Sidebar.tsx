@@ -12,7 +12,7 @@ import {
 import type { SessionSummaryView } from "#protocol/ServerEvent";
 import { version } from "../../../../package.json";
 import type { SessionStore } from "../session/SessionStore";
-import { abbreviateHome, relativeTime } from "../format";
+import { abbreviateHome, baseName, relativeTime } from "../format";
 import { ICON } from "../ui/classes";
 import { Spinner } from "../ui/Spinner";
 
@@ -168,7 +168,9 @@ export function Sidebar(props: {
                     </Show>
                   </div>
                   <div class="flex items-center justify-between gap-6 text-neutral-400">
-                    <div class="truncate">{abbreviateHome(row().cwd)}</div>
+                    <div class="truncate" title={abbreviateHome(row().cwd)}>
+                      {baseName(row().cwd)}
+                    </div>
                     <div class="flex shrink-0 items-center gap-1.5">
                       <Show
                         when={props.store.draftText(row().sessionId) !== ""}

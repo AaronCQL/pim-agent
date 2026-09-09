@@ -180,15 +180,13 @@ function Card(props: { readonly row: MessageRow }) {
     <>
       <Show when={props.row.text !== ""}>
         <div
-          // `wrap-anywhere`, not `break-words`: the card's own intrinsic width
-          // has to count the break, or a long path lays it out past the column.
-          class={`whitespace-pre-wrap wrap-anywhere rounded-lg px-4 py-3 ${
+          class={`rounded-lg px-4 py-3 ${
             props.row.queued
               ? "bg-neutral-900 text-neutral-400 group-hover:bg-neutral-850 group-hover:text-neutral-200"
               : "bg-neutral-850"
           }`}
         >
-          {props.row.text}
+          <Markdown text={props.row.text} complete wrap="wrap-anywhere" />
         </div>
       </Show>
       <div
