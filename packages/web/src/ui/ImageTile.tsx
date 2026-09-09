@@ -19,7 +19,7 @@ export function ImageTile(props: {
       <button
         type="button"
         aria-label={`View ${props.alt}`}
-        class="block overflow-hidden rounded-lg ring-1 ring-neutral-700 hover:ring-indigo-400"
+        class="inline-block max-w-full self-start overflow-hidden rounded-lg ring-1 ring-neutral-700 hover:ring-indigo-400"
         onClick={() => {
           setViewing(true);
         }}

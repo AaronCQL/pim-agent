@@ -15,11 +15,8 @@ export default function (pi: ExtensionAPI): void {
     name: "read",
     label: "read",
     description:
-      "Read a local UTF-8 text file. " +
-      "Output is `LINE:CONTENT` with no space after the colon. " +
-      "Capped at 32KB per call; lines longer than 2000 chars are truncated. " +
-      "Images (png, jpeg, gif, webp) are returned as pictures; they are downscaled to 2000px and the resize is reported. " +
-      "An animated image shows frame 1 and reports its frame count.",
+      "Read a local UTF-8 text file or image (png, jpeg, gif, webp). " +
+      "Text output is `LINE:CONTENT` with no space after the colon.",
     parameters: readSchema,
     renderShell: "self",
     effect: { kind: "readOnly" },

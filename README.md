@@ -9,7 +9,7 @@
 An opinionated, Bun-native distro of Pi - one agent, reachable from your terminal, browser, or Telegram.
 
 - **For the agent:** revamped `bash`/`read`/`write`/`edit`, plus `glob`, `grep`, `web_search`, `web_fetch` and `subagent`, behind a ~3K system prompt that adapts its toolset to the model.
-- **For you:** ANSI-compatible themes, fzf-style autocomplete, and git-aware status with sessions shared across frontends, so work started at your desk continues from your phone.
+- **For you:** ANSI-compatible themes, fzf-style autocomplete, and git-aware status with sessions shared across frontends, so work started at your desk can continue on your phone.
 - **Full Pi compatibility:** your Pi extensions, CLI, sessions and config all keep working, and vanilla `pi` is untouched.
 
 ![Pim Demo](https://raw.githubusercontent.com/AaronCQL/pim-agent/refs/heads/main/assets/demo.webp)
@@ -82,18 +82,6 @@ Environment variables take precedence over `settings.json` when set:
 
 ```sh
 EXA_API_KEY='api_key_here' FIRECRAWL_API_KEY='api_key_here' JINA_API_KEY='api_key_here' pim
-```
-
-### Image Reads (Optional)
-
-`read` returns images (png, jpeg, gif, webp) as pictures on vision-capable models. Re-reading a picture that has not changed on disk since the last read in the same conversation sends a one-line note instead of the image again, saving both tokens and the downscale. Set the following in `~/.pim/settings.json` to always re-send:
-
-```json
-{
-  "read": {
-    "dedupImages": false
-  }
-}
 ```
 
 ### Recommended Pi Settings (Optional)
