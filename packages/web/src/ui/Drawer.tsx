@@ -14,7 +14,6 @@ export function Drawer(props: {
     onClose: () => {
       props.onClose();
     },
-    back: false,
   });
 
   return (

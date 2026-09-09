@@ -2,13 +2,14 @@ import "../test/dom";
 
 import { render } from "@solidjs/web";
 import { describe, expect, test } from "bun:test";
-import { createRoot, createSignal, flush } from "solid-js";
+import { createRoot, createSignal, flush, Show } from "solid-js";
 
 import { mountPoint } from "../test/dom";
 import { Combobox, createComboboxNavigation } from "./Combobox";
 import { Collapsible } from "./Collapsible";
 import { Drawer } from "./Drawer";
 import { Lightbox } from "./Lightbox";
+import { Modal } from "./Modal";
 import { Menu } from "./Menu";
 import { Popover } from "./Popover";
 
@@ -444,6 +445,160 @@ describe("platform wrappers", () => {
     flush();
     expect(drawer.open).toBe(false);
     expect(closed).toEqual([1]);
+  });
+
+  // The drawer covers the session like any other overlay, so it answers the
+  // phone gesture for "out of this" like any other overlay.
+  test("Back closes the drawer rather than leaving the session", () => {
+    const host = mountPoint();
+    const [open, setOpen] = createSignal(true);
+    const closed: number[] = [];
+    render(
+      () => (
+        <Drawer
+          open={open()}
+          label="Sessions"
+          onClose={() => {
+            setOpen(false);
+            closed.push(1);
+          }}
+        >
+          <button type="button">pick</button>
+        </Drawer>
+      ),
+      host
+    );
+    flush();
+    const drawer = host.querySelector("dialog")!;
+    expect(drawer.open).toBe(true);
+
+    globalThis.dispatchEvent(new Event("popstate"));
+    flush();
+
+    expect(drawer.open).toBe(false);
+    expect(closed).toEqual([1]);
+  });
+
+  // A browser delivers the `popstate` for `history.back()` in a later task;
+  // happy-dom delivers it inline, which is the one ordering a handoff between
+  // two overlays never sees.
+  function deferredBack(): {
+    readonly deliver: () => void;
+    readonly restore: () => void;
+  } {
+    const real = history.back.bind(history);
+    const pending: (() => void)[] = [];
+    history.back = () => {
+      pending.push(real);
+    };
+    return {
+      deliver: () => {
+        for (const run of pending.splice(0)) {
+          run();
+        }
+      },
+      restore: () => {
+        history.back = real;
+      },
+    };
+  }
+
+  // The drawer's own rows open overlays: it closes as the next one opens, and
+  // the entry it takes back must not be read as the Back that closes that one.
+  test("an overlay opened from the drawer survives the drawer's own retraction", () => {
+    const browser = deferredBack();
+    const host = mountPoint();
+    const [drawn, setDrawn] = createSignal(true);
+    const [configuring, setConfiguring] = createSignal(false);
+    render(
+      () => (
+        <>
+          <Drawer
+            open={drawn()}
+            label="Sessions"
+            onClose={() => setDrawn(false)}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                setDrawn(false);
+                setConfiguring(true);
+              }}
+            >
+              settings
+            </button>
+          </Drawer>
+          <Modal
+            open={configuring()}
+            label="Settings"
+            header={<span>Settings</span>}
+            onClose={() => setConfiguring(false)}
+          >
+            <p>body</p>
+          </Modal>
+        </>
+      ),
+      host
+    );
+    flush();
+
+    try {
+      const [drawer, modal] = [...host.querySelectorAll("dialog")];
+      drawer!.querySelector("button")!.click();
+      flush();
+      expect(drawer!.open).toBe(false);
+      expect(modal!.open).toBe(true);
+
+      browser.deliver();
+      flush();
+      expect(modal!.open).toBe(true);
+
+      globalThis.dispatchEvent(new Event("popstate"));
+      flush();
+      expect(modal!.open).toBe(false);
+    } finally {
+      browser.restore();
+    }
+  });
+
+  // Two overlays deep, Back is one step out, not the way back to the session.
+  test("Back closes the innermost overlay only", () => {
+    const host = mountPoint();
+    const [configuring, setConfiguring] = createSignal(true);
+    const [zoomed, setZoomed] = createSignal(true);
+    render(
+      () => (
+        <>
+          <Modal
+            open={configuring()}
+            label="Settings"
+            header={<span>Settings</span>}
+            onClose={() => setConfiguring(false)}
+          >
+            <p>body</p>
+          </Modal>
+          <Show when={zoomed()}>
+            <Lightbox
+              src="/files/shot.png"
+              alt="shot.png"
+              onClose={() => setZoomed(false)}
+            />
+          </Show>
+        </>
+      ),
+      host
+    );
+    flush();
+    expect(host.querySelectorAll("dialog")).toHaveLength(2);
+
+    globalThis.dispatchEvent(new Event("popstate"));
+    flush();
+    expect(zoomed()).toBe(false);
+    expect(configuring()).toBe(true);
+
+    globalThis.dispatchEvent(new Event("popstate"));
+    flush();
+    expect(configuring()).toBe(false);
   });
 
   function lightbox(): {

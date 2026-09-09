@@ -14,7 +14,6 @@ export function Lightbox(props: {
     onClose: () => {
       props.onClose();
     },
-    back: true,
   });
 
   return (

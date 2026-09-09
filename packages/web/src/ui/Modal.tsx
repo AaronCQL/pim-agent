@@ -19,7 +19,6 @@ export function Modal(props: {
     onClose: () => {
       props.onClose();
     },
-    back: true,
   });
 
   return (

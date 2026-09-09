@@ -2,35 +2,45 @@ import { onCleanup } from "solid-js";
 
 const MODAL_ENTRY = { pimModal: true };
 
+type Armed = { readonly onBack: () => void };
+
+const armed: Armed[] = [];
+// A `release` reaches this listener as a `popstate` of its own; count those out, or one closes the overlay handed to next.
+let retracted = 0;
+
+globalThis.addEventListener("popstate", () => {
+  if (retracted > 0) {
+    retracted -= 1;
+    return;
+  }
+  armed.pop()?.onBack();
+});
+
 export type BackGuard = {
   readonly arm: () => void;
   readonly release: () => void;
 };
 
-/** Back closes the overlay: `arm` pushes a history entry, `release` pops it exactly once — popping twice navigates the app. */
+/** Back closes the innermost armed overlay: `arm` pushes a history entry, `release` takes that entry back. */
 export function createBackGuard(onBack: () => void): BackGuard {
-  let pushed = false;
-
-  const onPopState = (): void => {
-    pushed = false;
-    onBack();
-  };
+  const entry: Armed = { onBack };
 
   const release = (): void => {
-    globalThis.removeEventListener("popstate", onPopState);
-    if (pushed) {
-      pushed = false;
-      history.back();
+    const at = armed.lastIndexOf(entry);
+    if (at < 0) {
+      return;
     }
+    armed.splice(at, 1);
+    retracted += 1;
+    history.back();
   };
 
   onCleanup(release);
 
   return {
     arm: () => {
-      pushed = true;
+      armed.push(entry);
       history.pushState(MODAL_ENTRY, "");
-      globalThis.addEventListener("popstate", onPopState);
     },
     release,
   };

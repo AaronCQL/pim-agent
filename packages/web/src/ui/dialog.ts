@@ -12,14 +12,11 @@ export type Dialog = {
 export function createDialog(options: {
   readonly open: () => boolean;
   readonly onClose: () => void;
-  readonly back: boolean;
 }): Dialog {
   let host!: HTMLDialogElement;
-  const back = options.back
-    ? createBackGuard(() => {
-        host.close();
-      })
-    : undefined;
+  const back = createBackGuard(() => {
+    host.close();
+  });
 
   // Open from an effect, not the ref: a `<dialog>` must be in the document before it can be shown.
   createEffect(
@@ -33,7 +30,7 @@ export function createDialog(options: {
         return;
       }
       host.showModal();
-      back?.arm();
+      back.arm();
     }
   );
 
@@ -45,7 +42,7 @@ export function createDialog(options: {
       host.close();
     },
     onNativeClose: () => {
-      back?.release();
+      back.release();
       options.onClose();
     },
     isHost: (target: EventTarget | null) => target === host,
