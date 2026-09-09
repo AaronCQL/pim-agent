@@ -6,8 +6,8 @@ import { dirname, join } from "node:path";
 // Solid's JSX compile and browser dev builds for `bun test`: the `node` condition's
 // `template` throws, and Bun's runtime plugins silently ignore `onResolve`.
 const DOM_BUILDS = {
-  "solid-js": "dist/dev.js",
-  "@solidjs/web": "dist/dev.js",
+  "solid-js": "dist/solid.dev.js",
+  "@solidjs/web": "dist/web.dev.js",
   // Pinned by name: solid-js's dev build imports it bare, and the resolver
   // would hand back the production build, with the diagnostics compiled out.
   "@solidjs/signals": "dist/dev.js",

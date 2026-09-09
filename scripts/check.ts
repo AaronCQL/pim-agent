@@ -84,7 +84,7 @@ const TASKS: readonly Task[] = [
     argv: ["oxfmt", ...FORMAT_PATHS],
     mutates: true,
   },
-  { name: "typecheck", argv: ["tsgo", "--noEmit"] },
+  { name: "typecheck", argv: ["tsc", "--noEmit"] },
   {
     name: "agent",
     argv: [
@@ -193,7 +193,7 @@ type Output = {
 async function spawn(argv: readonly string[]): Promise<Output> {
   const child = Bun.spawn([...argv], {
     cwd: ROOT,
-    // oxlint, oxfmt and tsgo are `node_modules/.bin` shims that only `bun run`
+    // oxlint, oxfmt and tsc are `node_modules/.bin` shims that only `bun run`
     // puts on PATH, and going through `bun run` would re-print every command
     // as it starts.
     env: {
