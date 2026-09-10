@@ -15,6 +15,12 @@ export function createScrollAnchor(): ScrollAnchor {
   let scroller: HTMLElement | undefined;
   let pinned = true;
   let anchor = 0;
+  // A send asks for the end, but the browser can still be running a scroll of
+  // its own over that moment — a wheel it is animating, a fling settling —
+  // and each of its frames arrives here as a reader who has scrolled away.
+  // Hold the end against them until one lands there, which the next `stick`
+  // makes happen; a reader who scrolls after that is a reader again.
+  let holding = false;
 
   // Route every `scrollTop` write through here: the browser clamps it and reports the move a frame later, and a stale anchor reads back as a reader's gesture.
   const scrollTo = (top: number): void => {
@@ -38,6 +44,7 @@ export function createScrollAnchor(): ScrollAnchor {
     stick,
     jump: () => {
       pinned = true;
+      holding = true;
       stick();
     },
     shift: (delta) => {
@@ -56,6 +63,10 @@ export function createScrollAnchor(): ScrollAnchor {
       // Unpin only on moving away from the end: rows grow after the flush that appended them, so slack alone reads a self-written scroll as a reader's.
       if (slack < SLACK) {
         pinned = true;
+        holding = false;
+      } else if (holding) {
+        stick();
+        return;
       } else if (top < anchor) {
         pinned = false;
       }

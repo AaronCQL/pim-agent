@@ -835,10 +835,13 @@ describe("the shell, painted from events alone", () => {
     const store = offline();
     const host = paint(store);
     store.ingest(attached());
+    flush();
 
     // happy-dom lays nothing out, so the scroller is given a page worth of
     // content to have scrolled away from.
     const { element: scroller } = scrollerOf(host);
+    scroller.scrollTop = 500;
+    scroller.dispatchEvent(new Event("scroll"));
     scroller.scrollTop = 0;
     scroller.dispatchEvent(new Event("scroll"));
 
@@ -848,6 +851,43 @@ describe("the shell, painted from events alone", () => {
     flush();
 
     expect(scroller.scrollTop).toBe(1000);
+  });
+
+  test("a scroll the browser is still running when the message goes is not the reader's", () => {
+    const store = offline();
+    const host = paint(store);
+    store.ingest(attached());
+    flush();
+    const { element: scroller, grow } = scrollerOf(host);
+    // Three pages of content, so a scroll away from the end reads as one.
+    grow(600);
+
+    const input = host.querySelector("textarea")!;
+    type(input, "hello");
+    press(input, "Enter");
+    flush();
+    expect(scroller.scrollTop).toBe(1600);
+
+    // The wheel the reader turned just before hitting Enter is still being
+    // animated, and the browser delivers its frames after the send. Reading
+    // one of them as the reader letting go leaves the message just sent half
+    // under the composer, which is where a sent message must never end up.
+    scroller.scrollTop = 1000;
+    scroller.dispatchEvent(new Event("scroll"));
+    expect(scroller.scrollTop).toBe(1600);
+
+    store.ingest(message(2, "the reply"));
+    flush();
+    expect(scroller.scrollTop).toBe(1600);
+
+    // The end reached, the hold is over and the reader has the transcript
+    // back: the next scroll away from it is theirs.
+    scroller.dispatchEvent(new Event("scroll"));
+    scroller.scrollTop = 900;
+    scroller.dispatchEvent(new Event("scroll"));
+    store.ingest(message(3, "and another"));
+    flush();
+    expect(scroller.scrollTop).toBe(900);
   });
 
   test("a transcript that grows under its own scroll stays pinned", () => {
