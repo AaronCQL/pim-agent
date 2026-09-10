@@ -2,8 +2,10 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { mkdir, mkdtemp, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { SubagentLogs } from "./SubagentLogs";
+
+const HASHED = /^[0-9a-f]{64}\.jsonl$/;
 
 let previousPimHomeDir: string | undefined;
 let testPimHomeDir: string | undefined;
@@ -26,18 +28,23 @@ afterAll(async () => {
 });
 
 describe("SubagentLogs.pathFor", () => {
-  test("keys a child log by its parent session and its call id", () => {
-    expect(SubagentLogs.pathFor("parent-1", "call_1")).toBe(
-      join(SubagentLogs.dir(), "parent-1", "call_1.jsonl")
-    );
+  test("keys a child log by its parent session and a hash of its call id", () => {
+    const path = SubagentLogs.pathFor("parent-1", "call_1");
+    expect(dirname(path!)).toBe(join(SubagentLogs.dir(), "parent-1"));
+    expect(basename(path!)).toMatch(HASHED);
+    expect(path).not.toBe(SubagentLogs.pathFor("parent-1", "call_2"));
   });
 
-  test("refuses ids that would name a path instead of a file", () => {
+  test("hashes call ids instead of treating them as path segments", () => {
+    const path = SubagentLogs.pathFor("parent", "../../../etc/passwd|fc_123");
+    expect(dirname(path!)).toBe(join(SubagentLogs.dir(), "parent"));
+    expect(basename(path!)).toMatch(HASHED);
+  });
+
+  test("refuses invalid parent and empty call ids", () => {
     expect(SubagentLogs.pathFor("..", "call")).toBeNull();
-    expect(SubagentLogs.pathFor("parent", "../../etc/passwd")).toBeNull();
-    expect(SubagentLogs.pathFor("parent", "/etc/passwd")).toBeNull();
     expect(SubagentLogs.pathFor("parent", "")).toBeNull();
-    expect(SubagentLogs.pathFor("parent", "a".repeat(129))).toBeNull();
+    expect(SubagentLogs.pathFor("parent", "a".repeat(4097))).toBeNull();
   });
 
   test("stays outside the directory the session catalogue globs", () => {
@@ -63,8 +70,11 @@ describe("SubagentLogs.create", () => {
     expect(await SubagentLogs.create("parent-3", "call-3")).toBeNull();
   });
 
-  test("refuses a call id that is not a single path segment", async () => {
-    expect(await SubagentLogs.create("parent-4", "../escape")).toBeNull();
+  test("creates a log for a provider id with path punctuation", async () => {
+    const callId = "call_4|fc_123";
+    const path = await SubagentLogs.create("parent-4", callId);
+    expect(path).toBe(SubagentLogs.pathFor("parent-4", callId));
+    expect(path).not.toContain(callId);
   });
 });
 

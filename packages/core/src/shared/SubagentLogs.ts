@@ -4,8 +4,10 @@ import { dirname, join } from "node:path";
 import { Paths } from "./Paths";
 import { Sweeper } from "./Sweeper";
 
-// Ids become path segments: anything outside this charset is refused, never escaped.
+// The parent id names a directory; a call id is opaque provider data, hashed rather than trusted as a segment.
 const ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+// A call id arrives off the wire: bound what gets hashed.
+const MAX_CALL_ID_LENGTH = 4096;
 
 const TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
@@ -16,10 +18,18 @@ function dir(): string {
 }
 
 function pathFor(parentSessionId: string, callId: string): string | null {
-  if (!ID_RE.test(parentSessionId) || !ID_RE.test(callId)) {
+  if (
+    !ID_RE.test(parentSessionId) ||
+    callId.length === 0 ||
+    callId.length > MAX_CALL_ID_LENGTH
+  ) {
     return null;
   }
-  return join(dir(), parentSessionId, `${callId}.jsonl`);
+  return join(
+    dir(),
+    parentSessionId,
+    `${Bun.SHA256.hash(callId, "hex")}.jsonl`
+  );
 }
 
 // Create the log empty with explicit modes: a file pi creates takes the process umask.

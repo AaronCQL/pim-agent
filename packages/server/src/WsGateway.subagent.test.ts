@@ -12,7 +12,7 @@ import { isDurableEvent, type ServerEvent } from "#protocol/ServerEvent";
 import { ProbeClient } from "./ProbeClient";
 import { WsGateway } from "./WsGateway";
 
-const CALL_ID = "call_1";
+const CALL_ID = "call_1|fc_1";
 const TASK = "find every call site of parseConfig";
 const CHILD_ANSWER = "three of the nine are in tests";
 const REPLY = "the subagent has answered";
@@ -383,8 +383,8 @@ test("stops sending a child's events once it is unwatched", async () => {
  * run that never happened is refused by the file not being there.
  */
 test.each([
-  ["../../../etc/passwd", "malformed"],
-  ["/etc/passwd", "malformed"],
+  ["../../../etc/passwd", "no subagent log"],
+  ["/etc/passwd", "no subagent log"],
   ["call_never_ran", "no subagent log"],
 ])("refuses the forged call id %p", async (callId, because) => {
   const probe = await connect();
