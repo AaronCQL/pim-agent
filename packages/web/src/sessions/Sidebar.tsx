@@ -43,12 +43,14 @@ export function Sidebar(props: {
     () => ({
       sessionId: props.store.state.sessionId,
       connection: props.store.state.connection,
+      catalogue: props.store.state.catalogue,
       running: props.store.runningIds(),
     }),
     (state, before) => {
       const stale =
         before === undefined ||
         before.sessionId !== state.sessionId ||
+        before.catalogue !== state.catalogue ||
         (state.connection === "open" && before.connection !== "open") ||
         before.running.some((sessionId) => !state.running.includes(sessionId));
       if (stale) {

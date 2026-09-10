@@ -161,6 +161,7 @@ export class WsGateway {
         closeOnBackpressureLimit: false,
         open: (ws) => {
           this.connections.set(ws, new ClientConnection(ws));
+          this.syncWatches();
         },
         message: (ws, raw) => {
           void this.onMessage(ws, raw);
@@ -171,6 +172,7 @@ export class WsGateway {
         close: (ws) => {
           this.connections.get(ws)?.close();
           this.connections.delete(ws);
+          this.syncWatches();
         },
       },
     });
@@ -182,6 +184,7 @@ export class WsGateway {
     }
     this.streams.clear();
     this.opening.clear();
+    this.catalogue.watch(false);
     this.catalogue.clear();
     await this.catalogue.flush();
     for (const connection of this.connections.values()) {
@@ -401,8 +404,17 @@ export class WsGateway {
       piVersion,
     });
     await connection.attach(stream, command.fromSeq);
+    this.syncWatches();
     await this.catalogue.markRead(stream.sessionId);
     return {};
+  }
+
+  /** A watch costs a poll, so only sessions someone is reading get one — and the catalogue only while someone is connected. */
+  private syncWatches(): void {
+    for (const [sessionId, stream] of this.streams) {
+      stream.watchFiles(this.isBeingRead(sessionId));
+    }
+    this.catalogue.watch(this.connections.size > 0);
   }
 
   private reload(force: boolean): Outcome {
@@ -487,7 +499,7 @@ export class WsGateway {
       return existing;
     }
     const stream = new SessionStream(id, host, path);
-    stream.start(agent);
+    stream.start();
     this.catalogue.track(id, host.status);
     stream.subscribe((event) => {
       if (event.type === "session_state") {

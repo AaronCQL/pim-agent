@@ -83,6 +83,7 @@ export function Composer(props: {
     () =>
       props.store.isBusy() && text().trim() === "" && attachments().length === 0
   );
+  const held = createMemo(() => props.store.heldNotice());
   const modelOptions = createMemo(() =>
     catalogue().models.map(({ id, label, provider }) => ({
       value: id,
@@ -177,7 +178,7 @@ export function Composer(props: {
 
   async function submit(): Promise<void> {
     const draft = text();
-    if (draft.trim() === "" && attachments().length === 0) {
+    if ((draft.trim() === "" && attachments().length === 0) || held()) {
       return;
     }
     setText("");
@@ -253,6 +254,7 @@ export function Composer(props: {
           rows={1}
           placeholder="Type your message here"
           aria-label="Message"
+          disabled={held() !== undefined}
           enterkeyhint={keyboard() ? "send" : "enter"}
           class="max-h-50 w-full resize-none bg-transparent outline-none [field-sizing:content] placeholder:text-neutral-500"
           onInput={track}
@@ -357,10 +359,11 @@ export function Composer(props: {
 
           <button
             type="button"
+            disabled={held() !== undefined}
             aria-label={
               stops() ? "Stop" : props.store.isBusy() ? "Steer" : "Send"
             }
-            class={`flex items-center justify-center rounded-full p-2 hover:ring-1 ${
+            class={`flex items-center justify-center rounded-full p-2 hover:ring-1 disabled:opacity-40 ${
               stops()
                 ? "bg-rose-500 text-rose-50 ring-rose-300 active:bg-rose-500/80"
                 : "bg-indigo-500 text-indigo-50 ring-indigo-300 active:bg-indigo-500/80"
@@ -383,6 +386,20 @@ export function Composer(props: {
             />
           </button>
         </div>
+
+        <Show when={held()}>
+          {(notice) => (
+            <div
+              role="status"
+              class="absolute inset-0 flex flex-col items-center justify-center gap-1 rounded-lg bg-neutral-850/90 px-4 text-center text-sm"
+            >
+              <p class="text-neutral-100">{notice()}</p>
+              <p class="text-neutral-400">
+                Its replies land here a message at a time, not a word at a time.
+              </p>
+            </div>
+          )}
+        </Show>
       </div>
 
       <Combobox

@@ -172,6 +172,7 @@ describe("the in-flight bucket", () => {
     // been superseded.
     feed(target, {
       type: "session_state",
+      writable: true,
       cwd: "/repo",
       model: "sonnet",
       thinking: "off",
@@ -565,6 +566,7 @@ describe("the optimistic echo", () => {
       attached("s1"),
       {
         type: "session_state",
+        writable: true,
         cwd: "/repo",
         model: "sonnet",
         thinking: "medium",
@@ -588,6 +590,7 @@ describe("the optimistic echo", () => {
     const target = store();
     feed(target, attached("s1"), {
       type: "session_state",
+      writable: true,
       cwd: "/repo",
       model: "sonnet",
       thinking: "medium",
@@ -611,6 +614,7 @@ test("session_state lands on the fields the sidebar and composer paint", () => {
   const target = store();
   feed(target, attached("s1"), {
     type: "session_state",
+    writable: true,
     cwd: "/repo",
     model: "sonnet",
     thinking: "medium",
@@ -675,6 +679,7 @@ describe("switching", () => {
       { seq: 9, type: "notice", severity: "info", text: "hi" },
       {
         type: "session_state",
+        writable: true,
         cwd: "/repo",
         model: "sonnet",
         thinking: "off",
@@ -689,6 +694,7 @@ describe("switching", () => {
     const target = store();
     feed(target, attached("s1", 4), {
       type: "session_state",
+      writable: true,
       cwd: "/repo",
       model: "sonnet",
       thinking: "off",
@@ -1081,6 +1087,7 @@ describe("the thinking cycle", () => {
   function thinkingAt(target: SessionStore, level: string): void {
     feed(target, {
       type: "session_state",
+      writable: true,
       cwd: "/repo",
       model: "sonnet",
       thinking: level,
@@ -1121,5 +1128,99 @@ describe("the thinking cycle", () => {
 
     await target.cycleThinking();
     expect(asked).toEqual([]);
+  });
+});
+
+describe("the turn lease", () => {
+  function state(
+    extra: Partial<Extract<ServerEvent, { type: "session_state" }>> = {}
+  ): ServerEvent {
+    return {
+      type: "session_state",
+      writable: true,
+      cwd: "/repo",
+      model: "sonnet",
+      thinking: "off",
+      cost: 0,
+      status: "idle",
+      ...extra,
+    };
+  }
+
+  function sent(target: SessionStore): readonly string[] {
+    const types: string[] = [];
+    target.client.send = (async (command: { readonly type: string }) => {
+      types.push(command.type);
+      return { type: "response", id: "1", success: true };
+    }) as typeof target.client.send;
+    return types;
+  }
+
+  test("names the surface that has it, and says nothing once it is free", () => {
+    const target = store();
+    feed(target, attached("s1"));
+    expect(target.heldNotice()).toBeUndefined();
+
+    feed(
+      target,
+      state({ writable: false, heldBy: { frontend: "tui", pid: 42 } })
+    );
+    expect(target.heldNotice()).toBe(
+      "Running in the terminal — you can continue when this turn ends."
+    );
+
+    feed(
+      target,
+      state({ writable: false, heldBy: { frontend: "daemon", pid: 43 } })
+    );
+    expect(target.heldNotice()).toContain("in another window");
+
+    feed(target, state());
+    expect(target.heldNotice()).toBeUndefined();
+  });
+
+  test("refuses every intent that would write, and takes them back on release", async () => {
+    const target = store();
+    const types = sent(target);
+    feed(
+      target,
+      attached("s1"),
+      state({ writable: false, heldBy: { frontend: "tui", pid: 42 } })
+    );
+
+    await target.prompt("carry on without me");
+    await target.setModel("opus");
+    await target.setThinking("high");
+    await target.cancel();
+    await target.dequeue();
+    flush();
+
+    expect(types).toEqual([]);
+    // Nothing was drawn as said either: the composer still holds the text.
+    expect(target.state.optimistic).toEqual([]);
+
+    feed(target, state());
+    await target.prompt("carry on without me");
+    flush();
+
+    expect(types).toEqual(["user_message"]);
+    expect(
+      rows(target).map((row) => row.kind === "message" && row.text)
+    ).toEqual(["carry on without me"]);
+  });
+
+  // Attaching elsewhere must not carry the last session's holder across.
+  test("a fresh attach starts writable", () => {
+    const target = store();
+    feed(
+      target,
+      attached("s1"),
+      state({ writable: false, heldBy: { frontend: "tui", pid: 42 } })
+    );
+    expect(target.state.writable).toBe(false);
+
+    feed(target, attached("s2"));
+    expect(target.state.writable).toBe(true);
+    expect(target.state.heldBy).toBeUndefined();
   });
 });

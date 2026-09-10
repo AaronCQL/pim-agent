@@ -257,7 +257,11 @@ export class WsClient {
     }
     // Session-scoped frames name their session, so they pass the attach gate
     // and disturb no cursor.
-    if (event.type === "session_activity" || event.type === "update_state") {
+    if (
+      event.type === "session_activity" ||
+      event.type === "sessions_changed" ||
+      event.type === "update_state"
+    ) {
       this.options.onEvent(event);
       return;
     }

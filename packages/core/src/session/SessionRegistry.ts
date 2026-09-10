@@ -187,6 +187,8 @@ export class SessionRegistry {
       modelRegistry,
       settingsManagerFor: (cwd) => this.settingsManagerFor(cwd),
       persistSettings: async () => {},
+      // The terminal can hold the same file open, so every mutation goes through the turn lease.
+      lease: "daemon",
       customTools: this.deps.customTools,
       ...(this.deps.systemInstruction === undefined
         ? {}

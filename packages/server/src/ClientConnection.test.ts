@@ -123,6 +123,7 @@ const STATE = {
   thinking: "medium",
   cost: 0,
   status: "idle" as const,
+  writable: true,
 };
 
 function build(): {

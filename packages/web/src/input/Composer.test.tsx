@@ -31,6 +31,7 @@ function attached(sessionId = "s1"): ServerEvent {
 function sessionState(extra: Record<string, unknown> = {}): ServerEvent {
   return {
     type: "session_state",
+    writable: true,
     cwd: "/repo",
     model: "sonnet",
     thinking: "medium",
@@ -680,4 +681,41 @@ test("switching session swaps the box, the rows and the files", async () => {
 
   type(input, "@gret");
   await until(() => options(host).length > 0, "the rows for the next token");
+});
+
+test("a foreign lease wears the reason and keeps the words typed", async () => {
+  const store = offline();
+  const seen = answers(store, () => ({}));
+  store.ingest(attached());
+  store.ingest(sessionState());
+  const { host, input } = paint(store);
+
+  type(input, "your turn is mine now");
+  store.ingest(
+    sessionState({ writable: false, heldBy: { frontend: "tui", pid: 42 } })
+  );
+  flush();
+
+  expect(input.disabled).toBe(true);
+  expect(host.querySelector('[role="status"]')?.textContent).toContain(
+    "Running in the terminal"
+  );
+
+  press(input, "Enter");
+  host.querySelector<HTMLButtonElement>('[aria-label="Send"]')!.click();
+  flush();
+  expect(seen).toEqual([]);
+  expect(input.value).toBe("your turn is mine now");
+
+  store.ingest(sessionState());
+  flush();
+  expect(input.disabled).toBe(false);
+  expect(host.querySelector('[role="status"]')).toBeNull();
+
+  host.querySelector<HTMLButtonElement>('[aria-label="Send"]')!.click();
+  await until(
+    () => seen.length === 1,
+    "the message to go once the lease frees"
+  );
+  expect(seen[0]?.text).toBe("your turn is mine now");
 });

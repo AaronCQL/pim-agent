@@ -3,12 +3,15 @@ import {
   ModelRuntime,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 
+import { EventLog } from "./EventLog";
 import { SessionHost, type SessionHostDeps } from "./SessionHost";
+import { SessionLease } from "./SessionLease";
+import { SessionRegistry } from "./SessionRegistry";
 
 const MODEL_ID = "test/echo";
 
@@ -55,6 +58,40 @@ async function until(ready: () => boolean, what: string): Promise<void> {
     }
     await Bun.sleep(1);
   }
+}
+
+function mainPath(): string {
+  return join(tmp, "sessions", "main.jsonl");
+}
+
+async function leaseExists(sessionPath = mainPath()): Promise<boolean> {
+  return await Bun.file(SessionLease.pathFor(sessionPath)).exists();
+}
+
+async function roles(sessionPath = mainPath()): Promise<readonly string[]> {
+  const entries = await new EventLog(sessionPath).read();
+  return entries.flatMap((e) =>
+    e.entry.type === "message" ? [e.entry.message.role] : []
+  );
+}
+
+/** The line a `pi` that never took the lease leaves behind: a child of whatever leaf it read. */
+async function appendUnleased(text: string): Promise<void> {
+  const entries = await new EventLog(mainPath()).read();
+  await appendFile(
+    mainPath(),
+    `${JSON.stringify({
+      type: "message",
+      id: "unleased",
+      parentId: entries.at(-1)?.entry.id ?? null,
+      timestamp: new Date().toISOString(),
+      message: {
+        role: "user",
+        content: [{ type: "text", text }],
+        timestamp: Date.now(),
+      },
+    })}\n`
+  );
 }
 
 function chunk(delta: Record<string, unknown>): string {
@@ -244,4 +281,234 @@ test("retires the session file on clear", async () => {
   await host.clear();
   expect(retired).toEqual([join(tmp, "sessions", "main.jsonl")]);
   expect(host.settings.sessionPath).toBeUndefined();
+});
+
+test("two hosts over one session file take their turns one at a time", async () => {
+  const first = await buildHost({ lease: "daemon" });
+  const second = await buildHost({ lease: "daemon" });
+  const order: string[] = [];
+  let leaseChanges = 0;
+  second.onLeaseChange(() => {
+    leaseChanges += 1;
+  });
+  const release = holdTurn();
+
+  const one = first.run(async (agent) => {
+    order.push("first:start");
+    await agent.prompt("say hello");
+    order.push("first:end");
+  });
+  await requestSeen;
+  await until(() => first.isStreaming, "the first host to stream");
+
+  const two = second.run(async (agent) => {
+    order.push("second:start");
+    await agent.prompt("say hello");
+    order.push("second:end");
+  });
+  await until(() => !second.leaseState.writable, "the second host to block");
+
+  expect(second.leaseState.heldBy).toEqual({
+    frontend: "daemon",
+    pid: process.pid,
+  });
+  expect(order).toEqual(["first:start"]);
+
+  release();
+  await Promise.all([one, two]);
+
+  expect(order).toEqual([
+    "first:start",
+    "first:end",
+    "second:start",
+    "second:end",
+  ]);
+  expect(await roles()).toEqual(["user", "assistant", "user", "assistant"]);
+  expect(second.leaseState).toEqual({ writable: true });
+  expect(leaseChanges).toBe(2);
+  expect(await leaseExists()).toBe(false);
+});
+
+test("a host whose file advanced rebuilds from it before its next turn", async () => {
+  const first = await buildHost({ lease: "daemon" });
+  const second = await buildHost({ lease: "daemon" });
+
+  await first.run((agent) => agent.prompt("say hello"));
+  const stale = first.agentSession;
+  await second.run((agent) => agent.prompt("say hello"));
+
+  let loaded = 0;
+  await first.run(async (agent) => {
+    loaded = agent.messages.length;
+  });
+
+  expect(stale).toBeDefined();
+  expect(first.agentSession).not.toBe(stale);
+  expect(loaded).toBe(4);
+
+  // A turn that changed nothing on disk leaves the rebuilt agent alone.
+  const rebuilt = first.agentSession;
+  await first.run(async () => {});
+  expect(first.agentSession).toBe(rebuilt);
+});
+
+test("clear and setModel hold the lease across their writes", async () => {
+  const held: boolean[] = [];
+  const host = await buildHost({
+    lease: "daemon",
+    settings: { sessionPath: mainPath() },
+    persistSettings: async () => {
+      held.push(await leaseExists());
+    },
+    onRetire: async () => {
+      held.push(await leaseExists());
+    },
+  });
+
+  expect(await host.setModel(MODEL_ID)).toEqual({ ok: true, id: MODEL_ID });
+  await host.setThinkingLevel("high");
+  await host.clear();
+
+  expect(held).toEqual([true, true, true, true]);
+  expect(await leaseExists()).toBe(false);
+});
+
+test("an isolated run takes no lease", async () => {
+  const isolated = join(tmp, "sessions", "isolated.jsonl");
+  const host = await buildHost({
+    lease: "daemon",
+    isolatedSessionPath: () => isolated,
+  });
+  let seen: readonly boolean[] = [];
+
+  await host.run(
+    async (agent) => {
+      seen = [await leaseExists(), await leaseExists(isolated)];
+      await agent.prompt("say hello");
+    },
+    { isolated: true }
+  );
+
+  expect(seen).toEqual([false, false]);
+});
+
+test("a turn that throws still gives the lease back", async () => {
+  const errors = spyOn(console, "error").mockImplementation(() => {});
+  const host = await buildHost({ lease: "daemon" });
+  let heldDuringTurn = false;
+
+  const turn = host.run(async () => {
+    heldDuringTurn = await leaseExists();
+    throw new Error("turn failed");
+  });
+
+  await expect(turn).rejects.toThrow("turn failed");
+  expect(heldDuringTurn).toBe(true);
+  expect(await leaseExists()).toBe(false);
+  expect(host.leaseState).toEqual({ writable: true });
+  expect(errors).toHaveBeenCalled();
+  errors.mockRestore();
+});
+
+test("evicting a host from the registry leaves no lease behind", async () => {
+  const previous = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  const registry = new SessionRegistry({
+    defaults: { cwd: tmp, model: MODEL_ID },
+    agentDir,
+    capacity: 1,
+  });
+  try {
+    await registry.init();
+    const evicted = await registry.create({ cwd: tmp });
+    await evicted.run((agent) => agent.prompt("say hello"));
+    const sessionPath = evicted.settings.sessionPath;
+    expect(sessionPath).toBeString();
+    expect(await leaseExists(sessionPath!)).toBe(false);
+
+    // `evictIfNeeded` disposes without awaiting, so nothing may outlive the turn.
+    await registry.create({ cwd: tmp });
+
+    expect(registry.peek(evicted.sessionId!)).toBeUndefined();
+    expect(await leaseExists(sessionPath!)).toBe(false);
+  } finally {
+    await registry.disposeAll();
+    if (previous === undefined) {
+      delete process.env.PI_CODING_AGENT_DIR;
+    } else {
+      process.env.PI_CODING_AGENT_DIR = previous;
+    }
+  }
+});
+
+/**
+ * A `pi` that never took the lease appends while the daemon holds it. The turn
+ * in flight is worth more than the inconsistency, so it finishes; the file is
+ * what the next turn is rebuilt from.
+ */
+test("warns when another process writes the session mid-turn", async () => {
+  const warnings = spyOn(console, "warn").mockImplementation(() => {});
+  const host = await buildHost({ lease: "daemon" });
+  let foreign = 0;
+  host.onForeignWrite(() => {
+    foreign += 1;
+  });
+
+  await host.run((agent) => agent.prompt("say hello"));
+  const before = host.agentSession;
+
+  const release = holdTurn();
+  const turn = host.run((agent) => agent.prompt("say hello again"));
+  await until(() => host.isStreaming, "the second turn to start streaming");
+  await appendUnleased("written by a vanilla pi");
+  release();
+  await turn;
+
+  expect(foreign).toBe(1);
+  expect(warnings.mock.calls.flat().join(" ")).toContain(
+    "written by another process"
+  );
+  expect(await roles()).toEqual([
+    "user",
+    "assistant",
+    "user",
+    "user",
+    "assistant",
+  ]);
+
+  // The head was never marked as seen, so the next turn rebuilds from the file.
+  let carried = false;
+  await host.run(async (agent) => {
+    carried = agent.sessionManager
+      .getEntries()
+      .some((entry) => entry.id === "unleased");
+  });
+  expect(host.agentSession).not.toBe(before);
+  expect(carried).toBe(true);
+  warnings.mockRestore();
+});
+
+/** Everything pi appends on this host's behalf moves both counts together. */
+test("a host's own turns and out-of-turn writes are never foreign", async () => {
+  const warnings = spyOn(console, "warn").mockImplementation(() => {});
+  const errors = spyOn(console, "error").mockImplementation(() => {});
+  const host = await buildHost({ lease: "daemon" });
+  let foreign = 0;
+  host.onForeignWrite(() => {
+    foreign += 1;
+  });
+
+  await host.run((agent) => agent.prompt("say hello"));
+  const built = host.agentSession;
+  expect(await host.setModel(MODEL_ID)).toEqual({ ok: true, id: MODEL_ID });
+  await host.setThinkingLevel("high");
+  await host.run((agent) => agent.prompt("say hello again"));
+  // pi refuses to compact a session this short, which still holds and gives back the lease.
+  await expect(host.compact()).rejects.toThrow("Nothing to compact");
+
+  expect(foreign).toBe(0);
+  // Nothing looked stale either, so no turn ran against a rebuilt agent.
+  expect(host.agentSession).toBe(built);
+  errors.mockRestore();
+  warnings.mockRestore();
 });

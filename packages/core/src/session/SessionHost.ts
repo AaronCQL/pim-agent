@@ -23,6 +23,12 @@ import { CoreExtensions } from "../extensions/CoreExtensions";
 import { Directories } from "../shared/Directories";
 import { FuzzyMatcher, type FuzzyCandidate } from "../shared/FuzzyMatcher";
 import { EventLog } from "./EventLog";
+import {
+  SessionLease,
+  type LeaseFrontend,
+  type LeaseRecord,
+} from "./SessionLease";
+import { WriteMark } from "./WriteMark";
 
 /** What the agent is doing right now. */
 export type SessionStatus = "idle" | "thinking" | "streaming" | "tool";
@@ -59,6 +65,15 @@ export type CancelResult = {
   readonly restored: readonly string[];
 };
 
+/** Whether this host can mutate its session file right now, and who is stopping it. */
+export type LeaseState = {
+  readonly writable: boolean;
+  readonly heldBy?: {
+    readonly frontend: LeaseFrontend;
+    readonly pid: number;
+  };
+};
+
 export type SessionHostDeps = {
   /** Prefix for this host's log lines; also the registry key in practice. */
   readonly label: string;
@@ -69,6 +84,11 @@ export type SessionHostDeps = {
   readonly modelRegistry: ModelRegistry;
   readonly settingsManagerFor: (cwd: string) => SettingsManager;
   readonly persistSettings: (patch: Partial<HostSettings>) => Promise<void>;
+  /**
+   * Take the session file's turn lease around every mutation, as this frontend.
+   * Leave unset where nothing else can open the file.
+   */
+  readonly lease?: LeaseFrontend;
   /** Omit to let pi place the file in its own cwd-grouped sessions directory. */
   readonly mainSessionPath?: () => string;
   readonly isolatedSessionPath?: () => string;
@@ -93,6 +113,18 @@ type ModelResolveResult =
   | { readonly kind: "ambiguous"; readonly candidates: readonly string[] }
   | { readonly kind: "none"; readonly candidates: readonly string[] };
 
+/** A mutation of ours parked behind someone else's lease; the holder is unknown when their file is torn. */
+type LeaseWait = { readonly holder?: LeaseRecord };
+
+const FOREIGN_POLL_MS = 2_000;
+
+function sameWait(a: LeaseWait | undefined, b: LeaseWait | undefined): boolean {
+  return a === undefined || b === undefined
+    ? a === b
+    : a.holder?.pid === b.holder?.pid &&
+        a.holder?.startedAt === b.holder?.startedAt;
+}
+
 function isOutput(event: AssistantMessageEvent): boolean {
   switch (event.type) {
     case "text_delta":
@@ -116,6 +148,17 @@ export class SessionHost {
   private cachedSystemInstruction: string | undefined;
   private cachedLog: EventLog | undefined;
   private queue: Promise<unknown> = Promise.resolve();
+  private seqLog: EventLog | undefined;
+  /** The `EventLog` head as of this host's own last write to that file. */
+  private lastSeen: { readonly path: string; readonly seq: number } | undefined;
+  private blockedBy: LeaseWait | undefined;
+  private readonly leaseListeners = new Set<() => void>();
+  private readonly foreignListeners = new Set<() => void>();
+  /** Set only while a held turn is watching the file; re-samples on demand. */
+  private sampleWrites: (() => Promise<void>) | undefined;
+  private readonly agentListeners = new Set<
+    (event: AgentSessionEvent) => void
+  >();
   private runningTools = 0;
   private streaming = false;
   private producing = false;
@@ -151,6 +194,45 @@ export class SessionHost {
   /** Reader over this session's JSONL, live only once the agent is built. */
   public get eventLog(): EventLog | undefined {
     return this.cachedLog;
+  }
+
+  /** False only while one of this host's own mutations waits on another process. */
+  public get leaseState(): LeaseState {
+    const blocked = this.blockedBy;
+    if (blocked === undefined) {
+      return { writable: true };
+    }
+    const holder = blocked.holder;
+    return holder === undefined
+      ? { writable: false }
+      : {
+          writable: false,
+          heldBy: { frontend: holder.frontend, pid: holder.pid },
+        };
+  }
+
+  /** Fires whenever `leaseState` changes. */
+  public onLeaseChange(listener: () => void): () => void {
+    this.leaseListeners.add(listener);
+    return () => {
+      this.leaseListeners.delete(listener);
+    };
+  }
+
+  /** Fires once per turn in which another process appended to this session's file. */
+  public onForeignWrite(listener: () => void): () => void {
+    this.foreignListeners.add(listener);
+    return () => {
+      this.foreignListeners.delete(listener);
+    };
+  }
+
+  /** Events from whatever agent this host currently holds, across rehydration rebuilds. */
+  public subscribe(listener: (event: AgentSessionEvent) => void): () => void {
+    this.agentListeners.add(listener);
+    return () => {
+      this.agentListeners.delete(listener);
+    };
   }
 
   public get isStreaming(): boolean {
@@ -218,8 +300,9 @@ export class SessionHost {
     work: (agent: AgentSession) => Promise<void>,
     opts?: { readonly isolated?: boolean }
   ): Promise<void> {
-    return this.enqueue(async () => {
-      if (opts?.isolated) {
+    // An isolated run owns a throwaway file nobody else can name, so it takes no lease.
+    if (opts?.isolated) {
+      return this.enqueue(async () => {
         const { agent, sessionPath } = await this.buildIsolatedAgent();
         try {
           await work(agent);
@@ -231,8 +314,9 @@ export class SessionHost {
             }
           });
         }
-        return;
-      }
+      });
+    }
+    return this.withLease(async () => {
       const agent = await this.ensureCached();
       await work(agent);
     });
@@ -269,7 +353,7 @@ export class SessionHost {
   }
 
   public clear(): Promise<void> {
-    return this.enqueue(async () => {
+    return this.withLease(async () => {
       await this.tearDownCached();
       await this.patchSettings({ sessionPath: undefined });
     });
@@ -288,7 +372,7 @@ export class SessionHost {
   }
 
   public setModel(pattern: string): Promise<SetModelResult> {
-    return this.enqueue(async (): Promise<SetModelResult> => {
+    return this.withLease(async (): Promise<SetModelResult> => {
       const result = this.resolveModel(pattern);
       if (result.kind === "none" || result.kind === "ambiguous") {
         return { ok: false, kind: result.kind, candidates: result.candidates };
@@ -306,7 +390,7 @@ export class SessionHost {
   }
 
   public setThinkingLevel(level: ThinkingLevel): Promise<void> {
-    return this.enqueue(async () => {
+    return this.withLease(async () => {
       if (this.currentSettings.thinkingLevel === level) {
         return;
       }
@@ -316,19 +400,26 @@ export class SessionHost {
   }
 
   public compact(customInstructions?: string): Promise<SessionCompactResult> {
-    return this.enqueue(async (): Promise<SessionCompactResult> => {
+    return this.withLease(async (): Promise<SessionCompactResult> => {
       const agent = await this.ensureCached();
       const compaction = await agent.compact(customInstructions);
       return { compaction, activeMessages: agent.messages.length };
     });
   }
 
-  public async dispose(): Promise<void> {
-    if (this.cached) {
-      const agent = this.cached;
-      this.detachCached();
-      await disposeAgent(agent);
+  /** Drop the cached agent so the next turn rebuilds it from the file; never retires the session. */
+  public async invalidate(): Promise<void> {
+    if (!this.cached) {
+      return;
     }
+    const agent = this.cached;
+    this.detachCached();
+    this.cachedSystemInstruction = undefined;
+    await disposeAgent(agent);
+  }
+
+  public async dispose(): Promise<void> {
+    await this.invalidate();
   }
 
   private enqueue<T>(work: () => Promise<T>): Promise<T> {
@@ -339,6 +430,153 @@ export class SessionHost {
     });
     this.lastUsed = Date.now();
     return next;
+  }
+
+  /** Where this session's turn lease lives, once anything has named the file. */
+  private get leasePath(): string | undefined {
+    return (
+      this.cached?.sessionFile ??
+      this.currentSettings.sessionPath ??
+      this.deps.mainSessionPath?.()
+    );
+  }
+
+  /**
+   * Serialize `work` behind the session file's turn lease, with a rehydration on
+   * either side of the acquire: waiting for the lease is exactly the window in
+   * which the other surface appends.
+   */
+  private withLease<T>(work: () => Promise<T>): Promise<T> {
+    return this.enqueue(async () => {
+      const frontend = this.deps.lease;
+      if (frontend === undefined) {
+        return await work();
+      }
+      await this.rehydrateIfStale();
+      // pi names a brand-new session's file itself, and a file nobody else knows cannot be contended.
+      const path = this.leasePath ?? (await this.ensureCached()).sessionFile;
+      if (path === undefined) {
+        return await work();
+      }
+      try {
+        return await SessionLease.hold(
+          path,
+          frontend,
+          async () => {
+            this.setBlocked(undefined);
+            await this.rehydrateIfStale();
+            const settle = await this.watchForeignWrites(path);
+            try {
+              return await work();
+            } finally {
+              // A line we cannot account for means the file has moved past our
+              // agent: leave `lastSeen` behind the head so the next turn rebuilds.
+              if (!(await settle())) {
+                await this.markSeen(path);
+              }
+            }
+          },
+          {
+            onBlocked: (holder) =>
+              this.setBlocked(holder === undefined ? {} : { holder }),
+          }
+        );
+      } finally {
+        this.setBlocked(undefined);
+      }
+    });
+  }
+
+  /**
+   * Watch, for one held turn, for lines this host cannot account for: a `pi` that
+   * took no lease, or a holder killed mid-write. Reports at most once and never
+   * aborts — the work in flight is worth more than the inconsistency it races.
+   * Resolves to whether anything foreign landed.
+   */
+  private async watchForeignWrites(
+    path: string
+  ): Promise<() => Promise<boolean>> {
+    let base:
+      | { readonly agent: AgentSession; readonly mark: WriteMark }
+      | undefined;
+    let foreign = false;
+
+    const check = async (): Promise<void> => {
+      if (foreign) {
+        return;
+      }
+      const agent = this.cached;
+      // A rebuilt agent re-opened the file, which repairs a torn tail and rewrites
+      // on migration, so its own accounting starts from whatever it just read.
+      if (agent?.sessionFile !== path) {
+        base = undefined;
+        return;
+      }
+      const mark = await WriteMark.of(this.logFor(path), agent.sessionManager);
+      const previous = base;
+      base = { agent, mark };
+      if (
+        previous?.agent !== agent ||
+        !WriteMark.foreignSince(previous.mark, mark)
+      ) {
+        return;
+      }
+      foreign = true;
+      console.warn(
+        `[${this.label}] ${path} was written by another process during this turn; its history may be inconsistent`
+      );
+      for (const listener of this.foreignListeners) {
+        listener();
+      }
+    };
+
+    const sample = (): Promise<void> => check().catch(() => undefined);
+    this.sampleWrites = sample;
+    await sample();
+    const timer = setInterval(() => void sample(), FOREIGN_POLL_MS);
+    timer.unref?.();
+
+    return async (): Promise<boolean> => {
+      clearInterval(timer);
+      this.sampleWrites = undefined;
+      await sample();
+      return foreign;
+    };
+  }
+
+  private setBlocked(blocked: LeaseWait | undefined): void {
+    if (sameWait(this.blockedBy, blocked)) {
+      return;
+    }
+    this.blockedBy = blocked;
+    for (const listener of this.leaseListeners) {
+      listener();
+    }
+  }
+
+  /** Another writer moved the file past what this host's `messages` were loaded from. */
+  private async rehydrateIfStale(): Promise<void> {
+    const path = this.cached?.sessionFile;
+    const seen = this.lastSeen;
+    if (path === undefined || seen?.path !== path) {
+      return;
+    }
+    if ((await this.logFor(path).head()) > seen.seq) {
+      await this.invalidate();
+    }
+  }
+
+  // Reading the head is how our own writes stop looking foreign: pi repairs a torn tail and
+  // rewrites on migration, so a rebuild moves the head without anyone else touching the file.
+  private async markSeen(path: string): Promise<void> {
+    this.lastSeen = { path, seq: await this.logFor(path).head() };
+  }
+
+  private logFor(path: string): EventLog {
+    if (this.seqLog?.path !== path) {
+      this.seqLog = new EventLog(path);
+    }
+    return this.seqLog;
   }
 
   private async ensureCached(): Promise<AgentSession> {
@@ -360,6 +598,12 @@ export class SessionHost {
       ? new EventLog(agent.sessionFile)
       : undefined;
     this.cachedUnsubscribe = this.observe(agent);
+    if (this.deps.lease !== undefined && agent.sessionFile) {
+      await this.markSeen(agent.sessionFile);
+    }
+    // Anchor a watching turn on the agent it is about to run, not on the file as
+    // it was before this rebuild read it.
+    await this.sampleWrites?.();
     await this.patchSettings({ cwd, sessionPath: agent.sessionFile });
     return agent;
   }
@@ -403,6 +647,9 @@ export class SessionHost {
           this.producing = false;
           this.runningTools = 0;
           break;
+      }
+      for (const listener of this.agentListeners) {
+        listener(event);
       }
     });
     return () => {
@@ -532,12 +779,7 @@ export class SessionHost {
   }
 
   private async tearDownCached(): Promise<void> {
-    if (this.cached) {
-      const agent = this.cached;
-      this.detachCached();
-      this.cachedSystemInstruction = undefined;
-      await disposeAgent(agent);
-    }
+    await this.invalidate();
     const path =
       this.currentSettings.sessionPath ?? this.deps.mainSessionPath?.();
     if (path) {

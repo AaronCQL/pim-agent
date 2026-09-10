@@ -1,5 +1,6 @@
 import type { DirectoryListing } from "#core/shared/Directories";
 import type { PickerItem } from "#core/picker/PickerItem";
+import type { LeaseFrontend } from "#core/session/SessionLease";
 import type { UpdateSkip } from "#core/shared/Updater";
 import type { NoticeSeverity, ToolView } from "#core/view/ViewBlock";
 import type { ProtocolVersion } from "./Protocol";
@@ -159,6 +160,8 @@ export type EphemeralEvent =
     }
   /** Sent to every connection; the read cursor is one per session, not one per client. */
   | { readonly type: "session_read"; readonly sessionId: string }
+  /** Sent to every connection: the sessions on disk changed, so any listing a client holds is stale. */
+  | { readonly type: "sessions_changed" }
   /** Sent to every connection; the restart it ends in drops every socket. */
   | UpdateStateEvent
   | {
@@ -170,6 +173,13 @@ export type EphemeralEvent =
       readonly thinking: string;
       readonly cost: number;
       readonly status: SessionStatus;
+      /** False while another process holds this session's turn lease. */
+      readonly writable: boolean;
+      /** Who holds it; absent when nothing does, or when their record is torn. */
+      readonly heldBy?: {
+        readonly frontend: LeaseFrontend;
+        readonly pid: number;
+      };
       readonly tps?: number;
       /** Elapsed run time of the turn in flight, by the server's clock; absent when idle. */
       readonly turnElapsedMs?: number;
