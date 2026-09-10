@@ -15,6 +15,22 @@ export type Unit = {
   readonly args?: ReadonlyArray<string>;
 };
 
+/** One reversible act of an install: everything a unit's removal is made of. */
+export type UnitStep =
+  | { readonly kind: "run"; readonly cmd: ReadonlyArray<string> }
+  | { readonly kind: "remove"; readonly path: string };
+
+/** Which init system, and whose home — named so a test can ask about the other platform. */
+export type UnitPlace = {
+  readonly platform: NodeJS.Platform;
+  readonly home: string;
+};
+
+export type InstallOptions = {
+  /** Units this one replaces: stopped and removed before it is written. */
+  readonly replaces?: ReadonlyArray<Unit>;
+};
+
 export type Install = {
   readonly kind: "dev" | "prod";
   readonly packageRoot: string;
@@ -22,9 +38,14 @@ export type Install = {
   readonly bunPath: string;
 };
 
-async function install(unit: Unit): Promise<void> {
+async function install(
+  unit: Unit,
+  options: InstallOptions = {}
+): Promise<void> {
   const at = await detectInstall();
   console.log(`[install] ${at.kind} mode, root=${at.packageRoot}`);
+  // Strictly before the new unit exists: two daemons must never share a token or a port.
+  await supersede(options.replaces ?? []);
   if (process.platform === "linux") {
     const path = systemdUnitPath(unit);
     await Fs.writeAtomic(path, systemdUnit(unit, at));
@@ -68,57 +89,123 @@ async function install(unit: Unit): Promise<void> {
 }
 
 async function uninstall(unit: Unit): Promise<void> {
-  if (process.platform === "linux") {
-    const path = systemdUnitPath(unit);
-    try {
-      await runOrThrow([
-        "systemctl",
-        "--user",
-        "disable",
-        "--now",
-        unitName(unit),
-      ]);
-    } catch (err) {
-      console.warn(`[uninstall] disable failed:`, (err as Error).message);
-    }
-    try {
-      await rm(path);
-      console.log(`[uninstall] removed ${path}`);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw err;
-      }
-    }
-    try {
-      await runOrThrow(["systemctl", "--user", "daemon-reload"]);
-    } catch (err) {
-      console.warn(`[uninstall] daemon-reload failed:`, (err as Error).message);
-    }
-    return;
+  if (process.platform !== "linux" && process.platform !== "darwin") {
+    throw new Error(`Unsupported platform: ${process.platform}`);
   }
-  if (process.platform === "darwin") {
-    const path = launchdPlistPath(unit);
+  await runSteps(uninstallSteps(unit), "uninstall");
+}
+
+/**
+ * Stop and remove every one of `units` that is installed, saying so. Idempotent:
+ * a unit that was never installed, or is already stopped, costs a stat and a line.
+ */
+async function supersede(
+  units: ReadonlyArray<Unit>,
+  where: Partial<UnitPlace> = {}
+): Promise<void> {
+  for (const unit of await installedAmong(units, where)) {
+    console.log(
+      `[supersede] ${unitName(unit)} is no longer used; stopping and removing it`
+    );
+    await runSteps(uninstallSteps(unit, where), "supersede");
+  }
+}
+
+/** Which of `units` this machine currently has a unit file for. */
+async function installedAmong(
+  units: ReadonlyArray<Unit>,
+  where: Partial<UnitPlace> = {}
+): Promise<ReadonlyArray<Unit>> {
+  const present = await Promise.all(
+    units.map((unit) => pathExists(unitFile(unit, where)))
+  );
+  return units.filter((_, index) => present[index]);
+}
+
+/**
+ * The argv the installed unit starts the daemon with, empty when it is not
+ * installed: what a re-install has to preserve rather than quietly drop.
+ */
+async function installedArgs(
+  unit: Unit,
+  where: Partial<UnitPlace> = {}
+): Promise<ReadonlyArray<string>> {
+  const at = place(where);
+  const text = await Bun.file(unitFile(unit, at))
+    .text()
+    .catch(() => "");
+  const words = unitWords(text, at.platform);
+  // Everything before `--mode` is the interpreter and the entry point.
+  const mode = words.indexOf("--mode");
+  return mode < 0 ? [] : words.slice(mode);
+}
+
+function unitWords(
+  text: string,
+  platform: NodeJS.Platform
+): ReadonlyArray<string> {
+  if (platform === "darwin") {
+    const argv = /<array>([\s\S]*?)<\/array>/.exec(text)?.[1] ?? "";
+    return [...argv.matchAll(/<string>([^<]*)<\/string>/g)].map(
+      (match) => match[1]!
+    );
+  }
+  return (/^ExecStart=(.*)$/m.exec(text)?.[1] ?? "")
+    .split(/\s+/)
+    .filter((word) => word.length > 0);
+}
+
+/** Everything removing `unit` is made of, in the order it has to happen. */
+function uninstallSteps(
+  unit: Unit,
+  where: Partial<UnitPlace> = {}
+): ReadonlyArray<UnitStep> {
+  const at = place(where);
+  if (at.platform === "darwin") {
     const uid = process.getuid?.() ?? 0;
-    try {
-      await runOrThrow([
-        "launchctl",
-        "bootout",
-        `gui/${uid}/${launchdLabel(unit)}`,
-      ]);
-    } catch (err) {
-      console.warn(`[uninstall] bootout failed:`, (err as Error).message);
+    return [
+      {
+        kind: "run",
+        cmd: ["launchctl", "bootout", `gui/${uid}/${launchdLabel(unit)}`],
+      },
+      { kind: "remove", path: launchdPlistPath(unit, at) },
+    ];
+  }
+  return [
+    { kind: "run", cmd: ["systemctl", "--user", "stop", unitName(unit)] },
+    { kind: "run", cmd: ["systemctl", "--user", "disable", unitName(unit)] },
+    { kind: "remove", path: systemdUnitPath(unit, at) },
+    { kind: "run", cmd: ["systemctl", "--user", "daemon-reload"] },
+  ];
+}
+
+// A step that fails is reported, never fatal: an already-stopped unit still has
+// to lose its file, and a file already gone still has to trigger a reload.
+async function runSteps(
+  steps: ReadonlyArray<UnitStep>,
+  label: string
+): Promise<void> {
+  for (const step of steps) {
+    if (step.kind === "run") {
+      try {
+        await runOrThrow(step.cmd);
+      } catch (err) {
+        console.warn(
+          `[${label}] ${step.cmd.join(" ")} failed:`,
+          (err as Error).message
+        );
+      }
+      continue;
     }
     try {
-      await rm(path);
-      console.log(`[uninstall] removed ${path}`);
+      await rm(step.path);
+      console.log(`[${label}] removed ${step.path}`);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
         throw err;
       }
     }
-    return;
   }
-  throw new Error(`Unsupported platform: ${process.platform}`);
 }
 
 /** Only a supervisor turns an exit into a restart; unsupervised it is a stop. */
@@ -239,20 +326,35 @@ function modeArgs(unit: Unit): ReadonlyArray<string> {
   return ["--mode", unit.mode, ...(unit.args ?? [])];
 }
 
-function systemdDir(): string {
-  return join(homedir(), ".config", "systemd", "user");
+function place(where: Partial<UnitPlace> = {}): UnitPlace {
+  return {
+    platform: where.platform ?? process.platform,
+    home: where.home ?? homedir(),
+  };
 }
 
-function launchAgentsDir(): string {
-  return join(homedir(), "Library", "LaunchAgents");
+function systemdDir(at: UnitPlace = place()): string {
+  return join(at.home, ".config", "systemd", "user");
 }
 
-function systemdUnitPath(unit: Unit): string {
-  return join(systemdDir(), `${unitName(unit)}.service`);
+function launchAgentsDir(at: UnitPlace = place()): string {
+  return join(at.home, "Library", "LaunchAgents");
 }
 
-function launchdPlistPath(unit: Unit): string {
-  return join(launchAgentsDir(), `${launchdLabel(unit)}.plist`);
+function systemdUnitPath(unit: Unit, at: UnitPlace = place()): string {
+  return join(systemdDir(at), `${unitName(unit)}.service`);
+}
+
+function launchdPlistPath(unit: Unit, at: UnitPlace = place()): string {
+  return join(launchAgentsDir(at), `${launchdLabel(unit)}.plist`);
+}
+
+/** Where this platform keeps `unit`'s definition, installed or not. */
+function unitFile(unit: Unit, where: Partial<UnitPlace> = {}): string {
+  const at = place(where);
+  return at.platform === "darwin"
+    ? launchdPlistPath(unit, at)
+    : systemdUnitPath(unit, at);
 }
 
 function launchdLogPath(unit: Unit): string {
@@ -344,6 +446,11 @@ async function runOrThrow(
 export const Supervisor = {
   install,
   uninstall,
+  supersede,
+  installedAmong,
+  installedArgs,
+  uninstallSteps,
+  unitFile,
   restart,
   restartSiblings,
   isSupervised,

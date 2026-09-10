@@ -1,6 +1,7 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { Bot as Grammy } from "grammy";
 
+import type { AgentRuntime } from "#core/session/AgentRuntime";
 import { PimVersion } from "#core/shared/PimVersion";
 import { Commands } from "./Commands";
 import type { TelegramConfig } from "./Config";
@@ -19,8 +20,10 @@ export class Bot {
   private readonly scheduler: TaskScheduler;
   private readonly config: TelegramConfig;
   private readonly commands: Commands;
+  /** Grammy's long poll, which only settles once the bot is stopped. */
+  private polling: Promise<void> | undefined;
 
-  public constructor(config: TelegramConfig) {
+  public constructor(config: TelegramConfig, runtime: AgentRuntime) {
     this.config = config;
     this.grammy = new Grammy(config.token);
     this.allowSet = new Set(config.allow);
@@ -31,7 +34,8 @@ export class Bot {
     this.registry = new SessionRegistry(
       config,
       this.grammy.api,
-      this.scheduler
+      this.scheduler,
+      runtime
     );
     this.commands = new Commands(config, this.grammy.api, this.registry);
 
@@ -102,12 +106,16 @@ export class Bot {
     this.registry.setBotUsername(username);
     console.log(`bot @${username} ready`);
     await this.scheduler.start();
-    await this.grammy.start();
+    // Polling outlives this call: awaiting it would hold every other surface down with it.
+    this.polling = this.grammy.start().catch((err: unknown) => {
+      console.error("[bot] polling stopped:", err);
+    });
   }
 
   public async stop(): Promise<void> {
     await this.scheduler.stop();
     await this.grammy.stop();
+    await this.polling;
     await this.registry.disposeAll();
   }
 

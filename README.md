@@ -209,6 +209,9 @@ Supported arguments:
 
 These are frozen into the daemon's unit file at install time, so re-run `--install` to change them. The daemon auto-restarts on failure, and allows for manual updates on the web UI: **Settings → Update & Restart**.
 
+> [!NOTE]
+> One daemon serves every surface. `pim --mode web --install` installs it with the web surface on, keeping the Telegram bot if this machine already served one; the old per-surface units are stopped and removed for you. `pim --mode daemon --install` turns both on, and `pim --mode daemon --install --surfaces web` is how you turn one back off.
+
 After installing with the default settings, the web UI is at <http://localhost:4319>.
 
 ### Remote Access
@@ -255,7 +258,7 @@ pim --mode telegram --uninstall
 
 The daemon auto-restarts on failure and supports the `/update` command for in-chat updates.
 
-For development, run standalone with `pim --mode telegram` instead.
+For development, run standalone with `pim --mode telegram` instead — it starts the daemon with only the bot, so no web bundle or port is needed.
 
 ### Commands
 

@@ -1,14 +1,10 @@
-import {
-  ModelRegistry,
-  ModelRuntime,
-  SettingsManager,
-} from "@earendil-works/pi-coding-agent";
 import type { Api } from "grammy";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 
+import { AgentRuntime } from "#core/session/AgentRuntime";
 import type { TelegramConfig } from "./Config";
 import { Session } from "./Session";
 import { TaskScheduler } from "./TaskScheduler";
@@ -36,20 +32,15 @@ afterEach(async () => {
 });
 
 async function buildSession(): Promise<Session> {
-  const modelRuntime = await ModelRuntime.create({
-    authPath: join(agentDir, "auth.json"),
-    modelsPath: join(agentDir, "models.json"),
-  });
+  const runtime = new AgentRuntime(agentDir);
+  await runtime.init();
   return new Session({
     id: { chatId: 1, threadId: undefined },
     settings: {},
     config,
     api: stubApi,
-    agentDir,
-    modelRuntime,
-    modelRegistry: new ModelRegistry(modelRuntime),
+    runtime,
     scheduler: new TaskScheduler({ configDir: tmp, runTask: async () => {} }),
-    settingsManagerFor: (cwd) => SettingsManager.create(cwd, agentDir),
     persistSettings: async () => {},
     getBotUsername: () => undefined,
   });

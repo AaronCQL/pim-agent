@@ -42,7 +42,8 @@ describe("the published tarball", () => {
     "bin/pim.ts",
     "packages/core/src/extensions/bash/index.ts",
     "packages/tui/src/extensions/_init/index.ts",
-    "packages/telegram/src/index.ts",
+    "packages/daemon/src/index.ts",
+    "packages/telegram/src/Bot.ts",
     // pim's themes are loaded from disk at runtime; nothing else guards them.
     "packages/tui/src/themes/pim-dark.json",
     "packages/tui/src/themes/pim-light.json",

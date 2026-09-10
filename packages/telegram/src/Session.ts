@@ -1,15 +1,10 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import {
-  AgentSession,
-  ModelRegistry,
-  ModelRuntime,
-  SettingsManager,
-} from "@earendil-works/pi-coding-agent";
+import { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { Api } from "grammy";
 import { rename } from "node:fs/promises";
 import { join } from "node:path";
 
-import { Tools } from "#core/shared/Tools";
+import type { AgentRuntime } from "#core/session/AgentRuntime";
 import {
   SessionHost,
   type HostSettings,
@@ -17,6 +12,7 @@ import {
   type SetCwdResult,
   type SetModelResult,
 } from "#core/session/SessionHost";
+import { Tools } from "#core/shared/Tools";
 import type { LogsMode, TelegramConfig, ThinkingLevelOpt } from "./Config";
 import { SendFileTool } from "./SendFileTool";
 import type { TaskScheduler } from "./TaskScheduler";
@@ -39,11 +35,9 @@ export type SessionDeps = {
   readonly settings: SessionSettings;
   readonly config: TelegramConfig;
   readonly api: Api;
-  readonly agentDir: string;
-  readonly modelRuntime: ModelRuntime;
-  readonly modelRegistry: ModelRegistry;
+  /** Pi's installation, shared with every other surface in this process. */
+  readonly runtime: AgentRuntime;
   readonly scheduler: TaskScheduler;
-  readonly settingsManagerFor: (cwd: string) => SettingsManager;
   readonly persistSettings: (patch: Partial<SessionSettings>) => Promise<void>;
   readonly getBotUsername: () => string | undefined;
 };
@@ -72,11 +66,14 @@ export class Session {
       label: `session ${encodeId(deps.id)}`,
       settings: deps.settings,
       defaults: { cwd: deps.config.cwd, model: deps.config.model },
-      agentDir: deps.agentDir,
-      modelRuntime: deps.modelRuntime,
-      modelRegistry: deps.modelRegistry,
-      settingsManagerFor: deps.settingsManagerFor,
+      agentDir: deps.runtime.agentDir,
+      modelRuntime: deps.runtime.modelRuntime,
+      modelRegistry: deps.runtime.modelRegistry,
+      settingsManagerFor: (cwd) => deps.runtime.settingsManagerFor(cwd),
       persistSettings: deps.persistSettings,
+      // Nothing else opens these files; the lease is here for the turn a crashed
+      // daemon left behind, and for an eviction that races its own turn.
+      lease: "daemon",
       mainSessionPath: () => this.sessionPath("sessions"),
       isolatedSessionPath: () =>
         this.sessionPath("isolated-sessions", `-${stamp()}`),

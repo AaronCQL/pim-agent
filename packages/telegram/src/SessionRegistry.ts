@@ -1,13 +1,9 @@
-import {
-  getAgentDir,
-  ModelRegistry,
-  ModelRuntime,
-  SettingsManager,
-} from "@earendil-works/pi-coding-agent";
 import type { Api } from "grammy";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
+import { AgentRuntime } from "#core/session/AgentRuntime";
+import { SessionCache } from "#core/session/SessionCache";
 import { Fs } from "#core/shared/Fs";
 import { type TelegramConfig } from "./Config";
 import {
@@ -18,17 +14,12 @@ import {
 } from "./Session";
 import type { TaskScheduler } from "./TaskScheduler";
 
-const LRU_CAP = 16;
-
 export class SessionRegistry {
   private readonly config: TelegramConfig;
   private readonly api: Api;
   private readonly scheduler: TaskScheduler;
-  private readonly cache = new Map<string, Session>();
-  private modelRuntime!: ModelRuntime;
-  private modelRegistry!: ModelRegistry;
-  private readonly settingsManagers = new Map<string, SettingsManager>();
-  private readonly agentDir: string;
+  private readonly runtime: AgentRuntime;
+  private readonly cache = new SessionCache<Session>();
   private settings: Map<string, SessionSettings> = new Map();
   private initialized = false;
   private initPromise: Promise<void> | undefined;
@@ -37,12 +28,13 @@ export class SessionRegistry {
   public constructor(
     config: TelegramConfig,
     api: Api,
-    scheduler: TaskScheduler
+    scheduler: TaskScheduler,
+    runtime: AgentRuntime
   ) {
     this.config = config;
     this.api = api;
     this.scheduler = scheduler;
-    this.agentDir = getAgentDir();
+    this.runtime = runtime;
   }
 
   public setBotUsername(username: string): void {
@@ -63,45 +55,34 @@ export class SessionRegistry {
   public get(sessionId: SessionId): Session {
     this.requireInitialized();
     const key = encodeId(sessionId);
-    const cached = this.cache.get(key);
+    const cached = this.cache.touch(key);
     if (cached) {
-      cached.lastUsed = Date.now();
       return cached;
     }
-    this.evictIfNeeded();
-    const session = new Session({
-      id: sessionId,
-      settings: this.settings.get(key) ?? {},
-      config: this.config,
-      api: this.api,
-      agentDir: this.agentDir,
-      modelRuntime: this.modelRuntime,
-      modelRegistry: this.modelRegistry,
-      scheduler: this.scheduler,
-      settingsManagerFor: (cwd) => this.settingsManagerFor(cwd),
-      persistSettings: (patch) => this.persistSettings(key, patch),
-      getBotUsername: () => this.botUsername,
-    });
-    this.cache.set(key, session);
-    return session;
+    return this.cache.adopt(
+      key,
+      new Session({
+        id: sessionId,
+        settings: this.settings.get(key) ?? {},
+        config: this.config,
+        api: this.api,
+        runtime: this.runtime,
+        scheduler: this.scheduler,
+        persistSettings: (patch) => this.persistSettings(key, patch),
+        getBotUsername: () => this.botUsername,
+      })
+    );
   }
 
   public async disposeAll(): Promise<void> {
-    await Promise.all(
-      Array.from(this.cache.values(), (session) => session.dispose())
-    );
-    this.cache.clear();
+    await this.cache.disposeAll();
     if (this.initialized) {
       await this.flushSettings();
     }
   }
 
   private async bootstrap(): Promise<void> {
-    this.modelRuntime = await ModelRuntime.create({
-      authPath: join(this.agentDir, "auth.json"),
-      modelsPath: join(this.agentDir, "models.json"),
-    });
-    this.modelRegistry = new ModelRegistry(this.modelRuntime);
+    await this.runtime.init();
     const loaded = await Fs.readJsonOrEmpty<Record<string, SessionSettings>>(
       join(this.config.configDir, "state.json"),
       {}
@@ -141,35 +122,5 @@ export class SessionRegistry {
     } catch (err) {
       console.warn(`[registry] state save failed:`, err);
     }
-  }
-
-  private settingsManagerFor(cwd: string): SettingsManager {
-    const existing = this.settingsManagers.get(cwd);
-    if (existing) {
-      return existing;
-    }
-    const settingsManager = SettingsManager.create(cwd, this.agentDir);
-    this.settingsManagers.set(cwd, settingsManager);
-    return settingsManager;
-  }
-
-  private evictIfNeeded(): void {
-    if (this.cache.size < LRU_CAP) {
-      return;
-    }
-    let oldestKey: string | undefined;
-    let oldestTime = Infinity;
-    for (const [k, v] of this.cache) {
-      if (v.lastUsed < oldestTime) {
-        oldestTime = v.lastUsed;
-        oldestKey = k;
-      }
-    }
-    if (!oldestKey) {
-      return;
-    }
-    const entry = this.cache.get(oldestKey)!;
-    this.cache.delete(oldestKey);
-    void entry.dispose();
   }
 }

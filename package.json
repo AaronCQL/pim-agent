@@ -20,6 +20,7 @@
   },
   "imports": {
     "#core/*": "./packages/core/src/*.ts",
+    "#daemon/*": "./packages/daemon/src/*.ts",
     "#tui/*": "./packages/tui/src/*.ts",
     "#telegram/*": "./packages/telegram/src/*.ts",
     "#protocol/*": "./packages/protocol/src/*.ts",
@@ -29,6 +30,7 @@
   "files": [
     "bin/",
     "packages/core/src/",
+    "packages/daemon/src/",
     "packages/tui/src/",
     "packages/telegram/src/",
     "packages/protocol/src/",

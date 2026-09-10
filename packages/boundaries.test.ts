@@ -13,6 +13,9 @@ const allowed: Record<string, readonly string[]> = {
   telegram: ["core"],
   server: ["core", "protocol"],
   web: ["core", "protocol", "server"],
+  // The composition root, and the only place the surfaces meet: `server` and
+  // `telegram` stay blind to each other.
+  daemon: ["core", "protocol", "server", "telegram"],
 };
 
 const packageNames = Object.keys(allowed);
@@ -67,6 +70,7 @@ describe("layer boundaries", () => {
 // build error — it is a blank page the first time the module body runs.
 const aliases: Record<string, string> = {
   core: "core/src/",
+  daemon: "daemon/src/",
   protocol: "protocol/src/",
   server: "server/src/",
   tui: "tui/src/",
