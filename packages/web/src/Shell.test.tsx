@@ -115,27 +115,8 @@ async function attach(store: SessionStore, name: string): Promise<void> {
   }
 }
 
-/**
- * The transcript's scroller, with a layout happy-dom will not compute: a page
- * of viewport over a body of content whose height the caller can grow, which
- * is what a row taller than the flush that appended it looks like from here.
- */
-function scrollerOf(host: HTMLElement): {
-  readonly element: HTMLElement;
-  grow: (height: number) => void;
-} {
-  // The sidebar's list scrolls too; the transcript's scroller is the one
-  // holding it.
-  const element = host.querySelector<HTMLElement>("div.overflow-y-auto")!;
-  let height = 1000;
-  Object.defineProperty(element, "scrollHeight", { get: () => height });
-  Object.defineProperty(element, "clientHeight", { value: 500 });
-  return {
-    element,
-    grow: (by) => {
-      height += by;
-    },
-  };
+function scrollerOf(host: HTMLElement): HTMLElement {
+  return host.querySelector<HTMLElement>("div.overflow-y-auto")!;
 }
 
 function message(seq: number, text: string): ServerEvent {
@@ -831,102 +812,61 @@ describe("the shell, painted from events alone", () => {
     expect(host.querySelector('[aria-label="Stop"]')).not.toBeNull();
   });
 
-  test("sending re-pins the transcript to its end", () => {
+  test("sending jumps to the bottom origin", () => {
     const store = offline();
     const host = paint(store);
     store.ingest(attached());
+    store.ingest(message(1, "earlier message"));
     flush();
 
-    // happy-dom lays nothing out, so the scroller is given a page worth of
-    // content to have scrolled away from.
-    const { element: scroller } = scrollerOf(host);
-    scroller.scrollTop = 500;
-    scroller.dispatchEvent(new Event("scroll"));
-    scroller.scrollTop = 0;
-    scroller.dispatchEvent(new Event("scroll"));
+    const scroller = scrollerOf(host);
+    scroller.scrollTop = -500;
 
     const input = host.querySelector("textarea")!;
-    type(input, "hello");
+    const draft = "first line\nsecond line\nthird line\nfourth line";
+    type(input, draft);
     press(input, "Enter");
     flush();
 
-    expect(scroller.scrollTop).toBe(1000);
+    expect(store.state.optimistic[0]?.text).toBe(draft);
+    expect(input.value).toBe("");
+    expect(scroller.scrollTop).toBe(0);
   });
 
-  test("a scroll the browser is still running when the message goes is not the reader's", () => {
+  test("the bottom-origin layout keeps messages in chronological DOM order", () => {
     const store = offline();
     const host = paint(store);
     store.ingest(attached());
+    store.ingest(message(1, "first message"));
+    store.ingest(message(2, "second message"));
     flush();
-    const { element: scroller, grow } = scrollerOf(host);
-    // Three pages of content, so a scroll away from the end reads as one.
-    grow(600);
-
-    const input = host.querySelector("textarea")!;
-    type(input, "hello");
-    press(input, "Enter");
-    flush();
-    expect(scroller.scrollTop).toBe(1600);
-
-    // The wheel the reader turned just before hitting Enter is still being
-    // animated, and the browser delivers its frames after the send. Reading
-    // one of them as the reader letting go leaves the message just sent half
-    // under the composer, which is where a sent message must never end up.
-    scroller.scrollTop = 1000;
-    scroller.dispatchEvent(new Event("scroll"));
-    expect(scroller.scrollTop).toBe(1600);
-
-    store.ingest(message(2, "the reply"));
-    flush();
-    expect(scroller.scrollTop).toBe(1600);
-
-    // The end reached, the hold is over and the reader has the transcript
-    // back: the next scroll away from it is theirs.
-    scroller.dispatchEvent(new Event("scroll"));
-    scroller.scrollTop = 900;
-    scroller.dispatchEvent(new Event("scroll"));
-    store.ingest(message(3, "and another"));
-    flush();
-    expect(scroller.scrollTop).toBe(900);
+    const scroller = scrollerOf(host);
+    expect(scroller.classList.contains("flex")).toBe(true);
+    expect(scroller.classList.contains("flex-col-reverse")).toBe(true);
+    expect(scroller.children).toHaveLength(1);
+    const content = scroller.firstElementChild!;
+    expect(content.classList.contains("flex-none")).toBe(true);
+    expect(content.classList.contains("min-h-full")).toBe(true);
+    expect(
+      [...content.querySelectorAll("article p")].map((p) => p.textContent)
+    ).toEqual(["first message", "second message"]);
   });
 
-  test("a transcript that grows under its own scroll stays pinned", () => {
+  test("new messages do not write the reader's scroll position", () => {
     const store = offline();
     const host = paint(store);
     store.ingest(attached());
-    const { element: scroller, grow } = scrollerOf(host);
-
-    store.ingest(message(2, "hello"));
-    flush();
-    expect(scroller.scrollTop).toBe(1000);
-
-    // Markdown parses, a code block grows a copy button: the row is taller
-    // than it was when the scroll above was written, and the browser delivers
-    // that scroll now, against the taller transcript. Read as distance from
-    // the end, this is a reader who has scrolled up; it is not one.
-    grow(600);
-    scroller.dispatchEvent(new Event("scroll"));
-
-    store.ingest(message(3, "and the next one"));
-    flush();
-    expect(scroller.scrollTop).toBe(1600);
-  });
-
-  test("a reader who scrolls up is left where they are", () => {
-    const store = offline();
-    const host = paint(store);
-    store.ingest(attached());
-    const { element: scroller } = scrollerOf(host);
+    const scroller = scrollerOf(host);
 
     store.ingest(message(2, "hello"));
     flush();
 
-    scroller.scrollTop = 120;
+    scroller.scrollTop = -120;
     scroller.dispatchEvent(new Event("scroll"));
 
     store.ingest(message(3, "and the next one"));
     flush();
-    expect(scroller.scrollTop).toBe(120);
+    expect(scroller.scrollTop).toBe(-120);
   });
 });
 
@@ -978,7 +918,7 @@ describe("the composer, against a real gateway", () => {
     expect(options(host)).toHaveLength(0);
   });
 
-  test("the sidebar lists the sessions pi has on disk", async () => {
+  test("the sidebar lists sessions and picking one jumps to its end", async () => {
     const host = paint(store);
     await store.prompt("say hello");
     await until(
@@ -996,6 +936,10 @@ describe("the composer, against a real gateway", () => {
     // Flat, most recent first, the directory on every row — no grouping by it.
     expect(list().textContent).toContain(baseName(harness.tmp));
     expect(list().querySelectorAll("li").length).toBeGreaterThan(0);
+    const scroller = scrollerOf(host);
+    scroller.scrollTop = -500;
+    list().querySelector<HTMLButtonElement>("li button")!.click();
+    expect(scroller.scrollTop).toBe(0);
   });
 
   /** Everything this client has said and not yet had heard, as one string. */

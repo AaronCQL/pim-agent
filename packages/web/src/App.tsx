@@ -20,7 +20,7 @@ import { Splash } from "./transcript/Splash";
 import { SubagentModal } from "./transcript/SubagentModal";
 import { Transcript } from "./transcript/Transcript";
 import { Topbar } from "./topbar/Topbar";
-import { createScrollAnchor, observeHeight } from "./ui/scroll";
+import { observeHeight } from "./ui/scroll";
 import { Drawer } from "./ui/Drawer";
 import { createMediaQuery, DESKTOP } from "./ui/media";
 
@@ -52,7 +52,7 @@ export function Shell(props: {
       setSidebar(isDesktop);
     }
   );
-  const anchor = createScrollAnchor();
+  let scroller!: HTMLDivElement;
   const [inset, setInset] = createSignal(0);
   // An object rather than the string, so taking back the same words twice is two recalls.
   const [recalled, setRecalled] = createSignal<{ text: string }>();
@@ -65,7 +65,9 @@ export function Shell(props: {
     });
   };
 
-  const jump = anchor.jump;
+  const jump = (): void => {
+    scroller.scrollTop = 0;
+  };
   const hasTranscript = createMemo(
     (): boolean =>
       props.store.state.durable.length > 0 ||
@@ -76,27 +78,11 @@ export function Shell(props: {
     (): boolean => !props.store.state.loading && !hasTranscript()
   );
 
-  createEffect(
-    () =>
-      props.store.state.durable.length +
-      props.store.state.optimistic.length +
-      props.store.liveSize(),
-    anchor.stick
-  );
-
-  createEffect(
-    () => inset(),
-    (height, previous) => {
-      anchor.shift(height - (previous ?? 0));
-    }
-  );
-
   // `dvh` does not follow the software keyboard on iOS; only the visual viewport shrinks.
   const viewport = globalThis.visualViewport;
   const [viewportHeight, setViewportHeight] = createSignal(viewport?.height);
   const resizeViewport = (): void => {
     setViewportHeight(viewport?.height);
-    anchor.stick();
   };
   viewport?.addEventListener("resize", resizeViewport);
   onCleanup(() => {
@@ -164,13 +150,13 @@ export function Shell(props: {
 
             <div class="relative min-h-0 flex-1">
               <div
-                ref={anchor.mount}
-                class="h-full overflow-y-auto"
-                onScroll={anchor.onScroll}
+                ref={(element: HTMLDivElement) => {
+                  scroller = element;
+                }}
+                class="flex h-full flex-col-reverse overflow-y-auto"
               >
                 <div
-                  ref={observeHeight(anchor.stick)}
-                  class="mx-auto w-full max-w-3xl space-y-[--line] p-3 leading-[--line]"
+                  class="mx-auto min-h-full w-full max-w-3xl flex-none space-y-[--line] p-3 leading-[--line]"
                   style={{
                     "padding-bottom": `calc(${inset()}px + var(--line))`,
                   }}
