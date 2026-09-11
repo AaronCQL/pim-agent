@@ -9,6 +9,7 @@ import { Directories } from "#core/shared/Directories";
 import type { DirectoryListing } from "#core/shared/Directories";
 import { Git, type GitBranch, type GitOutcome } from "#core/shared/Git";
 import { GitMonitor } from "#core/shared/GitMonitor";
+import { RepoDiff } from "#core/shared/RepoDiff";
 import { ReadCursors } from "#core/session/ReadCursors";
 import type { SessionHost } from "#core/session/SessionHost";
 import type { SessionRegistry } from "#core/session/SessionRegistry";
@@ -16,6 +17,7 @@ import { PimVersion } from "#core/shared/PimVersion";
 import { SubagentLogs } from "#core/shared/SubagentLogs";
 import type { UpdateOutcome } from "#core/shared/Updater";
 import type { Command } from "#protocol/Command";
+import type { ChangeList, FileDiff } from "#protocol/Diff";
 import { CLOSE_PROTOCOL_MISMATCH, PROTOCOL_VERSION } from "#protocol/Protocol";
 import type {
   ModelView,
@@ -59,6 +61,8 @@ type Outcome = {
   readonly thinkingLevels?: readonly string[];
   readonly directory?: DirectoryListing;
   readonly branches?: readonly GitBranch[];
+  readonly changes?: ChangeList;
+  readonly fileDiff?: FileDiff;
   readonly restored?: readonly string[];
   readonly after?: () => void;
 };
@@ -286,6 +290,25 @@ export class WsGateway {
         return {
           branches: await Git.listBranches(
             this.requireStream(connection).host.cwd
+          ),
+        };
+      // Reading the repository never moves it, so neither of these takes the `repoBusy` refusal.
+      case "list_changes":
+        return {
+          changes: await RepoDiff.listChanges(
+            this.requireStream(connection).host.cwd,
+            command.base,
+            this.git
+          ),
+        };
+      case "file_diff":
+        return {
+          fileDiff: await RepoDiff.fileDiff(
+            this.requireStream(connection).host.cwd,
+            command.base,
+            command.path,
+            this.git,
+            command.context
           ),
         };
       case "checkout": {

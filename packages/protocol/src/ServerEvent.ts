@@ -4,6 +4,7 @@ import type { PickerItem } from "#core/picker/PickerItem";
 import type { LeaseFrontend } from "#core/session/SessionLease";
 import type { UpdateSkip } from "#core/shared/Updater";
 import type { NoticeSeverity, ToolView } from "#core/view/ViewBlock";
+import type { ChangeList, FileDiff } from "./Diff";
 import type { ProtocolVersion } from "./Protocol";
 
 export type SessionStatus = "idle" | "thinking" | "streaming" | "tool";
@@ -240,6 +241,10 @@ export type ResponseEvent = {
   readonly directory?: DirectoryListing;
   /** The cwd's local branches, for `list_branches`. */
   readonly branches?: readonly GitBranch[];
+  /** The change list, for `list_changes`. */
+  readonly changes?: ChangeList;
+  /** One file's hunks, for `file_diff`. */
+  readonly fileDiff?: FileDiff;
   /** For `cancel` and `dequeue`: queued messages pi gave back, now owned by the client that asked. */
   readonly restored?: readonly string[];
 };
