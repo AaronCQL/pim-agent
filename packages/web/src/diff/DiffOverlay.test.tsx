@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { flush } from "solid-js";
 
 import { git, makeRepo } from "#core/shared/fixtures/repo";
+import type { ChangeList, FileDiff } from "#protocol/Diff";
 import type { CommandDraft } from "#protocol/Command";
 import type { ResponseEvent } from "#protocol/ServerEvent";
 import { SessionStore } from "../session/SessionStore";
@@ -100,6 +101,58 @@ function settle(test: () => boolean, label: string): Promise<void> {
     flush();
     return test();
   }, label);
+}
+
+/** A change list no repository has to be built for: the row ceiling needs more files than git can cheaply make. */
+function bulk(files: number): ChangeList {
+  return {
+    base: { kind: "worktree" },
+    files: Array.from({ length: files }, (_, at) => ({
+      path: `src/file-${at}.ts`,
+      status: "modified" as const,
+      added: 1,
+      removed: 0,
+      fingerprint: `f${at}`,
+    })),
+    added: files,
+    removed: 0,
+    truncated: true,
+  };
+}
+
+function answerWith(changes?: ChangeList, fileDiff?: FileDiff): void {
+  watch((command) => {
+    if (command.type === "list_changes" && changes !== undefined) {
+      return { type: "response", id: "stub", success: true, changes };
+    }
+    if (command.type === "file_diff" && fileDiff !== undefined) {
+      return { type: "response", id: "stub", success: true, fileDiff };
+    }
+    return undefined;
+  });
+}
+
+function clickText(host: HTMLElement, label: string): void {
+  [...host.querySelectorAll<HTMLButtonElement>("button")]
+    .find((button) => button.textContent?.trim() === label)
+    ?.click();
+}
+
+/** The state frame the server sends whenever the repository moves. */
+function dirty(count: number): void {
+  store.ingest({
+    type: "session_state",
+    writable: true,
+    cwd: repo,
+    model: "test/echo",
+    thinking: "off",
+    cost: 0,
+    status: "idle",
+    branch: "main",
+    dirtyCount: count,
+    ahead: 0,
+    behind: 0,
+  });
 }
 
 /** The overlay painted with its first list already landed. */
@@ -252,4 +305,92 @@ test("the Diff button opens the overlay while an agent is working", async () => 
   expect(
     host.querySelector<HTMLDialogElement>("[aria-label='Changes']")?.open
   ).toBe(true);
+});
+
+test("the list paints five hundred rows, and the next five hundred on request", async () => {
+  answerWith(bulk(1200));
+  const host = paint();
+
+  await settle(() => rows(host).length === 500, "the first page");
+  expect(host.textContent).toContain("500 of 1200");
+  expect(host.textContent).toContain("More files changed than this list holds");
+
+  clickText(host, "show more");
+
+  await settle(() => rows(host).length === 1000, "the second page");
+  expect(host.textContent).toContain("1000 of 1200");
+});
+
+test("a repository that moves marks the list stale and waits to be asked", async () => {
+  await seed();
+  const host = await open();
+  await settle(() => rows(host).length === 2, "both rows");
+
+  dirty(99);
+  flush();
+
+  expect(host.textContent).toContain("The repository has changed");
+  expect(asked("list_changes").length).toBe(1);
+
+  host
+    .querySelector<HTMLButtonElement>("[title='Read the change list again']")
+    ?.click();
+
+  await settle(() => asked("list_changes").length === 2, "the re-read");
+  expect(host.querySelector("[title='Read the change list again']")).toBeNull();
+});
+
+test("a diff too large to paint says so, and offers no way past it", async () => {
+  await seed();
+  answerWith(undefined, {
+    path: "alpha.ts",
+    hunks: [
+      {
+        oldStart: 1,
+        oldLines: 0,
+        newStart: 1,
+        newLines: 1,
+        lines: [{ kind: "added", newLine: 1, text: "the part that fit" }],
+      },
+    ],
+    truncated: true,
+  });
+  const host = paint();
+  await settle(() => rows(host).length === 2, "both rows");
+
+  rows(host)[0]?.click();
+
+  await settle(
+    () => host.textContent?.includes("diff is very large") === true,
+    "the note"
+  );
+  expect(host.textContent).toContain("the part that fit");
+  expect(host.textContent).not.toContain("no textual changes");
+  expect(
+    [...host.querySelectorAll("button")].some((button) =>
+      /show anyway/i.test(button.textContent ?? "")
+    )
+  ).toBe(false);
+});
+
+test("a binary file reads as one row and the size of each side", async () => {
+  await seed();
+  answerWith(undefined, {
+    path: "alpha.ts",
+    hunks: [],
+    binary: true,
+    oldBytes: 1200,
+    newBytes: 3400,
+  });
+  const host = paint();
+  await settle(() => rows(host).length === 2, "both rows");
+
+  rows(host)[0]?.click();
+
+  await settle(
+    () => host.textContent?.includes("binary file") === true,
+    "the binary row"
+  );
+  expect(host.textContent).toContain("1.2 kB → 3.4 kB");
+  expect(host.querySelector("img")).toBeNull();
 });

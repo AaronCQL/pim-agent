@@ -238,10 +238,10 @@ const SIGNS = {
   removed: "−",
 } as const satisfies Record<ToolDiffLine["kind"], string>;
 
-type Piece = Token & { readonly emphasis?: boolean };
+export type Piece = Token & { readonly emphasis?: boolean };
 
 // Syntax tokens re-cut at the emphasis range edges; both count the same characters.
-function emphasize(
+export function emphasize(
   tokens: readonly Token[],
   ranges: readonly IntraLineRange[] = []
 ): readonly Piece[] {

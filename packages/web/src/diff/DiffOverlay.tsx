@@ -1,4 +1,4 @@
-import { createEffect, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 
 import type { SessionStore } from "../session/SessionStore";
 import { QUIET } from "../ui/classes";
@@ -14,6 +14,9 @@ const BASES = [
   { value: "staged", label: "staged", tag: "index vs HEAD" },
 ] as const satisfies readonly MenuOption[];
 
+/** How many rows are painted at once; the next page is a button, never a scroll handler. */
+const PAGE = 500;
+
 /** Every file the chosen base says has changed, each opening onto its hunks. */
 export function DiffOverlay(props: {
   readonly open: boolean;
@@ -22,6 +25,7 @@ export function DiffOverlay(props: {
 }) {
   const diff = new DiffStore(props.store);
   const seen = new Seen();
+  const [visible, setVisible] = createSignal(PAGE);
 
   createEffect(
     () => props.open,
@@ -33,9 +37,25 @@ export function DiffOverlay(props: {
   );
 
   createEffect(
+    () => props.store.state.dirtyCount,
+    (count, previous) => {
+      if (previous !== undefined && count !== previous) {
+        diff.markStale();
+      }
+    }
+  );
+
+  createEffect(
+    () => diff.files(),
+    () => {
+      setVisible(PAGE);
+    }
+  );
+
+  createEffect(
     () => ({
       cwd: props.store.state.cwd,
-      files: diff.state.files,
+      files: diff.files(),
       // A list nobody has read yet is not a working copy with nothing in it.
       read: diff.state.status === "ready" && diff.state.error === undefined,
     }),
@@ -46,8 +66,10 @@ export function DiffOverlay(props: {
     }
   );
 
+  const shown = createMemo(() => diff.files().slice(0, visible()));
+
   const count = (): string => {
-    const files = diff.state.files.length;
+    const files = diff.files().length;
     return `${files} ${files === 1 ? "file" : "files"}`;
   };
 
@@ -80,17 +102,16 @@ export function DiffOverlay(props: {
               </Show>
             </span>
           </div>
-          <Show when={diff.state.files.length > 0}>
+          <Show when={diff.files().length > 0}>
             <div class="flex min-w-0 flex-wrap items-center gap-2 text-sm text-neutral-400">
               <span class="tabular-nums">
-                {seen.count(diff.state.files)} of {diff.state.files.length}{" "}
-                reviewed
+                {seen.count()} of {diff.files().length} reviewed
               </span>
               <button
                 type="button"
                 class={`${QUIET} ml-auto`}
                 onClick={() => {
-                  seen.markAll(diff.state.files);
+                  seen.markAll(diff.files());
                 }}
               >
                 mark all seen
@@ -103,6 +124,25 @@ export function DiffOverlay(props: {
                 }}
               >
                 clear
+              </button>
+            </div>
+          </Show>
+          <Show when={diff.state.stale}>
+            <div class="flex min-w-0 items-center gap-2 text-sm text-amber-400">
+              <span>The repository has changed since this was read.</span>
+              <button
+                type="button"
+                class={`${QUIET} ml-auto flex items-center gap-1.5`}
+                title="Read the change list again"
+                onClick={() => {
+                  void diff.refresh();
+                }}
+              >
+                <span
+                  class="i-griddy-icons:refresh size-4 shrink-0"
+                  aria-hidden="true"
+                />
+                refresh
               </button>
             </div>
           </Show>
@@ -122,18 +162,18 @@ export function DiffOverlay(props: {
             when={
               diff.state.error === undefined &&
               diff.state.status === "ready" &&
-              diff.state.files.length === 0
+              diff.files().length === 0
             }
           >
             <p class="px-3 py-2 text-sm text-neutral-500">
               Nothing has changed.
             </p>
           </Show>
-          <For each={diff.state.files}>
+          <For each={shown()}>
             {(file) => (
               <FileRow
                 file={file}
-                state={diff.state.hunks[file.path]}
+                state={diff.fileState(file.path)}
                 seen={seen.isSeen(file)}
                 onExpand={() => {
                   void diff.expand(file.path);
@@ -144,6 +184,27 @@ export function DiffOverlay(props: {
               />
             )}
           </For>
+          <Show when={diff.files().length > shown().length}>
+            <div class="flex items-center gap-2 px-3 py-2 text-sm text-neutral-400">
+              <span class="tabular-nums">
+                {shown().length} of {diff.files().length}
+              </span>
+              <button
+                type="button"
+                class={`${QUIET} ml-auto`}
+                onClick={() => {
+                  setVisible((rows) => rows + PAGE);
+                }}
+              >
+                show more
+              </button>
+            </div>
+          </Show>
+          <Show when={diff.state.truncated}>
+            <p class="px-3 py-2 text-sm text-amber-400">
+              More files changed than this list holds.
+            </p>
+          </Show>
         </div>
       </Show>
     </Modal>

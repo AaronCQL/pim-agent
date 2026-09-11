@@ -1,7 +1,6 @@
 import { createMemo, For, Show } from "solid-js";
 
 import type {
-  IntraLineRange,
   ToolDiffHunk,
   ToolDiffLine,
   ToolDiffLineKind,
@@ -9,6 +8,7 @@ import type {
 import { Languages } from "#core/shared/Languages";
 import { DiffLayout } from "#core/view/DiffLayout";
 import { DiffPairs } from "#core/view/DiffPairs";
+import { emphasize, type Piece } from "../view/Blocks";
 import { Highlight, type Token } from "../view/highlight";
 import {
   DIFF_EMPHASIS_CLASSES,
@@ -140,47 +140,4 @@ function SplitCell(props: {
       </span>
     </>
   );
-}
-
-type Piece = Token & { readonly emphasis?: boolean };
-
-// Syntax tokens re-cut at the emphasis range edges; both count the same characters.
-function emphasize(
-  tokens: readonly Token[],
-  ranges: readonly IntraLineRange[] = []
-): readonly Piece[] {
-  if (ranges.length === 0) {
-    return tokens;
-  }
-
-  const edges = ranges.flatMap((range) => [range.start, range.end]);
-  const pieces: Piece[] = [];
-  let at = 0;
-
-  for (const token of tokens) {
-    const end = at + token.text.length;
-    const stops = [
-      ...new Set(edges.filter((edge) => edge > at && edge < end)),
-      end,
-    ].sort((first, second) => first - second);
-    let cut = at;
-
-    for (const stop of stops) {
-      const text = token.text.slice(cut - at, stop - at);
-      if (text !== "") {
-        pieces.push({
-          text,
-          role: token.role,
-          emphasis: ranges.some(
-            (range) => cut >= range.start && cut < range.end
-          ),
-        });
-      }
-      cut = stop;
-    }
-
-    at = end;
-  }
-
-  return pieces;
 }

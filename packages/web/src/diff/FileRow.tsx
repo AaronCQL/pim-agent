@@ -34,6 +34,18 @@ function file(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1);
 }
 
+const UNITS = ["B", "kB", "MB", "GB"] as const;
+
+function bytes(count: number): string {
+  let size = count;
+  let unit = 0;
+  while (size >= 1000 && unit < UNITS.length - 1) {
+    size /= 1000;
+    unit += 1;
+  }
+  return `${unit === 0 ? size : size.toFixed(1)} ${UNITS[unit]}`;
+}
+
 /** One changed file: what happened to it, and its hunks once a reader asks. */
 export function FileRow(props: {
   readonly file: ChangeSummary;
@@ -68,6 +80,21 @@ export function FileRow(props: {
       ? []
       : [{ kind: "diff", path: props.file.path, hunks: hunks() }]
   );
+
+  const ready = createMemo(() =>
+    props.state?.kind === "ready" ? props.state.diff : undefined
+  );
+
+  const truncated = createMemo(() => ready()?.truncated === true);
+
+  const binary = createMemo(() => {
+    const diff = ready();
+    const sizes = [diff?.oldBytes, diff?.newBytes]
+      .filter((side) => side !== undefined)
+      .map(bytes)
+      .join(" → ");
+    return sizes === "" ? "binary file" : `binary file ${sizes}`;
+  });
 
   const toggle = (): void => {
     const next = !open();
@@ -153,19 +180,24 @@ export function FileRow(props: {
             )}
           </Show>
           <Show when={props.state?.kind === "ready"}>
-            <Show
-              when={hunks().length > 0}
-              fallback={
-                <p class="text-neutral-500">
-                  {props.file.binary ? "binary file" : "no textual changes"}
-                </p>
-              }
-            >
+            <Show when={hunks().length > 0}>
               <div class="overflow-x-auto">
                 <Show when={desktop()} fallback={<Blocks blocks={blocks()} />}>
                   <SplitDiff path={props.file.path} hunks={hunks()} />
                 </Show>
               </div>
+            </Show>
+            <Show when={truncated()}>
+              <p class="text-amber-400">
+                diff is very large — the rest is not shown
+              </p>
+            </Show>
+            <Show when={hunks().length === 0 && !truncated()}>
+              <p class="text-neutral-500">
+                {props.file.binary || ready()?.binary === true
+                  ? binary()
+                  : "no textual changes"}
+              </p>
             </Show>
           </Show>
         </div>

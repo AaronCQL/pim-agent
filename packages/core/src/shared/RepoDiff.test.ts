@@ -1,4 +1,4 @@
-import { rm, mkdtemp, unlink } from "node:fs/promises";
+import { rm, mkdtemp, symlink, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, spyOn, test } from "bun:test";
@@ -6,6 +6,7 @@ import { afterAll, describe, expect, spyOn, test } from "bun:test";
 import { git, makeRepo } from "./fixtures/repo";
 import { GitMonitor } from "./GitMonitor";
 import { Proc } from "./Proc";
+import type { ToolDiffHunk } from "./DiffLines";
 import { RepoDiff, type ChangeList, type ChangeSummary } from "./RepoDiff";
 
 const monitor = new GitMonitor();
@@ -251,8 +252,19 @@ describe("the long tail of one file", () => {
       binary: true,
       added: 0,
     });
-    expect(diff).toEqual({ path: "tracked.bin", hunks: [], binary: true });
-    expect(loose).toEqual({ path: "loose.bin", hunks: [], binary: true });
+    expect(diff).toEqual({
+      path: "tracked.bin",
+      hunks: [],
+      binary: true,
+      oldBytes: 5,
+      newBytes: 5,
+    });
+    expect(loose).toEqual({
+      path: "loose.bin",
+      hunks: [],
+      binary: true,
+      newBytes: 3,
+    });
   });
 
   test("an untracked file past a megabyte is reported rather than read", async () => {
@@ -350,12 +362,276 @@ describe("the long tail of one file", () => {
       { kind: "worktree" },
       monitor
     );
+    const diff = await RepoDiff.fileDiff(
+      root,
+      { kind: "worktree" },
+      "a.txt",
+      monitor
+    );
 
     expect(rowOf(list, "a.txt")).toMatchObject({
       status: "modified",
       added: 1,
       removed: 0,
     });
+    expect(diff.hunks[0]?.lines.at(-1)).toMatchObject({
+      kind: "added",
+      text: "four",
+    });
+  });
+
+  test("a mode change is a row with no lines in it", async () => {
+    const root = await repo();
+    await git(root, ["update-index", "--chmod=+x", "a.txt"]);
+
+    const list = await RepoDiff.listChanges(root, { kind: "staged" }, monitor);
+    const diff = await RepoDiff.fileDiff(
+      root,
+      { kind: "staged" },
+      "a.txt",
+      monitor
+    );
+
+    expect(rowOf(list, "a.txt")).toMatchObject({
+      status: "modified",
+      added: 0,
+      removed: 0,
+    });
+    expect(diff).toEqual({ path: "a.txt", hunks: [] });
+  });
+
+  test("a symlink diffs as the path it points at", async () => {
+    const root = await repo();
+    await symlink("a.txt", join(root, "link"));
+    await commit(root, "link");
+    await unlink(join(root, "link"));
+    await symlink("b.txt", join(root, "link"));
+
+    const diff = await RepoDiff.fileDiff(
+      root,
+      { kind: "worktree" },
+      "link",
+      monitor
+    );
+
+    expect(diff.hunks[0]?.lines).toEqual([
+      {
+        kind: "removed",
+        oldLine: 1,
+        text: "a.txt",
+        emphasis: [{ start: 0, end: 1 }],
+      },
+      {
+        kind: "added",
+        newLine: 1,
+        text: "b.txt",
+        emphasis: [{ start: 0, end: 1 }],
+      },
+    ]);
+  });
+
+  test("a submodule pointer bump is the two commits it moved between", async () => {
+    const root = await repo();
+    const first = "1".repeat(40);
+    const second = "2".repeat(40);
+    await git(root, [
+      "update-index",
+      "--add",
+      "--cacheinfo",
+      `160000,${first},sub`,
+    ]);
+    await git(root, ["commit", "-m", "submodule"]);
+    await git(root, [
+      "update-index",
+      "--add",
+      "--cacheinfo",
+      `160000,${second},sub`,
+    ]);
+
+    const list = await RepoDiff.listChanges(root, { kind: "staged" }, monitor);
+    const diff = await RepoDiff.fileDiff(
+      root,
+      { kind: "staged" },
+      "sub",
+      monitor
+    );
+
+    expect(rowOf(list, "sub")).toMatchObject({ status: "modified" });
+    expect(diff.hunks[0]?.lines.map((line) => line.text)).toEqual([
+      `Subproject commit ${first}`,
+      `Subproject commit ${second}`,
+    ]);
+  });
+
+  test("an empty file is a row with nothing under it", async () => {
+    const root = await repo();
+    await write(root, "empty.txt", "");
+
+    const list = await RepoDiff.listChanges(
+      root,
+      { kind: "worktree" },
+      monitor
+    );
+    const diff = await RepoDiff.fileDiff(
+      root,
+      { kind: "worktree" },
+      "empty.txt",
+      monitor
+    );
+
+    expect(rowOf(list, "empty.txt")).toMatchObject({
+      status: "untracked",
+      added: 0,
+      removed: 0,
+    });
+    expect(diff).toEqual({ path: "empty.txt", hunks: [] });
+
+    await git(root, ["add", "-A"]);
+    const staged = await RepoDiff.listChanges(
+      root,
+      { kind: "staged" },
+      monitor
+    );
+    const tracked = await RepoDiff.fileDiff(
+      root,
+      { kind: "staged" },
+      "empty.txt",
+      monitor
+    );
+
+    expect(rowOf(staged, "empty.txt")).toMatchObject({
+      status: "added",
+      added: 0,
+      removed: 0,
+    });
+    expect(tracked).toEqual({ path: "empty.txt", hunks: [] });
+  });
+
+  test("a path gitattributes marks -diff is reported as binary", async () => {
+    const root = await repo();
+    await write(root, ".gitattributes", "secret.txt -diff\n");
+    await write(root, "secret.txt", "one\n");
+    await commit(root, "attributed");
+    await write(root, "secret.txt", "two\n");
+
+    const list = await RepoDiff.listChanges(
+      root,
+      { kind: "worktree" },
+      monitor
+    );
+    const diff = await RepoDiff.fileDiff(
+      root,
+      { kind: "worktree" },
+      "secret.txt",
+      monitor
+    );
+
+    expect(rowOf(list, "secret.txt")).toMatchObject({
+      binary: true,
+      added: 0,
+      removed: 0,
+    });
+    expect(diff).toMatchObject({ binary: true, hunks: [], newBytes: 4 });
+  });
+});
+
+describe("a file too big to hand over whole", () => {
+  const changedOf = (diff: { readonly hunks: readonly ToolDiffHunk[] }) =>
+    diff.hunks.reduce(
+      (total, hunk) =>
+        total + hunk.lines.filter((line) => line.kind !== "context").length,
+      0
+    );
+
+  test("five thousand new lines come back clipped, not whole", async () => {
+    const root = await repo();
+    const lines = Array.from({ length: 5000 }, (_, at) => `line ${at}`);
+    await write(root, "big.txt", "");
+    await commit(root, "empty");
+    await write(root, "big.txt", `${lines.join("\n")}\n`);
+
+    const diff = await RepoDiff.fileDiff(
+      root,
+      { kind: "worktree" },
+      "big.txt",
+      monitor
+    );
+
+    expect(diff.truncated).toBe(true);
+    expect(changedOf(diff)).toBe(2000);
+    expect(diff.hunks[0]?.lines[0]).toMatchObject({ text: "line 0" });
+  });
+
+  test("an untracked file is clipped by the same budget", async () => {
+    const root = await repo();
+    await write(
+      root,
+      "fresh.txt",
+      `${Array.from({ length: 5000 }, (_, at) => `line ${at}`).join("\n")}\n`
+    );
+
+    const diff = await RepoDiff.fileDiff(
+      root,
+      { kind: "worktree" },
+      "fresh.txt",
+      monitor
+    );
+
+    expect(diff.truncated).toBe(true);
+    expect(changedOf(diff)).toBe(2000);
+  });
+
+  test("the budget is spent hunk by hunk, and what fits is whole", async () => {
+    const root = await repo();
+    const block = (mark: string, count: number): string =>
+      `${Array.from({ length: count }, (_, at) => `${mark}${at}`).join("\n")}\n`;
+    const spacer = block("keep", 20);
+    await write(root, "runs.txt", `${spacer}${spacer}${spacer}`);
+    await commit(root, "runs");
+    await write(
+      root,
+      "runs.txt",
+      `${block("first", 1200)}${spacer}${block("second", 1200)}${spacer}${block("third", 1200)}`
+    );
+
+    const diff = await RepoDiff.fileDiff(
+      root,
+      { kind: "worktree" },
+      "runs.txt",
+      monitor
+    );
+
+    expect(diff.truncated).toBe(true);
+    expect(changedOf(diff)).toBe(2000);
+    expect(diff.hunks.length).toBe(2);
+    expect(diff.hunks[0]?.lines.some((line) => line.text === "first1199")).toBe(
+      true
+    );
+    const cut = diff.hunks[1];
+    expect(cut?.newLines).toBe(
+      cut?.lines.filter((line) => line.kind !== "removed").length
+    );
+    expect(cut?.oldLines).toBe(
+      cut?.lines.filter((line) => line.kind !== "added").length
+    );
+  });
+
+  test("a patch past a megabyte is cut at a hunk boundary", async () => {
+    const root = await repo();
+    const wide = `${"x".repeat(1500)}\n`;
+    await write(root, "wide.txt", wide.repeat(400));
+    await commit(root, "wide");
+    await write(root, "wide.txt", `${"y".repeat(1500)}\n`.repeat(400));
+
+    const diff = await RepoDiff.fileDiff(
+      root,
+      { kind: "worktree" },
+      "wide.txt",
+      monitor
+    );
+
+    expect(diff.truncated).toBe(true);
+    expect(diff.hunks).toEqual([]);
   });
 });
 

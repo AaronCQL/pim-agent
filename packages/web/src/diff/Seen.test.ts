@@ -185,19 +185,19 @@ test("the counter tracks every way a row is ticked", () => {
     summary("gamma.ts", "f3"),
   ];
   const seen = loaded(files);
-  expect(seen.count(files)).toBe(0);
+  expect(seen.count()).toBe(0);
 
   seen.toggle(files[0]!);
   flush();
-  expect(seen.count(files)).toBe(1);
+  expect(seen.count()).toBe(1);
 
   seen.markAll(files);
   flush();
-  expect(seen.count(files)).toBe(3);
+  expect(seen.count()).toBe(3);
 
   seen.clear();
   flush();
-  expect(seen.count(files)).toBe(0);
+  expect(seen.count()).toBe(0);
 });
 
 test("ticking a row collapses it, dims it, and fills its box", () => {

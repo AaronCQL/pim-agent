@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-import { DiffLines, type ToolDiffHunk } from "./DiffLines";
+import { DiffLines, type ToolDiffHunk, type ToolDiffLine } from "./DiffLines";
 import { DiffPatch } from "./DiffPatch";
 import type { GitMonitor } from "./GitMonitor";
 import { Proc, type ProcResult } from "./Proc";
@@ -49,11 +49,18 @@ export type FileDiff = {
   readonly hunks: readonly ToolDiffHunk[];
   readonly truncated?: boolean;
   readonly binary?: boolean;
+  /** Byte size of each side of a binary file, when git or the working tree can say. */
+  readonly oldBytes?: number;
+  readonly newBytes?: number;
 };
 
 const DEFAULT_CONTEXT = 3;
 
 const FILE_LIMIT = 2000;
+
+/** How much of one file a reader is handed at once; past either limit the rest is dropped. */
+const CHANGED_LINE_LIMIT = 2000;
+const PATCH_TEXT_LIMIT = 1_000_000;
 
 /** Past this an untracked file is reported as binary rather than read. */
 const UNTRACKED_BYTE_LIMIT = 1_000_000;
@@ -266,12 +273,19 @@ type Untracked = {
   readonly text: string;
   readonly lines: number;
   readonly mtimeMs: number;
+  readonly bytes: number;
 };
 
 async function readUntracked(cwd: string, path: string): Promise<Untracked> {
   const file = Bun.file(join(cwd, path));
   const mtimeMs = file.lastModified;
-  const opaque: Untracked = { binary: true, text: "", lines: 0, mtimeMs };
+  const opaque: Untracked = {
+    binary: true,
+    text: "",
+    lines: 0,
+    mtimeMs,
+    bytes: file.size,
+  };
   if (file.size > UNTRACKED_BYTE_LIMIT) {
     return opaque;
   }
@@ -288,6 +302,7 @@ async function readUntracked(cwd: string, path: string): Promise<Untracked> {
     text,
     lines: DiffLines.fromText(text).lines.length,
     mtimeMs,
+    bytes: bytes.length,
   };
 }
 
@@ -373,7 +388,7 @@ async function untrackedDiff(
 ): Promise<FileDiff> {
   const file = await readUntracked(cwd, path);
   if (file.binary) {
-    return { path, hunks: [], binary: true };
+    return { path, hunks: [], binary: true, newBytes: file.bytes };
   }
   const diff = DiffLines.buildToolDiff(
     path,
@@ -381,7 +396,135 @@ async function untrackedDiff(
     DiffLines.fromText(file.text),
     context
   );
-  return { path, hunks: diff?.hunks ?? [] };
+  return clipped(path, diff?.hunks ?? [], false);
+}
+
+type Clip = {
+  readonly hunks: readonly ToolDiffHunk[];
+  readonly truncated: boolean;
+};
+
+/** The longest prefix of a patch that is still whole hunks, once it is too much text to parse. */
+function clipPatch(patch: string): {
+  readonly text: string;
+  readonly cut: boolean;
+} {
+  if (patch.length <= PATCH_TEXT_LIMIT) {
+    return { text: patch, cut: false };
+  }
+  const boundary = patch.lastIndexOf("\n@@ ", PATCH_TEXT_LIMIT);
+  return { text: boundary < 0 ? "" : patch.slice(0, boundary + 1), cut: true };
+}
+
+function changedOf(lines: readonly ToolDiffLine[]): number {
+  return lines.filter((line) => line.kind !== "context").length;
+}
+
+/** A hunk cut short still has to describe itself: its spans count the lines left in it. */
+function reflow(
+  hunk: ToolDiffHunk,
+  lines: readonly ToolDiffLine[]
+): ToolDiffHunk {
+  return {
+    ...hunk,
+    oldLines: lines.filter((line) => line.kind !== "added").length,
+    newLines: lines.filter((line) => line.kind !== "removed").length,
+    lines,
+  };
+}
+
+function headOf(
+  lines: readonly ToolDiffLine[],
+  budget: number
+): readonly ToolDiffLine[] {
+  const kept: ToolDiffLine[] = [];
+  let left = budget;
+  for (const line of lines) {
+    if (line.kind !== "context") {
+      if (left === 0) {
+        break;
+      }
+      left -= 1;
+    }
+    kept.push(line);
+  }
+  return kept;
+}
+
+/** Hunks while the changed-line budget lasts, the one that overruns it cut short. */
+function clipHunks(hunks: readonly ToolDiffHunk[]): Clip {
+  let budget = CHANGED_LINE_LIMIT;
+  const kept: ToolDiffHunk[] = [];
+
+  for (const hunk of hunks) {
+    const changed = changedOf(hunk.lines);
+    if (changed <= budget) {
+      kept.push(hunk);
+      budget -= changed;
+      continue;
+    }
+    const lines = headOf(hunk.lines, budget);
+    if (changedOf(lines) > 0) {
+      kept.push(reflow(hunk, lines));
+    }
+    return { hunks: kept, truncated: true };
+  }
+
+  return { hunks: kept, truncated: false };
+}
+
+function clipped(
+  path: string,
+  hunks: readonly ToolDiffHunk[],
+  cut: boolean
+): FileDiff {
+  const clip = clipHunks(hunks);
+  return {
+    path,
+    hunks: clip.hunks,
+    ...(clip.truncated || cut ? { truncated: true } : {}),
+  };
+}
+
+async function blobSize(
+  cwd: string,
+  sha: string | undefined
+): Promise<number | undefined> {
+  if (sha === undefined) {
+    return undefined;
+  }
+  const result = await git(cwd, ["cat-file", "-s", sha]);
+  const size = Number(result.stdout.trim());
+  return result.code === 0 && Number.isFinite(size) ? size : undefined;
+}
+
+async function worktreeSize(
+  cwd: string,
+  path: string
+): Promise<number | undefined> {
+  const file = Bun.file(join(cwd, path));
+  return (await file.exists()) ? file.size : undefined;
+}
+
+/** A binary file is a row, not a diff: all a reader is told is how big each side is. */
+async function binaryDiff(
+  cwd: string,
+  path: string,
+  entry: Entry | undefined
+): Promise<FileDiff> {
+  const [oldBytes, newBytes] = await Promise.all([
+    blobSize(cwd, entry?.baseSha),
+    entry?.headSha === undefined
+      ? worktreeSize(cwd, path)
+      : blobSize(cwd, entry.headSha),
+  ]);
+  return {
+    path,
+    hunks: [],
+    binary: true,
+    ...(oldBytes === undefined ? {} : { oldBytes }),
+    ...(newBytes === undefined ? {} : { newBytes }),
+  };
 }
 
 /** Every changed file of one base, in git's own order and without a hunk of any of them. */
@@ -449,9 +592,14 @@ async function fileDiff(
       `could not diff ${path}`
     );
     if (BINARY_PATCH.test(patch)) {
-      return { path, hunks: [], binary: true };
+      return await binaryDiff(cwd, path, entry);
     }
-    return { path, hunks: DiffPatch.fromUnified(path, patch)?.hunks ?? [] };
+    const clip = clipPatch(patch);
+    return clipped(
+      path,
+      DiffPatch.fromUnified(path, clip.text)?.hunks ?? [],
+      clip.cut
+    );
   });
 }
 
