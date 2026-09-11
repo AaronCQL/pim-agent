@@ -1,25 +1,27 @@
 <!-- omit in toc -->
 # PIM - Pi IMproved
 
-[![npm version](https://img.shields.io/npm/v/@aaroncql/pim-agent?style=flat-square)](https://www.npmjs.com/package/@aaroncql/pim-agent)
-[![npm downloads](https://img.shields.io/npm/dm/@aaroncql/pim-agent?style=flat-square)](https://www.npmjs.com/package/@aaroncql/pim-agent)
-[![license](https://img.shields.io/npm/l/@aaroncql/pim-agent?style=flat-square)](./LICENSE)
+[![npm version](https://img.shields.io/npm/v/pim-agent?style=flat-square)](https://www.npmjs.com/package/pim-agent)
+[![npm downloads](https://img.shields.io/npm/dm/pim-agent?style=flat-square)](https://www.npmjs.com/package/pim-agent)
+[![license](https://img.shields.io/npm/l/pim-agent?style=flat-square)](./LICENSE)
 [![Bun](https://img.shields.io/badge/runtime-Bun-black?logo=bun&style=flat-square)](https://bun.com)
 
 _**Pim is to Pi what Vim is to Vi.**_
 
-A Bun-native extension pack for [Pi](https://pi.dev/): web access, subagents, revamped core tools, ANSI-compatible themes, fzf-style completions, Telegram mode, and more. Preliminary score of [37.8% on Terminal-Bench 2.0](#terminal-bench-20) with locally hosted Qwen3.6-35B, rivalling Claude Code + Sonnet 4.5.
+An opinionated distro of [Pi](https://pi.dev/): built-in web access, subagents, revamped core tools, ANSI-compatible themes, fzf-style completions, alternate frontends (Web & Telegram), and compatible with other Pi extensions. Preliminary score of [37.8% on Terminal-Bench 2.0](#terminal-bench-20) with locally hosted Qwen3.6-35B, rivalling Claude Code + Sonnet 4.5.
 
 - [Quick Start](#quick-start)
-  - [Enabling/Disabling Extensions](#enablingdisabling-extensions)
+  - [Toggling Features](#toggling-features)
   - [API Keys (Optional)](#api-keys-optional)
   - [Recommended Pi Settings (Optional)](#recommended-pi-settings-optional)
 - [Why Pim?](#why-pim)
+  - [Pi Core](#pi-core)
   - [Lean System Prompt](#lean-system-prompt)
   - [Model-Aware Tools](#model-aware-tools)
   - [Terminal-Bench 2.0](#terminal-bench-20)
 - [Agent Tools](#agent-tools)
 - [Terminal UI](#terminal-ui)
+- [Web UI](#web-ui)
 - [Telegram Bot](#telegram-bot)
   - [Setup](#setup)
   - [Commands](#commands)
@@ -31,39 +33,29 @@ A Bun-native extension pack for [Pi](https://pi.dev/): web access, subagents, re
 
 ## Quick Start
 
-Ensure that you have [Pi](https://pi.dev/docs/latest/quickstart) and [Bun](https://bun.com/docs/installation) already installed. If not, install them first (_or ask your agent to do it for you_). For all things related to Pi, refer to [Pi's comprehensive docs](https://pi.dev/docs/latest).
+Ensure that you have [Bun](https://bun.com/docs/installation) already installed:
 
 ```sh
-# First, install Pim as a Pi extension:
-pi install npm:@aaroncql/pim-agent
+# Install pim:
+bun install -g pim-agent
 
-# Then, install the Bun-native `pim` launcher:
-bun install -g @aaroncql/pim-agent
-
-# Finally, launch pim:
+# Launch pim:
 pim
+
+# Update pim (pi comes along with it):
+pim update
 ```
 
-> [!IMPORTANT]
-> **Use `pim` instead of `pi` after installing Pim.** The `pim` command is a drop-in replacement for `pi` that [runs Pi via Bun](./bin/pim.ts), enabling Bun-specific APIs. Existing Pi behaviour and extensions should continue to work normally.
+### Toggling Features
 
-If `pim` cannot locate Pi, make sure `pi` is on your `PATH`, or set:
-
-```sh
-PIM_PI_CLI=/path/to/pi/dist/cli.js pim
-```
-
-### Enabling/Disabling Extensions
-
-Pim ships a collection of extensions which are all enabled by default. To disable specific ones that don't suit your needs, run `pim config` and toggle them there.
-
-Some Pim extensions can be toggled directly within the TUI as well: `/powerline` for the Git-aware powerline footer, `/tps` for inference speed reporting.
+Pim ships a collection of features, nearly all enabled by default. To enable or disable specific features, run `/pim` in the TUI and toggle from the list. The changes apply to the running session immediately.
 
 ### API Keys (Optional)
 
-Pim's web tools use [Exa](https://exa.ai) for searching the web and [Jina](https://jina.ai/reader/) for fetching websites as Markdown. These tools still work without API keys, but are subject to the following rate limits (as of May 2026):
+`web_search` tries [Exa](https://exa.ai) → [Firecrawl](https://www.firecrawl.dev/) → DuckDuckGo (via [Jina](https://jina.ai/reader/) reader), and `web_fetch` uses Jina with a `Bun.WebView` fallback. These tools still work without API keys, but are subject to the following keyless rate limits (as of Sept 2026):
 
 - Exa - 1,000 requests per month
+- Firecrawl - daily limit per IP
 - Jina - 20 requests per minute
 
 For heavier usage, add API keys to `~/.pim/settings.json`:
@@ -73,16 +65,19 @@ For heavier usage, add API keys to `~/.pim/settings.json`:
   "exa": {
     "apiKey": "api_key_here"
   },
+  "firecrawl": {
+    "apiKey": "api_key_here"
+  },
   "jina": {
     "apiKey": "api_key_here"
   }
 }
 ```
 
-Environment variables override `settings.json` when present:
+Environment variables take precedence over `settings.json` when set:
 
 ```sh
-EXA_API_KEY='api_key_here' JINA_API_KEY='api_key_here' pim
+EXA_API_KEY='api_key_here' FIRECRAWL_API_KEY='api_key_here' JINA_API_KEY='api_key_here' pim
 ```
 
 ### Recommended Pi Settings (Optional)
@@ -103,9 +98,17 @@ Add the following settings to your `~/.pi/agent/settings.json` for the best expe
 
 Pim's philosophy is **opinionated but minimal**. Its goal is to improve the out-of-the-box experience for both users and agents, without sacrificing composability with other Pi extensions.
 
+### Pi Core
+
+Think of Pim as an opinionated distro of Pi (like what Ubuntu is to Linux). Pim uses Pi in its core, and everything Pi does, it continues to do:
+
+- **Every Pi extension still works.** Pim registers its own extensions in-process, so third-party extensions from your Pi settings load right alongside them, exactly as before.
+- **Pi's CLI, sessions and config are unchanged.** Only Pim's own settings live separately in `~/.pim/settings.json`.
+- **Your vanilla `pi` keeps working.** Pim never registers itself with Pi and never touches your Pi settings, so `pi` and `pim` can both be used on the same machine.
+
 ### Lean System Prompt
 
-Pim's system prompt is just **~3K tokens** despite exposing 10+ tools, far leaner than alternatives like OpenCode (~10K) or Hermes (~16K).
+Pim's system prompt is just **~3K tokens** despite exposing 10+ tools, far leaner than alternatives like OpenCode (~10K), Hermes (~16K), or Claude Code (~30K).
 
 This is achieved by having tool descriptions focus on _how_ to use each tool instead of prescribing _when_, since models already appear to internally encode when tools are needed, and prompting them to call tools can [suppress both necessary and unnecessary calls](https://arxiv.org/abs/2605.09252).
 
@@ -159,15 +162,14 @@ _Note 4_: see the [`benchmarks/terminal_bench_2`](./benchmarks/terminal_bench_2/
 
 ## Agent Tools
 
-Pim revamps Pi's default tools (`bash`, `read`, `write`, `edit`) so they produce consistent behaviour and output, cross-reference each other where useful, and render uniformly in the TUI. It also adds:
+Pim revamps Pi's default tools (`bash`, `read`, `write`, `edit`) so they produce consistent behaviour and output, cross-reference each other where useful, and render uniformly in your UIs. It also adds:
 
-- **`apply_patch`** - V4A patch editing, dynamically exposed instead of `edit` for OpenAI models
+- **`apply_patch`** - V4A patch editing, dynamically exposed instead of `edit` for OpenAI and select Claude models
 - **`glob`** - file enumeration by glob pattern, sorted newest-first, respects `.gitignore`
 - **`grep`** - regex search across files with context lines, multiline matching, respects `.gitignore`
 - **`web_search`** - search the web via [Exa](https://exa.ai) with ranked results and snippets
 - **`web_fetch`** - fetch websites as Markdown via [Jina](https://jina.ai/reader/), with browser-rendered fallback via [`Bun.WebView`](https://bun.com/docs/runtime/webview)
-- **`subagent`** - delegate complex work to isolated sub-sessions with full tool access
-- **`todo`** - in-session task list with a live widget in the UI footer
+- **`subagent`** - delegate complex work to isolated sub-sessions with full tool access, each keeping its own transcript under `~/.pim/subagents` for 30 days
 
 ## Terminal UI
 
@@ -175,9 +177,13 @@ Pim also ships with quality of life improvements for the TUI:
 
 - **ANSI-compatible themes** - `pim-light` and `pim-dark` themes which adapt to your terminal's colour scheme
 - **fzf-style autocomplete** - `@path` file picker and `/command` picker with fuzzy search
-- **Git-aware powerline footer** - cwd, git branch and states, context usage, model and session cost (toggle with `/powerline`)
-- **TPS reporting** - per-cycle decode/prefill rate, TTFT, and cache read tokens (toggle with `/tps`)
+- **Git-aware powerline footer** - cwd, git branch and states, context usage, model and session cost (run `/pim` to disable)
+- **TPS reporting** - per-cycle decode/prefill rate, TTFT, and cache read tokens (disabled by default; run `/pim` to enable)
 - **Concise tool UI** - minimal one-liner title across all tool calls, `Ctrl+O` to toggle full details
+
+## Web UI
+
+<!-- TODO -->
 
 ## Telegram Bot
 
@@ -247,4 +253,6 @@ See [CHANGELOG.md](./CHANGELOG.md) for release notes.
 bun dev
 ```
 
-Pim is registered as a project-local Pi package via `.pi/settings.json` and auto-loads when launched from within this repo. Use the built-in `/reload` command to reload after edits without restarting.
+`bun dev` runs `bun link` and launches `pim` from this checkout, with the local extensions loaded in-process. Restart `pim` to pick up edits: `/reload` reloads Pi's own resources, but Pim's extensions are already-imported modules and will not be re-read.
+
+See [AGENTS.md](./AGENTS.md) for the developer guide.

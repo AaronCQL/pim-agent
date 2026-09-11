@@ -1,0 +1,36 @@
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Paths } from "../../shared/Paths";
+import { Tools } from "../../shared/Tools";
+import { editFile, formatEditSummary } from "./edit";
+import { editView } from "./render";
+import { type EditInput, editSchema } from "./schema";
+
+export default function (pi: ExtensionAPI): void {
+  Tools.register(pi, {
+    name: "edit",
+    label: "edit",
+    description:
+      "Replace strings in a UTF-8 text file. " +
+      "Prefer edit over write for changes to existing files.",
+    parameters: editSchema,
+    renderShell: "self",
+    effect: { kind: "writesPaths", paths: ({ path }) => [path] },
+    executionMode: "sequential",
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      const { path, edits } = params as EditInput;
+
+      if (signal?.aborted) {
+        throw new Error("Edit aborted before execution.");
+      }
+
+      const absolutePath = Paths.resolve(path, ctx.cwd);
+      const outcome = await editFile(absolutePath, edits);
+
+      return {
+        content: [{ type: "text", text: formatEditSummary(path, outcome) }],
+        details: outcome,
+      };
+    },
+    toViewModel: editView,
+  });
+}

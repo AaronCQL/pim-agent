@@ -1,0 +1,921 @@
+import type {
+  AgentToolResult,
+  ExtensionAPI,
+  ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
+import { validateToolArguments } from "@earendil-works/pi-ai";
+import type { Static, TSchema } from "typebox";
+import { Levenshtein } from "./Levenshtein";
+import { Renderer } from "./Renderer";
+import { AnsiPainter } from "../view/AnsiPainter";
+import { BodyRenderer } from "../view/BodyRenderer";
+import type { ToolView } from "../view/ViewBlock";
+
+export type ToolViewInput<TParams extends TSchema, TDetails> = {
+  /** Partially streamed while the call is in flight; treat fields as optional. */
+  readonly args: Static<TParams>;
+  /**
+   * The result so far. Undefined until the call reports one, and a streaming
+   * snapshot rather than the final result while `isPartial` is true.
+   */
+  readonly result?: AgentToolResult<TDetails>;
+  /**
+   * True while the call is still running. A `summary` renders in that state,
+   * so a view that styles "in flight" differently needs to see it.
+   */
+  readonly isPartial: boolean;
+  readonly cwd: string;
+};
+
+/**
+ * What a call to this tool can do to the machine the agent runs on. Declaring
+ * it next to the tool keeps the risk profile with the code that carries the
+ * risk, instead of in a name list the next tool would silently miss. The
+ * server reads it to decide whether a finished call may have invalidated the
+ * file picker's answers.
+ *
+ * A tool that declares nothing is treated as `unbounded` — an unknown tool
+ * (MCP, another extension pack) must not be able to declare itself harmless
+ * by omission.
+ */
+export type ToolEffect<TParams extends TSchema = TSchema> =
+  /** Nothing outside the agent's own session changes. */
+  | { readonly kind: "readOnly" }
+  /** Mutates exactly the paths `paths` reads out of the call's arguments. */
+  | {
+      readonly kind: "writesPaths";
+      /**
+       * Paths as the model wrote them, relative or absolute; the caller
+       * resolves them against the session cwd. Throwing is allowed and means
+       * "cannot be determined", which is treated as `unbounded`.
+       */
+      readonly paths: (args: Static<TParams>) => readonly string[];
+    }
+  /** Effects the arguments do not bound. */
+  | { readonly kind: "unbounded" };
+
+/** `ToolEffect` with its parameter type erased, for name-keyed lookup. */
+export type ErasedToolEffect = ToolEffect<TSchema> & {
+  readonly paths?: (args: unknown) => readonly string[];
+};
+
+/**
+ * Pi's tool definition plus pim's optional view model. `toViewModel` must be
+ * pure over `(args, result, cwd)` so a persisted session entry replays
+ * identically with no live process state.
+ */
+export type PimToolDefinition<
+  TParams extends TSchema,
+  TDetails = unknown,
+  TState = unknown,
+> = ToolDefinition<TParams, TDetails, TState> & {
+  readonly toViewModel?: (input: ToolViewInput<TParams, TDetails>) => ToolView;
+  /** Omitted means `unbounded`; see `ToolEffect`. */
+  readonly effect?: ToolEffect<TParams>;
+};
+
+/**
+ * A registered `toViewModel` with its parameter types erased, so a frontend
+ * that only knows a tool by name (an event stream carries no schema) can still
+ * ask for its view.
+ */
+export type ToolViewFactory = (input: {
+  readonly args: unknown;
+  readonly result?: AgentToolResult<unknown>;
+  readonly isPartial: boolean;
+  readonly cwd: string;
+}) => ToolView;
+
+/** Renderer-owned plumbing that hands the result back to the title renderer. */
+type ViewRenderState<TDetails> = {
+  viewResult?: AgentToolResult<TDetails>;
+};
+
+type Issue = { readonly path: string; readonly message: string };
+
+type JsonSchema = {
+  readonly type?: string;
+  readonly const?: unknown;
+  readonly properties?: Readonly<Record<string, JsonSchema>>;
+  readonly items?: JsonSchema | readonly JsonSchema[];
+  readonly anyOf?: readonly JsonSchema[];
+  readonly oneOf?: readonly JsonSchema[];
+  readonly enum?: readonly unknown[];
+};
+
+const viewFactories = new Map<string, ToolViewFactory>();
+const effects = new Map<string, ErasedToolEffect>();
+
+/**
+ * What a registered tool declared it can do, or undefined when it declared
+ * nothing. An absent entry reads as `unbounded`; see `ToolEffect`.
+ */
+function effectOf(toolName: string): ErasedToolEffect | undefined {
+  return effects.get(toolName);
+}
+
+/**
+ * The view model a registered tool paints itself with, or undefined for a
+ * tool that has none (an MCP tool, or one not ported yet). Registration is
+ * the only key-by-name map in the system: every frontend reads this instead
+ * of keeping its own table of tool names.
+ */
+function viewFor(toolName: string): ToolViewFactory | undefined {
+  return viewFactories.get(toolName);
+}
+
+/**
+ * The view for one call, with a generic fallback for a tool that registered
+ * none. Every frontend paints tool rows through this, so an unported or MCP
+ * tool still renders instead of disappearing.
+ */
+function viewOf(input: {
+  readonly name: string;
+  readonly args: unknown;
+  readonly result?: AgentToolResult<unknown>;
+  /**
+   * The call failed, so `result` is pi's synthetic error one. Without this
+   * the view is painted from that result like any other, and a tool whose
+   * body comes out of `details` — every diff-carrying one — renders a bare
+   * title row that reads exactly like a call that succeeded.
+   */
+  readonly isError?: boolean;
+  readonly isPartial: boolean;
+  readonly cwd: string;
+}): ToolView {
+  const { name, result, isError, ...rest } = input;
+  if (isError === true) {
+    return errorView(name, rest, result);
+  }
+  return (
+    viewFor(name)?.({
+      ...rest,
+      ...(result === undefined ? {} : { result }),
+    }) ?? genericView(name, input.args)
+  );
+}
+
+/**
+ * A failed call: what was attempted, and why it did not happen. Painted from
+ * the arguments alone, because pi's error result carries no `details` and a
+ * renderer handed it would describe a result that never existed. The message
+ * is the body, which is also the row's only claim to a disclosure — the same
+ * split the TUI makes when it hands an errored call to `renderErrorResult`.
+ *
+ * It replaces whatever body the renderer produced rather than joining it: with
+ * no result to paint from, a body is either empty or the placeholder blocks a
+ * view emits while a call is still in flight, and neither is worth a line
+ * under a failure. A live row loses the output it had streamed by the same
+ * rule, which is the point — it then reads exactly as it will after a reload,
+ * where the log holds nothing but the error either.
+ */
+function errorView(
+  name: string,
+  call: {
+    readonly args: unknown;
+    readonly isPartial: boolean;
+    readonly cwd: string;
+  },
+  result: AgentToolResult<unknown> | undefined
+): ToolView {
+  const view = viewFor(name)?.(call) ?? genericView(name, call.args);
+  const text =
+    result === undefined ? "" : Renderer.extractErrorText(result, "");
+  if (text === "") {
+    return view;
+  }
+  return {
+    ...view,
+    body: [{ kind: "notice", severity: "error", text }],
+  };
+}
+
+/**
+ * Wrap a tool definition so pi's validator errors get rewritten before they
+ * reach the model. Pi runs `prepareArguments` before validation, so we call
+ * pi's validator ourselves inside it, rewrite any throw, and return the
+ * (coerced) args; pi's own second validation pass then sees clean input.
+ * After successful validation we also reject unknown top-level keys, since
+ * TypeBox object schemas accept them by default and typos like
+ * `headlimit` vs `head_limit` would silently no-op.
+ *
+ * Use `Tools.register` for `pi.registerTool` callers; use `Tools.wrap` to
+ * pass into `customTools`.
+ */
+function wrap<TParams extends TSchema, TDetails = unknown, TState = unknown>(
+  def: PimToolDefinition<TParams, TDetails, TState>
+): ToolDefinition<TParams, TDetails, TState> {
+  const schema = def.parameters as unknown as JsonSchema;
+  // Pi rejects unknown definition fields, so strip pim-only ones here.
+  const { toViewModel, effect, ...piDef } = def;
+  if (toViewModel !== undefined) {
+    viewFactories.set(def.name, toViewModel as ToolViewFactory);
+  }
+  if (effect !== undefined) {
+    effects.set(def.name, effect as ErasedToolEffect);
+  }
+  return {
+    ...piDef,
+    ...(toViewModel === undefined ? {} : synthesizeRenderers(def, toViewModel)),
+    prepareArguments: (rawArgs: unknown): Static<TParams> => {
+      const prepared = def.prepareArguments
+        ? def.prepareArguments(rawArgs)
+        : (rawArgs as Static<TParams>);
+      const cleaned = coerceQuotedEnums(prepared, schema) as Static<TParams>;
+      const strictIssues = checkStrictTypes(cleaned, schema, "");
+      if (strictIssues.length > 0) {
+        const lines = strictIssues.map((s) => `  - ${s}`).join("\n");
+        throw new Error(`Validation failed for tool "${def.name}":\n${lines}`);
+      }
+      let validated: Static<TParams>;
+      try {
+        validated = validateToolArguments(
+          { name: def.name, parameters: def.parameters } as never,
+          {
+            type: "toolCall",
+            id: "",
+            name: def.name,
+            arguments: cleaned as Record<string, unknown>,
+          }
+        ) as Static<TParams>;
+      } catch (err) {
+        throw new Error(rewriteValidationError(def.name, schema, err, cleaned));
+      }
+      const unknownKeys = findUnknownTopLevelKeys(schema, validated);
+      if (unknownKeys.length > 0) {
+        throw new Error(formatUnknownKeysError(def.name, schema, unknownKeys));
+      }
+      return validated;
+    },
+  };
+}
+
+function register<
+  TParams extends TSchema,
+  TDetails = unknown,
+  TState = unknown,
+>(pi: ExtensionAPI, def: PimToolDefinition<TParams, TDetails, TState>): void {
+  pi.registerTool(wrap(def));
+}
+
+/**
+ * Rewrite a `validateToolArguments` error string into a clearer form.
+ * `schema` is the tool's parameters schema, used to enumerate allowed values
+ * for `anyOf`/`enum` failures. `args` is the validated input, used to pick
+ * the matching branch of a discriminated union. Public for testing.
+ */
+function rewriteValidationError(
+  toolName: string,
+  schema: JsonSchema,
+  err: unknown,
+  args?: unknown
+): string {
+  const message = err instanceof Error ? err.message : String(err);
+  if (!message.startsWith("Validation failed for tool")) {
+    return message;
+  }
+
+  const raw = parseIssues(message);
+  const collapsed = collapseAnyOf(raw, schema, args);
+  const issues = collapsed.map((issue) => formatIssue(issue, schema));
+
+  const header = `Validation failed for tool "${toolName}":`;
+  if (issues.length === 0) {
+    return header;
+  }
+  return `${header}\n${issues.map((s) => `  - ${s}`).join("\n")}`;
+}
+
+const GENERIC_ARG_KEYS = [
+  "path",
+  "command",
+  "query",
+  "pattern",
+  "url",
+] as const;
+
+/**
+ * The view for a tool that ships no `toViewModel` — an MCP tool, or one from
+ * another extension pack. Names the tool and echoes whichever argument reads
+ * most like its subject, which is all a stranger's schema will honestly give.
+ */
+function genericView(toolName: string, args: unknown): ToolView {
+  const record =
+    args && typeof args === "object" ? (args as Record<string, unknown>) : {};
+  const subject = GENERIC_ARG_KEYS.map((key) => record[key]).find(
+    (value): value is string => typeof value === "string" && value !== ""
+  );
+  return {
+    title: [
+      {
+        kind: "spans",
+        spans: [{ text: subject ? `${toolName} ${subject}` : toolName }],
+      },
+    ],
+  };
+}
+
+/**
+ * Build the renderers a `toViewModel` tool did not write itself. An explicit
+ * `renderCall`/`renderResult` always wins, so adoption stays incremental.
+ */
+function synthesizeRenderers<TParams extends TSchema, TDetails, TState>(
+  def: PimToolDefinition<TParams, TDetails, TState>,
+  toViewModel: (input: ToolViewInput<TParams, TDetails>) => ToolView
+): Pick<
+  ToolDefinition<TParams, TDetails, TState>,
+  "renderCall" | "renderResult"
+> {
+  return {
+    renderCall:
+      def.renderCall ??
+      ((args, theme, context) => {
+        const state = context.state as ViewRenderState<TDetails>;
+        const view = toViewModel({
+          args,
+          result: state.viewResult,
+          isPartial: Boolean(context.isPartial),
+          cwd: context.cwd,
+        });
+        const title = AnsiPainter.paintTitle(view.title, theme);
+        return Renderer.renderToolCallTitle({
+          label: view.label ?? def.label,
+          title: title.text,
+          markdown: title.markdown,
+          labelColor: AnsiPainter.themeColorFor(view.labelTone),
+          theme,
+          context,
+        });
+      }),
+    renderResult:
+      def.renderResult ??
+      ((result, options, theme, context) => {
+        const state = context.state as ViewRenderState<TDetails>;
+        // The title may depend on `details`, which only renderResult receives;
+        // stash it and redraw so the synthesized renderCall can see it too.
+        // The redraw has to wait for the current pass to finish: pi calls this
+        // from inside its own container rebuild, and invalidating re-entrantly
+        // makes that rebuild append this pass's component on top of the one the
+        // nested pass already added — the body would be painted twice.
+        if (!options.isPartial && state.viewResult === undefined) {
+          state.viewResult = result;
+          queueMicrotask(() => context.invalidate());
+        }
+
+        if (context.isError) {
+          return Renderer.renderErrorResult({
+            result,
+            options,
+            theme,
+            context,
+          });
+        }
+
+        const view = toViewModel({
+          args: context.args,
+          result,
+          isPartial: options.isPartial,
+          cwd: context.cwd,
+        });
+
+        return BodyRenderer.render({
+          summary: view.summary,
+          body: view.body,
+          options,
+          theme,
+          context,
+        });
+      }),
+  };
+}
+
+function parseIssues(message: string): Issue[] {
+  const issues: Issue[] = [];
+  for (const line of message.split("\n")) {
+    if (line.startsWith("Received arguments:")) {
+      break;
+    }
+    if (!line.startsWith("  - ")) {
+      continue;
+    }
+    const body = line.slice(4);
+    const colonIdx = body.indexOf(": ");
+    if (colonIdx === -1) {
+      issues.push({ path: "", message: body });
+    } else {
+      issues.push({
+        path: body.slice(0, colonIdx),
+        message: body.slice(colonIdx + 2),
+      });
+    }
+  }
+  return issues;
+}
+
+/**
+ * Pi emits one error per anyOf branch plus a `must match a schema in anyOf`
+ * parent error, producing 6+ noisy lines for a 6-variant union. Replace the
+ * whole cluster with a single synthesised line. If the actual value has a
+ * discriminator that matches one branch, surface only that branch's real
+ * errors instead.
+ */
+function collapseAnyOf(
+  issues: readonly Issue[],
+  schema: JsonSchema,
+  args: unknown
+): Issue[] {
+  const handled = new Set<number>();
+  const inserts = new Map<number, Issue[]>();
+
+  issues.forEach((issue, idx) => {
+    if (handled.has(idx) || issue.message !== "must match a schema in anyOf") {
+      return;
+    }
+    const node = walkSchema(schema, issue.path);
+    const branches = node?.anyOf ?? node?.oneOf;
+    if (!node || !branches) {
+      return;
+    }
+    handled.add(idx);
+    issues.forEach((other, otherIdx) => {
+      if (handled.has(otherIdx)) {
+        return;
+      }
+      if (other.path === issue.path || isUnderPath(other.path, issue.path)) {
+        handled.add(otherIdx);
+      }
+    });
+
+    const value = walkValue(args, issue.path);
+    const matched = matchDiscriminatedBranch(branches, value);
+    if (matched) {
+      const branchIssues = revalidateBranch(matched, value).map((sub) => ({
+        path: joinPath(issue.path, sub.path),
+        message: sub.message,
+      }));
+      inserts.set(idx, branchIssues);
+    } else {
+      inserts.set(idx, [
+        { path: issue.path, message: describeAnyOf(branches) },
+      ]);
+    }
+  });
+
+  const result: Issue[] = [];
+  issues.forEach((issue, idx) => {
+    if (inserts.has(idx)) {
+      result.push(...inserts.get(idx)!);
+      return;
+    }
+    if (!handled.has(idx)) {
+      result.push(issue);
+    }
+  });
+  return result;
+}
+
+function describeAnyOf(branches: readonly JsonSchema[]): string {
+  const constValues = branches
+    .map((b) => (b && "const" in b ? b.const : undefined))
+    .filter((v) => v !== undefined);
+  if (constValues.length === branches.length) {
+    return `must be one of: ${constValues.map(displayValue).join(", ")}`;
+  }
+
+  const discriminator = findDiscriminator(branches);
+  if (discriminator) {
+    const values = discriminator.values.map(displayValue).join(", ");
+    return `must match one of the allowed variants (${discriminator.field}: ${values})`;
+  }
+
+  return `must match one of ${branches.length} allowed variants`;
+}
+
+/**
+ * Format an enum value for an error message. Strings render bare so a weaker
+ * model that retries off the message doesn't include the quotes in its next
+ * attempt (e.g. `action: "\"create\""`). Non-strings keep JSON form for
+ * disambiguation.
+ */
+function displayValue(value: unknown): string {
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
+
+function matchDiscriminatedBranch(
+  branches: readonly JsonSchema[],
+  value: unknown
+): JsonSchema | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const discriminator = findDiscriminator(branches);
+  if (!discriminator) {
+    return undefined;
+  }
+  const actual = value[discriminator.field];
+  const branchIndex = discriminator.values.findIndex(
+    (v) => JSON.stringify(v) === JSON.stringify(actual)
+  );
+  return branchIndex >= 0 ? branches[branchIndex] : undefined;
+}
+
+function findDiscriminator(
+  branches: readonly JsonSchema[]
+): { readonly field: string; readonly values: readonly unknown[] } | undefined {
+  const objectBranches = branches.filter(
+    (b) => b.type === "object" && b.properties
+  );
+  if (
+    objectBranches.length !== branches.length ||
+    objectBranches.length === 0
+  ) {
+    return undefined;
+  }
+  for (const propName of Object.keys(objectBranches[0]!.properties!)) {
+    const values: unknown[] = [];
+    for (const branch of objectBranches) {
+      const prop = branch.properties![propName];
+      if (prop && "const" in prop) {
+        values.push(prop.const);
+      } else {
+        break;
+      }
+    }
+    if (
+      values.length === objectBranches.length &&
+      new Set(values.map((v) => JSON.stringify(v))).size === values.length
+    ) {
+      return { field: propName, values };
+    }
+  }
+  return undefined;
+}
+
+function revalidateBranch(branch: JsonSchema, value: unknown): Issue[] {
+  try {
+    validateToolArguments(
+      { name: "_branch", parameters: branch as TSchema } as never,
+      {
+        type: "toolCall",
+        id: "",
+        name: "_branch",
+        arguments: (value ?? {}) as Record<string, unknown>,
+      }
+    );
+    return [];
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return parseIssues(message);
+  }
+}
+
+function walkSchema(
+  schema: JsonSchema | undefined,
+  path: string
+): JsonSchema | undefined {
+  if (!schema) {
+    return undefined;
+  }
+  if (!path) {
+    return schema;
+  }
+  let current: JsonSchema | undefined = schema;
+  for (const part of path.split(".")) {
+    if (!current) {
+      return undefined;
+    }
+    if (current.properties && part in current.properties) {
+      current = current.properties[part];
+      continue;
+    }
+    if (current.items) {
+      current = Array.isArray(current.items)
+        ? current.items[Number(part)]
+        : current.items;
+      continue;
+    }
+    return undefined;
+  }
+  return current;
+}
+
+function walkValue(value: unknown, path: string): unknown {
+  if (!path) {
+    return value;
+  }
+  let current = value;
+  for (const part of path.split(".")) {
+    if (current === null || current === undefined) {
+      return undefined;
+    }
+    if (Array.isArray(current)) {
+      current = current[Number(part)];
+    } else if (isRecord(current)) {
+      current = current[part];
+    } else {
+      return undefined;
+    }
+  }
+  return current;
+}
+
+function isUnderPath(candidate: string, parent: string): boolean {
+  if (!parent) {
+    return candidate.length > 0;
+  }
+  return candidate.startsWith(`${parent}.`);
+}
+
+function joinPath(parent: string, child: string): string {
+  if (!parent) {
+    return child;
+  }
+  if (!child) {
+    return parent;
+  }
+  return `${parent}.${child}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function formatIssue(issue: Issue, schema: JsonSchema): string {
+  const requiredMatch = issue.message.match(
+    /^must have required propert(?:y|ies) (.+)$/
+  );
+  if (requiredMatch) {
+    const props = requiredMatch[1]!;
+    const parent = issue.path.includes(".")
+      ? issue.path.slice(0, issue.path.lastIndexOf("."))
+      : "";
+    const where = parent ? ` at ${parent}` : "";
+    const noun = props.includes(",") ? "properties" : "property";
+    return `missing required ${noun}${where}: ${props}`;
+  }
+
+  if (issue.message === "must be equal to one of the allowed values") {
+    const node = walkSchema(schema, issue.path);
+    if (node?.enum && node.enum.length > 0) {
+      const values = node.enum.map(displayValue).join(", ");
+      return `${issue.path}: must be one of: ${values}`;
+    }
+  }
+
+  if (!issue.path) {
+    return issue.message;
+  }
+  return `${issue.path}: ${issue.message}`;
+}
+
+/**
+ * Recursively unwrap quoted enum values. Weaker models sometimes send
+ * `"\"create\""` instead of `"create"` because the JSON Schema and earlier
+ * error messages show enum values quoted. Only unwraps when the inner value is
+ * a valid enum/const match, so real typos still surface as errors.
+ */
+function coerceQuotedEnums(
+  value: unknown,
+  schema: JsonSchema | undefined
+): unknown {
+  if (!schema) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const allowed = collectAllowedStrings(schema);
+    if (allowed && allowed.length > 0 && !allowed.includes(value)) {
+      const unwrapped = stripWrappingQuotes(value);
+      if (unwrapped !== value && allowed.includes(unwrapped)) {
+        return unwrapped;
+      }
+    }
+    return value;
+  }
+
+  if (isRecord(value)) {
+    let mutated: Record<string, unknown> | undefined;
+    const propSchemas = schema.properties;
+    for (const key of Object.keys(value)) {
+      const subSchema = propSchemas?.[key];
+      const next = coerceQuotedEnums(value[key], subSchema);
+      if (next !== value[key]) {
+        mutated ??= { ...value };
+        mutated[key] = next;
+      }
+    }
+    if (schema.anyOf || schema.oneOf) {
+      const branches = (schema.anyOf ?? schema.oneOf) as readonly JsonSchema[];
+      const branch =
+        matchDiscriminatedBranch(branches, mutated ?? value) ??
+        branches.find((b) => b.type === "object" && b.properties);
+      if (branch) {
+        const recursed = coerceQuotedEnums(mutated ?? value, branch);
+        if (recursed !== (mutated ?? value)) {
+          return recursed;
+        }
+      }
+    }
+    return mutated ?? value;
+  }
+
+  if (Array.isArray(value)) {
+    const itemsField = schema.items;
+    if (!itemsField || Array.isArray(itemsField)) {
+      return value;
+    }
+    const itemSchema = itemsField as JsonSchema;
+    let mutated: unknown[] | undefined;
+    for (let i = 0; i < value.length; i++) {
+      const next = coerceQuotedEnums(value[i], itemSchema);
+      if (next !== value[i]) {
+        mutated ??= [...value];
+        mutated[i] = next;
+      }
+    }
+    return mutated ?? value;
+  }
+
+  return value;
+}
+
+function collectAllowedStrings(schema: JsonSchema): string[] | undefined {
+  if (schema.enum) {
+    const strings = schema.enum.filter(
+      (v): v is string => typeof v === "string"
+    );
+    return strings.length > 0 ? strings : undefined;
+  }
+  if (typeof schema.const === "string") {
+    return [schema.const];
+  }
+  const branches = schema.anyOf ?? schema.oneOf;
+  if (branches) {
+    const collected: string[] = [];
+    for (const branch of branches) {
+      const inner = collectAllowedStrings(branch);
+      if (inner) {
+        collected.push(...inner);
+      }
+    }
+    return collected.length > 0 ? collected : undefined;
+  }
+  return undefined;
+}
+
+function stripWrappingQuotes(value: string): string {
+  if (value.length < 2) {
+    return value;
+  }
+  const first = value[0]!;
+  const last = value[value.length - 1]!;
+  const quoteChars = ['"', "'", "`"];
+  if (quoteChars.includes(first) && first === last) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
+/**
+ * Pi-ai intentionally coerces a lot of LLM-quirk inputs (`"42"` → 42,
+ * `"true"` → true, single value → array, etc.) so weak/cheap models don't
+ * fail on JSON shakiness. This is good. But two of those coercions are
+ * almost certainly silent bugs:
+ *
+ * - `null` → `0` / `""` / `false` / `"null"` for primitive fields. `null`
+ *   is never a sensible value for a non-nullable primitive; treating it as
+ *   the type's zero value hides the model's confusion.
+ * - `"42.5"` → `42` for an integer field. The float-shaped string means the
+ *   model misunderstood the type; truncating loses information without
+ *   recovering the intent.
+ *
+ * Reject both before pi's `Value.Convert` runs.
+ */
+function checkStrictTypes(
+  value: unknown,
+  schema: JsonSchema | undefined,
+  path: string
+): string[] {
+  if (!schema) {
+    return [];
+  }
+
+  const types = collectSchemaTypes(schema);
+  if (types.length > 0 && !types.includes("null") && value === null) {
+    return [
+      `${path || "root"}: must not be null (expected ${types.join(" | ")})`,
+    ];
+  }
+
+  if (
+    types.includes("integer") &&
+    typeof value === "string" &&
+    /^-?\d+\.\d*[1-9]/.test(value)
+  ) {
+    return [
+      `${path || "root"}: must be an integer (received "${value}" — fractional part would be truncated)`,
+    ];
+  }
+
+  if (isRecord(value) && schema.properties) {
+    const issues: string[] = [];
+    for (const [key, sub] of Object.entries(value)) {
+      const subSchema = schema.properties[key];
+      if (subSchema) {
+        issues.push(...checkStrictTypes(sub, subSchema, joinPath(path, key)));
+      }
+    }
+    return issues;
+  }
+
+  if (Array.isArray(value)) {
+    const itemsField = schema.items;
+    if (!itemsField || Array.isArray(itemsField)) {
+      return [];
+    }
+    const itemSchema = itemsField as JsonSchema;
+    const issues: string[] = [];
+    for (let i = 0; i < value.length; i++) {
+      issues.push(
+        ...checkStrictTypes(value[i], itemSchema, joinPath(path, String(i)))
+      );
+    }
+    return issues;
+  }
+
+  return [];
+}
+
+function collectSchemaTypes(schema: JsonSchema): string[] {
+  const types = new Set<string>();
+  if (typeof schema.type === "string") {
+    types.add(schema.type);
+  }
+  if (Array.isArray(schema.type)) {
+    for (const t of schema.type) {
+      if (typeof t === "string") {
+        types.add(t);
+      }
+    }
+  }
+  const branches = schema.anyOf ?? schema.oneOf;
+  if (branches) {
+    for (const b of branches) {
+      for (const t of collectSchemaTypes(b)) {
+        types.add(t);
+      }
+    }
+  }
+  return Array.from(types);
+}
+
+function findUnknownTopLevelKeys(schema: JsonSchema, args: unknown): string[] {
+  if (schema.type !== "object" || !schema.properties || !isRecord(args)) {
+    return [];
+  }
+  const known = new Set(Object.keys(schema.properties));
+  return Object.keys(args).filter((key) => !known.has(key));
+}
+
+function formatUnknownKeysError(
+  toolName: string,
+  schema: JsonSchema,
+  unknownKeys: readonly string[]
+): string {
+  const known = schema.properties ? Object.keys(schema.properties) : [];
+  const lines = unknownKeys.map((key) => {
+    const suggestion = closestKey(key, known);
+    const hint = suggestion ? ` (did you mean "${suggestion}"?)` : "";
+    return `  - unknown property: ${key}${hint}`;
+  });
+  return `Validation failed for tool "${toolName}":\n${lines.join("\n")}`;
+}
+
+function closestKey(
+  key: string,
+  candidates: readonly string[]
+): string | undefined {
+  const lowered = key.toLowerCase();
+  let best: { key: string; distance: number } | undefined;
+  for (const candidate of candidates) {
+    if (candidate.toLowerCase() === lowered) {
+      return candidate;
+    }
+    const d = Levenshtein.distance(lowered, candidate.toLowerCase());
+    if (d <= Math.max(2, Math.floor(candidate.length / 3))) {
+      if (!best || d < best.distance) {
+        best = { key: candidate, distance: d };
+      }
+    }
+  }
+  return best?.key;
+}
+
+export const Tools = {
+  effectOf,
+  viewFor,
+  viewOf,
+  wrap,
+  register,
+  rewriteValidationError,
+};

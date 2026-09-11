@@ -4,6 +4,11 @@ bun.lockb
 .DS_Store
 dist/
 notes/
+# Local operator scripts (deploy units, box-specific helpers) stay out, but the
+# check runner and brand generator are shared contributor tools.
+scripts/*
+!scripts/check.ts
+!scripts/brand/
 vendor/
 __pycache__/
 benchmarks/*/runs/

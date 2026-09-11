@@ -1,0 +1,342 @@
+import { Dynamic } from "@solidjs/web";
+import { createMemo, For, Show, useContext, type Component } from "solid-js";
+
+import type { DurableEvent } from "#protocol/ServerEvent";
+import { clockTime } from "../format";
+import { Markdown } from "../markdown/Markdown";
+import type { LiveMessage, PendingMessage } from "../session/SessionStore";
+import { HideThinking } from "../settings/Settings";
+import { Attachments } from "../view/Attachments";
+import { ToolCards } from "../view/ToolCard";
+import { NOTICE_CLASSES } from "../view/tokens";
+import { SubagentRow } from "./SubagentRow";
+import {
+  buildRows,
+  extendRows,
+  type MessageRow,
+  type NoticeRow,
+  type Row,
+  type ToolRow,
+} from "./rows";
+
+/** The tool whose rows open a transcript instead of a body. */
+const SUBAGENT = "subagent";
+
+type RowOf<TKind extends Row["kind"]> = Extract<Row, { kind: TKind }>;
+
+type RowMap = {
+  readonly [TKind in Row["kind"]]: Component<{
+    readonly row: RowOf<TKind>;
+  }>;
+};
+
+/**
+ * The whole conversation, painted from durable events alone.
+ *
+ * `trailing` is what this client has said and not yet had echoed back; `live`
+ * is the turn in flight, a message per step with the calls that step made.
+ * Both merge into the durable rows through `extendRows`, which dedupes calls
+ * on `callId`, so a call keeps one row from the moment it starts to the
+ * moment its result lands.
+ *
+ * Two memos so a text delta, which ticks many times a second, only rebuilds
+ * the few trailing rows: the durable log is flattened once per durable event,
+ * not once per delta. Keyed on the row id rather than on identity, because
+ * the trailing rows are still rebuilt on every delta and an unkeyed `<For>`
+ * would remount them each time.
+ */
+export function Transcript(props: {
+  readonly events: readonly DurableEvent[];
+  readonly trailing?: readonly PendingMessage[];
+  readonly live?: readonly LiveMessage[];
+  /**
+   * Take the queued message back to edit it. There is only ever one, so this
+   * needs no argument — pi holds a single message per turn, and every row
+   * that offers this is drawing that one.
+   */
+  readonly onEdit?: () => void;
+  /**
+   * Read a subagent's own transcript. Absent inside the modal that answers
+   * it, which is how depth stays at one: a subagent cannot spawn a subagent,
+   * so nothing in a child's transcript may offer to open another.
+   */
+  readonly onOpenSubagent?: (callId: string) => void;
+}) {
+  const durable = createMemo(() => buildRows(props.events));
+  const rows = createMemo(() =>
+    extendRows(durable(), props.trailing ?? [], props.live ?? [])
+  );
+  const hidden = useContext(HideThinking);
+  const groups = createMemo(() =>
+    groupRuns(rows().filter((row) => draws(row, hidden())))
+  );
+  // Built here rather than at module scope so the message row can be handed
+  // the one thing a row is allowed to do. The body runs once per mount, so
+  // the component identities are stable and `<Dynamic>` never remounts a row.
+  const painters: RowMap = {
+    message: (message) => (
+      <MessageBubble
+        row={message.row}
+        hidden={hidden()}
+        onEdit={props.onEdit}
+      />
+    ),
+    tool: (tool) => (
+      <ToolRowView row={tool.row} onOpenSubagent={props.onOpenSubagent} />
+    ),
+    notice: NoticeRowView,
+  };
+
+  return (
+    <div class="space-y-[--line]">
+      <For each={groups()} keyed={(group: Group) => group.id}>
+        {(group) => (
+          <div class="min-w-0">
+            <For each={group().rows} keyed={(row: Row) => row.id}>
+              {(row) => (
+                <Dynamic
+                  component={painters[row().kind] as Component<{ row: Row }>}
+                  row={row()}
+                />
+              )}
+            </For>
+          </div>
+        )}
+      </For>
+    </div>
+  );
+}
+
+type Group = { readonly id: string; readonly rows: readonly Row[] };
+
+/**
+ * Whether a row puts anything on screen. Only one ever fails to: a step whose
+ * entire body was reasoning — no prose, no files — once reasoning is hidden.
+ * Dropped here rather than skipped while painting, because a row that draws
+ * nothing is still a row, and it both ends a run of tool calls and takes a
+ * gap on either side of itself: a blank line between two calls that ran back
+ * to back.
+ */
+function draws(row: Row, hidden: boolean): boolean {
+  return !(
+    hidden &&
+    row.kind === "message" &&
+    row.thinking !== undefined &&
+    row.text === "" &&
+    row.attachments === undefined
+  );
+}
+
+/**
+ * A run of consecutive tool rows is one group and gets no gaps inside it, the
+ * way the mockup stacks four calls as four adjacent lines. Everything else is
+ * its own group, so the only vertical space in a transcript is a whole blank
+ * row between things that are not a list of calls.
+ */
+function groupRuns(rows: readonly Row[]): readonly Group[] {
+  const groups: Group[] = [];
+  let run: Row[] | undefined;
+  for (const row of rows) {
+    if (row.kind === "tool" && run) {
+      run.push(row);
+      continue;
+    }
+    run = row.kind === "tool" ? [row] : undefined;
+    groups.push({ id: row.id, rows: run ?? [row] });
+  }
+  return groups;
+}
+
+/** The column a user turn lives in, whether or not it has been heard. */
+const COLUMN = "flex max-w-[85%] min-w-0 flex-col items-end";
+
+/**
+ * A user turn is the mockup's right-aligned card; an assistant turn is not a
+ * bubble at all — it is prose on the line grid, and copying it is the job of
+ * the buttons on the payloads inside it.
+ *
+ * A queued message is drawn as the same card, recessed, and the card is a
+ * button: it is a thing this reader has said that the agent has not heard
+ * yet, so it is still theirs to take back. The whole card is the target
+ * rather than a control tucked into a corner of it, because on a phone the
+ * corner is smaller than the thumb aiming at it.
+ */
+function MessageBubble(props: {
+  readonly row: MessageRow;
+  /** Whether this reader has asked not to see reasoning. */
+  readonly hidden: boolean;
+  readonly onEdit?: () => void;
+}) {
+  return (
+    <Show
+      when={props.row.role === "user"}
+      fallback={
+        <article class="min-w-0 space-y-[--line]">
+          <Show when={!props.hidden && props.row.thinking}>
+            {(thinking) => (
+              // Thinking is markdown too, so it gets the same painter as the
+              // answer; only weight and opacity say it is not the answer. Once
+              // the answer has started the thinking can no longer grow, so it
+              // is flushed even while the message is still streaming.
+              <div class="font-300 italic opacity-60">
+                <Markdown
+                  text={thinking()}
+                  complete={
+                    props.row.streaming !== true || props.row.text !== ""
+                  }
+                />
+              </div>
+            )}
+          </Show>
+          <Markdown
+            text={props.row.text}
+            complete={props.row.streaming !== true}
+          />
+        </article>
+      }
+    >
+      <article class="flex flex-col items-end">
+        {/* Above the card and outside it, in both senses. Above, because the
+            picture is what the message is about and the sentence under it is
+            the caption. Outside, because a queued card is itself a button and
+            a thumbnail is another: nesting them would make opening the
+            picture also take the message back out of the queue. */}
+        <Show when={props.row.attachments}>
+          {(files) => (
+            <div class="mb-1.5">
+              <Attachments
+                files={files().map((file) => ({ ...file, key: file.url }))}
+              />
+            </div>
+          )}
+        </Show>
+        <Show
+          when={props.row.queued}
+          fallback={
+            <div class={COLUMN}>
+              <Card row={props.row} />
+            </div>
+          }
+        >
+          <button
+            type="button"
+            aria-label="Edit queued message"
+            class={`group ${COLUMN} text-left`}
+            onClick={() => props.onEdit?.()}
+          >
+            <Card row={props.row} />
+          </button>
+        </Show>
+      </article>
+    </Show>
+  );
+}
+
+/**
+ * The card and what it says beneath itself: the wall clock once the message
+ * has been written down, and — while pi is still holding it — that it has
+ * not been, which is worth saying out loud where the time would go.
+ */
+function Card(props: { readonly row: MessageRow }) {
+  return (
+    <>
+      {/* Queued sits a step darker than a message that has landed — fill and
+          text both — and rises to the landed shade under the cursor. The dim
+          text is what says "not yet": unsent words should not read as
+          confidently as the ones pi has already heard, and pointing at the
+          card, which is what takes it back, brings them up to be re-read.
+          A message of nothing but files draws no bubble at all: an empty one
+          under a photo is a speech bubble with nothing said in it. */}
+      <Show when={props.row.text !== ""}>
+        <div
+          // `wrap-anywhere`, not `break-words`. The card is sized to fit its
+          // own content — it is a flex item under `items-end`, so it is as
+          // wide as its text and no wider — and `overflow-wrap: break-word`
+          // breaks a long run only after the box has a width, leaving the
+          // box's own min-content width at the longest unbreakable run. A
+          // message carrying a path or a URL is then laid out that wide,
+          // straight past the 85% column and off the left edge of a phone.
+          // `anywhere` is the same break with the intrinsic width counted, so
+          // the card fits the column and the path wraps inside it.
+          class={`whitespace-pre-wrap wrap-anywhere rounded-lg px-4 py-3 ${
+            props.row.queued
+              ? "bg-neutral-900 text-neutral-400 group-hover:bg-neutral-850 group-hover:text-neutral-200"
+              : "bg-neutral-850"
+          }`}
+        >
+          {props.row.text}
+        </div>
+      </Show>
+      <div
+        class={`text-sm ${props.row.queued ? "text-neutral-400" : "text-neutral-500"}`}
+      >
+        {props.row.queued
+          ? "Queued. Click to edit."
+          : clockTime(props.row.timestamp)}
+      </div>
+    </>
+  );
+}
+
+/**
+ * A tool row — except for the one tool whose output is a conversation. A
+ * subagent's run is a session of its own, far too much to hang off a
+ * disclosure inside a column, so its row is a button that opens it rather
+ * than a disclosure that expands it. It is still a tool row and still drawn
+ * as one; what differs is small enough to describe in a sentence and too
+ * load-bearing to hide behind a flag on `ToolCard`, whose whole subject is
+ * the disclosure this row does not have.
+ */
+function ToolRowView(props: {
+  readonly row: ToolRow;
+  readonly onOpenSubagent?: (callId: string) => void;
+}) {
+  return (
+    <Show
+      when={props.row.name === SUBAGENT && props.onOpenSubagent !== undefined}
+      fallback={
+        <ToolCards
+          view={props.row.view}
+          name={props.row.name}
+          isError={props.row.isError}
+          isPartial={props.row.isPartial}
+        />
+      }
+    >
+      <SubagentRow
+        row={props.row}
+        onOpen={(callId) => props.onOpenSubagent?.(callId)}
+      />
+    </Show>
+  );
+}
+
+const NOTICE_LABELS = {
+  info: "INFO",
+  warn: "WARNING",
+  error: "ERROR",
+} as const satisfies Record<NoticeRow["severity"], string>;
+
+/**
+ * A notice is prose about the turn it sits beside, whatever its severity: it
+ * reads on the transcript's own left edge and at its own size, so an error is
+ * as legible as the answer that failed to arrive.
+ *
+ * What says which kind it is, besides hue, is a tag — hue alone is a
+ * distinction nobody can name out loud, and the palette here already spends
+ * rose on failed tool rows. Small and faintly filled, so the tag reads as a
+ * label on the sentence rather than as the first word of it.
+ */
+function NoticeRowView(props: { readonly row: NoticeRow }) {
+  return (
+    <p
+      class={`whitespace-pre-wrap ${NOTICE_CLASSES[props.row.severity]}`}
+      role={props.row.severity === "error" ? "alert" : undefined}
+    >
+      <span class="mr-1ch rounded bg-current/10 px-1.5 py-0.5 text-sm font-semibold">
+        {NOTICE_LABELS[props.row.severity]}
+      </span>
+      {props.row.text}
+    </p>
+  );
+}

@@ -17,3 +17,8 @@ jobs:
 
       - name: Run checks
         run: bun run check
+
+      # `pack` is not in a bare `check`: it is a full Vite build, and agents
+      # run `check` after every commit. PR latency is cheap, so it runs here.
+      - name: Verify the published tarball
+        run: bun run check pack

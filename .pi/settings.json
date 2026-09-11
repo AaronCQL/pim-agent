@@ -1,5 +1,4 @@
 {
-  "packages": [".."],
   "quietStartup": true,
   "markdown": {
     "codeBlockIndent": ""

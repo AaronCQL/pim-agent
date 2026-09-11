@@ -1,11 +1,10 @@
 {
-  "name": "@aaroncql/pim-agent",
-  "version": "0.8.0",
-  "description": "A Bun-native extension pack for Pi: web access, subagents, revamped core tools, ANSI-compatible themes, fzf-style completions, Telegram mode, and more.",
+  "name": "pim-agent",
+  "version": "0.9.0",
+  "description": "A Bun-native distribution of Pi: revamped core tools, web access, subagents, themes, fzf-style completions, plus Telegram and web frontends.",
   "license": "MIT",
   "type": "module",
   "keywords": [
-    "pi-package",
     "agent"
   ],
   "homepage": "https://github.com/AaronCQL/pim-agent#readme",
@@ -19,42 +18,64 @@
   "bin": {
     "pim": "bin/pim.ts"
   },
+  "imports": {
+    "#core/*": "./packages/core/src/*.ts",
+    "#tui/*": "./packages/tui/src/*.ts",
+    "#telegram/*": "./packages/telegram/src/*.ts",
+    "#protocol/*": "./packages/protocol/src/*.ts",
+    "#server/*": "./packages/server/src/*.ts",
+    "#web/*": "./packages/web/src/*.ts"
+  },
   "files": [
     "bin/",
-    "src/",
-    "!src/**/*.test.ts"
+    "packages/core/src/",
+    "packages/tui/src/",
+    "packages/telegram/src/",
+    "packages/protocol/src/",
+    "packages/server/src/",
+    "packages/web/dist/client/",
+    "!packages/core/src/session/fixtures/",
+    "!packages/**/*.test.ts"
   ],
   "engines": {
     "bun": ">=1.2.7"
   },
   "pi": {
-    "extensions": [
-      "./src/extensions"
-    ],
-    "themes": [
-      "./src/themes"
-    ],
     "image": "https://raw.githubusercontent.com/AaronCQL/pim-agent/refs/heads/main/assets/demo.webp"
   },
   "scripts": {
     "dev": "bun link && pim",
-    "typecheck": "tsgo --noEmit",
-    "test": "bun test src --only-failures",
-    "lint": "oxlint . --fix",
-    "format": "prettier --write --list-different package.json tsconfig.json .oxlintrc.json .prettierrc.json \"src/**/*.ts\" \"bin/**/*.ts\"",
-    "check": "bun run typecheck && bun run test && bun run lint && bun run format"
-  },
-  "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.84.4"
+    "prepack": "bun run build:web",
+    "web": "bun bin/pim.ts --mode web",
+    "probe": "bun packages/server/src/probe.ts",
+    "test": "bun scripts/check.ts agent web pack",
+    "check": "bun scripts/check.ts",
+    "brand": "bun scripts/brand/generate.ts",
+    "build:web": "cd packages/web && vite build",
+    "dev:web": "cd packages/web && vite"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.84.4",
+    "@fontsource/commit-mono": "^5.3.0",
+    "@happy-dom/global-registrator": "^20.12.0",
+    "@iconify-json/griddy-icons": "^1.2.0",
+    "@iconify-json/solar": "^1.2.10",
+    "@resvg/resvg-js": "^2.6.2",
+    "@solidjs/vite-plugin": "3.0.0-next.36",
+    "@solidjs/web": "^2.0.0-rc.4",
     "@types/bun": "latest",
     "@typescript/native-preview": "^7.0.0-dev.20260612.1",
+    "happy-dom": "^20.12.0",
+    "highlight.js": "^11",
+    "oxfmt": "0.66.0",
     "oxlint": "^1.69.0",
-    "prettier": "^3.8.4"
+    "solid-js": "^2.0.0-rc.4",
+    "streaming-markdown": "^0.2.15",
+    "unocss": "^66.8.1",
+    "vite": "^8.2.2"
   },
   "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.85.0",
+    "@earendil-works/pi-server": "0.85.0",
     "diff": "^9.0.0",
     "fzf": "^0.5.2",
     "grammy": "^1.44.0",

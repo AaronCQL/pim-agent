@@ -1,0 +1,191 @@
+import type {
+  AgentMessage,
+  AgentToolResult,
+} from "@earendil-works/pi-agent-core";
+import type { FileEntry } from "@earendil-works/pi-coding-agent";
+
+import { Attachments } from "#core/attachments/Attachments";
+import { EventLog, type LoggedEntry } from "#core/session/EventLog";
+import { MessageText } from "#core/session/MessageText";
+import { Tools } from "#core/shared/Tools";
+import type {
+  AttachmentView,
+  DurableEvent,
+  ToolCallView,
+} from "#protocol/ServerEvent";
+import { attachmentUrl } from "./AttachmentEndpoint";
+
+type PendingCall = {
+  readonly name: string;
+  readonly args: unknown;
+};
+
+/**
+ * Projects pi's session file into the durable half of the wire protocol: one
+ * line in, at most one `DurableEvent` out, tagged with that line's ordinal.
+ *
+ * Stateful because a tool result carries no arguments — only the assistant
+ * message that requested it does — so rendering a result's `ToolView` requires
+ * the call recorded earlier in the same file. That is also why a partial
+ * replay still reads from ordinal 0 and filters afterwards: the arguments a
+ * client needs may live behind its cursor.
+ */
+export class SessionProjection {
+  private readonly log: EventLog;
+  private readonly cwd: () => string;
+  private readonly events: DurableEvent[] = [];
+  private readonly calls = new Map<string, PendingCall>();
+  private draining: Promise<void> = Promise.resolve();
+  private highest = 0;
+
+  public constructor(path: string, cwd: () => string) {
+    this.log = new EventLog(path);
+    this.cwd = cwd;
+  }
+
+  /** Highest line ordinal projected so far, whether or not it emitted. */
+  public get head(): number {
+    return this.highest;
+  }
+
+  public since(fromSeq: number): readonly DurableEvent[] {
+    return this.events.filter((event) => event.seq > fromSeq);
+  }
+
+  /**
+   * Read whatever pi has appended since the last drain. Serialized against
+   * itself: two overlapping reads would double-project the same lines.
+   */
+  public async drain(): Promise<readonly DurableEvent[]> {
+    const before = this.events.length;
+    const done = this.draining.then(async () => {
+      for (const logged of await this.log.read(this.highest)) {
+        this.highest = logged.seq;
+        const event = this.project(logged);
+        if (event) {
+          this.events.push(event);
+        }
+      }
+    });
+    this.draining = done.catch(() => {});
+    await done;
+    return this.events.slice(before);
+  }
+
+  private project(logged: LoggedEntry): DurableEvent | undefined {
+    const { seq, entry } = logged;
+    if (entry.type === "compaction") {
+      return {
+        seq,
+        type: "notice",
+        severity: "info",
+        text: `Context compacted (${entry.tokensBefore} tokens before).`,
+      };
+    }
+    if (!isMessageEntry(entry)) {
+      return undefined;
+    }
+    const message = entry.message;
+    // Pi stamps every entry as it appends it, so this is when the message was
+    // written, not when it was read: the client's `17:24` line and its
+    // "Clanked for" reading survive a reload because of it.
+    const timestamp = Date.parse(entry.timestamp);
+    switch (message.role) {
+      case "user": {
+        // The files are pulled back out of the words: what the agent was told
+        // is a marker line naming a server path, and a reader has no use for
+        // either half of that. What is left is what was actually said, which
+        // for a photo sent on its own is nothing at all.
+        const said = Attachments.parse(MessageText.textOf(message.content));
+        const attachments: readonly AttachmentView[] = said.files.map(
+          (file) => ({
+            name: Attachments.nameOf(file.path),
+            url: attachmentUrl(file.path),
+            isImage: file.isImage,
+          })
+        );
+        return {
+          seq,
+          type: "message",
+          messageId: entry.id,
+          role: "user",
+          text: said.text,
+          timestamp,
+          ...(attachments.length === 0 ? {} : { attachments }),
+        };
+      }
+      case "assistant": {
+        const toolCalls: ToolCallView[] = [];
+        for (const part of message.content) {
+          if (part.type !== "toolCall") {
+            continue;
+          }
+          this.calls.set(part.id, { name: part.name, args: part.arguments });
+          toolCalls.push({
+            callId: part.id,
+            name: part.name,
+            view: Tools.viewOf({
+              name: part.name,
+              args: part.arguments,
+              isPartial: true,
+              cwd: this.cwd(),
+            }),
+          });
+        }
+        const thinking = MessageText.textOf(message.content, "thinking");
+        // A dead turn is a line in the log like any other: pi appends the
+        // assistant message it could not finish, so the client hears why the
+        // agent stopped from the projection rather than from a live frame no
+        // reload could replay.
+        const error =
+          message.stopReason === "error"
+            ? (message.errorMessage ?? "The model call failed.")
+            : undefined;
+        return {
+          seq,
+          type: "message",
+          messageId: entry.id,
+          role: "assistant",
+          text: MessageText.textOf(message.content),
+          timestamp,
+          ...(thinking ? { thinking } : {}),
+          ...(toolCalls.length > 0 ? { toolCalls } : {}),
+          ...(error === undefined ? {} : { error }),
+        };
+      }
+      case "toolResult": {
+        const call = this.calls.get(message.toolCallId);
+        return {
+          seq,
+          type: "tool_result",
+          callId: message.toolCallId,
+          name: message.toolName,
+          isError: message.isError,
+          view: Tools.viewOf({
+            name: message.toolName,
+            args: call?.args ?? {},
+            isError: message.isError,
+            result: {
+              content: message.content,
+              details: message.details,
+            } as AgentToolResult<unknown>,
+            isPartial: false,
+            cwd: this.cwd(),
+          }),
+        };
+      }
+      default:
+        return undefined;
+    }
+  }
+}
+
+type MessageEntry = {
+  readonly id: string;
+  readonly timestamp: string;
+  readonly message: AgentMessage;
+};
+
+function isMessageEntry(entry: FileEntry): entry is FileEntry & MessageEntry {
+  return entry.type === "message";
+}

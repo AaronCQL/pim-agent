@@ -1,40 +1,28 @@
 # Developer Guide
 
-Pim is an opinionated yet minimal, Bun-native extension pack for [Pi](https://pi.dev/).
+Pim is an opinionated, Bun-native distribution of [Pi](https://pi.dev/).
 
-`bin/pim.ts` is a Bun launcher that resolves pi's `cli.js` and runs it under Bun, bypassing pi's Node shebang. Other pi extensions still work normally.
+`bin/pim.ts` is a Bun entry point that imports pi's `main()` **in-process** and hands it pim's extensions inline via `MainOptions.extensionFactories`. A vanilla `pi` on the same machine is unaffected, and third-party pi extensions still load alongside pim's.
 
-Dev setup: `bun link` puts `pim` on PATH; `.pi/settings.json` registers Pim Agent as a project-local pi package, so pi auto-loads it inside this repo. Launching plain `pi` (Node) instead of `pim` trips Pim Agent's Bun runtime guard.
+Dev setup: `bun link` puts `pim` on PATH, and `pim` run from anywhere loads this checkout's extensions. Plain `pi` inside this repo is just vanilla pi.
 
-## Commands
+## Layout
 
-- `bun run check`: typecheck + test + lint + format. **Run after every change.**
-- `bun dev`: `bun link` then launch `pim` from this repo.
-- `bun test src --only-failures`: run only previously-failing tests. Single test: `bun test src/path/to/file.test.ts`.
-- `bun run typecheck` / `bun run lint` / `bun run format`: individual steps if you want to isolate.
+Plain layered directories under `packages/*` — no workspaces, no per-directory `package.json`. Cross-package imports use the root `package.json` `imports` aliases (`#core/*` → `packages/core/src/*`, likewise `#tui`, `#telegram`, `#protocol`, `#server`, `#web`); intra-package imports stay relative. `packages/boundaries.test.ts` enforces which layer may import which.
 
-Inside a running `pim` session, `/reload` re-loads Pim Agent after edits without restarting.
-
-Telegram daemon: `pim --mode telegram --install` writes a user systemd/launchd unit and starts it. From Telegram, `/update` re-runs `bun install` (dev) or bumps the global pi and pim installs to latest (prod), then exits so the supervisor restarts the daemon. `pim --mode telegram --uninstall` tears it down. See `src/telegram/Supervisor.ts`.
-
-## Code Conventions
-
-- Always prefer `type` over `interface`.
-- Mark all data-shape fields `readonly` where possible.
-- Default to `Bun.*` APIs over Node built-ins (`fs`, `child_process`, etc.), unless Bun does not have a similar API.
-- Use comments sparingly, and only to explain why, not what or how.
-- Use instance classes for stateful services and lifecycle objects. Avoid static-only classes outside `src/shared/`; prefer named functions for stateless module-local helpers.
-- Shared utilities that cross module boundaries live in `src/shared/` and are exposed as a static-method class rather than a bare function. The filename must match the class name exactly (`Renderer.ts` exports `class Renderer`). Helpers with a single colocated caller stay as bare functions in lowercase files.
-- Use relative imports only. Do not use path aliases (`paths` in tsconfig, `imports` in package.json, or `@/`/`#`/`~/` prefixes).
-- When committing, check the commit history and use a similar semantic commit message.
+| Package | Contents |
+| --- | --- |
+| `packages/core` | Tools, schemas, `shared/`, `view/` (`ViewBlock`/`ToolView` + ANSI/Markdown painters), `session/` (`SessionHost`, `EventLog`, `SessionRegistry`), `picker/`, `attachments/`, and the daemon `Supervisor` (systemd/launchd units, one per `--mode`). Frontend-agnostic; depends on nothing else in `packages/`. |
+| `packages/tui` | Terminal frontend: splash, autocomplete over `core/picker`, footer, themes. |
+| `packages/telegram` | Telegram frontend: grammy bot, chat-keyed sessions, its `Supervisor` unit descriptor. |
+| `packages/protocol` | Versioned wire types. Server and web **only** — never the TUI; nothing browser-specific. Shipped. |
+| `packages/server` | `WsGateway` (resume handshake, fanout, session/model catalogues), `SessionProjection` (JSONL → wire events), `SessionStream` (live state, git, context usage), probe CLI. Shipped as source. |
+| `packages/web` | Solid 2 browser client: `WsClient`, `SessionStore` (the only place an intent becomes a command), HTML `ViewBlock` painter, `Markdown`, `highlight` (lazy highlight.js, same engine and roles as the TUI). Ships built `dist/client`, not sources. |
 
 ## On-demand Docs
 
-Read the topic doc only when its trigger applies to keep context lean.
-
 | When you are… | Read |
 | --- | --- |
+| writing code | [docs/style.md](./docs/style.md) |
 | touching the Pi API surface (tools, events, ExtensionContext, commands, etc.) | [docs/pi-api.md](./docs/pi-api.md) |
 | writing or changing a tool's `execute()` return, error handling, or truncation UX | [docs/tool-output.md](./docs/tool-output.md) |
-
-If a task spans multiple areas, read each relevant doc.

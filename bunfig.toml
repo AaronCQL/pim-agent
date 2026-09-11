@@ -1,0 +1,19 @@
+# `bun test` runs without Vite, so Solid's JSX compiler and its DOM build have
+# to be installed as a Bun plugin. Scoped to `.tsx` and two specifiers, which
+# only `packages/web` has.
+[test]
+preload = ["./packages/web/src/test/preload.ts"]
+# The browser tests need a process per file: happy-dom's globals and pi's
+# module-level state both outlive the file that made them, so a run that shares
+# one registry across all 22 fails in ways that have nothing to do with the code
+# under it. That is `--isolate`, a flag no config file can set — so they stay
+# out of a bare `bun test`, which isolates nothing.
+#
+# The pattern is the directory rather than `**/packages/web/**` on purpose.
+# Either keeps the scan out, but the wider one also swallows a path named on the
+# command line: `bun test ./packages/web/src/ui/ui.test.tsx` reported "0 tests"
+# and exited, which reads as "my tests vanished", not "wrong runner". Pruning
+# the directory only prunes the walk, so naming a file or a subdirectory runs
+# it, and naming `./packages/web` runs the suite — add `--isolate` for that one,
+# or let `check.ts` do it.
+pathIgnorePatterns = ["**/packages/web"]

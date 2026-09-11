@@ -1,0 +1,58 @@
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Paths } from "../../shared/Paths";
+import { Tools } from "../../shared/Tools";
+import { writeView } from "./render";
+import { type WriteInput, writeSchema } from "./schema";
+import { writeContent, type WriteOutcome } from "./write";
+
+export default function (pi: ExtensionAPI): void {
+  Tools.register(pi, {
+    name: "write",
+    label: "write",
+    description:
+      "Create or overwrite UTF-8 text files. " +
+      "Use write only for new files or full rewrites.",
+    parameters: writeSchema,
+    renderShell: "self",
+    effect: { kind: "writesPaths", paths: ({ path }) => [path] },
+    executionMode: "sequential",
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      const { path, content } = params as WriteInput;
+
+      if (signal?.aborted) {
+        throw new Error("Write aborted before execution.");
+      }
+
+      const absolutePath = Paths.resolve(path, ctx.cwd);
+      const outcome = await writeContent(absolutePath, content);
+
+      return {
+        content: [{ type: "text", text: formatSummary(path, outcome) }],
+        details: outcome,
+      };
+    },
+    toViewModel: writeView,
+  });
+}
+
+function formatSummary(path: string, outcome: WriteOutcome): string {
+  const verb = outcome.created ? "Created" : "Wrote";
+  const eofNote =
+    outcome.trailingNewlineChange === undefined
+      ? ""
+      : ` Trailing newline ${outcome.trailingNewlineChange}.`;
+
+  if (
+    outcome.diff === undefined &&
+    !outcome.created &&
+    outcome.diffSkipped === undefined
+  ) {
+    return `Wrote ${outcome.bytesWritten} bytes to ${path} (no content changes).${eofNote}`;
+  }
+
+  if (outcome.diffSkipped !== undefined) {
+    return `${verb} ${outcome.bytesWritten} bytes at ${path} (diff omitted: file exceeds ${outcome.diffSkipped.thresholdBytes}-byte render cap).${eofNote}`;
+  }
+
+  return `${verb} ${outcome.bytesWritten} bytes at ${path}.${eofNote}`;
+}
