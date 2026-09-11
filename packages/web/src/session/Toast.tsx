@@ -35,15 +35,6 @@ export function Toast(props: {
         <span class="whitespace-pre-wrap">
           {state().pending ? state().label : state().notice?.text}
         </span>
-        <Show when={state().notice?.action === "reload"}>
-          <button
-            type="button"
-            class="ml-1ch inline-flex h-6 items-center rounded-md bg-neutral-800 px-2 align-text-bottom text-neutral-100 hover:bg-neutral-700"
-            onClick={() => props.update.refresh()}
-          >
-            Reload
-          </button>
-        </Show>
       </div>
     </Show>
   );

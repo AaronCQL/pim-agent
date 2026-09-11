@@ -1,7 +1,7 @@
 {
   "name": "pim-agent",
   "version": "0.9.0",
-  "description": "An opinionated, Bun-native distro of Pi - one agent, reachable from your terminal, browser, or Telegram.",
+  "description": "A batteries-included distro of Pi, accessible in your terminal, browser and Telegram.",
   "license": "MIT",
   "type": "module",
   "keywords": [
@@ -43,7 +43,7 @@
     "bun": ">=1.2.7"
   },
   "pi": {
-    "image": "https://raw.githubusercontent.com/AaronCQL/pim-agent/refs/heads/main/assets/demo.webp"
+    "image": "https://raw.githubusercontent.com/AaronCQL/pim-agent/refs/heads/main/assets/hero.webp"
   },
   "scripts": {
     "dev": "bun link && pim",

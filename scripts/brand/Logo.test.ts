@@ -91,7 +91,7 @@ test("attribute values are XML-escaped", () => {
   expect(logo.svg).not.toContain("<script>");
 });
 
-test("generated assets contain only the three current website exports", async () => {
+test("the public directory holds only the current website exports", async () => {
   const destination = new URL("../../assets/brand/", import.meta.url);
   const files = await Array.fromAsync(
     new Bun.Glob("**/*").scan(destination.pathname)
@@ -99,6 +99,10 @@ test("generated assets contain only the three current website exports", async ()
   expect(files.sort()).toEqual([
     "apple-touch-icon.png",
     "favicon.svg",
+    "icon-192.png",
+    "icon-512.png",
+    "icon-maskable.png",
+    "manifest.webmanifest",
     "wordmark.svg",
   ]);
   expect(await Bun.file(new URL("wordmark.svg", destination)).text()).toBe(
@@ -107,12 +111,47 @@ test("generated assets contain only the three current website exports", async ()
   expect(await Bun.file(new URL("favicon.svg", destination)).text()).toBe(
     Logo.render(style, { favicon: true, background: iconBackground }).svg
   );
-  const expected = new Resvg(
-    Logo.render(style, { mark: true, background: iconBackground }).svg,
-    { fitTo: { mode: "width", value: 180 } }
-  ).render();
-  expect([expected.width, expected.height]).toEqual([180, 180]);
-  expect(
-    await Bun.file(new URL("apple-touch-icon.png", destination)).bytes()
-  ).toEqual(new Uint8Array(expected.asPng()));
+});
+
+test("every icon PNG is the mark at its declared size", async () => {
+  const destination = new URL("../../assets/brand/", import.meta.url);
+  const mark = Logo.render(style, { mark: true, background: iconBackground });
+  const maskable = Logo.render(
+    { ...style, padding: 2 },
+    { mark: true, background: iconBackground }
+  );
+  for (const [name, svg, size] of [
+    ["apple-touch-icon.png", mark.svg, 180],
+    ["icon-192.png", mark.svg, 192],
+    ["icon-512.png", mark.svg, 512],
+    ["icon-maskable.png", maskable.svg, 512],
+  ] as const) {
+    const expected = new Resvg(svg, {
+      fitTo: { mode: "width", value: size },
+    }).render();
+    expect([expected.width, expected.height]).toEqual([size, size]);
+    expect(await Bun.file(new URL(name, destination)).bytes()).toEqual(
+      new Uint8Array(expected.asPng())
+    );
+  }
+});
+
+test("the manifest drops browser chrome and names icons that exist", async () => {
+  const destination = new URL("../../assets/brand/", import.meta.url);
+  const manifest = (await Bun.file(
+    new URL("manifest.webmanifest", destination)
+  ).json()) as {
+    readonly display: string;
+    readonly start_url: string;
+    readonly icons: readonly { readonly src: string; readonly sizes: string }[];
+  };
+  expect(manifest.display).toBe("standalone");
+  expect(manifest.start_url).toBe("/");
+  expect(manifest.icons.map(({ sizes }) => sizes)).toContain("192x192");
+  for (const { src } of manifest.icons) {
+    expect(src.startsWith("/")).toBe(true);
+    expect(await Bun.file(new URL(src.slice(1), destination)).exists()).toBe(
+      true
+    );
+  }
 });

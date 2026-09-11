@@ -1,7 +1,5 @@
 # Developer Guide
 
-Pim is an opinionated, Bun-native distribution of [Pi](https://pi.dev/).
-
 `bin/pim.ts` is a Bun entry point that imports pi's `main()` **in-process** and hands it pim's extensions inline via `MainOptions.extensionFactories`. A vanilla `pi` on the same machine is unaffected, and third-party pi extensions still load alongside pim's. `--mode daemon` routes to `packages/daemon` instead; `--mode web` and `--mode telegram` are its single-surface spellings.
 
 Dev setup: `bun link` puts `pim` on PATH, and `pim` run from anywhere loads this checkout's extensions. Plain `pi` inside this repo is just vanilla pi.

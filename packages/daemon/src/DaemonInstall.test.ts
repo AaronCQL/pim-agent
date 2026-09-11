@@ -108,9 +108,9 @@ test("the unit's description names the surfaces it serves", () => {
   );
 });
 
-// The two README flows are `--mode web --install` and `--mode telegram
-// --install`, run months apart. One unit now serves both, so the second must
-// not silently stop being the first.
+// `--mode web --install` and `--mode telegram --install` were the two flows the
+// README documented, run months apart. One unit now serves both, so the second
+// must not silently stop being the first.
 test("installing one surface keeps the one the daemon already serves", () => {
   const installed = serving(["--mode", "web", "--hostname", "100.64.0.1"]);
   const merged = DaemonInstall.unit(["--mode", "telegram"], installed).args;
