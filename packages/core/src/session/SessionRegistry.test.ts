@@ -131,6 +131,6 @@ test("rejects an unknown session id", async () => {
 test("requires init before building a host", async () => {
   const fresh = new SessionRegistry({ defaults: { cwd: tmp }, agentDir });
   expect(fresh.create()).rejects.toThrow(
-    "SessionRegistry.init() must complete before use"
+    "AgentRuntime.init() must complete before use"
   );
 });

@@ -6,23 +6,16 @@
 [![license](https://img.shields.io/npm/l/pim-agent?style=flat-square)](./LICENSE)
 [![Bun](https://img.shields.io/badge/runtime-Bun-black?logo=bun&style=flat-square)](https://bun.com)
 
-An opinionated, Bun-native distro of Pi - one agent, reachable from your terminal, browser, or Telegram.
+A batteries-included distro of Pi, accessible in your terminal, browser and Telegram.
 
-- **For the agent:** revamped `bash`/`read`/`write`/`edit`, plus `glob`, `grep`, `web_search`, `web_fetch` and `subagent`, behind a ~3K system prompt that adapts its toolset to the model.
-- **For you:** ANSI-compatible themes, fzf-style autocomplete, and git-aware status with sessions shared across frontends, so work started at your desk can continue on your phone.
-- **Full Pi compatibility:** your Pi extensions, CLI, sessions and config all keep working, and vanilla `pi` is untouched.
+- **For the agent**: model-aware editing, web search/fetch, subagents, and more, behind a system prompt under 3K tokens.
+- **For you**: shared terminal/browser sessions, a mobile-friendly web UI, and a Telegram bot.
+- **Still Pi**: your Pi extensions, CLI, sessions and config keep working, while vanilla `pi` stays untouched.
 
-![Pim Demo](https://raw.githubusercontent.com/AaronCQL/pim-agent/refs/heads/main/assets/hero.webp)
+![Pim running in a terminal, a browser and Telegram, with a live session shared between them](https://raw.githubusercontent.com/AaronCQL/pim-agent/refs/heads/main/assets/hero.webp)
 
 - [Quick Start](#quick-start)
-  - [Toggling Features](#toggling-features)
-  - [API Keys (Optional)](#api-keys-optional)
-  - [Recommended Pi Settings (Optional)](#recommended-pi-settings-optional)
-- [Why Pim?](#why-pim)
-  - [Pi Core](#pi-core)
-  - [Lean System Prompt](#lean-system-prompt)
-  - [Model-Aware Tools](#model-aware-tools)
-  - [Terminal-Bench 2.0](#terminal-bench-20)
+  - [Web \& Telegram](#web--telegram)
 - [Agent Tools](#agent-tools)
 - [Terminal UI](#terminal-ui)
 - [Web UI](#web-ui)
@@ -32,6 +25,16 @@ An opinionated, Bun-native distro of Pi - one agent, reachable from your termina
   - [Setup](#setup-1)
   - [Commands](#commands)
   - [Features](#features)
+- [Configuration](#configuration)
+  - [Toggling Features](#toggling-features)
+  - [API Keys (Optional)](#api-keys-optional)
+  - [Recommended TUI Settings (Optional)](#recommended-tui-settings-optional)
+- [Why Pim?](#why-pim)
+  - [Pi Core](#pi-core)
+  - [Lean System Prompt](#lean-system-prompt)
+  - [Model-Aware Tools](#model-aware-tools)
+- [Benchmarks](#benchmarks)
+  - [Terminal-Bench 2.0](#terminal-bench-20)
 - [Changelog](#changelog)
 - [Developing](#developing)
 
@@ -46,9 +49,127 @@ bun install -g pim-agent
 # Launch pim TUI:
 pim
 
-# Update pim (pi comes along with it):
+# Update pim:
 pim update
 ```
+
+### Web & Telegram
+
+To use Pim via your browser or Telegram, the recommended approach is to install the servers as a persistent daemon:
+
+```sh
+# Supports Linux (systemd) and macOS (launchd)
+pim --mode daemon --install
+
+# Tear down
+pim --mode daemon --uninstall
+```
+
+Supported arguments:
+
+| Flag | Default |
+| --- | --- |
+| `--surfaces` | `web,telegram` |
+| `--port` (web only) | `4319` |
+| `--hostname` (web only) | `127.0.0.1` |
+| `--cwd` | Current working directory |
+
+These are frozen into the daemon's unit file at install time, so re-run `--install` to change them. Flags you omit keep their installed values, and an older per-surface install is stopped and replaced for you. The daemon auto-restarts on failure, and updates in place from **Settings → Update & Restart** on the web UI, or `/update` in Telegram.
+
+After installing with the default settings, the web UI is at <http://localhost:4319>. Telegram needs a bot token first (see [Telegram Bot](#telegram-bot)). Surfaces start in isolation, so an unconfigured bot still leaves the browser served.
+
+## Agent Tools
+
+Pim revamps Pi's default tools (`bash`, `read`, `write`, `edit`) so they produce consistent behaviour and output, cross-reference each other where useful, and render uniformly in your UIs. It also adds:
+
+- **`apply_patch`** - V4A patch editing, dynamically exposed instead of `edit` for OpenAI and select Claude models
+- **`glob`** - file enumeration by glob pattern, sorted newest-first, respects `.gitignore`
+- **`grep`** - regex search across files with context lines, multiline matching, respects `.gitignore`
+- **`web_search`** - search the web via [Exa](https://exa.ai)/[Firecrawl](https://www.firecrawl.dev/)/[DuckDuckGo](https://duckduckgo.com/) with ranked results and snippets
+- **`web_fetch`** - fetch websites as Markdown via [Jina](https://jina.ai/reader/), with browser-rendered fallback via [`Bun.WebView`](https://bun.com/docs/runtime/webview)
+- **`subagent`** - delegate complex work to isolated sub-sessions with full tool access
+
+## Terminal UI
+
+Pim also ships with quality of life improvements for the TUI:
+
+- **ANSI-compatible themes** - `pim-light` and `pim-dark` themes which adapt to your terminal's colour scheme
+- **fzf-style autocomplete** - `@path` file picker and `/command` picker with fuzzy search
+- **Git-aware powerline footer** - cwd, git branch and states, context usage, model and session cost (run `/pim` to disable)
+- **TPS reporting** - per-cycle decode/prefill rate, TTFT, and cache read tokens (disabled by default; run `/pim` to enable)
+- **Concise tool UI** - minimal one-liner title across all tool calls, `Ctrl+O` to toggle full details
+
+## Web UI
+
+Run Pim in the browser, on any device. Hosted on a machine you can reach remotely, this lets you start work at your desk and carry on from your phone.
+
+### Setup
+
+See [Web & Telegram](#web--telegram).
+
+### Remote Access
+
+> [!WARNING]
+> Web mode has no built-in authentication, and the agent runs shell commands as you: anything that can reach the port has full access to the host. Bind it to a private network, never to `0.0.0.0`.
+
+[Tailscale](https://tailscale.com/) is the recommended way to do this. Binding to your tailnet IP keeps the server off your LAN and off the public internet, while every device on your tailnet can still reach it:
+
+```sh
+# Look up this machine's tailnet IP:
+tailscale ip -4
+
+# Install with --hostname set to it:
+pim --mode daemon --install --hostname=100.115.46.15 # Replace with your actual tailscale IP
+```
+
+The web UI is then at `http://<tailnet-ip>:4319` and `localhost` no longer serves it.
+
+## Telegram Bot
+
+Run Pim as a Telegram bot with full agent capabilities in your DMs or group chats (supports threads).
+
+### Setup
+
+Create `~/.pim/telegram/config.json` with your bot token (from [@BotFather](https://t.me/BotFather)) and an allowlist of chat IDs the bot will respond to:
+
+```json
+{
+  "token": "YOUR_TELEGRAM_BOT_TOKEN",
+  "allow": [123456789, 987654321]
+}
+```
+
+Then [install the daemon](#run-as-a-daemon), which brings the bot up with it.
+
+### Commands
+
+> [!TIP]
+> Use `/commands` on your bot for all commands to show up on your Telegram UI.
+
+| Command      | Description                                        |
+| ------------ | -------------------------------------------------- |
+| `/cancel`    | Cancel the current turn                            |
+| `/cd`        | Show or change the working directory               |
+| `/chatid`    | Show this chat's numeric ID                        |
+| `/clear`     | Reset chat history and context window              |
+| `/commands`  | Register all commands with Telegram                |
+| `/compact`   | Compact the current session context                |
+| `/effort`    | Show or change thinking effort level               |
+| `/logs`      | Show or change log verbosity                       |
+| `/model`     | Show or change the AI model                        |
+| `/temporary` | Toggle temporary chat (fresh session each message) |
+| `/update`    | Update the bot to the latest version               |
+| `/usage`     | Show context window and session cost               |
+
+### Features
+
+- ⏰ **Scheduled tasks** - your bot can create one-time, interval, or cron-based tasks that fire automatically; ask your bot to schedule something.
+- 👀 **Live progress logs** - use `/logs` to choose what you see while the agent works: final replies, tool use, intermediate text, or thinking.
+- 📝 **Rich Markdown** - supports Telegram's [rich text formatting](https://telegram.org/blog/watch-apps-and-more#obscenely-rich-text-formatting-for-bots) with full markdown and LaTeX math support.
+- 📎 **Rich media** - send photos, documents, videos, audio, and voice messages directly in chat; your bot can also send files back to you.
+- 🧵 **Thread-specific prompts** - each chat (or thread) gets its own session and optional instructions; ask your bot to modify its instructions.
+
+## Configuration
 
 ### Toggling Features
 
@@ -56,10 +177,10 @@ Pim ships a collection of features, nearly all enabled by default. To enable or 
 
 ### API Keys (Optional)
 
-`web_search` tries [Exa](https://exa.ai) → [Firecrawl](https://www.firecrawl.dev/) → DuckDuckGo (via [Jina](https://jina.ai/reader/) reader), and `web_fetch` uses Jina with a `Bun.WebView` fallback. These tools still work without API keys, but are subject to the following keyless rate limits (as of Sept 2026):
+The `web_search` tool tries [Exa](https://exa.ai) → [Firecrawl](https://www.firecrawl.dev/) → DuckDuckGo (via [Jina](https://jina.ai/reader/) reader), and the `web_fetch` tool uses Jina with a `Bun.WebView` fallback. These tools still work without API keys, but are subject to the following keyless rate limits (as of Sept 2026):
 
 - Exa - 1,000 requests per month
-- Firecrawl - daily limit per IP
+- Firecrawl - 1,000 requests per month
 - Jina - 20 requests per minute
 
 For heavier usage, add API keys to `~/.pim/settings.json`:
@@ -84,7 +205,7 @@ Environment variables take precedence over `settings.json` when set:
 EXA_API_KEY='api_key_here' FIRECRAWL_API_KEY='api_key_here' JINA_API_KEY='api_key_here' pim
 ```
 
-### Recommended Pi Settings (Optional)
+### Recommended TUI Settings (Optional)
 
 Add the following settings to your `~/.pi/agent/settings.json` for the best experience with Pim:
 
@@ -104,15 +225,15 @@ Pim's philosophy is **opinionated but minimal**. Its goal is to improve the out-
 
 ### Pi Core
 
-Think of Pim as an opinionated distro of Pi (like what Ubuntu is to Linux). Pim uses Pi in its core, and everything Pi does, it continues to do:
+Think of Pim as an opinionated, batteries-included distro of Pi (like what Ubuntu is to Linux). Pim uses Pi in its core, and everything Pi does, it continues to do:
 
 - **Every Pi extension still works.** Pim registers its own extensions in-process, so third-party extensions from your Pi settings load right alongside them, exactly as before.
-- **Pi's CLI, sessions and config are unchanged.** Only Pim's own settings live separately in `~/.pim/settings.json`.
+- **Pi's CLI, sessions and config are unchanged.** Pim reads and writes pi's own session files, so a conversation started in pi resumes in pim and back again. Only Pim's own settings live separately in `~/.pim/settings.json`.
 - **Your vanilla `pi` keeps working.** Pim never registers itself with Pi and never touches your Pi settings, so `pi` and `pim` can both be used on the same machine.
 
 ### Lean System Prompt
 
-Pim's system prompt is just **~3K tokens** despite exposing 10+ tools, far leaner than alternatives like OpenCode (~10K), Hermes (~16K), or Claude Code (~30K).
+Pim's system prompt is **under 3K tokens** despite exposing 10+ tools, far leaner than alternatives like OpenCode (~10K), Hermes (~16K), or Claude Code (~30K).
 
 This is achieved by having tool descriptions focus on _how_ to use each tool instead of prescribing _when_, since models already appear to internally encode when tools are needed, and prompting them to call tools can [suppress both necessary and unnecessary calls](https://arxiv.org/abs/2605.09252).
 
@@ -121,6 +242,8 @@ This is achieved by having tool descriptions focus on _how_ to use each tool ins
 LLMs are [increasingly post-trained](https://openai.com/index/introducing-codex) for specific agent harnesses, making tool schemas part of the model's learned interface. For text-file editing, Anthropic models are trained to use [string replacement operations](https://platform.claude.com/docs/en/agents-and-tools/tool-use/text-editor-tool), while OpenAI models use [V4A patch operations](https://developers.openai.com/api/docs/guides/tools-apply-patch).
 
 Pim keeps the active toolset model-aware instead of assuming one tool fits every LLM. It dynamically exposes the tools best suited to the selected model, giving each model the interface that best matches its learned behaviour while keeping the prompt lean.
+
+## Benchmarks
 
 ### Terminal-Bench 2.0
 
@@ -164,140 +287,10 @@ _Note 3_: in r1 and r3, the `code-from-image` trial was counted as non-passing b
 
 _Note 4_: see the [`benchmarks/terminal_bench_2`](./benchmarks/terminal_bench_2/) dir for breakdown of results and reproduction steps.
 
-## Agent Tools
-
-Pim revamps Pi's default tools (`bash`, `read`, `write`, `edit`) so they produce consistent behaviour and output, cross-reference each other where useful, and render uniformly in your UIs. It also adds:
-
-- **`apply_patch`** - V4A patch editing, dynamically exposed instead of `edit` for OpenAI and select Claude models
-- **`glob`** - file enumeration by glob pattern, sorted newest-first, respects `.gitignore`
-- **`grep`** - regex search across files with context lines, multiline matching, respects `.gitignore`
-- **`web_search`** - search the web via [Exa](https://exa.ai)/[Firecrawl](https://www.firecrawl.dev/)/[DuckDuckGo](https://duckduckgo.com/) with ranked results and snippets
-- **`web_fetch`** - fetch websites as Markdown via [Jina](https://jina.ai/reader/), with browser-rendered fallback via [`Bun.WebView`](https://bun.com/docs/runtime/webview)
-- **`subagent`** - delegate complex work to isolated sub-sessions with full tool access
-
-## Terminal UI
-
-Pim also ships with quality of life improvements for the TUI:
-
-- **ANSI-compatible themes** - `pim-light` and `pim-dark` themes which adapt to your terminal's colour scheme
-- **fzf-style autocomplete** - `@path` file picker and `/command` picker with fuzzy search
-- **Git-aware powerline footer** - cwd, git branch and states, context usage, model and session cost (run `/pim` to disable)
-- **TPS reporting** - per-cycle decode/prefill rate, TTFT, and cache read tokens (disabled by default; run `/pim` to enable)
-- **Concise tool UI** - minimal one-liner title across all tool calls, `Ctrl+O` to toggle full details
-
-## Web UI
-
-Run Pim in the browser, on any device. Hosted on a machine you can reach remotely, this lets you start work at your desk and carry on from your phone.
-
-### Setup
-
-Install and run as a persistent daemon (_recommended_):
-
-```sh
-# Supports Linux (systemd) and macOS (launchd)
-pim --mode web --install
-
-# Tear down
-pim --mode web --uninstall
-```
-
-Supported arguments:
-
-- `--port`: defaults to `4319`
-- `--hostname`: defaults to `127.0.0.1` (localhost)
-- `--cwd`: defaults to current working directory
-
-These are frozen into the daemon's unit file at install time, so re-run `--install` to change them. The daemon auto-restarts on failure, and allows for manual updates on the web UI: **Settings → Update & Restart**.
-
-After installing with the default settings, the web UI is at <http://localhost:4319>.
-
-### Remote Access
-
-> [!WARNING]
-> Web mode has no built-in authentication, and the agent runs shell commands as you: anything that can reach the port has full access to the host. Bind it to a private network, never to `0.0.0.0`.
-
-[Tailscale](https://tailscale.com/) is the recommended way to do this. Binding to your tailnet IP keeps the server off your LAN and off the public internet, while every device on your tailnet can still reach it:
-
-```sh
-# Look up this machine's tailnet IP:
-tailscale ip -4
-
-# Install with --hostname set to it:
-pim --mode web --install --hostname=100.115.46.15 # Replace with your actual tailscale IP
-```
-
-The web UI is then at `http://<tailnet-ip>:4319`; `localhost` no longer serves it. Since the address is baked into the unit file, re-run `--install` if your tailnet IP ever changes.
-
-## Telegram Bot
-
-Run Pim as a Telegram bot with full agent capabilities in your DMs or group chats (supports threads).
-
-### Setup
-
-Create `~/.pim/telegram/config.json` with your bot token (from [@BotFather](https://t.me/BotFather)) and an allowlist of chat IDs the bot will respond to:
-
-```json
-{
-  "token": "YOUR_TELEGRAM_BOT_TOKEN",
-  "allow": [123456789, 987654321]
-}
-```
-
-Then, install and run as a persistent daemon (_recommended_):
-
-```sh
-# Supports Linux (systemd) and macOS (launchd)
-pim --mode telegram --install
-
-# Tear down
-pim --mode telegram --uninstall
-```
-
-The daemon auto-restarts on failure and supports the `/update` command for in-chat updates.
-
-For development, run standalone with `pim --mode telegram` instead.
-
-### Commands
-
-> [!TIP]
-> Use `/commands` on your bot for all commands to show up on your Telegram UI.
-
-| Command      | Description                                        |
-| ------------ | -------------------------------------------------- |
-| `/cancel`    | Cancel the current turn                            |
-| `/cd`        | Show or change the working directory               |
-| `/chatid`    | Show this chat's numeric ID                        |
-| `/clear`     | Reset chat history and context window              |
-| `/commands`  | Register all commands with Telegram                |
-| `/compact`   | Compact the current session context                |
-| `/effort`    | Show or change thinking effort level               |
-| `/logs`      | Show or change log verbosity                       |
-| `/model`     | Show or change the AI model                        |
-| `/temporary` | Toggle temporary chat (fresh session each message) |
-| `/update`    | Update the bot to the latest version               |
-| `/usage`     | Show context window and session cost               |
-
-### Features
-
-- ⏰ **Scheduled tasks** - your bot can create one-time, interval, or cron-based tasks that fire automatically; ask your bot to schedule something.
-- 👀 **Live progress logs** - use `/logs` to choose what you see while the agent works: final replies, tool use, intermediate text, or thinking.
-- 📝 **Rich Markdown** - supports Telegram's [rich text formatting](https://telegram.org/blog/watch-apps-and-more#obscenely-rich-text-formatting-for-bots) with full markdown and LaTeX math support.
-- 📎 **Rich media** - send photos, documents, videos, audio, and voice messages directly in chat; your bot can also send files back to you.
-- 🧵 **Thread-specific prompts** - each chat (or thread) gets its own session and optional instructions; ask your bot to modify its instructions.
-
 ## Changelog
 
 See [CHANGELOG.md](./CHANGELOG.md) for release notes.
 
 ## Developing
-
-```sh
-# Link locally and launch:
-bun dev
-```
-
-`bun dev` runs `bun link` and launches `pim` from this checkout, with the local extensions loaded in-process. Restart `pim` to pick up edits: `/reload` reloads Pi's own resources, but Pim's extensions are already-imported modules and will not be re-read.
-
-For the web client, `bun run web:build` then `pim --mode web` serves the built bundle at <http://127.0.0.1:4319>. To work on the client itself, run `pim --mode web` in one terminal and `bun run web:dev` in another: Vite serves the client with HMR, and a dev build points its gateway at port 4319 regardless of where Vite is listening.
 
 See [AGENTS.md](./AGENTS.md) for the developer guide.

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
+import { AgentRuntime } from "#core/session/AgentRuntime";
 import { Fs } from "#core/shared/Fs";
 import { type TelegramConfig } from "./Config";
 import { SessionRegistry } from "./SessionRegistry";
@@ -27,6 +28,15 @@ beforeEach(async () => {
     configDir: tmp,
   };
 });
+
+function buildRegistry(): SessionRegistry {
+  return new SessionRegistry(
+    config,
+    stubApi,
+    stubScheduler,
+    new AgentRuntime(join(tmp, "agent"))
+  );
+}
 
 afterEach(async () => {
   await rm(tmp, { recursive: true, force: true });
@@ -55,7 +65,7 @@ describe("SessionRegistry state", () => {
       },
     });
 
-    const registry = new SessionRegistry(config, stubApi, stubScheduler);
+    const registry = buildRegistry();
     await registry.init();
     const session = registry.get({ chatId: 2, threadId: undefined });
     await session.setThinkingLevel("off");
@@ -77,7 +87,7 @@ describe("SessionRegistry state", () => {
       },
     });
 
-    const registry = new SessionRegistry(config, stubApi, stubScheduler);
+    const registry = buildRegistry();
     await registry.disposeAll();
 
     const loaded = await readState();

@@ -114,28 +114,16 @@ const daemonAction = cliArgs.includes("--install")
   : cliArgs.includes("--uninstall")
     ? "uninstall"
     : undefined;
-if (mode === "telegram") {
+// `--mode web` and `--mode telegram` are the single-surface spellings of the daemon.
+if (mode === "daemon" || mode === "web" || mode === "telegram") {
   if (daemonAction !== undefined) {
-    const [{ Supervisor }, { TelegramUnit }] = await Promise.all([
-      import("#core/shared/Supervisor"),
-      import("#telegram/TelegramUnit"),
-    ]);
-    await Supervisor[daemonAction](TelegramUnit);
-    process.exit(0);
-  }
-  const { start } = await import("#telegram/index");
-  await start(cliArgs);
-  process.exit(0);
-}
-if (mode === "web") {
-  if (daemonAction !== undefined) {
-    const { WebUnit } = await import("#server/WebUnit");
+    const { DaemonInstall } = await import("#daemon/DaemonInstall");
     await (daemonAction === "install"
-      ? WebUnit.install(cliArgs)
-      : WebUnit.uninstall());
+      ? DaemonInstall.install(cliArgs)
+      : DaemonInstall.uninstall());
     process.exit(0);
   }
-  const { start } = await import("#server/serve");
+  const { start } = await import("#daemon/index");
   await start(cliArgs);
   process.exit(0);
 }

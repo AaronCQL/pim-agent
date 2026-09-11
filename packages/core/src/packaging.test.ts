@@ -42,7 +42,8 @@ describe("the published tarball", () => {
     "bin/pim.ts",
     "packages/core/src/extensions/bash/index.ts",
     "packages/tui/src/extensions/_init/index.ts",
-    "packages/telegram/src/index.ts",
+    "packages/daemon/src/index.ts",
+    "packages/telegram/src/Bot.ts",
     // pim's themes are loaded from disk at runtime; nothing else guards them.
     "packages/tui/src/themes/pim-dark.json",
     "packages/tui/src/themes/pim-light.json",
@@ -74,18 +75,23 @@ describe("the published tarball", () => {
     ).toEqual([]);
   });
 
-  test.each(["wordmark.svg", "favicon.svg", "apple-touch-icon.png"])(
-    "ships the generated brand asset %s unchanged",
-    async (name) => {
-      const path = `packages/web/dist/client/${name}`;
-      expect(builtClient).toContain(path);
-      expect(await Bun.file(`${repoRoot}${path}`).bytes()).toEqual(
-        await Bun.file(`${repoRoot}assets/brand/${name}`).bytes()
-      );
-    }
-  );
+  test.each([
+    "wordmark.svg",
+    "favicon.svg",
+    "apple-touch-icon.png",
+    "icon-192.png",
+    "icon-512.png",
+    "icon-maskable.png",
+    "manifest.webmanifest",
+  ])("ships the public asset %s unchanged", async (name) => {
+    const path = `packages/web/dist/client/${name}`;
+    expect(builtClient).toContain(path);
+    expect(await Bun.file(`${repoRoot}${path}`).bytes()).toEqual(
+      await Bun.file(`${repoRoot}assets/brand/${name}`).bytes()
+    );
+  });
 
-  test("the built page declares the favicon and Apple touch icon", async () => {
+  test("the built page declares its icons and web app manifest", async () => {
     const html = await Bun.file(
       `${repoRoot}packages/web/dist/client/index.html`
     ).text();
@@ -93,6 +99,12 @@ describe("the published tarball", () => {
     expect(html).toMatch(/<link\b[^>]*rel="icon"[^>]*href="\/favicon\.svg"/);
     expect(html).toMatch(
       /<link\b[^>]*rel="apple-touch-icon"[^>]*href="\/apple-touch-icon\.png"/
+    );
+    expect(html).toMatch(
+      /<link\b[^>]*rel="manifest"[^>]*href="\/manifest\.webmanifest"/
+    );
+    expect(html).toMatch(
+      /<meta\b[^>]*name="apple-mobile-web-app-capable"[^>]*content="yes"/
     );
     expect(builtClient).not.toContain("packages/web/dist/client/README.md");
   });

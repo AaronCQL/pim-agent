@@ -1,7 +1,7 @@
+import { DaemonUnit } from "#core/shared/DaemonUnit";
 import { Supervisor } from "#core/shared/Supervisor";
 import { Updater, type UpdateOutcome } from "#core/shared/Updater";
 import type { ServerEvent } from "#protocol/ServerEvent";
-import { WebUnit } from "./WebUnit";
 
 export type ReloaderDeps = {
   /** To every connection: the restart takes all of them down together. */
@@ -14,7 +14,7 @@ export type ReloaderDeps = {
 
 // Re-raise SIGTERM rather than exiting: the handler stops the gateway and flushes the read cursors.
 async function restartAndExit(): Promise<void> {
-  await Supervisor.restartSiblings(WebUnit.descriptor);
+  await Supervisor.restartSiblings(DaemonUnit);
   process.kill(process.pid, "SIGTERM");
 }
 

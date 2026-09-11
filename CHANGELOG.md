@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.9.0
+
+### Breaking Changes
+
+- Renamed the npm package from `@aaroncql/pim-agent` to `pim-agent`. `pim update` cannot cross a rename, so install it once by hand: `bun install -g pim-agent`, then `bun remove -g @aaroncql/pim-agent` (955ecf2)
+- Web and Telegram now run under one daemon unit instead of one unit each. Re-run `pim --mode daemon --install` after upgrading; the old per-surface units are superseded and the arguments they were frozen with are carried over (#22)
+- The todo tool is off by default; turn it back on under `/pim` (dc96ca3)
+
+### Features
+
+- A browser frontend: live transcript, session list, file and command pickers, uploads, tool approvals, syntax highlighting and a mobile-first layout, served by a new websocket gateway (#16)
+- Any session can be continued from either the terminal or the browser, with a turn lease deciding who holds the turn and a `/sync` when the other surface moved on (#21)
+- The model can see images — pasted, uploaded or attached by path (#20)
+- One daemon process serves every surface, chosen with `--surfaces web,telegram`; a surface that fails to start never takes another down (#22)
+- Subagents run with pim's tools instead of pi's built-ins, and their transcripts are kept and readable rather than discarded (40009c1, c9308ef, 60c56fe)
+- Supervised `pim update` from the TUI and the browser: it rebuilds the web client, restarts the daemon, and reports what it skipped (a2a4311, 6e4689d)
+- A `send_file` tool that hands a file to the browser (4cd6d42)
+- V4A patches for Opus and Fable 5+ (ed1bdc4)
+
+### Improvements
+
+- Pim is a distribution of pi loaded in-process: it resolves pi from its own dependency instead of probing PATH, so one copy of pi backs the CLI and the extensions (7a87006, caa458c)
+- Split into layered packages — `core`, `tui`, `telegram`, `protocol`, `server`, `web`, `daemon` — with import boundaries enforced by a test (#16, 18b45e5)
+- Bump `pi-coding-agent` to 0.85.1 (d633d83)
+
+### Bug Fixes
+
+- Hash subagent call ids into log paths so a long id cannot overflow the filename (5af991c)
+- Name a session by its opening message rather than by its first 64KB or the draft in the composer (3030513, 7b1bf65)
+- Time a turn by the session that is running, not by the tab that last looked at it (8c0400f)
+- Keep pim's `--theme` flag off pi's subcommands (b19105e)
+- Report a failed turn setup to the Telegram chat instead of dropping it (2ad4ae5)
+- Default `ky` to no retries, so a failing request fails once (3e60104)
+
 ## v0.8.0
 
 ### Features

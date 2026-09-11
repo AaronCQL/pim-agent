@@ -6,7 +6,6 @@ import type { AttachTarget, ConnectionStatus } from "../ws/WsClient";
 export type ReloadNotice = {
   readonly tone: "success" | "warning" | "error";
   readonly text: string;
-  readonly action?: "reload";
 };
 
 type Intent = {
@@ -29,6 +28,10 @@ const DISMISS_MS = 10_000;
 const TIMEOUT_NOTICE: ReloadNotice = {
   tone: "warning",
   text: "Restart timed out. The server may still be updating; check it before trying again.",
+};
+const STALE_NOTICE: ReloadNotice = {
+  tone: "warning",
+  text: "Client is outdated. Refresh the page to use the latest client.",
 };
 
 /** Per-tab restart intent: only the tab that asked for it navigates. */
@@ -102,11 +105,7 @@ export class Reload {
       if (this.intent && this.intent.phase !== "loaded") {
         this.refresh();
       } else {
-        this.finish({
-          tone: "warning",
-          text: "This tab is outdated. Reload the page to use the current client.",
-          action: "reload",
-        });
+        this.finish(STALE_NOTICE);
       }
       return;
     }
@@ -118,11 +117,7 @@ export class Reload {
       if (this.intent?.phase === "restarting") {
         this.refresh();
       } else if (!this.intent && this.timer !== undefined) {
-        this.finish({
-          tone: "warning",
-          text: "Server reconnected. Reload the page to use the current client.",
-          action: "reload",
-        });
+        this.finish(STALE_NOTICE);
       }
     }
   }

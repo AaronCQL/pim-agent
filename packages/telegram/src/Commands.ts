@@ -6,6 +6,7 @@ import {
   type Api,
 } from "grammy";
 
+import { DaemonUnit } from "#core/shared/DaemonUnit";
 import { Paths } from "#core/shared/Paths";
 import { Supervisor } from "#core/shared/Supervisor";
 import { Updater } from "#core/shared/Updater";
@@ -24,7 +25,6 @@ import {
   type SessionId,
 } from "./Session";
 import { SessionRegistry } from "./SessionRegistry";
-import { TelegramUnit } from "./TelegramUnit";
 import { TypingIndicator } from "./TypingIndicator";
 import { UpdateConfirm } from "./UpdateConfirm";
 
@@ -584,7 +584,7 @@ export class Commands {
       (s) => `\nSkipped ${s.label}: ${s.reason}.`
     );
     // Restart siblings first; this daemon restarts by exiting, so it must go last.
-    await Supervisor.restartSiblings(TelegramUnit);
+    await Supervisor.restartSiblings(DaemonUnit);
     if (!Supervisor.isSupervised()) {
       await progress(
         `✅ ${moved}.${notes.join("")}\nNo supervisor is watching this process, so restart it yourself.`

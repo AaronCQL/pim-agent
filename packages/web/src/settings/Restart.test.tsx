@@ -155,27 +155,23 @@ test("the shell paints progress and a dismissible result outside the modal", () 
 });
 
 /**
- * The one notice a reader can act on where they are reading it. Without the
- * button the sentence is a dead end: the sidebar footer that used to carry
- * the reload is gone, and nothing else on screen can fetch the page again.
+ * A refused socket leaves a tab running a client the server will not talk to.
+ * The toast names that in words and asks for a refresh — no button of its own,
+ * since the browser's own reload is the thing it is asking for.
  */
-test("an outdated tab is offered the reload its notice asks for", () => {
-  const reloads: number[] = [];
+test("an outdated tab is told its client is stale", () => {
   store.dispose();
-  store = new SessionStore({
-    url: harness.url,
-    reloadPage: () => reloads.push(1),
-  });
+  store = new SessionStore({ url: harness.url });
   const host = shell();
   store.update.connection("outdated");
   flush();
   const toast = host.querySelector('[role="status"]')!;
-  expect(toast.textContent).toContain("This tab is outdated");
-  const reload = [...toast.querySelectorAll("button")].find(
-    (element) => element.textContent === "Reload"
-  )!;
-  reload.click();
-  expect(reloads).toHaveLength(1);
+  expect(toast.textContent).toContain("Client is outdated");
+  expect(
+    [...toast.querySelectorAll("button")].map((button) =>
+      button.getAttribute("aria-label")
+    )
+  ).toEqual(["Dismiss notification"]);
 });
 
 test("the reloaded shell toasts success only after attaching and consumes the intent", async () => {
