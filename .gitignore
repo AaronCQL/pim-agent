@@ -10,3 +10,4 @@ benchmarks/*/runs/
 benchmarks/*/dashboard.py
 assets/*.mp4
 assets/*.gif
+assets/gen/
