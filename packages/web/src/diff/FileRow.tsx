@@ -1,4 +1,4 @@
-import { createMemo, createSignal, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, Show } from "solid-js";
 
 import type { ToolDiffHunk } from "#core/shared/DiffLines";
 import type { ViewBlock } from "#core/view/ViewBlock";
@@ -38,10 +38,21 @@ function file(path: string): string {
 export function FileRow(props: {
   readonly file: ChangeSummary;
   readonly state: FileState | undefined;
+  readonly seen: boolean;
   readonly onExpand: () => void;
+  readonly onToggleSeen: () => void;
 }) {
   const [open, setOpen] = createSignal(false);
   const desktop = createMediaQuery(DESKTOP);
+
+  createEffect(
+    () => props.seen,
+    (seen) => {
+      if (seen) {
+        setOpen(false);
+      }
+    }
+  );
 
   const hunks = createMemo<readonly ToolDiffHunk[]>(() => {
     const state = props.state;
@@ -68,43 +79,63 @@ export function FileRow(props: {
 
   return (
     <div class="border-b border-neutral-850 last:border-b-0">
-      <button
-        type="button"
-        aria-expanded={open() ? "true" : "false"}
-        aria-label={props.file.path}
-        class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-neutral-900"
-        onClick={toggle}
-      >
-        <span
-          class={`i-griddy-icons:chevron-right-small-filled size-4 shrink-0 transition-transform ${open() ? "rotate-90" : ""}`}
-          aria-hidden="true"
-        />
-        <span
-          class={`w-3 shrink-0 font-bold ${LETTER_CLASSES[props.file.status]}`}
+      <div class="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-neutral-900">
+        <button
+          type="button"
+          role="checkbox"
+          aria-checked={props.seen ? "true" : "false"}
+          aria-label={`Seen ${props.file.path}`}
+          title="Reviewed"
+          class="flex size-5 shrink-0 items-center justify-center rounded text-neutral-500 hover:text-neutral-100"
+          onClick={props.onToggleSeen}
         >
-          {LETTERS[props.file.status]}
-        </span>
-        <span class="min-w-0 flex-1 truncate">
-          <Show when={props.file.oldPath}>
-            {(from) => <span class="text-neutral-500">{from()} → </span>}
-          </Show>
-          <span class="text-neutral-500">{directory(props.file.path)}</span>
-          <span class="text-neutral-100">{file(props.file.path)}</span>
-        </span>
-        <Show
-          when={!props.file.binary}
-          fallback={<span class="shrink-0 text-neutral-500">binary</span>}
+          <span
+            class={
+              props.seen
+                ? "i-griddy-icons:checkbox-filled size-4 text-indigo-400"
+                : "i-griddy-icons:checkbox size-4"
+            }
+            aria-hidden="true"
+          />
+        </button>
+        <button
+          type="button"
+          aria-expanded={open() ? "true" : "false"}
+          aria-label={props.file.path}
+          class={`flex min-w-0 flex-1 items-center gap-2 text-left ${props.seen ? "opacity-50" : ""}`}
+          onClick={toggle}
         >
-          <span class="flex shrink-0 gap-1.5 tabular-nums">
-            <Show when={props.file.added > 0}>
-              <span class="text-emerald-400">+{props.file.added}</span>
-            </Show>
-            <Show when={props.file.removed > 0}>
-              <span class="text-rose-400">−{props.file.removed}</span>
-            </Show>
+          <span
+            class={`i-griddy-icons:chevron-right-small-filled size-4 shrink-0 transition-transform ${open() ? "rotate-90" : ""}`}
+            aria-hidden="true"
+          />
+          <span
+            class={`w-3 shrink-0 font-bold ${LETTER_CLASSES[props.file.status]}`}
+          >
+            {LETTERS[props.file.status]}
           </span>
-        </Show>
-      </button>
+          <span class="min-w-0 flex-1 truncate">
+            <Show when={props.file.oldPath}>
+              {(from) => <span class="text-neutral-500">{from()} → </span>}
+            </Show>
+            <span class="text-neutral-500">{directory(props.file.path)}</span>
+            <span class="text-neutral-100">{file(props.file.path)}</span>
+          </span>
+          <Show
+            when={!props.file.binary}
+            fallback={<span class="shrink-0 text-neutral-500">binary</span>}
+          >
+            <span class="flex shrink-0 gap-1.5 tabular-nums">
+              <Show when={props.file.added > 0}>
+                <span class="text-emerald-400">+{props.file.added}</span>
+              </Show>
+              <Show when={props.file.removed > 0}>
+                <span class="text-rose-400">−{props.file.removed}</span>
+              </Show>
+            </span>
+          </Show>
+        </button>
+      </div>
 
       <Show when={open()}>
         <div class="px-3 pb-2 text-sm">

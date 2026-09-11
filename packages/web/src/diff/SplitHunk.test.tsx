@@ -80,7 +80,15 @@ function row(from: string, to: string): HTMLElement {
     diff: { path: PATH, hunks: hunks(from, to) },
   };
   dispose = render(
-    () => <FileRow file={summary()} state={state} onExpand={() => {}} />,
+    () => (
+      <FileRow
+        file={summary()}
+        state={state}
+        seen={false}
+        onExpand={() => {}}
+        onToggleSeen={() => {}}
+      />
+    ),
     host
   );
   flush();
