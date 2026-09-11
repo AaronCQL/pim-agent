@@ -1,10 +1,20 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type {
+  AgentToolResult,
+  ExtensionAPI,
+} from "@earendil-works/pi-coding-agent";
+import { Images } from "../../shared/Images";
 import { SpillCache } from "../../shared/SpillCache";
 import { Tools } from "../../shared/Tools";
 import { detailsOf, formatResult, isErrorResult } from "./format";
+import { imageNote } from "./image";
 import { bashView } from "./render";
 import { killAllActiveBashGroups, runBashCommand } from "./run";
-import { type BashInput, bashSchema, DEFAULT_TIMEOUT_MS } from "./schema";
+import {
+  type BashDetails,
+  type BashInput,
+  bashSchema,
+  DEFAULT_TIMEOUT_MS,
+} from "./schema";
 
 let lifecycleHandlersInstalled = false;
 
@@ -28,12 +38,13 @@ function installLifecycleHandlers(): void {
 export default function (pi: ExtensionAPI): void {
   SpillCache.installSweeper();
   installLifecycleHandlers();
-  Tools.register(pi, {
+  Tools.register<typeof bashSchema, BashDetails>(pi, {
     name: "bash",
     label: "bash",
     description:
       "Execute a bash command in the cwd. " +
       "Returns exit code, signal (if any), and stdout/stderr captured separately. " +
+      "Stdout that is a png/jpeg/gif/webp is returned as a picture. " +
       "Prefer commands that emit only what you need; keep output as small as possible.",
     parameters: bashSchema,
     renderShell: "self",
@@ -52,8 +63,23 @@ export default function (pi: ExtensionAPI): void {
       if (isErrorResult(result)) {
         throw new Error(text);
       }
+
+      const content: AgentToolResult<BashDetails>["content"] = [
+        { type: "text", text },
+      ];
+      const image = result.stdoutImage;
+      if (image !== null) {
+        const vision = Images.canSee(ctx.model);
+        const note = imageNote(image, vision);
+        content.push(
+          ...(vision
+            ? Images.contentOf(image, note)
+            : [{ type: "text" as const, text: note }])
+        );
+      }
+
       return {
-        content: [{ type: "text", text }],
+        content,
         details: detailsOf(result),
       };
     },

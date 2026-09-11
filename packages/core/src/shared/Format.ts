@@ -40,4 +40,35 @@ function count(value: number, noun: string): string {
   return `${value} ${noun}${value === 1 ? "" : "s"}`;
 }
 
-export const Format = { formatTokens, formatElapsed, contextFill, count };
+function scaleBytes(total: number): readonly [string, string] {
+  const [value, unit] =
+    total < 1024 * 1024 ? [total / 1024, "KB"] : [total / (1024 * 1024), "MB"];
+  return [value.toFixed(2).replace(/\.?0+$/u, ""), unit];
+}
+
+/** A byte count as a person reads it, unit spaced: `40 bytes`, `240 KB`, `1.5 MB`. */
+function bytes(total: number): string {
+  if (total < 1024) {
+    return `${total} bytes`;
+  }
+  const [value, unit] = scaleBytes(total);
+  return `${value} ${unit}`;
+}
+
+/** The same count where a title has no room for the space: `40B`, `240KB`, `1.5MB`. */
+function bytesCompact(total: number): string {
+  if (total < 1024) {
+    return `${total}B`;
+  }
+  const [value, unit] = scaleBytes(total);
+  return `${value}${unit}`;
+}
+
+export const Format = {
+  formatTokens,
+  formatElapsed,
+  contextFill,
+  count,
+  bytes,
+  bytesCompact,
+};

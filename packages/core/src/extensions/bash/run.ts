@@ -1,7 +1,11 @@
+import { type ImageMimeType, Images } from "../../shared/Images";
 import { SpillCache } from "../../shared/SpillCache";
 import { StreamCapture } from "./capture";
+import { isErrorResult } from "./format";
+import { normaliseStdoutImage } from "./image";
 import {
   type BashCommandResult,
+  type CapturedStream,
   DRAIN_GRACE_MS,
   KILL_GRACE_MS,
 } from "./schema";
@@ -40,13 +44,26 @@ async function drain(reader: Reader | null, cap: StreamCapture): Promise<void> {
 }
 
 async function spillIfTruncated(
+  stream: CapturedStream,
   cap: StreamCapture,
   ext: "out" | "err"
 ): Promise<string | null> {
-  if (!cap.truncated) {
+  return stream.truncated ? SpillCache.write("bash", ext, cap.full()) : null;
+}
+
+/**
+ * The picture stdout printed, or null. The verdict is the leading bytes',
+ * before anything is decoded; the cap is the whole stream's, so an image too
+ * big to send is text again and truncates like any other output.
+ */
+export function sniffStdoutImage(cap: StreamCapture): ImageMimeType | null {
+  if (
+    cap.totalBytes < Images.SNIFF_BYTES ||
+    cap.totalBytes > Images.MAX_SOURCE_BYTES
+  ) {
     return null;
   }
-  return SpillCache.write("bash", ext, cap.full());
+  return Images.sniff(cap.lead(Images.SNIFF_BYTES));
 }
 
 function killGroup(pid: number | undefined, sig: NodeJS.Signals): void {
@@ -177,16 +194,26 @@ export async function runBashCommand(
     }
   }
 
-  const [stdoutPath, stderrPath] = await Promise.all([
-    spillIfTruncated(stdoutCap, "out"),
-    spillIfTruncated(stderrCap, "err"),
+  // A picture nothing will show is never decoded: a failed command reports its bytes instead.
+  const sniffed = sniffStdoutImage(stdoutCap);
+  const shows =
+    sniffed !== null && !isErrorResult({ exitCode, timedOut, aborted });
+  const stdout = stdoutCap.snapshot(sniffed !== null);
+  const stderr = stderrCap.snapshot();
+
+  const [stdoutPath, stderrPath, stdoutImage] = await Promise.all([
+    spillIfTruncated(stdout, stdoutCap, "out"),
+    spillIfTruncated(stderr, stderrCap, "err"),
+    shows ? normaliseStdoutImage(stdoutCap.full()) : null,
   ]);
 
   return {
     exitCode,
     signal: signalCode,
-    stdout: { ...stdoutCap.snapshot(), path: stdoutPath },
-    stderr: { ...stderrCap.snapshot(), path: stderrPath },
+    stdout: { ...stdout, path: stdoutPath },
+    stderr: { ...stderr, path: stderrPath },
+    stdoutSniffed: sniffed,
+    stdoutImage,
     timedOut,
     aborted,
     durationMs: Date.now() - startedAt,

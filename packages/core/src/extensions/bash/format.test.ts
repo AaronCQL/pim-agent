@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { normalised } from "../../shared/fixtures/images";
 import {
   detailsOf,
   formatResult,
@@ -11,6 +12,17 @@ import {
   STREAM_HEAD_BYTES,
   STREAM_TAIL_BYTES,
 } from "./schema";
+
+const picture = normalised({
+  mimeType: "image/png",
+  width: 40,
+  height: 30,
+  bytes: 2560,
+  originalWidth: 40,
+  originalHeight: 30,
+  originalMimeType: "image/png",
+  sha256: "abc123",
+});
 
 function makeResult(
   overrides: Partial<BashCommandResult> = {}
@@ -32,6 +44,8 @@ function makeResult(
       path: null,
       nextStart: null,
     },
+    stdoutSniffed: null,
+    stdoutImage: null,
     timedOut: false,
     aborted: false,
     durationMs: 1,
@@ -185,6 +199,63 @@ describe("formatResult", () => {
     );
     expect(out).not.toContain("[bash tool:");
   });
+
+  test("says nothing about stdout when the picture rides the content array", () => {
+    const out = formatResult(
+      makeResult({
+        stdout: {
+          text: "",
+          totalBytes: 4096,
+          truncated: false,
+          path: null,
+          nextStart: null,
+        },
+        stdoutSniffed: "image/png",
+        stdoutImage: picture,
+      }),
+      30_000
+    );
+    expect(out).toBe("Exit code: 0");
+  });
+
+  test("names the bytes when a failing command means the picture is not shown", () => {
+    const out = formatResult(
+      makeResult({
+        exitCode: 1,
+        stdout: {
+          text: "",
+          totalBytes: 4096,
+          truncated: false,
+          path: null,
+          nextStart: null,
+        },
+        stdoutSniffed: "image/png",
+      }),
+      30_000
+    );
+    expect(out).toBe(
+      "Exit code: 1\n[bash tool: stdout is 4 KB of png data, not shown because the command failed.]"
+    );
+  });
+
+  test("names bytes that sniffed as a picture but decoded as nothing", () => {
+    const out = formatResult(
+      makeResult({
+        stdout: {
+          text: "",
+          totalBytes: 12,
+          truncated: false,
+          path: null,
+          nextStart: null,
+        },
+        stdoutSniffed: "image/webp",
+      }),
+      30_000
+    );
+    expect(out).toBe(
+      "Exit code: 0\n[bash tool: stdout is 12 bytes of webp data that could not be decoded as an image.]"
+    );
+  });
 });
 
 describe("detailsOf", () => {
@@ -217,6 +288,19 @@ describe("detailsOf", () => {
       aborted: false,
       stdout: { totalBytes: 99999, truncated: true, path: null },
       stderr: { totalBytes: 5, truncated: false, path: null },
+    });
+  });
+
+  test("carries the picture's address, never its bytes", () => {
+    const details = detailsOf(makeResult({ stdoutImage: picture }));
+    expect(details.image).toEqual({
+      sha256: "abc123",
+      mimeType: "image/png",
+      width: 40,
+      height: 30,
+      bytes: 2560,
+      resized: false,
+      frames: 1,
     });
   });
 });

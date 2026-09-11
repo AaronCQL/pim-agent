@@ -1,4 +1,9 @@
 import { type Static, Type } from "typebox";
+import type {
+  ImageDetails,
+  ImageMimeType,
+  NormalisedImage,
+} from "../../shared/Images";
 
 export const STREAM_HEAD_BYTES = 8192;
 export const STREAM_TAIL_BYTES = 8192;
@@ -32,6 +37,10 @@ export type BashCommandResult = {
   readonly signal: NodeJS.Signals | null;
   readonly stdout: CapturedStream;
   readonly stderr: CapturedStream;
+  /** What stdout's leading bytes sniffed as, whether or not the picture could then be decoded. */
+  readonly stdoutSniffed: ImageMimeType | null;
+  /** Set only when stdout sniffed as a picture and a provider will take it. */
+  readonly stdoutImage: NormalisedImage | null;
   readonly timedOut: boolean;
   readonly aborted: boolean;
   readonly durationMs: number;
@@ -51,4 +60,5 @@ export type BashDetails = {
   readonly aborted: boolean;
   readonly stdout: BashStreamDetails;
   readonly stderr: BashStreamDetails;
+  readonly image?: ImageDetails;
 };

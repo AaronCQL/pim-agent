@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
+import type { ImageDetails } from "../../shared/Images";
 import type { ToolViewInput } from "../../shared/Tools";
 import { AnsiPainter } from "../../view/AnsiPainter";
+import type { ToolView } from "../../view/ViewBlock";
 import { bashView } from "./render";
 import type { BashDetails, bashSchema } from "./schema";
 
@@ -124,5 +126,77 @@ describe("bashView body", () => {
         tracingTheme().theme
       ).join("\n")
     ).toBe("");
+  });
+});
+
+describe("bashView on stdout that is a picture", () => {
+  const details = {
+    exitCode: 0,
+    signal: null,
+    durationMs: 3,
+    timedOut: false,
+    aborted: false,
+    stdout: { totalBytes: 2560, truncated: false, path: null },
+    stderr: { totalBytes: 0, truncated: false, path: null },
+    image: {
+      sha256: "a".repeat(64),
+      mimeType: "image/png",
+      width: 40,
+      height: 30,
+      bytes: 2560,
+      resized: false,
+      frames: 1,
+    },
+  } satisfies BashDetails;
+
+  function view(overrides: Partial<ImageDetails> = {}): ToolView {
+    return bashView({
+      args: { command: "grim -" } as Input["args"],
+      result: {
+        content: [{ type: "text", text: "Exit code: 0" }],
+        details: { ...details, image: { ...details.image, ...overrides } },
+      } as Input["result"],
+      cwd,
+      isPartial: false,
+    });
+  }
+
+  test("draws the picture above the command's own output", () => {
+    expect(view().body).toEqual([
+      {
+        kind: "image",
+        sha256: "a".repeat(64),
+        mimeType: "image/png",
+        width: 40,
+        height: 30,
+        bytes: 2560,
+        alt: "grim -",
+      },
+      {
+        kind: "kv",
+        pairs: [
+          ["dimensions", "40x30"],
+          ["size", "2.5 KB"],
+        ],
+      },
+      { kind: "text", text: "Exit code: 0" },
+    ]);
+  });
+
+  test("says how many frames the still left behind", () => {
+    expect(view({ frames: 12 }).body?.[1]).toEqual({
+      kind: "kv",
+      pairs: [
+        ["dimensions", "40x30"],
+        ["frames", "12 (frame 1 shown)"],
+        ["size", "2.5 KB"],
+      ],
+    });
+  });
+
+  test("a result without the field is text alone", () => {
+    expect(paintBody({ command: "echo hi" }, "Exit code: 0")).toBe(
+      "Exit code: 0"
+    );
   });
 });

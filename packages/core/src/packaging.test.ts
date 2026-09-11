@@ -100,9 +100,7 @@ describe("the published tarball", () => {
   test("does not ship tests or fixtures", () => {
     expect(paths.filter((path) => path.endsWith(".test.ts"))).toEqual([]);
     expect(
-      paths.filter((path) =>
-        path.includes("packages/core/src/session/fixtures/")
-      )
+      paths.filter((path) => /packages\/core\/src\/.*\/fixtures\//.test(path))
     ).toEqual([]);
   });
 });

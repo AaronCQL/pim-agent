@@ -1,6 +1,9 @@
 const utf8Bom = "\uFEFF";
 const utf8BomBytes = new Uint8Array([0xef, 0xbb, 0xbf]);
 
+/** How far in a NUL is still evidence of a binary file rather than text. */
+const binarySniffBytes = 8192;
+
 function normalize(content: string): string {
   return stripUtf8Bom(content).replaceAll("\r\n", "\n").replaceAll("\r", "\n");
 }
@@ -51,13 +54,19 @@ function hasUtf8Bom(bytes: Uint8Array): boolean {
   );
 }
 
+function isBinaryBytes(bytes: Uint8Array): boolean {
+  return bytes.subarray(0, binarySniffBytes).includes(0);
+}
+
 async function isBinary(file: Bun.BunFile): Promise<boolean> {
-  const bytes = new Uint8Array(await file.slice(0, 8192).arrayBuffer());
-  return bytes.includes(0);
+  return isBinaryBytes(
+    new Uint8Array(await file.slice(0, binarySniffBytes).arrayBuffer())
+  );
 }
 
 export const Lines = {
   utf8Bom,
+  binarySniffBytes,
   normalize,
   split,
   splitNormalized,
@@ -65,5 +74,6 @@ export const Lines = {
   splitWithTrailingNewline,
   stripUtf8Bom,
   hasUtf8Bom,
+  isBinaryBytes,
   isBinary,
 };

@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import { createSignal, flush } from "solid-js";
 
 import type { ToolView, ViewBlock } from "#core/view/ViewBlock";
+import { GatewayOrigin } from "../session/Gateway";
 import { mountPoint } from "../test/dom";
 import { Blocks, Body } from "./Blocks";
 import { ToolCard, ToolCards } from "./ToolCard";
@@ -15,9 +16,20 @@ import {
   groupByFrame,
 } from "./tokens";
 
+const GATEWAY = "http://gateway";
+
+/** The shell names the gateway a picture is fetched from; a painter is always mounted under it. */
+function Painted(props: { readonly blocks: readonly ViewBlock[] }) {
+  return (
+    <GatewayOrigin value={() => GATEWAY}>
+      <Blocks blocks={props.blocks} />
+    </GatewayOrigin>
+  );
+}
+
 function paint(blocks: readonly ViewBlock[]): string {
   const host = mountPoint();
-  render(() => <Blocks blocks={blocks} />, host);
+  render(() => <Painted blocks={blocks} />, host);
   flush();
   return host.innerHTML;
 }
@@ -29,7 +41,11 @@ function paintTool(
 ): HTMLElement {
   const host = mountPoint();
   render(
-    () => <ToolCard view={view} isPartial={isPartial} name={name} />,
+    () => (
+      <GatewayOrigin value={() => GATEWAY}>
+        <ToolCard view={view} isPartial={isPartial} name={name} />
+      </GatewayOrigin>
+    ),
     host
   );
   flush();
@@ -109,6 +125,15 @@ const SAMPLES = {
     url: "http://gateway/attachment/s1/revenue-1.png",
     isImage: true,
   },
+  image: {
+    kind: "image",
+    sha256: "a".repeat(64),
+    mimeType: "image/png",
+    width: 1200,
+    height: 800,
+    bytes: 245_760,
+    alt: "docs/shot.png",
+  },
   notice: { kind: "notice", severity: "error", text: "boom" },
 } as const satisfies {
   [K in ViewBlock["kind"]]: Extract<ViewBlock, { kind: K }>;
@@ -134,7 +159,7 @@ describe("ViewBlock HTML painter", () => {
   // separates them, so a stat reads `+2/-1` and not `+2 / -1`.
   test("adjacent spans carry no spacing of their own", () => {
     const host = mountPoint();
-    render(() => <Blocks blocks={[SAMPLES.spans]} />, host);
+    render(() => <Painted blocks={[SAMPLES.spans]} />, host);
     flush();
     expect(host.textContent).toBe("+2/-1");
   });
@@ -150,7 +175,7 @@ describe("ViewBlock HTML painter", () => {
   // attachment gets.
   test("an image attachment paints a picture and a way to keep it", () => {
     const host = mountPoint();
-    render(() => <Blocks blocks={[SAMPLES.attachment]} />, host);
+    render(() => <Painted blocks={[SAMPLES.attachment]} />, host);
     flush();
 
     const image = host.querySelector("img");
@@ -182,6 +207,48 @@ describe("ViewBlock HTML painter", () => {
     expect(host.textContent).toContain("report.pdf");
   });
 
+  // What the model was shown, drawn as the picture it was: the same tile and
+  // lightbox a delivered image gets, minus the download — nobody is being
+  // handed this file, it is already on the machine it was read from. Its
+  // address is the digest resolved against the gateway this browser reads.
+  test("a picture the model read paints a tile that opens full size", () => {
+    const host = mountPoint();
+    render(() => <Painted blocks={[SAMPLES.image]} />, host);
+    flush();
+
+    const image = host.querySelector("img")!;
+    expect(image.getAttribute("src")).toBe(
+      `${GATEWAY}/image/${SAMPLES.image.sha256}.png`
+    );
+    expect(image.getAttribute("alt")).toBe("docs/shot.png");
+    // Its own shape, so the transcript holds its height before the bytes land.
+    expect(image.getAttribute("width")).toBe("1200");
+    expect(image.getAttribute("height")).toBe("800");
+    expect(host.querySelector("a[download]")).toBeNull();
+
+    image
+      .closest("button")!
+      .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    flush();
+    expect(host.querySelector("dialog")?.getAttribute("aria-label")).toBe(
+      "docs/shot.png"
+    );
+  });
+
+  // The cache the picture is served from is swept after a week, so an old
+  // transcript 404s here and says what the picture was instead.
+  test("an expired picture degrades to its summary, not a broken tile", () => {
+    const host = mountPoint();
+    render(() => <Painted blocks={[SAMPLES.image]} />, host);
+    flush();
+
+    host.querySelector("img")!.dispatchEvent(new Event("error"));
+    flush();
+
+    expect(host.querySelector("img")).toBeNull();
+    expect(host.textContent).toContain("[image 1200×800 png · 240 KB]");
+  });
+
   test("a section paints its label and recurses into its content", () => {
     const html = paint([SAMPLES.section]);
     // No glyph anywhere on the web: `icon` is declared and deliberately unpainted.
@@ -194,7 +261,7 @@ describe("ViewBlock HTML painter", () => {
   // disclosure of its own to open before the payload can be read.
   test("a diff paints one flat row per line, gutter included", () => {
     const host = mountPoint();
-    render(() => <Blocks blocks={[SAMPLES.diff]} />, host);
+    render(() => <Painted blocks={[SAMPLES.diff]} />, host);
     flush();
 
     expect(host.querySelector("details")).toBeNull();
@@ -368,6 +435,23 @@ describe("ToolCard", () => {
   test("a markdown body keeps full strength", () => {
     const host = paintTool({ ...view, body: [SAMPLES.markdown, SAMPLES.kv] });
     expect(host.querySelector("details > div > div")?.className).toBe("");
+  });
+
+  /**
+   * A picture the model was shown is the row's own output, not a delivery, so
+   * it stays behind the disclosure with the rest of the body — and at full
+   * strength, since a dimmed photograph reads as a faded one.
+   */
+  test("a read picture stays in the body, undimmed", () => {
+    const host = paintTool({
+      label: "Read",
+      title: [SAMPLES.file],
+      body: [SAMPLES.image, SAMPLES.kv],
+    });
+    const details = host.querySelector("details")!;
+    expect(details.querySelector("img")).not.toBeNull();
+    expect(host.querySelector("details > div > div")?.className).toBe("");
+    expect(host.querySelector("article")?.className).toContain("opacity-80");
   });
 
   // A row is at full strength when *it* is open, never because something

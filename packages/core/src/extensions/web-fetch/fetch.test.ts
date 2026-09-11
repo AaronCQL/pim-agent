@@ -3,11 +3,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SpillCache } from "../../shared/SpillCache";
+import type { HttpFetch } from "../../shared/Http";
 import {
   executeFetch,
   formatOutcome,
   truncationFooter,
   validatePublicUrl,
+  type WebFetchOutcome,
+  type WebFetchPageOutcome,
 } from "./fetch";
 import { WEB_FETCH_INLINE_BYTES } from "./schema";
 import type { JinaReaderClient } from "./JinaReaderClient";
@@ -81,6 +84,19 @@ describe("validatePublicUrl", () => {
 });
 
 describe("executeFetch", () => {
+  /** The image probe runs first on every fetch; this answers it offline, with a page. */
+  const notAnImage: HttpFetch = async () =>
+    new Response("<html>hello</html>", {
+      headers: { "content-type": "text/html" },
+    });
+
+  function page(outcome: WebFetchOutcome): WebFetchPageOutcome {
+    if (outcome.kind !== "page") {
+      throw new Error(`expected a page outcome, got ${outcome.kind}`);
+    }
+    return outcome;
+  }
+
   test("returns remote markdown when available", async () => {
     const jina = {
       fetchUrl: async () => ({
@@ -95,12 +111,15 @@ describe("executeFetch", () => {
       },
     } as unknown as WebViewFetchClient;
 
-    const outcome = await executeFetch({
-      jina,
-      webView,
-      url: "https://example.test/",
-      format: "markdown",
-    });
+    const outcome = page(
+      await executeFetch({
+        jina,
+        webView,
+        url: "https://example.test/",
+        format: "markdown",
+        fetch: notAnImage,
+      })
+    );
 
     expect(outcome.format).toBe("markdown");
     expect(outcome.text).toContain("remote markdown");
@@ -123,12 +142,15 @@ describe("executeFetch", () => {
       },
     } as unknown as WebViewFetchClient;
 
-    const outcome = await executeFetch({
-      jina,
-      webView,
-      url: "https://example.test/",
-      format: "markdown",
-    });
+    const outcome = page(
+      await executeFetch({
+        jina,
+        webView,
+        url: "https://example.test/",
+        format: "markdown",
+        fetch: notAnImage,
+      })
+    );
 
     expect(outcome.format).toBe("markdown");
     expect(outcome.text).toContain("# rendered markdown");
@@ -152,6 +174,7 @@ describe("executeFetch", () => {
         webView,
         url: "https://example.test/",
         format: "markdown",
+        fetch: notAnImage,
       })
     ).rejects.toThrow("Failed to fetch: Request failed: unavailable");
   });
@@ -170,12 +193,15 @@ describe("executeFetch", () => {
       }),
     } as unknown as WebViewFetchClient;
 
-    const outcome = await executeFetch({
-      jina,
-      webView,
-      url: "https://example.test/",
-      format: "html",
-    });
+    const outcome = page(
+      await executeFetch({
+        jina,
+        webView,
+        url: "https://example.test/",
+        format: "html",
+        fetch: notAnImage,
+      })
+    );
 
     expect(outcome.format).toBe("html");
     expect(outcome.text).toContain("<html><body>Hello</body></html>");

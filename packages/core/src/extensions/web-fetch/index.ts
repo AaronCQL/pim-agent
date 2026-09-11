@@ -1,11 +1,17 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Images } from "../../shared/Images";
 import { PimSettings } from "../../shared/PimSettings";
 import { SpillCache } from "../../shared/SpillCache";
 import { Tools } from "../../shared/Tools";
 import { executeFetch, validatePublicUrl } from "./fetch";
+import { imageContent, imageDetails, noVisionNote } from "./image";
 import { JinaReaderClient } from "./JinaReaderClient";
 import { webFetchView } from "./render";
-import { type WebFetchInput, webFetchSchema } from "./schema";
+import {
+  type WebFetchDetails,
+  type WebFetchInput,
+  webFetchSchema,
+} from "./schema";
 import { WebViewFetchClient } from "./WebViewFetchClient";
 
 async function createJina(): Promise<JinaReaderClient> {
@@ -20,15 +26,17 @@ export default function (pi: ExtensionAPI): void {
   const getJina = () => (jinaPromise ??= createJina());
   const webView = new WebViewFetchClient();
 
-  Tools.register(pi, {
+  Tools.register<typeof webFetchSchema, WebFetchDetails>(pi, {
     name: "web_fetch",
     label: "web_fetch",
-    description: "Fetch a web page as markdown or HTML.",
+    description:
+      "Fetch a web page as markdown or HTML. " +
+      "A URL serving an image (png, jpeg, gif, webp) returns the picture itself, saved to the cache; the format parameter does not apply to it.",
     parameters: webFetchSchema,
     renderShell: "self",
     effect: { kind: "readOnly" },
     executionMode: "parallel",
-    async execute(_id, params, signal) {
+    async execute(_id, params, signal, _onUpdate, ctx) {
       const { url, format } = params as WebFetchInput;
 
       if (signal?.aborted) {
@@ -46,9 +54,20 @@ export default function (pi: ExtensionAPI): void {
         ...(signal === undefined ? {} : { signal }),
       });
 
+      if (outcome.kind === "image") {
+        const withheld = !Images.canSee(ctx.model);
+        return {
+          content: withheld
+            ? [{ type: "text", text: noVisionNote(outcome.url, outcome.image) }]
+            : imageContent(outcome.image),
+          details: imageDetails(outcome.url, outcome.image, withheld),
+        };
+      }
+
       return {
         content: [{ type: "text", text: outcome.text }],
         details: {
+          kind: "page",
           url: outcome.url,
           title: outcome.title,
           format: outcome.format,

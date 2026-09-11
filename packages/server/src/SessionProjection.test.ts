@@ -3,6 +3,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { afterEach, expect, test } from "bun:test";
 
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+
+import readExtension from "#core/extensions/read/index";
+import { Tools } from "#core/shared/Tools";
 import { SessionProjection } from "./SessionProjection";
 
 const FIXTURE = join(
@@ -15,6 +20,69 @@ const FIXTURE = join(
   "fixtures",
   "pi-session-v3.jsonl"
 );
+
+/** A one-pixel PNG as pi persists it: the string that must never reach a client. */
+const BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+const SHA256 = "b".repeat(64);
+
+const pi = { registerTool: () => {} } as unknown as ExtensionAPI;
+
+/** A view that shows whatever content it is handed, so a leak would be visible in the frame. */
+function registerMirror(): void {
+  Tools.register(pi, {
+    name: "mirror",
+    label: "mirror",
+    description: "test double",
+    parameters: Type.Object({}),
+    execute: () => Promise.resolve({ content: [], details: undefined }),
+    toViewModel: ({ result }) => ({
+      title: [{ kind: "text", text: "mirror" }],
+      body: (result?.content ?? []).map((part) => ({
+        kind: "text" as const,
+        text: part.type === "text" ? part.text : `<${part.type}>`,
+      })),
+    }),
+  });
+}
+
+/** The pair of entries a `read` of a picture leaves in the session file. */
+function imageRead(toolName: string): ReadonlyArray<Record<string, unknown>> {
+  return [
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "toolCall",
+          id: "call-1",
+          name: toolName,
+          arguments: { path: "/work/shot.png" },
+        },
+      ],
+      usage: {},
+    },
+    {
+      role: "toolResult",
+      toolCallId: "call-1",
+      toolName,
+      isError: false,
+      content: [
+        { type: "text", text: "image resized from 4000x2000 to 2000x1000" },
+        { type: "image", data: BASE64, mimeType: "image/png" },
+      ],
+      details: {
+        kind: "image",
+        absolutePath: "/work/shot.png",
+        sha256: SHA256,
+        mimeType: "image/png",
+        width: 2000,
+        height: 1000,
+        bytes: 262144,
+        resized: true,
+      },
+    },
+  ];
+}
 
 function projection(): SessionProjection {
   return new SessionProjection(FIXTURE, () => "/home/htpc/Desktop/dev/mmorpg");
@@ -186,4 +254,33 @@ test("a failed call carries why, not a view of the result it never got", async (
   expect(result?.type === "tool_result" && result.view.body).toEqual([
     { kind: "notice", severity: "error", text: "No files were modified." },
   ]);
+});
+
+test("image content is replaced before a view is built, so no base64 is emitted", async () => {
+  registerMirror();
+  const events = await (await logOf(...imageRead("mirror"))).drain();
+
+  const result = events[1];
+  expect(result?.type === "tool_result" && result.view.body).toEqual([
+    { kind: "text", text: "image resized from 4000x2000 to 2000x1000" },
+    { kind: "text", text: "[image]" },
+  ]);
+  expect(JSON.stringify(events)).not.toContain(BASE64);
+});
+
+test("a read of a picture crosses as the digest that addresses the cache", async () => {
+  readExtension(pi);
+  const events = await (await logOf(...imageRead("read"))).drain();
+
+  const result = events[1];
+  expect(result?.type === "tool_result" && result.view.body?.[0]).toEqual({
+    kind: "image",
+    sha256: SHA256,
+    mimeType: "image/png",
+    width: 2000,
+    height: 1000,
+    bytes: 262144,
+    alt: "work/shot.png",
+  });
+  expect(JSON.stringify(events)).not.toContain(BASE64);
 });

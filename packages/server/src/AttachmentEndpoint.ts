@@ -5,7 +5,7 @@ import {
   type StoredAttachment,
 } from "#core/attachments/AttachmentStore";
 import { Paths } from "#core/shared/Paths";
-import { IMMUTABLE } from "./StaticClient";
+import { IMMUTABLE, serveFile } from "./StaticClient";
 
 export type AttachmentEndpointDeps = {
   /** Defaults to `~/.pim/attachments`. */
@@ -72,16 +72,13 @@ export class AttachmentEndpoint {
     if (!scope || !name || rest.length > 0) {
       return new Response("not found", { status: 404 });
     }
-    let file;
+    let path: string;
     try {
-      file = Bun.file(this.store.locate(scope, name));
+      path = this.store.locate(scope, name);
     } catch {
       return new Response("not found", { status: 404 });
     }
-    if (!(await file.exists())) {
-      return new Response("not found", { status: 404 });
-    }
-    return new Response(file, { headers: { "cache-control": IMMUTABLE } });
+    return serveFile(path, IMMUTABLE);
   }
 
   private async upload(request: Request): Promise<Response> {

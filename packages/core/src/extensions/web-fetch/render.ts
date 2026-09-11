@@ -1,9 +1,13 @@
+import { Format } from "../../shared/Format";
+import { Images } from "../../shared/Images";
 import { Renderer } from "../../shared/Renderer";
 import type { ToolViewInput } from "../../shared/Tools";
+import { Painting } from "../../view/Painting";
 import type { ToolView, ViewBlock } from "../../view/ViewBlock";
 import type {
   WebFetchDetails,
   WebFetchFormat,
+  WebFetchImageDetails,
   WebFetchInput,
   WebFetchResolvedFormat,
   webFetchSchema,
@@ -18,27 +22,59 @@ type TitleOutcome = {
 
 export function webFetchView({ args, result }: WebFetchViewInput): ToolView {
   const input = (args ?? {}) as Partial<WebFetchInput>;
-  const outcome = titleOutcome(result);
+  const image = imageDetailsOf(result?.details);
+  const url = image?.url ?? input.url ?? "...";
   return {
     label: "Web Fetch",
     icon: "globe",
     title: [
-      { kind: "text", text: input.url ?? "..." },
+      { kind: "text", text: url },
       {
         kind: "text",
         tone: "muted",
-        text: formatDetail(input.format, outcome),
+        text: image
+          ? imageDetail(image)
+          : formatDetail(input.format, titleOutcome(result)),
       },
     ],
-    body: formatBody(result),
+    body: image ? imageBody(image, url) : formatBody(result),
   };
+}
+
+/** Legacy sessions predate the tag, so anything untagged reads as a page. */
+function imageDetailsOf(
+  details: WebFetchDetails | undefined
+): WebFetchImageDetails | undefined {
+  return details?.kind === "image" ? details : undefined;
+}
+
+function imageBody(
+  details: WebFetchImageDetails,
+  url: string
+): readonly ViewBlock[] {
+  return Painting.imageBlocks(
+    details,
+    url,
+    details.withheld
+      ? [["not sent", "the current model has no vision input"]]
+      : []
+  );
+}
+
+function imageDetail(details: WebFetchImageDetails): string {
+  return `${Format.bytesCompact(details.bytes)} ${Images.extensionOf(details.mimeType).toUpperCase()}`;
 }
 
 function titleOutcome(
   result: WebFetchViewInput["result"]
 ): TitleOutcome | undefined {
   const details = result?.details;
-  if (details?.format === undefined || typeof details.totalBytes !== "number") {
+  if (
+    details === undefined ||
+    details.kind === "image" ||
+    details.format === undefined ||
+    typeof details.totalBytes !== "number"
+  ) {
     return undefined;
   }
   return { format: details.format, totalBytes: details.totalBytes };
@@ -56,23 +92,9 @@ function formatDetail(
   const label = formatLabel(outcome?.format ?? format ?? "markdown");
   return outcome === undefined
     ? label
-    : `${formatSize(outcome.totalBytes)} ${label}`;
+    : `${Format.bytesCompact(outcome.totalBytes)} ${label}`;
 }
 
 function formatLabel(format: WebFetchResolvedFormat): string {
   return format === "html" ? "HTML" : "Markdown";
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) {
-    return `${bytes}B`;
-  }
-  if (bytes < 1024 * 1024) {
-    return `${trimZeros((bytes / 1024).toFixed(2))}KB`;
-  }
-  return `${trimZeros((bytes / (1024 * 1024)).toFixed(2))}MB`;
-}
-
-function trimZeros(value: string): string {
-  return value.replace(/\.?0+$/u, "");
 }

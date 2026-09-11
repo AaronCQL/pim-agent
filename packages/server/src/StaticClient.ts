@@ -18,6 +18,17 @@ const BUILD_HINT =
 /** Vite fingerprints everything under `assets/`, so it can never go stale. */
 export const IMMUTABLE = "public, max-age=31536000, immutable";
 
+/** A file off disk under a caching policy, or the 404 that a path naming nothing is. */
+export async function serveFile(
+  path: string,
+  cacheControl: string
+): Promise<Response> {
+  const file = Bun.file(path);
+  return (await file.exists())
+    ? new Response(file, { headers: { "cache-control": cacheControl } })
+    : new Response("not found", { status: 404 });
+}
+
 function looksLikeAsset(pathname: string): boolean {
   const last = pathname.slice(pathname.lastIndexOf("/") + 1);
   return /\.[a-zA-Z0-9]+$/.test(last);

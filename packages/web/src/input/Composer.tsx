@@ -184,7 +184,6 @@ export function Composer(props: {
     setCaret(0);
     setItems([]);
     input.value = "";
-    // Before the await, so the optimistic message the store appends is anchored by the time it paints.
     props.onSend();
     await props.store.prompt(draft);
   }

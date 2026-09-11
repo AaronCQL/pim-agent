@@ -30,6 +30,12 @@ const Schema = Type.Object({
     },
     { default: {} }
   ),
+  read: Type.Object(
+    {
+      dedupImages: Type.Boolean({ default: true }),
+    },
+    { default: { dedupImages: true } }
+  ),
 });
 
 type Settings = Static<typeof Schema>;

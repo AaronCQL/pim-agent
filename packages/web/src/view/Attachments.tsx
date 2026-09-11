@@ -1,7 +1,7 @@
 import { createSignal, For, Show } from "solid-js";
 
 import type { AttachmentView } from "#protocol/ServerEvent";
-import { Lightbox } from "../ui/Lightbox";
+import { ImageTile } from "../ui/ImageTile";
 import { Spinner } from "../ui/Spinner";
 
 /** One file as a row draws it, plus what only an unsent one has. */
@@ -41,7 +41,6 @@ function Tile(props: {
   readonly file: AttachmentTile;
   readonly variant: TileVariant;
 }) {
-  const [viewing, setViewing] = createSignal(false);
   // A file stored by another frontend 404s here, so the chip is the fallback.
   const [broken, setBroken] = createSignal(false);
   const shows = () => props.file.isImage && !broken();
@@ -49,26 +48,16 @@ function Tile(props: {
   return (
     <li class="relative">
       <Show when={shows()} fallback={<Chip file={props.file} />}>
-        <button
-          type="button"
-          aria-label={`View ${props.file.name}`}
-          class="block overflow-hidden rounded-lg ring-1 ring-neutral-700 hover:ring-indigo-400"
-          onClick={() => {
-            setViewing(true);
+        <ImageTile
+          src={props.file.url}
+          alt={props.file.name}
+          class={`${IMAGE_CLASSES[props.variant]} ${
+            props.file.uploading ? "opacity-50" : ""
+          }`}
+          onError={() => {
+            setBroken(true);
           }}
-        >
-          <img
-            src={props.file.url}
-            alt={props.file.name}
-            loading="lazy"
-            class={`block ${IMAGE_CLASSES[props.variant]} ${
-              props.file.uploading ? "opacity-50" : ""
-            }`}
-            onError={() => {
-              setBroken(true);
-            }}
-          />
-        </button>
+        />
       </Show>
 
       <Show when={props.variant === "delivery" && shows()}>
@@ -99,16 +88,6 @@ function Tile(props: {
             <span class="i-griddy-icons:close size-3.5" aria-hidden="true" />
           </button>
         )}
-      </Show>
-
-      <Show when={viewing()}>
-        <Lightbox
-          src={props.file.url}
-          alt={props.file.name}
-          onClose={() => {
-            setViewing(false);
-          }}
-        />
       </Show>
     </li>
   );

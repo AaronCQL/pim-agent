@@ -1,3 +1,5 @@
+import { Format } from "../../shared/Format";
+import { type ImageMimeType, Images } from "../../shared/Images";
 import {
   type BashCommandResult,
   type BashDetails,
@@ -41,6 +43,17 @@ export function formatResult(
     if (stream.totalBytes === 0) {
       continue;
     }
+    if (label === "stdout" && result.stdoutSniffed !== null) {
+      const line = unshownImageLine(
+        result,
+        result.stdoutSniffed,
+        stream.totalBytes
+      );
+      if (line !== null) {
+        lines.push(line);
+      }
+      continue;
+    }
     lines.push(`${label}:`);
     lines.push(stripTrailingNewline(stream.text));
     if (stream.truncated) {
@@ -50,7 +63,25 @@ export function formatResult(
   return lines.join("\n");
 }
 
-export function isErrorResult(result: BashCommandResult): boolean {
+/** The words for a picture the content array will not carry; null when it will. */
+function unshownImageLine(
+  result: BashCommandResult,
+  sniffed: ImageMimeType,
+  totalBytes: number
+): string | null {
+  const subject = `stdout is ${Format.bytes(totalBytes)} of ${Images.extensionOf(sniffed)} data`;
+  if (isErrorResult(result)) {
+    return `[bash tool: ${subject}, not shown because the command failed.]`;
+  }
+  if (result.stdoutImage === null) {
+    return `[bash tool: ${subject} that could not be decoded as an image.]`;
+  }
+  return null;
+}
+
+export function isErrorResult(
+  result: Pick<BashCommandResult, "exitCode" | "timedOut" | "aborted">
+): boolean {
   return result.aborted || result.timedOut || result.exitCode !== 0;
 }
 
@@ -63,6 +94,10 @@ export function detailsOf(result: BashCommandResult): BashDetails {
     aborted: result.aborted,
     stdout: streamDetails(result.stdout),
     stderr: streamDetails(result.stderr),
+    image:
+      result.stdoutImage === null
+        ? undefined
+        : Images.detailsOf(result.stdoutImage),
   };
 }
 

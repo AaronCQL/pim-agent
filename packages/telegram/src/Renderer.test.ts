@@ -7,6 +7,7 @@ import type { Api } from "grammy";
 
 import applyPatchExtension from "#core/extensions/apply-patch/index";
 import editExtension from "#core/extensions/edit/index";
+import readExtension from "#core/extensions/read/index";
 import subagentExtension from "#core/extensions/subagent/index";
 import todoExtension from "#core/extensions/todo/index";
 import writeExtension from "#core/extensions/write/index";
@@ -27,6 +28,7 @@ const fakePi = {
 for (const extension of [
   applyPatchExtension,
   editExtension,
+  readExtension,
   subagentExtension,
   todoExtension,
   writeExtension,
@@ -439,6 +441,50 @@ describe("Telegram Renderer edit/write stats", () => {
     renderer.handleEvent(toolEndWithDiff("write", undefined, "w-2"));
     await renderer.finish("", "ok");
     expect(api.sent.map((m) => m.text)).toEqual(["✏️ <code>bar.ts</code>"]);
+  });
+});
+
+const IMAGE_BASE64 = "iVBORw0KGgoAAAANSUhEUg";
+
+/**
+ * A picture is what the model looked at, not something being handed to the
+ * reader, so nothing is uploaded: the row names the file it read and the
+ * picture's shape, and the base64 the result carries stops at the view.
+ */
+describe("Telegram Renderer read of an image", () => {
+  test("summarises the picture and carries none of its bytes", async () => {
+    const { api, renderer } = makeRenderer();
+    renderer.handleEvent(
+      toolStart("read", { path: "/repo/docs/shot.png" }, "r-1")
+    );
+    renderer.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: "r-1",
+      toolName: "read",
+      result: {
+        content: [
+          { type: "text", text: "image resized from 3000x2000 to 2000x1333" },
+          { type: "image", data: IMAGE_BASE64, mimeType: "image/png" },
+        ],
+        details: {
+          kind: "image",
+          absolutePath: "/repo/docs/shot.png",
+          sha256: "a".repeat(64),
+          mimeType: "image/png",
+          width: 2000,
+          height: 1333,
+          bytes: 262_144,
+          resized: true,
+        },
+      },
+      isError: false,
+    } as AgentSessionEvent);
+    await renderer.finish("", "ok");
+
+    expect(api.sent.map((m) => m.text)).toEqual([
+      "📄 <code>shot.png</code><br>[image 2000×1333 png · 256 KB]",
+    ]);
+    expect(api.sent[0]?.text).not.toContain(IMAGE_BASE64);
   });
 });
 

@@ -105,17 +105,6 @@ function settled(): boolean {
   );
 }
 
-/**
- * The modal's scroller, with a layout happy-dom will not compute: a page of
- * viewport over a body of content taller than it.
- */
-function scrollerOf(dialog: HTMLDialogElement): HTMLElement {
-  const element = dialog.querySelector<HTMLElement>("div.overflow-y-auto")!;
-  Object.defineProperty(element, "scrollHeight", { get: () => 1000 });
-  Object.defineProperty(element, "clientHeight", { value: 500 });
-  return element;
-}
-
 /** One more entry in the child's log, as the envelope that carries them. */
 function grow(seq: number, text: string): void {
   store.ingest({
@@ -343,24 +332,31 @@ test("a modal open across a reconnect re-watches without doubling", async () => 
   }
 });
 
-/**
- * The same anchoring the conversation uses, because it is the same anchor: a
- * child that writes while its modal is open follows the end for a reader who
- * is at it, and leaves alone one who has scrolled up to read a tool result.
- */
-test("the child's rows follow the end, and never yank a reader off it", async () => {
+test("the child's bottom-origin layout leaves scrolling to the browser", async () => {
   const host = paint(store);
   await delegate(host);
   await until(settled, "the delegated call to settle");
   await open(host);
-  const scroller = scrollerOf(modal(host));
+  const scroller = modal(host).querySelector<HTMLElement>(
+    "div.overflow-y-auto"
+  )!;
+  expect(scroller.classList.contains("flex")).toBe(true);
+  expect(scroller.classList.contains("flex-col-reverse")).toBe(true);
+  expect(scroller.children).toHaveLength(1);
+  expect(scroller.firstElementChild!.classList.contains("flex-none")).toBe(
+    true
+  );
+  expect(scroller.firstElementChild!.classList.contains("min-h-full")).toBe(
+    true
+  );
 
   grow(90, "still working on it");
-  expect(scroller.scrollTop).toBe(1000);
+  expect(scroller.textContent).toContain("still working on it");
 
-  scroller.scrollTop = 120;
+  scroller.scrollTop = -120;
   scroller.dispatchEvent(new Event("scroll"));
   grow(91, "and one more thing");
 
-  expect(scroller.scrollTop).toBe(120);
+  expect(scroller.textContent).toContain("and one more thing");
+  expect(scroller.scrollTop).toBe(-120);
 });

@@ -33,6 +33,10 @@ import { resolve } from "node:path";
 /** Set by every CI provider worth the name, and by GitHub Actions. */
 const CI = Bun.env.CI !== undefined && Bun.env.CI !== "false";
 
+// `agent` and `web` are started together below. Letting each claim every
+// reported CPU on a hosted runner starves their real gateway and WASM tests.
+const TEST_PARALLEL = CI ? "--parallel=1" : "--parallel";
+
 type Task = {
   readonly name: string;
   readonly argv: readonly string[];
@@ -95,7 +99,7 @@ const TASKS: readonly Task[] = [
       "--path-ignore-patterns=**/packages/web/**",
       "--path-ignore-patterns=**/packaging.test.ts",
       "--only-failures",
-      "--parallel",
+      TEST_PARALLEL,
       "--no-isolate",
     ],
     tests: true,
@@ -114,7 +118,7 @@ const TASKS: readonly Task[] = [
       "./packages/web",
       "--isolate",
       "--only-failures",
-      "--parallel",
+      TEST_PARALLEL,
     ],
     tests: true,
   },
