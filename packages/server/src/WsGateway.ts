@@ -7,6 +7,8 @@ import { Attachments } from "#core/attachments/Attachments";
 import type { PickerItem } from "#core/picker/PickerItem";
 import { Directories } from "#core/shared/Directories";
 import type { DirectoryListing } from "#core/shared/Directories";
+import { Git, type GitBranch, type GitOutcome } from "#core/shared/Git";
+import { GitMonitor } from "#core/shared/GitMonitor";
 import { ReadCursors } from "#core/session/ReadCursors";
 import type { SessionHost } from "#core/session/SessionHost";
 import type { SessionRegistry } from "#core/session/SessionRegistry";
@@ -56,6 +58,7 @@ type Outcome = {
   readonly models?: readonly ModelView[];
   readonly thinkingLevels?: readonly string[];
   readonly directory?: DirectoryListing;
+  readonly branches?: readonly GitBranch[];
   readonly restored?: readonly string[];
   readonly after?: () => void;
 };
@@ -89,6 +92,8 @@ export class WsGateway {
     ClientConnection
   >();
   private readonly reloader: Reloader;
+  private readonly git = new GitMonitor();
+  private readonly busyRepos = new Set<string>();
   private versionsRead: Promise<readonly [string, string]> | undefined;
   private server: Server<undefined> | undefined;
 
@@ -184,6 +189,8 @@ export class WsGateway {
     }
     this.streams.clear();
     this.opening.clear();
+    this.git.dispose();
+    this.busyRepos.clear();
     this.catalogue.watch(false);
     this.catalogue.clear();
     await this.catalogue.flush();
@@ -270,6 +277,30 @@ export class WsGateway {
         };
       case "list_dirs":
         return { directory: await Directories.list(command.path) };
+      case "refresh_git": {
+        const stream = this.requireStream(connection);
+        await stream.refreshGit(command.fetch === true);
+        return {};
+      }
+      case "list_branches":
+        return {
+          branches: await Git.listBranches(
+            this.requireStream(connection).host.cwd
+          ),
+        };
+      case "checkout": {
+        const stream = this.requireStream(connection);
+        return await this.runGit(stream, true, (cwd) =>
+          Git.checkout(cwd, command.branch)
+        );
+      }
+      case "pull":
+      case "push":
+        return await this.runGit(
+          this.requireStream(connection),
+          command.type === "pull",
+          command.type === "pull" ? Git.pull : Git.push
+        );
       case "unwatch_subagent":
         connection.unwatchSubagent(command.callId);
         return {};
@@ -288,6 +319,7 @@ export class WsGateway {
       case "set_cwd": {
         const stream = this.requireStream(connection);
         const result = await stream.host.setCwd(command.value);
+        stream.syncGit();
         stream.push(stream.sessionState());
         if (!result.ok) {
           return { error: result.error };
@@ -417,6 +449,52 @@ export class WsGateway {
     this.catalogue.watch(this.connections.size > 0);
   }
 
+  /**
+   * An operation that moves the working tree cannot run under an agent that
+   * may be halfway through an edit; `push` leaves the tree alone, so it can.
+   */
+  private async runGit(
+    stream: SessionStream,
+    movesTree: boolean,
+    operation: (cwd: string) => Promise<GitOutcome>
+  ): Promise<Outcome> {
+    const cwd = stream.host.cwd;
+    if (movesTree && this.repoBusy(cwd)) {
+      return {
+        error: `an agent is working in ${cwd}; wait for its turn to end`,
+      };
+    }
+    const result = await this.git.run(cwd, () => operation(cwd));
+    return result.ok ? {} : { error: result.error };
+  }
+
+  private repoBusy(cwd: string): boolean {
+    for (const stream of this.streams.values()) {
+      if (stream.host.cwd === cwd && stream.host.status !== "idle") {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** A turn starting anywhere freezes the branch menu of every session beside it, which only their own state can say. */
+  private syncRepoBusy(cwd: string, source: string): void {
+    const busy = this.repoBusy(cwd);
+    if (this.busyRepos.has(cwd) === busy) {
+      return;
+    }
+    if (busy) {
+      this.busyRepos.add(cwd);
+    } else {
+      this.busyRepos.delete(cwd);
+    }
+    for (const [sessionId, stream] of this.streams) {
+      if (sessionId !== source && stream.host.cwd === cwd) {
+        stream.push(stream.sessionState());
+      }
+    }
+  }
+
   private reload(force: boolean): Outcome {
     const busy = [...this.streams.values()]
       .filter((stream) => stream.host.status !== "idle")
@@ -498,12 +576,16 @@ export class WsGateway {
     if (existing) {
       return existing;
     }
-    const stream = new SessionStream(id, host, path);
+    const stream = new SessionStream(id, host, path, {
+      git: this.git,
+      repoBusy: () => this.repoBusy(host.cwd),
+    });
     stream.start();
     this.catalogue.track(id, host.status);
     stream.subscribe((event) => {
       if (event.type === "session_state") {
         this.catalogue.onStatus(id, event.status);
+        this.syncRepoBusy(stream.host.cwd, id);
       }
     });
     this.streams.set(id, stream);

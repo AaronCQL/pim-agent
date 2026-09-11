@@ -10,6 +10,10 @@ export function Popover(props: {
   readonly anchor: () => HTMLElement;
   /** Cap the panel at the trigger's width instead of the room left on screen. */
   readonly match?: boolean;
+  /** A floor for the panel's width, in px, where the trigger is far narrower than the rows it opens; the viewport still wins. */
+  readonly min?: number;
+  /** Which side of the trigger the panel takes; above it by default, as the composer's chips sit at the foot of the page. */
+  readonly place?: "above" | "below";
   readonly class?: string;
   readonly children: Element;
 }) {
@@ -20,19 +24,29 @@ export function Popover(props: {
 
   const place = (trigger: HTMLElement): void => {
     const rect = trigger.getBoundingClientRect();
+    const width = Math.min(
+      Math.max(rect.width, props.min ?? 0),
+      window.innerWidth - 2 * EDGE
+    );
     const left = Math.max(
       EDGE,
-      Math.min(rect.left, window.innerWidth - EDGE - rect.width)
+      Math.min(rect.left, window.innerWidth - EDGE - width)
     );
+    const below = props.place === "below";
     setPlacement({
       position: "fixed",
-      top: "auto",
+      top: below ? `${rect.bottom + GAP}px` : "auto",
       right: "auto",
       left: `${left}px`,
-      bottom: `${window.innerHeight - rect.top + GAP}px`,
-      "min-width": `${rect.width}px`,
+      bottom: below ? "auto" : `${window.innerHeight - rect.top + GAP}px`,
+      "min-width": `${width}px`,
       "max-width": `${props.match ? rect.width : window.innerWidth - EDGE - left}px`,
-      "max-height": `${Math.max(rect.top - EDGE - GAP, 0)}px`,
+      "max-height": `${Math.max(
+        below
+          ? window.innerHeight - rect.bottom - EDGE - GAP
+          : rect.top - EDGE - GAP,
+        0
+      )}px`,
       margin: "0",
     });
   };

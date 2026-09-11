@@ -415,7 +415,7 @@ test("carries a foreign turn to a client on the poll alone, with no agent event"
   try {
     stream.dispose();
     seen = [];
-    stream = new SessionStream("s1", host(), path, 5);
+    stream = new SessionStream("s1", host(), path, { pollMs: 5 });
     stream.subscribe((event) => {
       seen.push(event);
     });

@@ -4,6 +4,7 @@ import type { PickerItem } from "#core/picker/PickerItem";
 import { rankCommands } from "#core/picker/commandRanker";
 import { RemoteFilePickerSuggestionEngine } from "#core/picker/RemoteFilePickerSuggestionEngine";
 import type { DirectoryListing } from "#core/shared/Directories";
+import type { GitBranch } from "#core/shared/Git";
 import type { AttachmentRef, CommandDraft } from "#protocol/Command";
 import type {
   AttachmentView,
@@ -80,6 +81,8 @@ export type SessionState = {
   agent: SessionStatus;
   /** False while another process holds this session's turn lease. */
   writable: boolean;
+  /** A session in the same directory is mid-turn, so nothing may move the repository under it. */
+  repoBusy: boolean;
   heldBy: LeaseHolder;
   turnElapsedMs: number | undefined;
   contextPercent: number | undefined;
@@ -164,6 +167,7 @@ export class SessionStore {
       cost: 0,
       agent: "idle",
       writable: true,
+      repoBusy: false,
       heldBy: undefined,
       turnElapsedMs: undefined,
       contextPercent: undefined,
@@ -493,6 +497,65 @@ export class SessionStore {
       throw new Error(response.error ?? `could not read ${path}`);
     }
     return response.directory;
+  }
+
+  /** The cwd's branches, in the order the server ranks them. */
+  public async listBranches(): Promise<readonly GitBranch[]> {
+    const response = await this.client.send({
+      type: "list_branches",
+      sessionId: this.attached(),
+    });
+    if (!response.success || !response.branches) {
+      throw new Error(response.error ?? "could not read the branches");
+    }
+    return response.branches;
+  }
+
+  /**
+   * Re-reads the repository for a picture that may have aged — the tab coming
+   * back, a menu opening. `fetch` asks the remote first, which is the only
+   * thing that moves ahead and behind.
+   */
+  public async refreshGit(fetch = false): Promise<void> {
+    const sessionId = this.attached();
+    if (sessionId === "") {
+      return;
+    }
+    await this.client
+      .send({
+        type: "refresh_git",
+        sessionId,
+        fetch,
+      })
+      .catch(() => undefined);
+  }
+
+  public checkout(branch: string): Promise<void> {
+    return this.runGit({
+      type: "checkout",
+      sessionId: this.attached(),
+      branch,
+    });
+  }
+
+  public pull(): Promise<void> {
+    return this.runGit({ type: "pull", sessionId: this.attached() });
+  }
+
+  public push(): Promise<void> {
+    return this.runGit({ type: "push", sessionId: this.attached() });
+  }
+
+  /** Which session a command is about to name: a snapshot, never a dependency of whoever asked. */
+  private attached(): string {
+    return untrack(() => this.state.sessionId);
+  }
+
+  private async runGit(draft: CommandDraft): Promise<void> {
+    const response = await this.client.send(draft);
+    if (!response.success) {
+      throw new Error(response.error ?? "git refused the operation");
+    }
   }
 
   /** Directories this machine has sessions in, recent first, current one left out. */
@@ -838,6 +901,7 @@ export class SessionStore {
           draft.cost = event.cost;
           draft.agent = event.status;
           draft.writable = event.writable;
+          draft.repoBusy = event.repoBusy === true;
           draft.heldBy = event.heldBy;
           draft.turnElapsedMs = event.turnElapsedMs;
           draft.activity[draft.sessionId] = event.status;

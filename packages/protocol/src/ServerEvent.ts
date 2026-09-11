@@ -1,4 +1,5 @@
 import type { DirectoryListing } from "#core/shared/Directories";
+import type { GitBranch } from "#core/shared/Git";
 import type { PickerItem } from "#core/picker/PickerItem";
 import type { LeaseFrontend } from "#core/session/SessionLease";
 import type { UpdateSkip } from "#core/shared/Updater";
@@ -175,6 +176,8 @@ export type EphemeralEvent =
       readonly status: SessionStatus;
       /** False while another process holds this session's turn lease. */
       readonly writable: boolean;
+      /** A session in the same working directory is mid-turn, so nothing may move the repository under it. */
+      readonly repoBusy?: boolean;
       /** Who holds it; absent when nothing does, or when their record is torn. */
       readonly heldBy?: {
         readonly frontend: LeaseFrontend;
@@ -235,6 +238,8 @@ export type ResponseEvent = {
   readonly thinkingLevels?: readonly string[];
   /** One directory's subdirectories, for `list_dirs`. */
   readonly directory?: DirectoryListing;
+  /** The cwd's local branches, for `list_branches`. */
+  readonly branches?: readonly GitBranch[];
   /** For `cancel` and `dequeue`: queued messages pi gave back, now owned by the client that asked. */
   readonly restored?: readonly string[];
 };

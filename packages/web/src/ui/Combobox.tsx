@@ -93,6 +93,10 @@ export type ComboboxItem = {
 
 const ROW = "flex cursor-pointer items-baseline gap-1ch rounded-lg px-2 py-1";
 
+/** The filter box a panel puts above its rows. */
+export const SEARCH =
+  "w-full rounded-lg bg-neutral-900 px-2 py-1 outline-none ring-1 ring-neutral-700 placeholder:text-neutral-500 focus:ring-neutral-600";
+
 function tone(selected: boolean | undefined, active: boolean): string {
   if (selected === false) {
     return active ? "text-neutral-100" : "text-neutral-350";
@@ -109,6 +113,8 @@ export function Combobox(props: {
   readonly onActivate: (index: number) => void;
   readonly anchor: () => HTMLElement;
   readonly match?: boolean;
+  readonly min?: number;
+  readonly place?: "above" | "below";
   /** Omitted where an empty list means no popover at all. */
   readonly emptyLabel?: string;
   readonly header?: Element;
@@ -132,6 +138,8 @@ export function Combobox(props: {
       open={props.open}
       anchor={props.anchor}
       match={props.match ?? false}
+      min={props.min ?? 0}
+      place={props.place}
       class="z-50 flex flex-col rounded-lg bg-neutral-850 p-1 text-sm ring-1 ring-neutral-700"
     >
       {props.header}

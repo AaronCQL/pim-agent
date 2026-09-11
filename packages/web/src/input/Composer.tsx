@@ -9,6 +9,7 @@ import {
 import type { PickerItem } from "#core/picker/PickerItem";
 import { activeToken, applyCompletion, tokenKey } from "#core/picker/token";
 import type { ModelCatalogue, SessionStore } from "../session/SessionStore";
+import { PILL } from "../ui/classes";
 import { Combobox, createComboboxNavigation } from "../ui/Combobox";
 import { createMediaQuery, KEYBOARD } from "../ui/media";
 import { Menu } from "../ui/Menu";
@@ -317,7 +318,7 @@ export function Composer(props: {
             type="button"
             aria-label="Attach files"
             title="Attach files"
-            class="flex size-8 shrink-0 items-center justify-center rounded-full bg-neutral-900 text-neutral-350 ring-neutral-600 hover:text-neutral-100 hover:ring-1"
+            class={`${PILL} size-8 shrink-0`}
             onMouseDown={keepFocus}
             onClick={() => {
               chooser.click();

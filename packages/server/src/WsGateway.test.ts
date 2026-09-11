@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Type } from "typebox";
 
+import { makeRepo } from "#core/shared/fixtures/repo";
 import { SessionRegistry } from "#core/session/SessionRegistry";
 import { Tools, type PimToolDefinition } from "#core/shared/Tools";
 import {
@@ -966,4 +967,38 @@ test("taking the queued message back leaves the turn running", async () => {
   // reader thought better of the rest.
   await idle(probe, mark);
   expect(saidBy(probe)).toEqual(["say hello"]);
+});
+
+test("a working agent freezes the repository its session sits in", async () => {
+  await makeRepo(tmp, ["feat/work"]);
+  const probe = await connect();
+  const sessionId = probe.sessionId!;
+  const mark = probe.events.length;
+  const release = holdTurn();
+  try {
+    await probe.prompt("say hello");
+    await probe.waitFor(
+      (event) => event.type === "session_state" && event.repoBusy === true,
+      { from: mark }
+    );
+
+    const refused = await probe.send({
+      type: "checkout",
+      sessionId,
+      branch: "feat/work",
+    });
+
+    // The model may be halfway through an edit; moving the tree under it would
+    // land half its work on the wrong branch.
+    expect(refused.success).toBe(false);
+    expect(refused.error).toContain("working");
+  } finally {
+    release();
+  }
+  await idle(probe, mark);
+
+  expect(
+    (await probe.send({ type: "checkout", sessionId, branch: "feat/work" }))
+      .success
+  ).toBe(true);
 });

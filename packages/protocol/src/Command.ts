@@ -65,6 +65,32 @@ export type Command =
   | { readonly id: string; readonly type: "list_models" }
   /** Subdirectories of `path` on the server's filesystem; errors rather than answering empty when it is not a readable directory. */
   | { readonly id: string; readonly type: "list_dirs"; readonly path: string }
+  /** Re-read the cwd's git state now; `fetch` asks the remote first, which is the only thing that moves ahead and behind. */
+  | {
+      readonly id: string;
+      readonly type: "refresh_git";
+      readonly sessionId: string;
+      readonly fetch?: boolean;
+    }
+  /** The cwd's local branches, trunk first and the rest by how recently they were worked on. */
+  | {
+      readonly id: string;
+      readonly type: "list_branches";
+      readonly sessionId: string;
+    }
+  /** Refused while any session in the same directory is mid-turn: the agent may be halfway through an edit. */
+  | {
+      readonly id: string;
+      readonly type: "checkout";
+      readonly sessionId: string;
+      readonly branch: string;
+    }
+  /** `pull` is fast-forward only; `push` adopts an upstream the first time a branch is published. */
+  | {
+      readonly id: string;
+      readonly type: "pull" | "push";
+      readonly sessionId: string;
+    }
   /** Read-only view of a subagent's transcript; `callId` is the parent's tool call and `sessionId` must be this connection's session. */
   | {
       readonly id: string;

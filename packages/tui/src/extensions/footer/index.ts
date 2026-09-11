@@ -5,7 +5,8 @@ import type {
   ReadonlyFooterDataProvider,
 } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
-import { Git, type GitState } from "#core/shared/Git";
+import type { GitState } from "#core/shared/Git";
+import { GitMonitor } from "#core/shared/GitMonitor";
 import { renderFooterLine } from "./segments";
 
 let activeGitRefresh: (() => void) | null = null;
@@ -15,8 +16,6 @@ type FooterData = Pick<ReadonlyFooterDataProvider, "onBranchChange">;
 type FooterWidget = Component & { readonly dispose: () => void };
 
 type FooterWidgetDeps = {
-  readonly fetchGitStatus: (cwd: string) => Promise<GitState>;
-  readonly watchGitDir: (cwd: string, onChange: () => void) => () => void;
   readonly renderFooterLine: (
     width: number,
     ctx: ExtensionContext,
@@ -27,8 +26,6 @@ type FooterWidgetDeps = {
 };
 
 const DEFAULT_FOOTER_WIDGET_DEPS: FooterWidgetDeps = {
-  fetchGitStatus: Git.fetchStatus,
-  watchGitDir: Git.watchDir,
   renderFooterLine,
   getTotalCost,
 };
@@ -47,67 +44,46 @@ export function createFooterWidget(
   ctx: ExtensionContext,
   tui: FooterTui,
   footerData: FooterData,
+  monitor: GitMonitor,
   deps: FooterWidgetDeps = DEFAULT_FOOTER_WIDGET_DEPS
 ): FooterWidget {
-  let gitState: GitState = Git.EMPTY;
-  let inFlight = false;
-  let pending = false;
-  const refresh = async (): Promise<void> => {
-    if (inFlight) {
-      pending = true;
-      return;
-    }
-    inFlight = true;
-    try {
-      do {
-        pending = false;
-        const next = await deps.fetchGitStatus(ctx.cwd);
-        if (
-          next.branch !== gitState.branch ||
-          next.dirtyCount !== gitState.dirtyCount ||
-          next.ahead !== gitState.ahead ||
-          next.behind !== gitState.behind
-        ) {
-          gitState = next;
-          tui.requestRender();
-        }
-      } while (pending);
-    } finally {
-      inFlight = false;
-    }
+  const refresh = (): void => {
+    void monitor.refresh(ctx.cwd);
   };
-  void refresh();
-  const unsubBranch = footerData.onBranchChange(() => {
-    void refresh();
+  // The monitor holds the state; a copy here would be a second one to keep.
+  const unwatch = monitor.watch(ctx.cwd, () => {
+    tui.requestRender();
   });
-  const disposeGitWatch = deps.watchGitDir(ctx.cwd, () => {
-    void refresh();
-  });
-  activeGitRefresh = () => {
-    void refresh();
-  };
+  const unsubBranch = footerData.onBranchChange(refresh);
+  activeGitRefresh = refresh;
   return {
     invalidate(): void {},
     render(width: number): string[] {
       return [
-        deps.renderFooterLine(width, ctx, gitState, deps.getTotalCost(ctx)),
+        deps.renderFooterLine(
+          width,
+          ctx,
+          monitor.stateOf(ctx.cwd),
+          deps.getTotalCost(ctx)
+        ),
       ];
     },
     dispose(): void {
       unsubBranch();
-      disposeGitWatch();
+      unwatch();
       activeGitRefresh = null;
     },
   };
 }
 
 export default function (pi: ExtensionAPI): void {
+  const monitor = new GitMonitor();
   pi.on("session_start", (_event, ctx) => {
     if (!ctx.hasUI) {
       return;
     }
     ctx.ui.setFooter((tui, _theme, footerData) =>
-      createFooterWidget(ctx, tui, footerData)
+      createFooterWidget(ctx, tui, footerData, monitor)
     );
   });
 

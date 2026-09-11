@@ -340,6 +340,46 @@ describe("platform wrappers", () => {
     expect(style).toContain("max-width: 300px");
   });
 
+  // The branch chip is a few characters wide and the branches under it are
+  // not, so the panel is given a floor and pulled back inside the edge.
+  test("a floored panel widens past its trigger, and never past the viewport", () => {
+    const host = mountPoint();
+    const trigger = document.createElement("div");
+    trigger.getBoundingClientRect = () =>
+      ({
+        left: 180,
+        top: 8,
+        right: 260,
+        bottom: 48,
+        width: 80,
+        height: 40,
+      }) as DOMRect;
+    host.append(trigger);
+    window.innerHeight = 800;
+
+    window.innerWidth = 360;
+    render(
+      () => (
+        <Popover open anchor={() => trigger} min={300} place="below">
+          rows
+        </Popover>
+      ),
+      host
+    );
+    flush();
+
+    const panel = host.querySelector("[popover]")!;
+    expect(panel.getAttribute("style")).toContain("min-width: 300px");
+    expect(panel.getAttribute("style")).toContain("left: 52px");
+
+    window.innerWidth = 280;
+    window.dispatchEvent(new Event("resize"));
+    flush();
+
+    expect(panel.getAttribute("style")).toContain("min-width: 264px");
+    expect(panel.getAttribute("style")).toContain("left: 8px");
+  });
+
   test("the disclosure caret is the only glyph, and it can carry state", () => {
     const host = mountPoint();
     render(

@@ -5,7 +5,7 @@ import { MessageText } from "#core/session/MessageText";
 import type { LeaseState, SessionHost } from "#core/session/SessionHost";
 import { SessionLease, type LeaseRecord } from "#core/session/SessionLease";
 import { FileWatch } from "#core/shared/FileWatch";
-import { Git, type GitState } from "#core/shared/Git";
+import { GitMonitor } from "#core/shared/GitMonitor";
 import { Tools } from "#core/shared/Tools";
 import type { ToolView } from "#core/view/ViewBlock";
 import type {
@@ -35,7 +35,18 @@ type LiveMessage = {
   readonly tools: LiveTool[];
 };
 
-const GIT_TTL_MS = 5_000;
+export type SessionStreamDeps = {
+  /** How often the file watch falls back to a poll; the default is a second. */
+  readonly pollMs?: number;
+  /** Shared with every other session in the same directory; one is made here when none is given. */
+  readonly git?: GitMonitor;
+  /**
+   * Whether a session in this stream's directory is mid-turn, this one
+   * included. Only the gateway can see the others, so a stream standing alone
+   * reports nothing rather than guessing from itself.
+   */
+  readonly repoBusy?: () => boolean;
+};
 
 function sameLease(a: LeaseState, b: LeaseState): boolean {
   return (
@@ -54,6 +65,8 @@ export class SessionStream {
   private readonly projection: SessionProjection;
   private readonly listeners = new Set<StreamListener>();
   private readonly pollMs: number | undefined;
+  private readonly git: GitMonitor;
+  private readonly repoBusy: (() => boolean) | undefined;
   private liveTurn: LiveMessage[] = [];
   private unsubscribe: (() => void) | undefined;
   private unsubscribeLease: (() => void) | undefined;
@@ -66,22 +79,22 @@ export class SessionStream {
   private sentSeq = 0;
   private liveMessageId = 0;
   private turnStartedAt = 0;
-  private git: GitState = Git.EMPTY;
-  private gitCwd = "";
-  private gitReadAt = 0;
-  private gitInFlight = false;
+  private gitCwd: string | undefined;
+  private gitStop: (() => void) | undefined;
+  private gitBranch: string | null = null;
 
   public constructor(
     sessionId: string,
     host: SessionHost,
     sessionPath: string,
-    /** How often the file watch falls back to a poll; the default is a second. */
-    pollMs?: number
+    deps: SessionStreamDeps = {}
   ) {
     this.sessionId = sessionId;
     this.host = host;
     this.sessionPath = sessionPath;
-    this.pollMs = pollMs;
+    this.pollMs = deps.pollMs;
+    this.git = deps.git ?? new GitMonitor();
+    this.repoBusy = deps.repoBusy;
     this.projection = new SessionProjection(sessionPath, () => host.cwd);
     this.picker = new PickerService({
       cwd: () => host.cwd,
@@ -120,6 +133,7 @@ export class SessionStream {
     if (!active) {
       this.unwatch?.();
       this.unwatch = undefined;
+      this.syncGit();
       return;
     }
     const stops = [
@@ -139,6 +153,37 @@ export class SessionStream {
         stop();
       }
     };
+    this.syncGit();
+  }
+
+  /** Re-points the git watch after the session moves; the monitor is shared, so a repeat is free. */
+  public syncGit(): void {
+    const wanted = this.unwatch === undefined ? undefined : this.host.cwd;
+    if (wanted === this.gitCwd) {
+      return;
+    }
+    this.gitStop?.();
+    this.gitStop = undefined;
+    this.gitCwd = wanted;
+    if (wanted === undefined) {
+      return;
+    }
+    this.gitStop = this.git.watch(wanted, (state) => {
+      // Whoever moved it — this client, the terminal, another window — every
+      // path the pickers hold is from the branch that just left. The first
+      // reading is a discovery rather than a move, and drops nothing.
+      const moved = this.gitBranch !== null && state.branch !== this.gitBranch;
+      this.gitBranch = state.branch;
+      if (moved) {
+        this.invalidatePickers("files");
+      }
+      this.emit(this.sessionState());
+    });
+  }
+
+  /** Reads the repository again for a client that has reason to think its picture is old. */
+  public async refreshGit(fetch: boolean): Promise<void> {
+    await this.git.refresh(this.host.cwd, { fetch });
   }
 
   /** Project whatever pi has appended since the last read, telling every client; returns the head. */
@@ -211,7 +256,8 @@ export class SessionStream {
   public sessionState(): EphemeralEvent {
     const tps = this.host.tps;
     const usage = this.host.usage();
-    const { branch, dirtyCount, ahead, behind } = this.gitState();
+    const cwd = this.host.cwd;
+    const { branch, dirtyCount, ahead, behind } = this.git.stateOf(cwd);
     const modelLabel = this.host.currentModelLabel;
     const turnElapsedMs =
       this.host.status === "idle" || this.turnStartedAt === 0
@@ -219,13 +265,14 @@ export class SessionStream {
         : Date.now() - this.turnStartedAt;
     return {
       type: "session_state",
-      cwd: this.host.cwd,
+      cwd,
       model: this.host.currentModelId ?? "",
       ...(modelLabel === undefined ? {} : { modelLabel }),
       thinking: this.host.currentThinkingLevel,
       cost: this.host.settings.cumulativeCost ?? 0,
       status: this.host.status,
       ...this.leaseState(),
+      ...(this.repoBusy?.() === true ? { repoBusy: true } : {}),
       ...(tps === undefined ? {} : { tps }),
       ...(turnElapsedMs === undefined ? {} : { turnElapsedMs }),
       ...(usage?.percent === null || usage === undefined
@@ -281,37 +328,6 @@ export class SessionStream {
     if (await this.readLease()) {
       this.emit(this.sessionState());
     }
-  }
-
-  private gitState(): GitState {
-    const cwd = this.host.cwd;
-    const moved = cwd !== this.gitCwd;
-    if (moved) {
-      this.gitCwd = cwd;
-      this.git = Git.EMPTY;
-    }
-    if (
-      (moved || Date.now() - this.gitReadAt > GIT_TTL_MS) &&
-      !this.gitInFlight
-    ) {
-      this.gitInFlight = true;
-      void Git.fetchStatus(cwd)
-        .then((next) => {
-          this.gitInFlight = false;
-          this.gitReadAt = Date.now();
-          const changed =
-            next.branch !== this.git.branch ||
-            next.dirtyCount !== this.git.dirtyCount ||
-            next.ahead !== this.git.ahead ||
-            next.behind !== this.git.behind;
-          this.git = next;
-          if (changed) {
-            this.emit(this.sessionState());
-          }
-        })
-        .catch(() => {});
-    }
-    return this.git;
   }
 
   public dispose(): void {

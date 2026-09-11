@@ -1,20 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createFooterWidget, getTotalCost } from "./index";
-import type { GitState } from "#core/shared/Git";
-
-function deferred<T>(): {
-  readonly promise: Promise<T>;
-  readonly resolve: (value: T) => void;
-} {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((r) => {
-    resolve = r;
-  });
-  return { promise, resolve };
-}
+import { Git, type GitState } from "#core/shared/Git";
+import { GitMonitor } from "#core/shared/GitMonitor";
 
 async function flushPromises(): Promise<void> {
+  await Promise.resolve();
   await Promise.resolve();
   await Promise.resolve();
 }
@@ -55,22 +46,22 @@ describe("getTotalCost", () => {
 });
 
 describe("createFooterWidget", () => {
-  test("coalesces git refreshes while one is in flight", async () => {
-    const first = deferred<GitState>();
-    const second = deferred<GitState>();
-    const fetches: Promise<GitState>[] = [];
-    let branchHandler: () => void = () => {};
-    let gitWatchHandler: () => void = () => {};
-    let branchUnsubscribed = false;
-    let gitWatchDisposed = false;
-    let renderRequests = 0;
+  const ctx = {
+    cwd: "/repo",
+    sessionManager: {
+      getEntries: () => [],
+    },
+  } as unknown as ExtensionContext;
 
-    const ctx = {
-      cwd: "/repo",
-      sessionManager: {
-        getEntries: () => [],
-      },
-    } as unknown as ExtensionContext;
+  test("repaints the footer as the repository moves under it", async () => {
+    let branch: GitState = {
+      branch: "main",
+      dirtyCount: 0,
+      ahead: 0,
+      behind: 0,
+    };
+    const monitor = new GitMonitor({ status: () => Promise.resolve(branch) });
+    let renderRequests = 0;
 
     const widget = createFooterWidget(
       ctx,
@@ -79,83 +70,45 @@ describe("createFooterWidget", () => {
           renderRequests++;
         },
       },
+      { onBranchChange: () => () => {} },
+      monitor,
       {
-        onBranchChange: (handler) => {
-          branchHandler = handler;
-          return () => {
-            branchUnsubscribed = true;
-          };
-        },
-      },
-      {
-        fetchGitStatus: () => {
-          const promise = fetches.length === 0 ? first.promise : second.promise;
-          fetches.push(promise);
-          return promise;
-        },
-        watchGitDir: (_cwd, handler) => {
-          gitWatchHandler = handler;
-          return () => {
-            gitWatchDisposed = true;
-          };
-        },
-        renderFooterLine: (_width, _ctx, gitState) => gitState.branch ?? "none",
+        renderFooterLine: (_width, _context, state) => state.branch ?? "none",
         getTotalCost: () => 0,
       }
     );
-
-    expect(fetches).toHaveLength(1);
-
-    branchHandler();
-    gitWatchHandler();
-    expect(fetches).toHaveLength(1);
-
-    first.resolve({ branch: "main", dirtyCount: 0, ahead: 0, behind: 0 });
     await flushPromises();
-    expect(fetches).toHaveLength(2);
 
-    second.resolve({ branch: "next", dirtyCount: 1, ahead: 1, behind: 0 });
-    await flushPromises();
-    expect(fetches).toHaveLength(2);
-    expect(renderRequests).toBe(2);
+    expect(widget.render(80)).toEqual(["main"]);
+    expect(renderRequests).toBe(1);
+
+    branch = { branch: "next", dirtyCount: 1, ahead: 1, behind: 0 };
+    await monitor.refresh("/repo");
+
     expect(widget.render(80)).toEqual(["next"]);
+    expect(renderRequests).toBe(2);
 
     widget.dispose();
-    expect(branchUnsubscribed).toBe(true);
-    expect(gitWatchDisposed).toBe(true);
+    await monitor.refresh("/repo");
+    expect(renderRequests).toBe(2);
   });
 
-  test("requests render only when git state changes", async () => {
-    const refresh = deferred<GitState>();
-    let renderRequests = 0;
-
+  test("drops its branch subscription when disposed", async () => {
+    let unsubscribed = false;
     const widget = createFooterWidget(
+      ctx,
+      { requestRender: () => {} },
       {
-        cwd: "/repo",
-        sessionManager: {
-          getEntries: () => [],
-        },
-      } as unknown as ExtensionContext,
-      {
-        requestRender: () => {
-          renderRequests++;
+        onBranchChange: () => () => {
+          unsubscribed = true;
         },
       },
-      {
-        onBranchChange: () => () => {},
-      },
-      {
-        fetchGitStatus: () => refresh.promise,
-        watchGitDir: () => () => {},
-        renderFooterLine: () => "",
-        getTotalCost: () => 0,
-      }
+      new GitMonitor({ status: () => Promise.resolve(Git.EMPTY) }),
+      { renderFooterLine: () => "", getTotalCost: () => 0 }
     );
-
-    refresh.resolve({ branch: null, dirtyCount: 0, ahead: 0, behind: 0 });
     await flushPromises();
 
-    expect(renderRequests).toBe(0);
     widget.dispose();
+    expect(unsubscribed).toBe(true);
   });
 });
