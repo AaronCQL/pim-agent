@@ -1,10 +1,13 @@
 import { createMemo, createSignal, Show } from "solid-js";
 
+import type { ToolDiffHunk } from "#core/shared/DiffLines";
 import type { ViewBlock } from "#core/view/ViewBlock";
 import type { ChangeStatus, ChangeSummary } from "#protocol/Diff";
+import { createMediaQuery, DESKTOP } from "../ui/media";
 import { Spinner } from "../ui/Spinner";
 import { Blocks } from "../view/Blocks";
 import type { FileState } from "./DiffStore";
+import { SplitDiff } from "./SplitHunk";
 
 const LETTERS = {
   added: "A",
@@ -38,15 +41,22 @@ export function FileRow(props: {
   readonly onExpand: () => void;
 }) {
   const [open, setOpen] = createSignal(false);
+  const desktop = createMediaQuery(DESKTOP);
 
-  const blocks = createMemo<readonly ViewBlock[]>(() => {
+  const hunks = createMemo<readonly ToolDiffHunk[]>(() => {
     const state = props.state;
     return state?.kind === "ready" &&
       !props.file.binary &&
       state.diff.hunks.length > 0
-      ? [{ kind: "diff", path: props.file.path, hunks: state.diff.hunks }]
+      ? state.diff.hunks
       : [];
   });
+
+  const blocks = createMemo<readonly ViewBlock[]>(() =>
+    hunks().length === 0
+      ? []
+      : [{ kind: "diff", path: props.file.path, hunks: hunks() }]
+  );
 
   const toggle = (): void => {
     const next = !open();
@@ -113,7 +123,7 @@ export function FileRow(props: {
           </Show>
           <Show when={props.state?.kind === "ready"}>
             <Show
-              when={blocks().length > 0}
+              when={hunks().length > 0}
               fallback={
                 <p class="text-neutral-500">
                   {props.file.binary ? "binary file" : "no textual changes"}
@@ -121,7 +131,9 @@ export function FileRow(props: {
               }
             >
               <div class="overflow-x-auto">
-                <Blocks blocks={blocks()} />
+                <Show when={desktop()} fallback={<Blocks blocks={blocks()} />}>
+                  <SplitDiff path={props.file.path} hunks={hunks()} />
+                </Show>
               </div>
             </Show>
           </Show>
