@@ -177,3 +177,32 @@ test("a working agent freezes the menu, and says why", async () => {
   expect(store.state.branch).toBe("feat/work");
   expect(notice(host, "rose")).toContain("an agent is still working");
 });
+
+test("the Diff button is a read, so a working agent never disables it", async () => {
+  const host = await open();
+  store.ingest({
+    type: "session_state",
+    writable: true,
+    repoBusy: true,
+    cwd: harness.tmp,
+    model: "test/echo",
+    thinking: "off",
+    cost: 0,
+    status: "thinking",
+    branch: "feat/work",
+    dirtyCount: 3,
+    ahead: 0,
+    behind: 0,
+  });
+  flush();
+
+  const diff = action(host, "Read what has changed");
+  expect(diff.disabled).toBe(false);
+  expect(diff.textContent).toContain("3");
+
+  diff.click();
+  flush();
+
+  // The panel is done once the overlay is up; it would sit on top of it.
+  expect(expanded(host)).toBe(false);
+});

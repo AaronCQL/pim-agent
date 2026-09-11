@@ -1,5 +1,6 @@
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 
+import { DiffOverlay } from "../diff/DiffOverlay";
 import { abbreviateHome, baseName } from "../format";
 import type { SessionStore } from "../session/SessionStore";
 import type { ConnectionStatus } from "../ws/WsClient";
@@ -19,6 +20,7 @@ export function Topbar(props: {
   readonly graceMs?: number;
 }) {
   const [choosing, setChoosing] = createSignal(false);
+  const [reviewing, setReviewing] = createSignal(false);
   const offline = createOffline(
     () => props.store.state.connection,
     () => props.graceMs ?? GRACE_MS
@@ -75,6 +77,9 @@ export function Topbar(props: {
             store={props.store}
             branch={branch()}
             compact={props.compact}
+            onOpenDiff={() => {
+              setReviewing(true);
+            }}
           />
         )}
       </Show>
@@ -86,6 +91,16 @@ export function Topbar(props: {
           setChoosing(false);
         }}
       />
+
+      <Show when={reviewing()}>
+        <DiffOverlay
+          open={true}
+          store={props.store}
+          onClose={() => {
+            setReviewing(false);
+          }}
+        />
+      </Show>
     </div>
   );
 }

@@ -6,6 +6,7 @@ import { RemoteFilePickerSuggestionEngine } from "#core/picker/RemoteFilePickerS
 import type { DirectoryListing } from "#core/shared/Directories";
 import type { GitBranch } from "#core/shared/Git";
 import type { AttachmentRef, CommandDraft } from "#protocol/Command";
+import type { ChangeList, DiffBase, FileDiff } from "#protocol/Diff";
 import type {
   AttachmentView,
   DurableEvent,
@@ -509,6 +510,33 @@ export class SessionStore {
       throw new Error(response.error ?? "could not read the branches");
     }
     return response.branches;
+  }
+
+  /** Every changed file of one diff base, carrying no hunks. */
+  public async listChanges(base: DiffBase): Promise<ChangeList> {
+    const response = await this.client.send({
+      type: "list_changes",
+      sessionId: this.attached(),
+      base,
+    });
+    if (!response.success || !response.changes) {
+      throw new Error(response.error ?? "could not read the changes");
+    }
+    return response.changes;
+  }
+
+  /** One file's hunks, asked for only once a reader expands it. */
+  public async fileDiff(path: string, base: DiffBase): Promise<FileDiff> {
+    const response = await this.client.send({
+      type: "file_diff",
+      sessionId: this.attached(),
+      base,
+      path,
+    });
+    if (!response.success || !response.fileDiff) {
+      throw new Error(response.error ?? `could not diff ${path}`);
+    }
+    return response.fileDiff;
   }
 
   /**

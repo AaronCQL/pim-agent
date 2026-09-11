@@ -78,6 +78,7 @@ export function BranchMenu(props: {
   readonly store: SessionStore;
   readonly branch: string;
   readonly compact: boolean;
+  readonly onOpenDiff: () => void;
 }) {
   const [branches, setBranches] = createSignal<readonly GitBranch[]>([]);
   const [running, setRunning] = createSignal<Operation>();
@@ -276,6 +277,21 @@ export function BranchMenu(props: {
                 title="Publish this branch"
                 disabled={running() !== undefined}
               />
+              <button
+                type="button"
+                class={SYNC}
+                title="Read what has changed"
+                onClick={() => {
+                  panel.close();
+                  props.onOpenDiff();
+                }}
+              >
+                <span class="i-griddy-icons:code-compare size-4 shrink-0" />
+                Diff
+                <Show when={state().dirtyCount > 0}>
+                  <span class="text-amber-400">{state().dirtyCount}</span>
+                </Show>
+              </button>
             </div>
 
             <Show when={state().repoBusy}>
