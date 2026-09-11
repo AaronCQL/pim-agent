@@ -1,10 +1,10 @@
-import ky, { HTTPError, type KyInstance } from "ky";
+import { Errors } from "./Errors";
+import { createKy, type HttpFetch } from "./Http";
+import { Json } from "./Json";
+import { HTTPError, type KyInstance } from "ky";
 import type { RateLimiter } from "./RateLimiter";
 
-export type McpFetch = (
-  input: Parameters<typeof fetch>[0],
-  init?: Parameters<typeof fetch>[1]
-) => ReturnType<typeof fetch>;
+export type McpFetch = HttpFetch;
 
 export type McpClientOptions = {
   readonly endpoint: string;
@@ -55,11 +55,7 @@ export class McpClient {
     this.clientName = options.clientName ?? "pim-agent";
     this.clientVersion = options.clientVersion ?? "0.0.0";
     this.rateLimiter = options.rateLimiter;
-    this.ky = ky.create(
-      options.fetch === undefined
-        ? {}
-        : { fetch: options.fetch as typeof fetch }
-    );
+    this.ky = createKy(options.fetch);
   }
 
   public async callTool(input: CallToolInput): Promise<unknown> {
@@ -176,7 +172,7 @@ export class McpClient {
     const sessionId =
       input.sessionId ?? response.headers.get("mcp-session-id") ?? undefined;
 
-    if (asRecord(envelope.error) !== undefined) {
+    if (Json.asRecord(envelope.error) !== undefined) {
       throw new McpClientError(
         `MCP JSON-RPC error: ${describeRpcError(envelope.error)}`
       );
@@ -221,9 +217,7 @@ export class McpClient {
         },
         rateLimited: false,
       });
-    } catch {
-      // abort already surfaces; cancel is best-effort
-    }
+    } catch {}
   }
 
   private async postJson(
@@ -255,7 +249,7 @@ export class McpClient {
         );
       }
 
-      throw new McpClientError(`MCP request failed: ${describeThrown(error)}`);
+      throw new McpClientError(`MCP request failed: ${Errors.describe(error)}`);
     }
   }
 
@@ -392,18 +386,8 @@ function isStaleSessionError(error: unknown): boolean {
   return error instanceof McpClientError && error.status === 404;
 }
 
-function asRecord(
-  value: unknown
-): Readonly<Record<string, unknown>> | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
-  }
-
-  return value as Readonly<Record<string, unknown>>;
-}
-
 function asRpcResponse(value: unknown): JsonRpcResponse | undefined {
-  const record = asRecord(value);
+  const record = Json.asRecord(value);
 
   if (record === undefined) {
     return undefined;
@@ -425,7 +409,7 @@ function parseJson(text: string): unknown {
 }
 
 function describeRpcError(error: unknown): string {
-  const record = asRecord(error);
+  const record = Json.asRecord(error);
   const message = record?.["message"];
 
   if (typeof message === "string" && message.length > 0) {
@@ -433,14 +417,6 @@ function describeRpcError(error: unknown): string {
   }
 
   return JSON.stringify(error);
-}
-
-function describeThrown(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return String(error);
 }
 
 function stringifyErrorData(data: unknown): string {

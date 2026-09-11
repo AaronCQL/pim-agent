@@ -7,6 +7,7 @@ import { flush } from "solid-js";
 import { PROTOCOL_VERSION } from "#protocol/Protocol";
 import type { ServerEvent, SessionStatus } from "#protocol/ServerEvent";
 import { Shell } from "./App";
+import { baseName } from "./format";
 import { SessionStore } from "./session/SessionStore";
 import { Settings } from "./settings/Settings";
 import { mountPoint } from "./test/dom";
@@ -291,7 +292,7 @@ describe("the shell, painted from events alone", () => {
     expect(host.innerHTML).toContain("i-griddy-icons:code-branch");
     expect(host.textContent).toContain("feat/new-stuff");
     // Dirt is a count, not a flag, and divergence rides along beside it.
-    expect(host.textContent).toContain("●3");
+    expect(host.textContent).toContain("*3");
     expect(host.textContent).toContain("↑2");
     expect(host.textContent).toContain("↓1");
 
@@ -320,7 +321,7 @@ describe("the shell, painted from events alone", () => {
 
     expect(host.innerHTML).not.toContain("code-branch");
     // A clean tree says nothing rather than saying zero.
-    expect(host.textContent).not.toContain("●");
+    expect(host.textContent).not.toContain("*");
   });
 
   /**
@@ -952,8 +953,8 @@ describe("the composer, against a real gateway", () => {
       "the catalogue"
     );
 
-    // Flat, most recent first, cwd on every row — no grouping by directory.
-    expect(list().textContent).toContain(harness.tmp);
+    // Flat, most recent first, the directory on every row — no grouping by it.
+    expect(list().textContent).toContain(baseName(harness.tmp));
     expect(list().querySelectorAll("li").length).toBeGreaterThan(0);
   });
 

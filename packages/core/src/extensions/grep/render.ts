@@ -1,17 +1,16 @@
 import { Format } from "../../shared/Format";
 import { OutputBudget } from "../../shared/OutputBudget";
 import { Paths } from "../../shared/Paths";
+import {
+  NO_MATCHES,
+  type SearchList,
+  SearchRender,
+} from "../../shared/SearchRender";
 import type { ToolView, ViewBlock } from "../../view/ViewBlock";
 import type { GrepLineRange, GrepMatch } from "./grep";
 import type { GrepInput, GrepOutputMode, GrepPathFormat } from "./schema";
 
-const NO_MATCHES = "No matches.";
-
-export type RenderOutcome = {
-  readonly body: string;
-  readonly totalItems: number;
-  readonly visibleItems: number;
-  readonly truncated: boolean;
+export type RenderOutcome = SearchList & {
   readonly fileCount: number;
   readonly totalMatches: number;
   readonly itemNoun: string;
@@ -50,30 +49,13 @@ export function renderMatches(
   );
   const { itemNoun, toLines } = renderers[outputMode];
   const lines = toLines(matches, options);
-
-  if (lines.length === 0) {
-    return {
-      body: NO_MATCHES,
-      totalItems: 0,
-      visibleItems: 0,
-      truncated: false,
-      fileCount: 0,
-      totalMatches: 0,
-      itemNoun,
-    };
-  }
-
-  const headCapped = lines.slice(0, headLimit);
-  const { visible } = OutputBudget.applyByteCap(headCapped);
-  const truncated = visible.length < lines.length;
+  const list = SearchRender.capList(lines, headLimit);
+  const empty = list.totalItems === 0;
 
   return {
-    body: visible.join("\n"),
-    totalItems: lines.length,
-    visibleItems: visible.length,
-    truncated,
-    fileCount: matches.length,
-    totalMatches,
+    ...list,
+    fileCount: empty ? 0 : matches.length,
+    totalMatches: empty ? 0 : totalMatches,
     itemNoun,
   };
 }
@@ -85,20 +67,13 @@ export type TitleOptions = {
   readonly cwd: string;
 };
 
-/** The subject only; the match count trails it as its own muted block. */
 export function formatTitle(options: TitleOptions): string {
-  const pattern = formatPattern(options.pattern);
-  const resolved =
-    options.path === undefined
-      ? undefined
-      : Paths.resolve(options.path, options.cwd);
-  const dir =
-    resolved === undefined || resolved === options.cwd
-      ? undefined
-      : Paths.displayRelative(resolved, options.cwd);
-  const target = joinTarget(dir, options.glob);
-  const location = target ? ` in ${target}` : "";
-  return `${pattern}${location}`;
+  return SearchRender.subjectTitle({
+    subject: formatPattern(options.pattern),
+    path: options.path,
+    suffix: options.glob,
+    cwd: options.cwd,
+  });
 }
 
 export type GrepViewDetails = {
@@ -149,12 +124,6 @@ export function buildView({
   };
 }
 
-/**
- * `files_with_matches` rows are whole paths, so they model as `file` blocks.
- * `content` and `count` pack a path and a per-row payload (`:line:text`,
- * `:count`, plus context markers and `--` separators) into a single line, which
- * no block kind expresses inline, so those keep the pre-rendered text.
- */
 function bodyBlocks(
   body: string,
   outputMode: GrepOutputMode | undefined
@@ -169,16 +138,6 @@ function bodyBlocks(
   return [{ kind: "text", text: body }];
 }
 
-function joinTarget(
-  dir: string | undefined,
-  glob: string | undefined
-): string | undefined {
-  if (glob === undefined) {
-    return dir;
-  }
-  return dir === undefined ? glob : `${dir}/${glob}`;
-}
-
 function formatPattern(pattern: string | undefined): string {
   return pattern === undefined ? "..." : `/${pattern}/`;
 }
@@ -187,7 +146,9 @@ function renderFiles(
   matches: readonly GrepMatch[],
   options: RenderOptions
 ): readonly string[] {
-  return byRecency(matches).map((match) => formatPath(match.filePath, options));
+  return byRecency(matches).map((match) =>
+    SearchRender.formatPath(match.filePath, options)
+  );
 }
 
 function renderContent(
@@ -203,7 +164,7 @@ function renderContent(
   return byRecency(matches).flatMap((match) =>
     match.lines.map(
       (line) =>
-        `${formatPath(match.filePath, options)}:${line.lineNumber}:${OutputBudget.truncateLine(line.text)}`
+        `${SearchRender.formatPath(match.filePath, options)}:${line.lineNumber}:${OutputBudget.truncateLine(line.text)}`
     )
   );
 }
@@ -212,7 +173,7 @@ function renderContextContent(
   match: GrepMatch,
   options: RenderOptions
 ): readonly string[] {
-  const path = formatPath(match.filePath, options);
+  const path = SearchRender.formatPath(match.filePath, options);
   const blocks = contextBlocks(
     match.ranges,
     match.fileLines.length,
@@ -250,10 +211,11 @@ function renderCounts(
       (left, right) =>
         matchCount(right) - matchCount(left) ||
         right.mtime - left.mtime ||
-        comparePaths(left.filePath, right.filePath)
+        Paths.compare(left.filePath, right.filePath)
     )
     .map(
-      (match) => `${formatPath(match.filePath, options)}:${matchCount(match)}`
+      (match) =>
+        `${SearchRender.formatPath(match.filePath, options)}:${matchCount(match)}`
     );
 }
 
@@ -301,25 +263,9 @@ function isMatchLine(
   );
 }
 
-function formatPath(filePath: string, options: RenderOptions): string {
-  return options.pathFormat === "absolute"
-    ? filePath
-    : Paths.displayRelative(filePath, options.cwd);
-}
-
 function byRecency(matches: readonly GrepMatch[]): readonly GrepMatch[] {
   return [...matches].sort(
     (left, right) =>
-      right.mtime - left.mtime || comparePaths(left.filePath, right.filePath)
+      right.mtime - left.mtime || Paths.compare(left.filePath, right.filePath)
   );
-}
-
-function comparePaths(left: string, right: string): number {
-  if (left < right) {
-    return -1;
-  }
-  if (left > right) {
-    return 1;
-  }
-  return 0;
 }

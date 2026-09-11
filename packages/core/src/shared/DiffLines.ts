@@ -28,9 +28,7 @@ export type ToolDiff = {
   readonly hunks: readonly ToolDiffHunk[];
 };
 
-// Logical lines (no trailing empty token) plus an explicit EOF-newline flag.
-// Don't fold the flag back into the array: a raw `split("\n")` would make
-// `joinComparable` emit a phantom blank line on every append.
+// Keep the EOF-newline flag out of `lines`, or `joinComparable` emits a phantom blank line.
 export type ToolDiffSide = {
   readonly lines: readonly string[];
   readonly hasTrailingNewline: boolean;
@@ -64,7 +62,7 @@ function buildToolDiff(
 
 function fromText(text: string): ToolDiffSide {
   if (text.length === 0) {
-    return { lines: [], hasTrailingNewline: false };
+    return emptySide;
   }
 
   const hasTrailingNewline = text.endsWith("\n");
@@ -301,4 +299,6 @@ function partLines(value: string): readonly string[] {
   return lines;
 }
 
-export const DiffLines = { buildToolDiff, fromText };
+const emptySide: ToolDiffSide = { lines: [], hasTrailingNewline: false };
+
+export const DiffLines = { buildToolDiff, fromText, emptySide };

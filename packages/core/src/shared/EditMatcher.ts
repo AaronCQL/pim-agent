@@ -37,9 +37,16 @@ type Candidate = {
   readonly text: string;
 };
 
+type MatchInput = {
+  readonly content: string;
+  readonly oldString: string;
+  readonly contentLines: readonly OffsetLine[];
+  readonly searchLines: readonly string[];
+};
+
 type Strategy = {
   readonly name: EditMatchStrategy;
-  readonly find: (content: string, oldString: string) => readonly Candidate[];
+  readonly find: (input: MatchInput) => readonly Candidate[];
 };
 
 function resolve(
@@ -52,9 +59,21 @@ function resolve(
   }
 
   let foundAmbiguous = false;
+  let contentLines: readonly OffsetLine[] | undefined;
+  let searchLines: readonly string[] | undefined;
+  const input: MatchInput = {
+    content,
+    oldString,
+    get contentLines() {
+      return (contentLines ??= offsetLines(content));
+    },
+    get searchLines() {
+      return (searchLines ??= logicalLines(oldString));
+    },
+  };
 
   for (const strategy of strategies) {
-    const candidates = dedupeCandidates(strategy.find(content, oldString));
+    const candidates = dedupeCandidates(strategy.find(input));
 
     if (candidates.length === 0) {
       continue;
@@ -150,12 +169,27 @@ function findClosestRegions(
     return [];
   }
 
-  for (let index = 0; index <= contentLines.length - windowSize; index += 1) {
-    const window = contentLines.slice(index, index + windowSize);
+  const cache = new Map<string, number>();
+  const similarityOf = (left: string, right: string): number => {
+    const key = `${left}\u0000${right}`;
+    let cached = cache.get(key);
+
+    if (cached === undefined) {
+      cached = lineSimilarity(left, right);
+      cache.set(key, cached);
+    }
+
+    return cached;
+  };
+
+  for (let index = 0; index + windowSize <= contentLines.length; index += 1) {
     let total = 0;
 
     for (let offset = 0; offset < windowSize; offset += 1) {
-      total += lineSimilarity(searchLines[offset] ?? "", window[offset] ?? "");
+      total += similarityOf(
+        searchLines[offset] ?? "",
+        contentLines[index + offset] ?? ""
+      );
     }
 
     const similarity = total / windowSize;
@@ -165,7 +199,7 @@ function findClosestRegions(
         startLine: index + 1,
         endLine: index + windowSize,
         similarity,
-        text: window.join("\n"),
+        text: contentLines.slice(index, index + windowSize).join("\n"),
       });
     }
   }
@@ -215,52 +249,109 @@ class MultipleMatchesError extends Error {
   }
 }
 
-function simple(content: string, oldString: string): readonly Candidate[] {
-  return findAll(content, oldString);
-}
-
-function lineTrimmed(content: string, oldString: string): readonly Candidate[] {
-  const contentLines = offsetLines(content);
-  const searchLines = logicalLines(oldString);
+function windowCandidates(
+  input: MatchInput,
+  windowSize: number,
+  normalize: (text: string) => string,
+  normalizedFind: string
+): readonly Candidate[] {
+  const { content, contentLines } = input;
   const candidates: Candidate[] = [];
 
-  for (
-    let index = 0;
-    index <= contentLines.length - searchLines.length;
-    index += 1
-  ) {
-    const block = contentLines.slice(index, index + searchLines.length);
-
+  for (let index = 0; index + windowSize <= contentLines.length; index += 1) {
     if (
-      block.every(
-        (line, offset) =>
-          line.text.trim() === (searchLines[offset] ?? "").trim()
-      )
+      normalize(windowText(contentLines, index, windowSize)) === normalizedFind
     ) {
-      candidates.push(candidateFromLines(content, block));
+      candidates.push(candidateAt(content, contentLines, index, windowSize));
     }
   }
 
   return candidates;
 }
 
-function whitespaceNormalized(
-  content: string,
-  oldString: string
+function anchoredCandidates(
+  input: MatchInput,
+  accept: (start: number) => boolean
 ): readonly Candidate[] {
-  const normalize = (text: string) => text.replace(/\s+/gu, " ").trim();
-  const normalizedFind = normalize(oldString);
-  const lines = offsetLines(content);
-  const searchLines = logicalLines(oldString);
-  const candidates: Candidate[] = [];
-  const flexiblePattern = oldString
-    .trim()
-    .split(/\s+/u)
-    .map((word) => escapeRegex(word))
-    .join("\\s+");
+  const { content, contentLines, searchLines } = input;
 
-  for (const line of lines) {
-    if (normalize(line.text) === normalizedFind) {
+  if (searchLines.length < 3) {
+    return [];
+  }
+
+  const first = searchLines[0]?.trim() ?? "";
+  const last = searchLines.at(-1)?.trim() ?? "";
+  const candidates: Candidate[] = [];
+
+  for (
+    let index = 0;
+    index + searchLines.length <= contentLines.length;
+    index += 1
+  ) {
+    const endIndex = index + searchLines.length - 1;
+
+    if (
+      contentLines[index]?.text.trim() !== first ||
+      contentLines[endIndex]?.text.trim() !== last
+    ) {
+      continue;
+    }
+
+    if (accept(index)) {
+      candidates.push(
+        candidateAt(content, contentLines, index, searchLines.length)
+      );
+    }
+  }
+
+  return candidates;
+}
+
+function removeIndentation(text: string): string {
+  const lines = text.split("\n");
+  const nonEmpty = lines.filter((line) => line.trim().length > 0);
+
+  if (nonEmpty.length === 0) {
+    return text;
+  }
+
+  const minIndent = Math.min(
+    ...nonEmpty.map((line) => line.match(/^(\s*)/u)?.[1]?.length ?? 0)
+  );
+
+  return lines
+    .map((line) => (line.trim().length === 0 ? line : line.slice(minIndent)))
+    .join("\n");
+}
+
+const trimLines = (text: string): string =>
+  text
+    .split("\n")
+    .map((line) => line.trim())
+    .join("\n");
+
+const collapseWhitespace = (text: string): string =>
+  text.replace(/\s+/gu, " ").trim();
+
+function lineTrimmed(input: MatchInput): readonly Candidate[] {
+  return windowCandidates(
+    input,
+    input.searchLines.length,
+    trimLines,
+    input.searchLines.map((line) => line.trim()).join("\n")
+  );
+}
+
+function whitespaceNormalized(input: MatchInput): readonly Candidate[] {
+  const { content, oldString, contentLines, searchLines } = input;
+  const normalizedFind = collapseWhitespace(oldString);
+  const candidates: Candidate[] = [];
+  let flexible: RegExp | undefined;
+
+  for (const line of contentLines) {
+    const normalizedLine = collapseWhitespace(line.text);
+
+    if (normalizedLine === normalizedFind) {
       candidates.push({
         range: [line.start, line.end],
         text: content.slice(line.start, line.end),
@@ -268,10 +359,17 @@ function whitespaceNormalized(
       continue;
     }
 
-    if (normalize(line.text).includes(normalizedFind)) {
-      const regex = new RegExp(flexiblePattern, "gu");
+    if (normalizedLine.includes(normalizedFind)) {
+      flexible ??= new RegExp(
+        oldString
+          .trim()
+          .split(/\s+/u)
+          .map((word) => escapeRegex(word))
+          .join("\\s+"),
+        "gu"
+      );
 
-      for (const match of line.text.matchAll(regex)) {
+      for (const match of line.text.matchAll(flexible)) {
         if (match.index === undefined) {
           continue;
         }
@@ -285,117 +383,65 @@ function whitespaceNormalized(
   }
 
   if (searchLines.length > 1) {
-    for (
-      let index = 0;
-      index <= lines.length - searchLines.length;
-      index += 1
-    ) {
-      const block = lines.slice(index, index + searchLines.length);
-      const text = block.map((line) => line.text).join("\n");
-
-      if (normalize(text) === normalizedFind) {
-        candidates.push(candidateFromLines(content, block));
-      }
-    }
-  }
-
-  return candidates;
-}
-
-function indentationFlexible(
-  content: string,
-  oldString: string
-): readonly Candidate[] {
-  const removeIndentation = (text: string): string => {
-    const lines = text.split("\n");
-    const nonEmpty = lines.filter((line) => line.trim().length > 0);
-
-    if (nonEmpty.length === 0) {
-      return text;
-    }
-
-    const minIndent = Math.min(
-      ...nonEmpty.map((line) => line.match(/^(\s*)/u)?.[1]?.length ?? 0)
+    candidates.push(
+      ...windowCandidates(
+        input,
+        searchLines.length,
+        collapseWhitespace,
+        normalizedFind
+      )
     );
-
-    return lines
-      .map((line) => (line.trim().length === 0 ? line : line.slice(minIndent)))
-      .join("\n");
-  };
-
-  const normalizedFind = removeIndentation(oldString);
-  const lines = offsetLines(content);
-  const searchLines = logicalLines(oldString);
-  const candidates: Candidate[] = [];
-
-  for (let index = 0; index <= lines.length - searchLines.length; index += 1) {
-    const block = lines.slice(index, index + searchLines.length);
-    const text = block.map((line) => line.text).join("\n");
-
-    if (removeIndentation(text) === normalizedFind) {
-      candidates.push(candidateFromLines(content, block));
-    }
   }
 
   return candidates;
 }
 
-function escapeNormalized(
-  content: string,
-  oldString: string
-): readonly Candidate[] {
-  const unescaped = unescapeString(oldString);
-  const candidates: Candidate[] = [];
-  candidates.push(...findAll(content, unescaped));
-
-  const lines = offsetLines(content);
-  const searchLines = logicalLines(unescaped);
-
-  for (let index = 0; index <= lines.length - searchLines.length; index += 1) {
-    const block = lines.slice(index, index + searchLines.length);
-    const text = block.map((line) => line.text).join("\n");
-
-    if (unescapeString(text) === unescaped) {
-      candidates.push(candidateFromLines(content, block));
-    }
-  }
-
-  return candidates;
+function indentationFlexible(input: MatchInput): readonly Candidate[] {
+  return windowCandidates(
+    input,
+    input.searchLines.length,
+    removeIndentation,
+    removeIndentation(input.oldString)
+  );
 }
 
-function trimmedBoundary(
-  content: string,
-  oldString: string
-): readonly Candidate[] {
-  const trimmed = oldString.trim();
+function escapeNormalized(input: MatchInput): readonly Candidate[] {
+  const unescaped = unescapeString(input.oldString);
 
-  if (trimmed === oldString || trimmed.length === 0) {
+  return [
+    ...findAll(input.content, unescaped),
+    ...windowCandidates(
+      input,
+      logicalLines(unescaped).length,
+      unescapeString,
+      unescaped
+    ),
+  ];
+}
+
+function trimmedBoundary(input: MatchInput): readonly Candidate[] {
+  const trimmed = input.oldString.trim();
+
+  if (trimmed === input.oldString || trimmed.length === 0) {
     return [];
   }
 
-  const candidates = [...findAll(content, trimmed)];
-  const lines = offsetLines(content);
-  const searchLines = logicalLines(oldString);
-
-  for (let index = 0; index <= lines.length - searchLines.length; index += 1) {
-    const block = lines.slice(index, index + searchLines.length);
-    const text = block.map((line) => line.text).join("\n");
-
-    if (text.trim() === trimmed) {
-      candidates.push(candidateFromLines(content, block));
-    }
-  }
-
-  return candidates;
+  return [
+    ...findAll(input.content, trimmed),
+    ...windowCandidates(
+      input,
+      input.searchLines.length,
+      (text) => text.trim(),
+      trimmed
+    ),
+  ];
 }
 
-function unicodeNormalized(
-  content: string,
-  oldString: string
-): readonly Candidate[] {
-  // Substitutions in normalizeUnicode must be 1:1 by UTF-16 code unit so offsets in
-  // normalizedContent index into the original content. Adding multi-codepoint mappings
-  // (e.g. `…` → `...`) here would silently corrupt range math.
+function unicodeNormalized({
+  content,
+  oldString,
+}: MatchInput): readonly Candidate[] {
+  // normalizeUnicode substitutions must stay 1:1 by UTF-16 code unit, or offsets desync.
   const normalizedContent = normalizeUnicode(content);
   const normalizedOld = normalizeUnicode(oldString);
   const candidates: Candidate[] = [];
@@ -416,78 +462,35 @@ function unicodeNormalized(
   return candidates;
 }
 
-function blockAnchor(content: string, oldString: string): readonly Candidate[] {
-  const lines = offsetLines(content);
-  const searchLines = logicalLines(oldString);
+function blockAnchor(input: MatchInput): readonly Candidate[] {
+  const { contentLines, searchLines } = input;
+  const middleCount = Math.max(1, searchLines.length - 2);
 
-  if (searchLines.length < 3) {
-    return [];
-  }
-
-  const first = searchLines[0]?.trim() ?? "";
-  const last = searchLines.at(-1)?.trim() ?? "";
-  const candidates: Candidate[] = [];
-
-  for (let index = 0; index <= lines.length - searchLines.length; index += 1) {
-    const endIndex = index + searchLines.length - 1;
-
-    if (
-      lines[index]?.text.trim() !== first ||
-      lines[endIndex]?.text.trim() !== last
-    ) {
-      continue;
-    }
-
-    const block = lines.slice(index, endIndex + 1);
-    const middleCount = Math.max(1, searchLines.length - 2);
+  return anchoredCandidates(input, (start) => {
     let similarity = 0;
 
     for (let offset = 1; offset < searchLines.length - 1; offset += 1) {
       similarity +=
-        lineSimilarity(searchLines[offset] ?? "", block[offset]?.text ?? "") /
-        middleCount;
+        lineSimilarity(
+          searchLines[offset] ?? "",
+          contentLines[start + offset]?.text ?? ""
+        ) / middleCount;
     }
 
-    // 0.3 floor filters anchor coincidence on unrelated blocks that happen to share first/last line text.
-    if (similarity >= 0.3) {
-      candidates.push(candidateFromLines(content, block));
-    }
-  }
-
-  return candidates;
+    // 0.3 floor filters anchor coincidence on unrelated blocks sharing first/last line text.
+    return similarity >= 0.3;
+  });
 }
 
-function contextAware(
-  content: string,
-  oldString: string
-): readonly Candidate[] {
-  const lines = offsetLines(content);
-  const searchLines = logicalLines(oldString);
+function contextAware(input: MatchInput): readonly Candidate[] {
+  const { contentLines, searchLines } = input;
 
-  if (searchLines.length < 3) {
-    return [];
-  }
-
-  const first = searchLines[0]?.trim() ?? "";
-  const last = searchLines.at(-1)?.trim() ?? "";
-  const candidates: Candidate[] = [];
-
-  for (let index = 0; index <= lines.length - searchLines.length; index += 1) {
-    const endIndex = index + searchLines.length - 1;
-
-    if (
-      lines[index]?.text.trim() !== first ||
-      lines[endIndex]?.text.trim() !== last
-    ) {
-      continue;
-    }
-
-    const block = lines.slice(index, endIndex + 1);
+  return anchoredCandidates(input, (start) => {
     let matching = 0;
     let total = 0;
 
     for (let offset = 1; offset < searchLines.length - 1; offset += 1) {
-      const actual = block[offset]?.text.trim() ?? "";
+      const actual = contentLines[start + offset]?.text.trim() ?? "";
       const expected = searchLines[offset]?.trim() ?? "";
 
       if (actual.length > 0 || expected.length > 0) {
@@ -498,16 +501,15 @@ function contextAware(
       }
     }
 
-    if (total === 0 || matching / total >= 0.5) {
-      candidates.push(candidateFromLines(content, block));
-    }
-  }
-
-  return candidates;
+    return total === 0 || matching / total >= 0.5;
+  });
 }
 
 const strategies: readonly Strategy[] = [
-  { name: "simple", find: simple },
+  {
+    name: "simple",
+    find: ({ content, oldString }) => findAll(content, oldString),
+  },
   { name: "lineTrimmed", find: lineTrimmed },
   { name: "whitespaceNormalized", find: whitespaceNormalized },
   { name: "indentationFlexible", find: indentationFlexible },
@@ -542,12 +544,31 @@ function findAll(content: string, search: string): readonly Candidate[] {
   }
 }
 
-function candidateFromLines(
+function windowText(
+  lines: readonly OffsetLine[],
+  start: number,
+  size: number
+): string {
+  let text = "";
+
+  for (let offset = 0; offset < size; offset += 1) {
+    if (offset > 0) {
+      text += "\n";
+    }
+    text += lines[start + offset]?.text ?? "";
+  }
+
+  return text;
+}
+
+function candidateAt(
   content: string,
-  lines: readonly OffsetLine[]
+  lines: readonly OffsetLine[],
+  start: number,
+  size: number
 ): Candidate {
-  const first = lines[0];
-  const last = lines.at(-1);
+  const first = lines[start];
+  const last = lines[start + size - 1];
 
   if (first === undefined || last === undefined) {
     return { range: [0, 0], text: "" };

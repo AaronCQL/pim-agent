@@ -1,3 +1,6 @@
+import { HTTPError, TimeoutError } from "ky";
+import { Errors } from "../../../shared/Errors";
+
 export type SearchResult = {
   readonly title: string;
   readonly url: string;
@@ -15,11 +18,7 @@ export type SearchProvider = {
   search(input: ProviderSearchInput): Promise<readonly SearchResult[]>;
 };
 
-/**
- * A provider refused the call because its quota or rate limit is exhausted.
- * Distinct from a generic failure: the chain fails over on any error, but only
- * a quota error opens the circuit breaker and sidelines the provider.
- */
+/** Quota or rate limit exhausted; only this error opens the breaker and sidelines a provider. */
 export class ProviderQuotaError extends Error {
   public readonly provider: string;
   public readonly retryAfterMs: number | undefined;
@@ -44,11 +43,7 @@ export class ProviderSearchError extends Error {
 
 const MAX_SNIPPET_LENGTH = 500;
 
-/**
- * Providers disagree wildly on snippet size: Firecrawl returns whole scraped
- * pages in `description`, DuckDuckGo returns two lines. Normalize so a
- * fallback does not blow up the context window relative to the primary.
- */
+/** Caps a provider snippet; Firecrawl returns whole scraped pages where others return two lines. */
 export function normalizeSnippet(value: string | undefined): string {
   const collapsed = (value ?? "").replaceAll(/\s+/gu, " ").trim();
 
@@ -73,6 +68,51 @@ export function parseRetryAfterMs(value: string | null): number | undefined {
   return Number.isNaN(date) ? undefined : Math.max(0, date - Date.now());
 }
 
-export function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === "AbortError";
+export type ProviderErrorInput = {
+  readonly provider: string;
+  readonly subject: string;
+  readonly error: unknown;
+  readonly signal?: AbortSignal;
+  readonly timeoutMs: number;
+  readonly quotaStatuses: readonly number[];
+  readonly quotaMessage: string;
+  readonly readRetryAfterMs?: (data: unknown) => number | undefined;
+};
+
+export function mapProviderError(input: ProviderErrorInput): unknown {
+  const { provider, subject, error } = input;
+
+  if (input.signal?.aborted || Errors.isAbort(error)) {
+    return error;
+  }
+
+  if (error instanceof HTTPError) {
+    const { status, headers } = error.response;
+
+    if (input.quotaStatuses.includes(status)) {
+      return new ProviderQuotaError(
+        provider,
+        input.quotaMessage,
+        input.readRetryAfterMs?.(error.data) ??
+          parseRetryAfterMs(headers.get("retry-after"))
+      );
+    }
+
+    return new ProviderSearchError(
+      provider,
+      `${subject} failed with HTTP ${status}.`
+    );
+  }
+
+  if (error instanceof TimeoutError) {
+    return new ProviderSearchError(
+      provider,
+      `${subject} timed out after ${input.timeoutMs}ms.`
+    );
+  }
+
+  return new ProviderSearchError(
+    provider,
+    `${subject} failed: ${Errors.describe(error)}`
+  );
 }

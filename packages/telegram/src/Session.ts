@@ -54,11 +54,7 @@ function stamp(): string {
   return new Date().toISOString().replace(/[:.]/g, "-");
 }
 
-/**
- * Telegram's adapter over the frontend-agnostic `SessionHost`: chat-scoped
- * identity, the bot's own tools and system instruction, and the two settings
- * (log verbosity, temporary mode) that only make sense in a chat.
- */
+/** Telegram's chat-scoped adapter over the frontend-agnostic `SessionHost`. */
 export class Session {
   public readonly id: SessionId;
   private readonly deps: SessionDeps;
@@ -109,7 +105,6 @@ export class Session {
     this.host.lastUsed = value;
   }
 
-  /** Where this session's tools resolve relative paths, session override first. */
   public get cwd(): string {
     return this.host.cwd;
   }
@@ -118,15 +113,15 @@ export class Session {
     return this.host.isStreaming;
   }
 
-  public get agentSession(): AgentSession | undefined {
-    return this.host.agentSession;
+  public usage(): ReturnType<SessionHost["usage"]> {
+    return this.host.usage();
   }
 
-  /**
-   * Pi's session UUID once an agent exists. The registry's chat-keyed map plus
-   * this is the adapter-local `chatId → sessionId` mapping; pi's UUID stays the
-   * only session identity anything else sees.
-   */
+  public sessionCost(): number | undefined {
+    return this.host.sessionCost();
+  }
+
+  /** Pi's session UUID, once an agent exists. */
   public get sessionId(): string | undefined {
     return this.host.sessionId;
   }

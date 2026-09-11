@@ -83,4 +83,4 @@ The `axis` value is the `tag` field in `task.json`, so `--tag multifile` runs ju
 
 Add a task by creating a new `tasks/<id>/` with the same three parts. Keep the instruction precise enough that `before` + instruction determines `after` exactly, so exact-match scoring stays valid.
 
-The benchmark TypeScript is typechecked via its own tsconfig: `bunx tsgo --noEmit -p benchmarks/edit`.
+The benchmark TypeScript is typechecked via its own tsconfig: `bun run tsc --noEmit -p benchmarks/edit`.

@@ -16,29 +16,28 @@ const isAbsoluteQuery = (query: string): boolean =>
   query.startsWith("/") || query.startsWith("~");
 const GLOBAL_FUZZY_QUERY_MIN_LENGTH = 3;
 
-let cachedIndex:
-  | {
-      readonly source: readonly FileCandidate[];
-      readonly index: RelativeRankingIndex;
-    }
-  | undefined;
+const cachedIndexes = new WeakMap<
+  readonly FileCandidate[],
+  RelativeRankingIndex
+>();
 
 const indexFor = (
   candidates: readonly FileCandidate[]
 ): RelativeRankingIndex => {
-  if (cachedIndex?.source === candidates) {
-    return cachedIndex.index;
+  const cached = cachedIndexes.get(candidates);
+  if (cached !== undefined) {
+    return cached;
   }
 
   const index = new RelativeRankingIndex(candidates);
-  cachedIndex = { source: candidates, index };
+  cachedIndexes.set(candidates, index);
   return index;
 };
 
 type LoweredCandidate = {
   readonly candidate: FileCandidate;
-  readonly nameLower: string;
   readonly haystackLower: string;
+  readonly nameStart: number;
 };
 
 class RelativeRankingIndex {
@@ -61,8 +60,8 @@ class RelativeRankingIndex {
 
       lowered.push({
         candidate,
-        nameLower: basename(candidate.insertPath).toLocaleLowerCase(),
         haystackLower: candidate.matchHaystack.toLocaleLowerCase(),
+        nameStart: slash + 1,
       });
     }
 
@@ -72,9 +71,12 @@ class RelativeRankingIndex {
   public rank(query: string, limit: number | undefined): PickerItem[] {
     const scoped = this.scopedCandidates(query);
     if (scoped !== undefined) {
-      return rankCandidates(scoped.candidates, scoped.residualQuery, limit, {
-        index: () => this.indexForScope(scoped.directory, scoped.candidates),
-      });
+      return rankCandidates(
+        scoped.candidates,
+        scoped.residualQuery,
+        limit,
+        () => this.indexForScope(scoped.directory, scoped.candidates)
+      );
     }
 
     const literalHits = this.literalRank(query, limit);
@@ -82,9 +84,9 @@ class RelativeRankingIndex {
       return literalHits;
     }
 
-    return rankCandidates(this.source, query, limit, {
-      index: () => this.indexForGlobal(),
-    });
+    return rankCandidates(this.source, query, limit, () =>
+      this.indexForGlobal()
+    );
   }
 
   private scopedCandidates(query: string):
@@ -149,16 +151,20 @@ class RelativeRankingIndex {
     const substringHits: FileCandidate[] = [];
     const limitSize = limit ?? Infinity;
 
-    for (const { candidate, nameLower, haystackLower } of this.loweredSource) {
-      if (nameLower.startsWith(needle) || haystackLower.startsWith(needle)) {
+    for (const { candidate, haystackLower, nameStart } of this.loweredSource) {
+      if (
+        haystackLower.startsWith(needle) ||
+        haystackLower.startsWith(needle, nameStart)
+      ) {
         prefixHits.push(candidate);
-      } else if (nameLower.includes(needle) || haystackLower.includes(needle)) {
+      } else if (
+        substringHits.length < limitSize &&
+        haystackLower.includes(needle)
+      ) {
         substringHits.push(candidate);
       }
 
-      // Prefix hits always outrank substring hits, so we can stop only once we
-      // have enough prefixes to fill the limit; otherwise a late-sorting prefix
-      // could be dropped for an earlier substring match.
+      // Only prefix hits may end the scan early: a late prefix must not lose to an earlier substring.
       if (prefixHits.length >= limitSize) {
         break;
       }
@@ -199,21 +205,16 @@ export async function rank(
   return indexFor(options.cachedRelative).rank(query, options.limit);
 }
 
-type RankCandidatesOptions = {
-  readonly index?: () => FuzzyIndex<FileCandidate>;
-};
-
 const rankCandidates = (
   candidates: readonly FileCandidate[],
   query: string,
   limit: number | undefined,
-  options: RankCandidatesOptions = {}
+  index: () => FuzzyIndex<FileCandidate> = () => prepareIndex(candidates)
 ): PickerItem[] => {
   if (query.trim().length === 0) {
     return candidates.slice(0, limit).map((candidate) => toItem(candidate));
   }
 
-  const index = options.index ?? (() => prepareIndex(candidates));
   const hits = index().find(query, { limit });
   return hits.map((hit) => toItem(hit.item));
 };

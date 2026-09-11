@@ -14,10 +14,7 @@ export type FormatChecklistOptions = {
   readonly activeOnly?: boolean;
 };
 
-// Identity key for the per-session state slot. Extracted from ExtensionContext
-// because ReadonlySessionManager isn't on the package's public entry point.
-// Only identity is used (no methods called) — WeakMap reclaims the slot when
-// the session is disposed.
+/** Identity key for the per-session state slot. */
 export type TodoSessionKey = ExtensionContext["sessionManager"];
 
 const itemsBySession = new WeakMap<TodoSessionKey, TodoItem[]>();
@@ -117,7 +114,7 @@ function isActive(item: TodoItem): boolean {
   return item.status === "pending" || item.status === "in_progress";
 }
 
-function normalizeContent(content: string): string {
+export function normalizeContent(content: string): string {
   return content.trim().replaceAll(/\s+/g, " ");
 }
 

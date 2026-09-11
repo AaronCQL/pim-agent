@@ -1,6 +1,6 @@
+import { Errors } from "../../shared/Errors";
 import type { SearchBreaker } from "./SearchBreaker";
 import {
-  isAbortError,
   ProviderQuotaError,
   type ProviderSearchInput,
   type SearchProvider,
@@ -18,15 +18,7 @@ export type SearchChainOptions = {
   readonly breaker: SearchBreaker;
 };
 
-/**
- * Tries providers in order until one answers.
- *
- * Two rules make this safe to run against metered free tiers:
- * an empty result set is a legitimate answer and terminates the chain (a query
- * with genuinely no hits must not burn every provider's quota), and a quota
- * rejection additionally sidelines the provider via the breaker so later
- * searches skip it outright.
- */
+/** Tries providers in order until one answers; an empty result set is an answer and ends the chain. */
 export class SearchChain {
   private readonly providers: readonly SearchProvider[];
   private readonly breaker: SearchBreaker;
@@ -56,7 +48,7 @@ export class SearchChain {
 
         return { provider: provider.name, results, fellBack: attempted };
       } catch (error) {
-        if (input.signal?.aborted || isAbortError(error)) {
+        if (input.signal?.aborted || Errors.isAbort(error)) {
           throw error;
         }
 
@@ -72,7 +64,7 @@ export class SearchChain {
           });
         }
 
-        failures.push(`${provider.name}: ${describeError(error)}`);
+        failures.push(`${provider.name}: ${Errors.describe(error)}`);
       }
     }
 
@@ -82,8 +74,4 @@ export class SearchChain {
         .join("\n")}`
     );
   }
-}
-
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

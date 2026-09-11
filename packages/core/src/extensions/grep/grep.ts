@@ -1,6 +1,8 @@
 import { FileScanner, type FileScanOptions } from "../../shared/FileScanner";
 import { FsErrors } from "../../shared/FsErrors";
 import { Lines } from "../../shared/Lines";
+import { Paths } from "../../shared/Paths";
+import { Pool } from "../../shared/Pool";
 
 const MATCH_CONCURRENCY = 16;
 
@@ -25,20 +27,15 @@ export type GrepMatch = {
 export type GrepMatcher = {
   readonly regex: RegExp;
   readonly matchAcrossLines: boolean;
-  /**
-   * Raw-byte needle for the literal fast path: present only when the pattern is
-   * a pure literal, case-sensitive, and single-line, so `matchFile` can reject a
-   * non-matching file with `Buffer.indexOf` before decoding it. Undefined
-   * otherwise, in which case the regex path runs unchanged.
-   */
+  /** Raw-byte needle for the literal fast path; undefined leaves the regex path unchanged. */
   readonly literal: Buffer | undefined;
 };
 
-export type GrepScanOptions = FileScanOptions;
+export type GrepScanOptions = FileScanOptions & {
+  readonly retainFileLines?: boolean;
+};
 
-// Characters that stand for themselves in both a default-flag regex and raw
-// UTF-8 bytes (all ASCII, so they never alias a multibyte sequence). A pattern
-// made only of these is a literal we can scan on bytes.
+// ASCII-only: these stand for themselves in both a default-flag regex and raw UTF-8 bytes.
 const PURE_LITERAL = /^[A-Za-z0-9_ \-/]+$/;
 
 function literalNeedle(
@@ -89,51 +86,31 @@ export async function findMatches(
   const files = metadata.isFile()
     ? [path]
     : (await FileScanner.scan(path, glob ?? "**/*", options)).toSorted(
-        comparePaths
+        Paths.compare
       );
-  const results: GrepMatch[] = [];
+  const scanned = await Pool.mapPooled(files, MATCH_CONCURRENCY, (filePath) =>
+    matchFile(filePath, matcher, options.retainFileLines ?? true)
+  );
 
-  for (let index = 0; index < files.length; index += MATCH_CONCURRENCY) {
-    const chunk = files.slice(index, index + MATCH_CONCURRENCY);
-    const chunkResults = await Promise.all(
-      chunk.map((filePath) => matchFile(filePath, matcher))
-    );
-
-    for (const match of chunkResults) {
-      if (match !== undefined) {
-        results.push(match);
-      }
-    }
-  }
-
-  return results;
+  return scanned.filter((match) => match !== undefined);
 }
 
-/**
- * A scan enumerates symlinks without resolving them (matching `fd`, which lists
- * a symlinked directory without descending into it), so an entry here may not
- * be a readable regular file: a symlink to a directory fails with EISDIR, a
- * broken symlink with ENOENT, and an unreadable file with EACCES. None of those
- * should abort the whole search, so treat any unreadable entry as a non-match —
- * the same way `grep` and `rg` warn and continue.
- */
+// An entry may not be a readable regular file: an unreadable one is a non-match, never a failure.
 async function matchFile(
   filePath: string,
-  matcher: GrepMatcher
+  matcher: GrepMatcher,
+  retainFileLines: boolean
 ): Promise<GrepMatch | undefined> {
   const file = Bun.file(filePath);
 
   let text: string;
   try {
-    // Binary skip reads only the first 8KB, so a binary file is never fully read.
     if (await Lines.isBinary(file)) {
       return undefined;
     }
 
     if (matcher.literal !== undefined) {
-      // Literal fast path: scan raw bytes and bail on a miss without decoding. An
-      // ASCII literal can't match across a normalized newline or alias a
-      // multibyte char, so a raw-byte hit/miss matches the decoded result.
+      // Literal fast path: an ASCII needle's raw-byte hit/miss matches the decoded result.
       const bytes = Buffer.from(await file.arrayBuffer());
       if (bytes.indexOf(matcher.literal) < 0) {
         return undefined;
@@ -147,7 +124,7 @@ async function matchFile(
   }
 
   const content = Lines.normalize(text);
-  const fileLines = Lines.split(content);
+  const fileLines = Lines.splitNormalized(content);
   const ranges = matcher.matchAcrossLines
     ? regexRanges(content, matcher.regex)
     : matchLineByLine(fileLines, matcher.regex);
@@ -161,7 +138,7 @@ async function matchFile(
     mtime: file.lastModified,
     lines: linesForRanges(fileLines, ranges),
     ranges,
-    fileLines,
+    fileLines: retainFileLines ? fileLines : [],
   };
 }
 
@@ -184,6 +161,7 @@ function matchLineByLine(
 function regexRanges(content: string, regex: RegExp): readonly GrepLineRange[] {
   const globalRegex = new RegExp(regex.source, addFlag(regex.flags, "g"));
   const ranges: GrepLineRange[] = [];
+  const cursor: LineCursor = { offset: 0, line: 1 };
 
   while (true) {
     const match = globalRegex.exec(content);
@@ -193,7 +171,12 @@ function regexRanges(content: string, regex: RegExp): readonly GrepLineRange[] {
     }
 
     ranges.push(
-      lineRangeForOffsets(content, match.index, match.index + match[0].length)
+      lineRangeForOffsets(
+        content,
+        match.index,
+        match.index + match[0].length,
+        cursor
+      )
     );
 
     if (match[0].length === 0) {
@@ -208,30 +191,43 @@ function addFlag(flags: string, flag: string): string {
   return flags.includes(flag) ? flags : `${flags}${flag}`;
 }
 
+type LineCursor = {
+  offset: number;
+  line: number;
+};
+
 function lineRangeForOffsets(
   content: string,
   startOffset: number,
-  endOffset: number
+  endOffset: number,
+  cursor: LineCursor
 ): GrepLineRange {
   return {
-    startLineNumber: lineNumberForOffset(content, startOffset),
+    startLineNumber: lineNumberForOffset(content, startOffset, cursor),
     endLineNumber: lineNumberForOffset(
       content,
-      Math.max(startOffset, endOffset - 1)
+      Math.max(startOffset, endOffset - 1),
+      cursor
     ),
   };
 }
 
-function lineNumberForOffset(content: string, offset: number): number {
-  let lineNumber = 1;
+function lineNumberForOffset(
+  content: string,
+  offset: number,
+  cursor: LineCursor
+): number {
+  const target = Math.min(offset, content.length);
 
-  for (let index = 0; index < offset && index < content.length; index += 1) {
+  for (let index = cursor.offset; index < target; index += 1) {
     if (content[index] === "\n") {
-      lineNumber += 1;
+      cursor.line += 1;
     }
   }
 
-  return lineNumber;
+  cursor.offset = target;
+
+  return cursor.line;
 }
 
 function linesForRanges(
@@ -257,14 +253,4 @@ function linesForRanges(
   }
 
   return lines;
-}
-
-function comparePaths(left: string, right: string): number {
-  if (left < right) {
-    return -1;
-  }
-  if (left > right) {
-    return 1;
-  }
-  return 0;
 }

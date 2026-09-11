@@ -1,25 +1,20 @@
-import ky, { HTTPError, TimeoutError, type KyInstance } from "ky";
+import { Json } from "../../../shared/Json";
+import { createKy, type HttpFetch } from "../../../shared/Http";
+import type { KyInstance } from "ky";
 import {
-  isAbortError,
+  mapProviderError,
   normalizeSnippet,
-  parseRetryAfterMs,
-  ProviderQuotaError,
   ProviderSearchError,
   type ProviderSearchInput,
   type SearchProvider,
   type SearchResult,
 } from "./SearchProvider";
 
-type DuckDuckGoFetch = (
-  input: Parameters<typeof fetch>[0],
-  init?: Parameters<typeof fetch>[1]
-) => ReturnType<typeof fetch>;
-
 export type DuckDuckGoProviderOptions = {
   readonly readerEndpoint?: string;
   readonly searchEndpoint?: string;
   readonly apiKey?: string;
-  readonly fetch?: DuckDuckGoFetch;
+  readonly fetch?: HttpFetch;
   readonly timeoutMs?: number;
 };
 
@@ -30,11 +25,7 @@ const defaultReaderEndpoint = "https://r.jina.ai";
 const defaultSearchEndpoint = "https://lite.duckduckgo.com/lite/";
 const defaultTimeoutMs = 30_000;
 
-/**
- * DuckDuckGo blocks direct API access with a 202 anti-bot challenge, so this
- * reads the Lite SERP through Jina's keyless reader instead. Last-resort tier:
- * no credentials anywhere in the path, but also no stability guarantee.
- */
+/** Reads the Lite SERP through Jina: DuckDuckGo answers direct API calls with a 202 anti-bot challenge. */
 export class DuckDuckGoProvider implements SearchProvider {
   public readonly name = "duckduckgo";
 
@@ -52,18 +43,13 @@ export class DuckDuckGoProvider implements SearchProvider {
     this.timeoutMs = options.timeoutMs ?? defaultTimeoutMs;
     this.headers = {
       Accept: "application/json",
-      // Reader caches aggressively; a stale SERP snapshot is worse than a slow
-      // one for a search tool.
+      // The reader caches aggressively and would serve a stale SERP.
       "x-no-cache": "true",
       ...(options.apiKey === undefined || options.apiKey.length === 0
         ? {}
         : { Authorization: `Bearer ${options.apiKey}` }),
     };
-    this.ky = ky.create(
-      options.fetch === undefined
-        ? {}
-        : { fetch: options.fetch as typeof fetch }
-    );
+    this.ky = createKy(options.fetch);
   }
 
   public async search(
@@ -77,7 +63,6 @@ export class DuckDuckGoProvider implements SearchProvider {
       response = await this.ky(url, {
         headers: this.headers,
         timeout: this.timeoutMs,
-        retry: 0,
         ...(input.signal === undefined ? {} : { signal: input.signal }),
       });
     } catch (error) {
@@ -90,49 +75,27 @@ export class DuckDuckGoProvider implements SearchProvider {
   }
 
   private toProviderError(error: unknown, signal?: AbortSignal): unknown {
-    if (signal?.aborted || isAbortError(error)) {
-      return error;
-    }
-
-    if (error instanceof HTTPError) {
-      const { status, headers } = error.response;
-
-      if (status === 429 || status === 402) {
-        return new ProviderQuotaError(
-          this.name,
-          "Jina reader rejected the request: free tier limit reached.",
-          parseRetryAfterMs(headers.get("retry-after"))
-        );
-      }
-
-      return new ProviderSearchError(
-        this.name,
-        `DuckDuckGo lookup failed with HTTP ${status}.`
-      );
-    }
-
-    if (error instanceof TimeoutError) {
-      return new ProviderSearchError(
-        this.name,
-        `DuckDuckGo lookup timed out after ${this.timeoutMs}ms.`
-      );
-    }
-
-    return new ProviderSearchError(
-      this.name,
-      `DuckDuckGo lookup failed: ${describeError(error)}`
-    );
+    return mapProviderError({
+      provider: this.name,
+      subject: "DuckDuckGo lookup",
+      error,
+      ...(signal === undefined ? {} : { signal }),
+      timeoutMs: this.timeoutMs,
+      quotaStatuses: [429, 402],
+      quotaMessage:
+        "Jina reader rejected the request: free tier limit reached.",
+    });
   }
 
   private readContent(body: string): string {
-    const parsed = tryParseJson(body);
+    const parsed = Json.tryParseJson(body);
 
     if (parsed === undefined) {
       return body;
     }
 
-    const record = asRecord(parsed);
-    const data = asRecord(record?.["data"]) ?? record;
+    const record = Json.asRecord(parsed);
+    const data = Json.asRecord(record?.["data"]) ?? record;
     const content = data?.["content"];
 
     if (typeof content !== "string") {
@@ -197,9 +160,7 @@ export class DuckDuckGoProvider implements SearchProvider {
   }
 }
 
-/**
- * Lite SERP links are wrapped as `duckduckgo.com/l/?uddg=<encoded target>`.
- */
+// Lite SERP links are wrapped as `duckduckgo.com/l/?uddg=<encoded target>`.
 function resolveRedirect(href: string): string | undefined {
   let parsed: URL;
 
@@ -218,9 +179,7 @@ function resolveRedirect(href: string): string | undefined {
   return parsed.hostname.endsWith("duckduckgo.com") ? undefined : href;
 }
 
-/**
- * The last snippet line of a Lite result is the display URL, not prose.
- */
+// The last snippet line of a Lite result is the display URL, not prose.
 function joinSnippet(lines: readonly string[]): string {
   const last = lines.at(-1);
   const body =
@@ -233,26 +192,4 @@ function joinSnippet(lines: readonly string[]): string {
 
 function stripEmphasis(value: string): string {
   return value.replaceAll("**", "");
-}
-
-function tryParseJson(text: string): unknown | undefined {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-}
-
-function asRecord(
-  value: unknown
-): Readonly<Record<string, unknown>> | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
-  }
-
-  return value as Readonly<Record<string, unknown>>;
-}
-
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

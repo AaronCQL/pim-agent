@@ -1,3 +1,4 @@
+import { Errors } from "../../shared/Errors";
 import { platform } from "node:os";
 import type { WebFetchPage } from "./fetch";
 import { createMarkdownSnapshotScript } from "./WebViewMarkdownSnapshot";
@@ -70,7 +71,7 @@ export class WebViewFetchClient {
       view = this.factory();
     } catch (error) {
       throw new WebViewFetchClientError(
-        `Request failed: ${describeError(error)}`
+        `Request failed: ${Errors.describe(error)}`
       );
     }
 
@@ -131,7 +132,7 @@ export class WebViewFetchClient {
       }
 
       throw new WebViewFetchClientError(
-        `Request failed: ${describeError(error)}`
+        `Request failed: ${Errors.describe(error)}`
       );
     } finally {
       clearTimeout(timeoutHandle);
@@ -171,7 +172,7 @@ function safeClose(view: WebViewLike): void {
   try {
     view.close();
   } catch {
-    // close() throws if already closed; treat as idempotent.
+    // close() throws if already closed.
   }
 }
 
@@ -179,8 +180,4 @@ function defaultFactory(): WebViewLike {
   return new Bun.WebView(
     platform() === "darwin" ? undefined : { backend: "chrome" }
   );
-}
-
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

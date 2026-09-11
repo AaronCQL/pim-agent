@@ -64,6 +64,8 @@ export default function (pi: ExtensionAPI): void {
         exclude,
         includeDotfiles: includeDotfiles ?? false,
         includeIgnored: includeIgnored ?? false,
+        retainFileLines:
+          resolvedOutputMode === "content" && resolvedContext > 0,
       });
       const outcome = renderMatches(matches, resolvedOutputMode, limit, {
         cwd: ctx.cwd,

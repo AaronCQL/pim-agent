@@ -1,52 +1,46 @@
 import { onCleanup } from "solid-js";
 
-/** What a pushed entry is marked with, so only an overlay's pop is ours. */
 const MODAL_ENTRY = { pimModal: true };
 
+type Armed = { readonly onBack: () => void };
+
+const armed: Armed[] = [];
+// A `release` reaches this listener as a `popstate` of its own; count those out, or one closes the overlay handed to next.
+let retracted = 0;
+
+globalThis.addEventListener("popstate", () => {
+  if (retracted > 0) {
+    retracted -= 1;
+    return;
+  }
+  armed.pop()?.onBack();
+});
+
 export type BackGuard = {
-  /** The overlay is up: Back now closes it instead of leaving the page. */
   readonly arm: () => void;
-  /** It closed, however it closed — give the entry back if it is still ours. */
   readonly release: () => void;
 };
 
-/**
- * **Back closes the overlay.** Opening pushes a history entry and closing pops
- * it, so the phone gesture for "out of this" leaves the thing on top rather
- * than the session under it — an overlay that Back cannot dismiss is a trap on
- * the one device that has no ESC.
- *
- * Shared by every `showModal()` wrapper that covers the session, because the
- * bookkeeping is the whole of the feature and two copies of it drift: the
- * entry has to be given back however the overlay was closed — a close button,
- * ESC, the backdrop, or the state behind it going away — and exactly once, or
- * a stray `history.back()` navigates the app.
- */
+/** Back closes the innermost armed overlay: `arm` pushes a history entry, `release` takes that entry back. */
 export function createBackGuard(onBack: () => void): BackGuard {
-  // Whether the entry on top of the history stack is this overlay's.
-  let pushed = false;
-
-  const onPopState = (): void => {
-    // The reader popped it themselves, so there is nothing left to unwind.
-    pushed = false;
-    onBack();
-  };
+  const entry: Armed = { onBack };
 
   const release = (): void => {
-    globalThis.removeEventListener("popstate", onPopState);
-    if (pushed) {
-      pushed = false;
-      history.back();
+    const at = armed.lastIndexOf(entry);
+    if (at < 0) {
+      return;
     }
+    armed.splice(at, 1);
+    retracted += 1;
+    history.back();
   };
 
   onCleanup(release);
 
   return {
     arm: () => {
-      pushed = true;
+      armed.push(entry);
       history.pushState(MODAL_ENTRY, "");
-      globalThis.addEventListener("popstate", onPopState);
     },
     release,
   };

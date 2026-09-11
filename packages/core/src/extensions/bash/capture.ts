@@ -5,16 +5,6 @@ import {
   STREAM_TAIL_BYTES,
 } from "./schema";
 
-export function concat(parts: Uint8Array[], total: number): Uint8Array {
-  const out = new Uint8Array(total);
-  let off = 0;
-  for (const p of parts) {
-    out.set(p, off);
-    off += p.byteLength;
-  }
-  return out;
-}
-
 export class StreamCapture {
   private chunks: Uint8Array[] = [];
   private totalBytesAccum = 0;
@@ -38,7 +28,7 @@ export class StreamCapture {
 
   full(): Uint8Array {
     if (!this.fullBytes) {
-      this.fullBytes = concat(this.chunks, this.totalBytesAccum);
+      this.fullBytes = Buffer.concat(this.chunks, this.totalBytesAccum);
     }
     return this.fullBytes;
   }

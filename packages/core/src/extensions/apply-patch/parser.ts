@@ -1,14 +1,19 @@
+import {
+  ADD_FILE_MARKER,
+  cleanPath,
+  DELETE_FILE_MARKER,
+  MOVE_TO_MARKER,
+  UPDATE_FILE_MARKER,
+} from "../../shared/PatchSummary";
 import type { Hunk, Patch, UpdateChunk } from "./types";
 
 const BEGIN_PATCH_MARKER = "*** Begin Patch";
 const END_PATCH_MARKER = "*** End Patch";
-export const ADD_FILE_MARKER = "*** Add File: ";
-export const DELETE_FILE_MARKER = "*** Delete File: ";
-export const UPDATE_FILE_MARKER = "*** Update File: ";
-const MOVE_TO_PREFIX = "*** Move to:";
 const EOF_MARKER = "*** End of File";
 const CHANGE_CONTEXT_MARKER = "@@ ";
 const EMPTY_CHANGE_CONTEXT_MARKER = "@@";
+const MOVE_DESTINATION_REQUIRED =
+  "Invalid *** Move to directive: destination path is required.";
 
 type ParseErrorDetails =
   | { readonly type: "patch"; readonly message: string }
@@ -18,10 +23,7 @@ type ParseErrorDetails =
       readonly lineNumber: number;
     };
 
-/**
- * Match Codex's ParseError Display formats verbatim so GPT models see the exact
- * error strings they were trained to recover from.
- */
+// Keep these formats byte-identical to Codex's ParseError Display; GPT models recover from them.
 function formatParseError(error: ParseErrorDetails): string {
   switch (error.type) {
     case "patch":
@@ -31,13 +33,6 @@ function formatParseError(error: ParseErrorDetails): string {
   }
 }
 
-/**
- * Strict envelope + hunk parser, faithfully ported from Codex's
- * `parse_patch_text` (strict mode). The envelope check trims the whole text,
- * requires the first line to start with `*** Begin Patch` and the last line to
- * trim to exactly `*** End Patch`. Paths have a leading `@` and surrounding
- * quotes stripped.
- */
 export function parsePatch(text: string): Patch {
   const lines = text.trim().split("\n");
   checkBoundaries(lines);
@@ -90,155 +85,17 @@ function parseOneHunk(
 
   const addPath = stripPrefix(firstLine, ADD_FILE_MARKER);
   if (addPath !== undefined) {
-    let contents = "";
-    let consumed = 1;
-    for (const line of lines.slice(1)) {
-      if (line.startsWith("+")) {
-        contents += `${line.slice(1)}\n`;
-        consumed += 1;
-      } else {
-        break;
-      }
-    }
-    const nextLine = lines[consumed];
-    if (
-      nextLine !== undefined &&
-      !isHunkHeader(nextLine) &&
-      !nextLine.trim().startsWith("*")
-    ) {
-      throw new Error(
-        formatParseError({
-          type: "hunk",
-          lineNumber: lineNumber + consumed,
-          message: `Invalid Add File body: '${nextLine}' must start with '+'. Added file content lines must start with '+'.`,
-        })
-      );
-    }
-    return {
-      hunk: { kind: "add", path: cleanPath(addPath), contents },
-      consumed,
-    };
+    return parseAddHunk(lines, lineNumber, addPath);
   }
 
   const deletePath = stripPrefix(firstLine, DELETE_FILE_MARKER);
   if (deletePath !== undefined) {
-    const nextLine = lines[1];
-    if (nextLine !== undefined && !isHunkHeader(nextLine)) {
-      if (nextLine.trim().startsWith("*")) {
-        return {
-          hunk: { kind: "delete", path: cleanPath(deletePath) },
-          consumed: 1,
-        };
-      }
-      throw new Error(
-        formatParseError({
-          type: "hunk",
-          lineNumber: lineNumber + 1,
-          message: `Delete File hunks must not contain content lines, got: '${nextLine}'.`,
-        })
-      );
-    }
-    return {
-      hunk: { kind: "delete", path: cleanPath(deletePath) },
-      consumed: 1,
-    };
+    return parseDeleteHunk(lines, lineNumber, deletePath);
   }
 
   const updatePath = stripPrefix(firstLine, UPDATE_FILE_MARKER);
   if (updatePath !== undefined) {
-    let remaining = lines.slice(1);
-    let consumed = 1;
-
-    let movePath: string | undefined;
-    const moveLine = remaining[0]?.trim();
-    if (moveLine?.startsWith(MOVE_TO_PREFIX)) {
-      const rawMovePath = moveLine.slice(MOVE_TO_PREFIX.length);
-      if (rawMovePath.length === 0) {
-        throw new Error(
-          formatParseError({
-            type: "hunk",
-            lineNumber: lineNumber + consumed,
-            message:
-              "Invalid *** Move to directive: destination path is required.",
-          })
-        );
-      }
-      if (!rawMovePath.startsWith(" ")) {
-        throw new Error(
-          formatParseError({
-            type: "hunk",
-            lineNumber: lineNumber + consumed,
-            message: `Invalid *** Move to directive: use '*** Move to: {path}'.`,
-          })
-        );
-      }
-      if (cleanPath(rawMovePath).length === 0) {
-        throw new Error(
-          formatParseError({
-            type: "hunk",
-            lineNumber: lineNumber + consumed,
-            message:
-              "Invalid *** Move to directive: destination path is required.",
-          })
-        );
-      }
-      movePath = rawMovePath;
-    } else if (moveLine?.startsWith("*** Move")) {
-      throw new Error(
-        formatParseError({
-          type: "hunk",
-          lineNumber: lineNumber + consumed,
-          message: `Invalid move directive '${moveLine}'. Use '*** Move to: {path}'.`,
-        })
-      );
-    }
-    if (movePath !== undefined) {
-      remaining = remaining.slice(1);
-      consumed += 1;
-    }
-
-    const chunks: UpdateChunk[] = [];
-    while (remaining.length > 0) {
-      if (remaining[0]!.trim() === "") {
-        consumed += 1;
-        remaining = remaining.slice(1);
-        continue;
-      }
-      if (remaining[0]!.startsWith("*")) {
-        break;
-      }
-
-      const { chunk, consumed: chunkLines } = parseUpdateChunk(
-        remaining,
-        lineNumber + consumed,
-        chunks.length === 0
-      );
-      chunks.push(chunk);
-      consumed += chunkLines;
-      remaining = remaining.slice(chunkLines);
-    }
-
-    // An Update with a Move to and no hunks is a valid pure rename; only an
-    // Update with neither a move nor any hunks is truly empty.
-    if (chunks.length === 0 && movePath === undefined) {
-      throw new Error(
-        formatParseError({
-          type: "hunk",
-          lineNumber,
-          message: `Update file hunk for path '${cleanPath(updatePath)}' is empty. Include @@ plus at least one context, added, or removed line, or add *** Move to for a pure rename.`,
-        })
-      );
-    }
-
-    return {
-      hunk: {
-        kind: "update",
-        path: cleanPath(updatePath),
-        movePath: movePath === undefined ? undefined : cleanPath(movePath),
-        chunks,
-      },
-      consumed,
-    };
+    return parseUpdateHunk(lines, lineNumber, updatePath);
   }
 
   throw new Error(
@@ -251,6 +108,162 @@ function parseOneHunk(
         "Do not use unified-diff file headers like '---' or '+++' as hunk headers.",
     })
   );
+}
+
+function parseAddHunk(
+  lines: readonly string[],
+  lineNumber: number,
+  addPath: string
+): { readonly hunk: Hunk; readonly consumed: number } {
+  let contents = "";
+  let consumed = 1;
+  for (const line of lines.slice(1)) {
+    if (line.startsWith("+")) {
+      contents += `${line.slice(1)}\n`;
+      consumed += 1;
+    } else {
+      break;
+    }
+  }
+  const nextLine = lines[consumed];
+  if (
+    nextLine !== undefined &&
+    !isHunkHeader(nextLine) &&
+    !nextLine.trim().startsWith("*")
+  ) {
+    throw new Error(
+      formatParseError({
+        type: "hunk",
+        lineNumber: lineNumber + consumed,
+        message: `Invalid Add File body: '${nextLine}' must start with '+'. Added file content lines must start with '+'.`,
+      })
+    );
+  }
+  return {
+    hunk: { kind: "add", path: cleanPath(addPath), contents },
+    consumed,
+  };
+}
+
+function parseDeleteHunk(
+  lines: readonly string[],
+  lineNumber: number,
+  deletePath: string
+): { readonly hunk: Hunk; readonly consumed: number } {
+  const nextLine = lines[1];
+  if (
+    nextLine !== undefined &&
+    !isHunkHeader(nextLine) &&
+    !nextLine.trim().startsWith("*")
+  ) {
+    throw new Error(
+      formatParseError({
+        type: "hunk",
+        lineNumber: lineNumber + 1,
+        message: `Delete File hunks must not contain content lines, got: '${nextLine}'.`,
+      })
+    );
+  }
+  return {
+    hunk: { kind: "delete", path: cleanPath(deletePath) },
+    consumed: 1,
+  };
+}
+
+function parseUpdateHunk(
+  lines: readonly string[],
+  lineNumber: number,
+  updatePath: string
+): { readonly hunk: Hunk; readonly consumed: number } {
+  let remaining = lines.slice(1);
+  let consumed = 1;
+
+  let movePath: string | undefined;
+  const moveLine = remaining[0]?.trim();
+  if (moveLine?.startsWith(MOVE_TO_MARKER)) {
+    const rawMovePath = moveLine.slice(MOVE_TO_MARKER.length);
+    if (rawMovePath.length === 0) {
+      throw new Error(
+        formatParseError({
+          type: "hunk",
+          lineNumber: lineNumber + consumed,
+          message: MOVE_DESTINATION_REQUIRED,
+        })
+      );
+    }
+    if (!rawMovePath.startsWith(" ")) {
+      throw new Error(
+        formatParseError({
+          type: "hunk",
+          lineNumber: lineNumber + consumed,
+          message: `Invalid *** Move to directive: use '*** Move to: {path}'.`,
+        })
+      );
+    }
+    if (cleanPath(rawMovePath).length === 0) {
+      throw new Error(
+        formatParseError({
+          type: "hunk",
+          lineNumber: lineNumber + consumed,
+          message: MOVE_DESTINATION_REQUIRED,
+        })
+      );
+    }
+    movePath = rawMovePath;
+  } else if (moveLine?.startsWith("*** Move")) {
+    throw new Error(
+      formatParseError({
+        type: "hunk",
+        lineNumber: lineNumber + consumed,
+        message: `Invalid move directive '${moveLine}'. Use '*** Move to: {path}'.`,
+      })
+    );
+  }
+  if (movePath !== undefined) {
+    remaining = remaining.slice(1);
+    consumed += 1;
+  }
+
+  const chunks: UpdateChunk[] = [];
+  while (remaining.length > 0) {
+    if (remaining[0]!.trim() === "") {
+      consumed += 1;
+      remaining = remaining.slice(1);
+      continue;
+    }
+    if (remaining[0]!.startsWith("*")) {
+      break;
+    }
+
+    const { chunk, consumed: chunkLines } = parseUpdateChunk(
+      remaining,
+      lineNumber + consumed,
+      chunks.length === 0
+    );
+    chunks.push(chunk);
+    consumed += chunkLines;
+    remaining = remaining.slice(chunkLines);
+  }
+
+  if (chunks.length === 0 && movePath === undefined) {
+    throw new Error(
+      formatParseError({
+        type: "hunk",
+        lineNumber,
+        message: `Update file hunk for path '${cleanPath(updatePath)}' is empty. Include @@ plus at least one context, added, or removed line, or add *** Move to for a pure rename.`,
+      })
+    );
+  }
+
+  return {
+    hunk: {
+      kind: "update",
+      path: cleanPath(updatePath),
+      movePath: movePath === undefined ? undefined : cleanPath(movePath),
+      chunks,
+    },
+    consumed,
+  };
 }
 
 function parseUpdateChunk(
@@ -363,19 +376,4 @@ function isHunkHeader(line: string): boolean {
     trimmed.startsWith(DELETE_FILE_MARKER) ||
     trimmed.startsWith(UPDATE_FILE_MARKER)
   );
-}
-
-export function cleanPath(raw: string): string {
-  let path = raw.trim();
-  if (path.startsWith("@")) {
-    path = path.slice(1).trim();
-  }
-  if (path.length >= 2) {
-    const first = path[0]!;
-    const last = path.at(-1)!;
-    if ((first === '"' || first === "'" || first === "`") && first === last) {
-      path = path.slice(1, -1);
-    }
-  }
-  return path;
 }

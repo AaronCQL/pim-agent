@@ -7,7 +7,11 @@ import type { PimToolDefinition } from "#core/shared/Tools";
 import type { Span, ToolView } from "#core/view/ViewBlock";
 import type { SessionId } from "./Session";
 import type { TaskScheduler } from "./TaskScheduler";
-import { taskToolSchema, type TaskToolInput } from "./TaskSchema";
+import {
+  taskToolSchema,
+  type ScheduledTask,
+  type TaskToolInput,
+} from "./TaskSchema";
 
 export type TaskToolDeps = {
   readonly scheduler: TaskScheduler;
@@ -56,114 +60,100 @@ async function create(
   deps: TaskToolDeps,
   input: TaskToolInput
 ): Promise<AgentToolResult<unknown>> {
-  if (!input.prompt) {
-    throw new Error("'prompt' is required for action=create");
-  }
-  if (!input.schedule) {
-    throw new Error("'schedule' is required for action=create");
-  }
+  const prompt = required(input, "prompt");
+  const schedule = required(input, "schedule");
   const task = await deps.scheduler.create(deps.sessionId, {
-    prompt: input.prompt,
-    schedule: input.schedule,
+    prompt,
+    schedule,
     expires: input.expires,
     isolatedSession: input.isolatedSession,
   });
-  return {
-    content: [
-      {
-        type: "text" as const,
-        text: `Created task ${task.id}. Next run: ${task.nextRun}.`,
-      },
-    ],
-    details: task,
-  };
+  return text(`Created task ${task.id}. Next run: ${task.nextRun}.`, task);
 }
 
 async function list(deps: TaskToolDeps): Promise<AgentToolResult<unknown>> {
   const tasks = await deps.scheduler.list(deps.sessionId);
-  if (tasks.length === 0) {
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: "No tasks scheduled for this thread.",
-        },
-      ],
-      details: { tasks: [] },
-    };
-  }
-  return {
-    content: [{ type: "text" as const, text: JSON.stringify(tasks) }],
-    details: { tasks },
-  };
+  return tasks.length === 0
+    ? text("No tasks scheduled for this thread.", { tasks: [] })
+    : text(JSON.stringify(tasks), { tasks });
 }
 
 async function deleteTask(
   deps: TaskToolDeps,
   input: TaskToolInput
 ): Promise<AgentToolResult<unknown>> {
-  if (!input.id) {
-    throw new Error("'id' is required for action=delete");
-  }
-  const ok = await deps.scheduler.delete(deps.sessionId, input.id);
+  const id = required(input, "id");
+  const ok = await deps.scheduler.delete(deps.sessionId, id);
   if (!ok) {
-    throw new Error(`no task with id=${input.id} in this thread`);
+    throw notFound(id);
   }
-  return {
-    content: [{ type: "text" as const, text: `Deleted task ${input.id}.` }],
-    details: { id: input.id },
-  };
+  return text(`Deleted task ${id}.`, { id });
 }
 
 async function setStatus(
   deps: TaskToolDeps,
   input: TaskToolInput
 ): Promise<AgentToolResult<unknown>> {
-  if (!input.id) {
-    throw new Error(`'id' is required for action=${input.action}`);
-  }
-  const target = input.action === "pause" ? "paused" : "active";
-  const task = await deps.scheduler.setStatus(deps.sessionId, input.id, target);
-  if (!task) {
-    throw new Error(`no task with id=${input.id} in this thread`);
-  }
-  const text =
-    input.action === "pause"
+  const id = required(input, "id");
+  const paused = input.action === "pause";
+  const task = found(
+    await deps.scheduler.setStatus(
+      deps.sessionId,
+      id,
+      paused ? "paused" : "active"
+    ),
+    id
+  );
+  return text(
+    paused
       ? `Paused task ${task.id}. Will not fire until resumed.`
-      : `Resumed task ${task.id}. Next run: ${task.nextRun}.`;
-  return {
-    content: [{ type: "text" as const, text }],
-    details: task,
-  };
+      : `Resumed task ${task.id}. Next run: ${task.nextRun}.`,
+    task
+  );
 }
 
 async function updatePrompt(
   deps: TaskToolDeps,
   input: TaskToolInput
 ): Promise<AgentToolResult<unknown>> {
-  if (!input.id) {
-    throw new Error("'id' is required for action=update_prompt");
-  }
-  if (!input.prompt) {
-    throw new Error("'prompt' is required for action=update_prompt");
-  }
-  const task = await deps.scheduler.updatePrompt(
-    deps.sessionId,
-    input.id,
-    input.prompt
+  const id = required(input, "id");
+  const prompt = required(input, "prompt");
+  const task = found(
+    await deps.scheduler.updatePrompt(deps.sessionId, id, prompt),
+    id
   );
-  if (!task) {
-    throw new Error(`no task with id=${input.id} in this thread`);
-  }
+  return text(`Updated prompt for task ${task.id}.`, task);
+}
+
+function text(message: string, details: unknown): AgentToolResult<unknown> {
   return {
-    content: [
-      { type: "text" as const, text: `Updated prompt for task ${task.id}.` },
-    ],
-    details: task,
+    content: [{ type: "text" as const, text: message }],
+    details,
   };
 }
 
-/** Mirrors the schema's action union; a new action gets a bare verb, not a crash. */
+function required<K extends "id" | "prompt" | "schedule">(
+  input: TaskToolInput,
+  field: K
+): NonNullable<TaskToolInput[K]> {
+  const value = input[field];
+  if (!value) {
+    throw new Error(`'${field}' is required for action=${input.action}`);
+  }
+  return value;
+}
+
+function found(task: ScheduledTask | undefined, id: string): ScheduledTask {
+  if (!task) {
+    throw notFound(id);
+  }
+  return task;
+}
+
+function notFound(id: string): Error {
+  return new Error(`no task with id=${id} in this thread`);
+}
+
 function taskSpans(input: Partial<TaskToolInput>): readonly Span[] {
   const action = input.action;
   if (!action) {

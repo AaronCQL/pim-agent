@@ -51,6 +51,7 @@ const defaultGitSpawner: GitSpawner = async (args, options) => {
 };
 
 const inflightRelative = new Map<string, Promise<readonly FileCandidate[]>>();
+const COLLATOR = new Intl.Collator(undefined);
 
 export function loadRelative(
   options: LoadRelativeOptions
@@ -92,12 +93,9 @@ export async function loadAbsolute(
   }
 
   const includeDot = residualQuery.startsWith(".");
-  const filtered = entries.filter((entry) => {
-    if (!includeDot && entry.name.startsWith(".")) {
-      return false;
-    }
-    return true;
-  });
+  const filtered = includeDot
+    ? entries
+    : entries.filter((entry) => !entry.name.startsWith("."));
 
   filtered.sort((a, b) => {
     if (a.isDirectory !== b.isDirectory) {
@@ -151,8 +149,6 @@ async function tryGitListFiles(
 }
 
 async function scanWithGlob(root: string): Promise<readonly string[]> {
-  // FileEnumerator already returns ignore-respecting, root-relative POSIX file
-  // paths; directories are recovered from prefixes in finalizeRelative.
   return FileEnumerator.enumerate(root, {
     includeDotfiles: false,
     includeIgnored: false,
@@ -178,7 +174,7 @@ function finalizeRelative(paths: readonly string[]): readonly FileCandidate[] {
     ...[...directories].map((path) => toRelativeCandidate(path, true)),
     ...normalized.map((path) => toRelativeCandidate(path, false)),
   ];
-  candidates.sort((a, b) => a.insertPath.localeCompare(b.insertPath));
+  candidates.sort((a, b) => COLLATOR.compare(a.insertPath, b.insertPath));
 
   return candidates;
 }

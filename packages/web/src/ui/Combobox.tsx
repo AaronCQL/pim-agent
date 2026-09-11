@@ -23,22 +23,7 @@ export type ComboboxNavigationOptions = {
   readonly onDismiss: () => void;
 };
 
-/**
- * Keyboard navigation for the `@` and `/` pickers — the one part of this
- * client the platform does not already provide, and the reason the "no
- * component library" decision is affordable at all.
- *
- * The semantics are not invented here: they are the ones
- * `packages/tui/src/extensions/{file,command}-picker` drive against pi-tui,
- * ported with the event source swapped from stdin to `keydown`. Wrap at both
- * ends, Enter and Tab both commit, ESC dismisses without touching the draft,
- * and the emacs pair (`Ctrl-N`/`Ctrl-P`) works because a terminal user's
- * fingers already expect it.
- *
- * Type-to-refine needs no handling: an unconsumed key edits the input, the
- * query changes, the caller re-queries, and the clamp below drops the active
- * row back to the top.
- */
+/** Keyboard navigation for the `@` and `/` pickers: wrap at both ends, Enter and Tab commit, ESC dismisses. */
 export function createComboboxNavigation(
   options: ComboboxNavigationOptions
 ): ComboboxNavigation {
@@ -47,9 +32,6 @@ export function createComboboxNavigation(
   createEffect(
     () => options.count(),
     (count) => {
-      // The updater form for the same reason `move` uses it, and because a
-      // read here would be one this callback is not subscribed to: the row
-      // to clamp is whichever one is current when the write lands.
       setActiveIndex((previous) => (previous >= count ? 0 : previous));
     }
   );
@@ -59,9 +41,7 @@ export function createComboboxNavigation(
     if (count === 0) {
       return;
     }
-    // Updater form, not a read-then-write: Solid 2 applies writes on a
-    // microtask, so two keys inside one task would otherwise both move from
-    // the same starting row.
+    // Updater form, not read-then-write: Solid 2 applies writes on a microtask, so two keys in one task would move from the same row.
     setActiveIndex((previous) => (previous + delta + count) % count);
   };
 
@@ -106,32 +86,13 @@ export function createComboboxNavigation(
 export type ComboboxItem = {
   readonly label: string;
   readonly description?: string;
-  /** A short qualifier — a model's provider — parked at the row's right edge. */
   readonly tag?: string;
-  /**
-   * Whether this row is the one in force — the model the session is on, the
-   * level it thinks at. Distinct from the active row, which is only where the
-   * keyboard is standing: a list where the two were the same mark could not
-   * say what would happen if you walked away without choosing. Left
-   * `undefined` by lists that have no such thing, which is every completion
-   * over a draft.
-   */
+  /** The row in force, distinct from the active row the keyboard is standing on. */
   readonly selected?: boolean;
 };
 
 const ROW = "flex cursor-pointer items-baseline gap-1ch rounded-lg px-2 py-1";
 
-/**
- * How brightly a row is written. In a list with a choice in force, the rows
- * that are not it are stepped back to the chrome grey: the tick alone is one
- * small mark to find in a list of forty models, and a page of equally bright
- * names is what makes it hard to find. A row the keyboard is standing on
- * comes back up part of the way, so the highlight still reads as a place the
- * reader is rather than as the choice they have made.
- *
- * A completion over a draft has no choice in force — nothing is `selected`
- * there — so every row stays as bright as the next.
- */
 function tone(selected: boolean | undefined, active: boolean): string {
   if (selected === false) {
     return active ? "text-neutral-100" : "text-neutral-350";
@@ -139,25 +100,16 @@ function tone(selected: boolean | undefined, active: boolean): string {
   return active || selected === true ? "text-neutral-50" : "";
 }
 
-/**
- * The list half. Presentation only: the active row and every key that moves it
- * belong to `createComboboxNavigation`, so the same list serves both pickers.
- */
+/** The list half; the active row and the keys that move it belong to `createComboboxNavigation`. */
 export function Combobox(props: {
   readonly open: boolean;
   readonly items: readonly ComboboxItem[];
   readonly activeIndex: number;
   readonly onSelect: (index: number) => void;
   readonly onActivate: (index: number) => void;
-  readonly anchor?: () => HTMLElement | undefined;
-  /** Hold the list to the anchor's width; see `Popover`. */
+  readonly anchor: () => HTMLElement;
   readonly match?: boolean;
-  readonly emptyLabel?: string;
-  /**
-   * Drawn inside the panel, above the rows — a filter box, and so far
-   * nothing else. It belongs to whoever owns the query it edits, which is
-   * never this component: the list is told what to show, not asked.
-   */
+  readonly emptyLabel: string;
   readonly header?: Element;
 }) {
   let list!: HTMLUListElement;
@@ -177,14 +129,11 @@ export function Combobox(props: {
   return (
     <Popover
       open={props.open}
-      {...(props.anchor === undefined ? {} : { anchor: props.anchor })}
+      anchor={props.anchor}
       match={props.match ?? false}
       class="z-50 flex flex-col rounded-lg bg-neutral-850 p-1 text-sm ring-1 ring-neutral-700"
     >
       {props.header}
-      {/* The scroller is inside the panel, not the panel itself: the panel's
-          own height is whatever room the viewport left above the trigger, and
-          a flex child with `min-h-0` shrinks to that before this cap. */}
       <ul
         ref={(element: HTMLUListElement) => {
           list = element;
@@ -193,9 +142,7 @@ export function Combobox(props: {
         class="max-h-64 min-h-0 w-full overflow-y-auto"
       >
         <Show when={props.items.length === 0}>
-          <li class="px-2 py-1 text-neutral-500">
-            {props.emptyLabel ?? "no matches"}
-          </li>
+          <li class="px-2 py-1 text-neutral-500">{props.emptyLabel}</li>
         </Show>
         <For each={props.items}>
           {(item, index) => {
@@ -205,24 +152,16 @@ export function Combobox(props: {
                 data-index={index()}
                 role="option"
                 aria-selected={active() ? "true" : "false"}
-                // One expression rather than two class keys: both halves want
-                // to name a text colour, and which of two equal utilities wins
-                // is the stylesheet's order to decide, not this element's.
                 class={`${ROW} ${active() ? "bg-neutral-800" : ""} ${tone(item.selected, active())}`}
                 onMouseEnter={() => {
                   props.onActivate(index());
                 }}
                 onMouseDown={(event: MouseEvent) => {
-                  // Commit before the input loses focus, or the caret position
-                  // the completion is applied at is already gone.
+                  // Commit before the input loses focus, or the caret the completion is applied at is gone.
                   event.preventDefault();
                   props.onSelect(index());
                 }}
               >
-                {/* The label holds its width and the description gives way
-                    first, so what is being completed stays readable; the cap
-                    is the last resort for a label that is itself wider than
-                    the row. */}
                 <span class="max-w-full shrink-0 truncate">{item.label}</span>
                 <Show when={item.description}>
                   {(description) => (
@@ -231,11 +170,6 @@ export function Combobox(props: {
                     </span>
                   )}
                 </Show>
-                {/* Against the name it marks, not in a gutter of its own: the
-                    rows without one give the space back to their label rather
-                    than holding a column open for the single row that has it.
-                    Before the tag, which is parked at the far edge — the tick
-                    belongs to the title, the provider belongs to the row. */}
                 <Show when={item.selected === true}>
                   <span
                     class="i-griddy-icons:check size-4 shrink-0 self-center text-emerald-400"

@@ -37,8 +37,6 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   let update: string | undefined;
   let updateCheck: Promise<string | undefined> | undefined;
 
-  // Pi's own update banner is suppressed: it names a `pi update` that cannot
-  // reach the copy pim bundles. One line on the splash replaces it.
   const checkForUpdate = (): Promise<string | undefined> => {
     updateCheck ??= process.env["PI_OFFLINE"]
       ? Promise.resolve(undefined)

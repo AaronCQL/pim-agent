@@ -25,8 +25,7 @@ export type PimInlineExtension = {
   readonly factory: ExtensionFactory;
 };
 
-// Enumerated rather than globbed: the published tarball must not depend on a
-// directory scan, and pi never sees these as files on disk.
+// Enumerated, never globbed: the published tarball must not depend on a directory scan.
 const list: readonly PimInlineExtension[] = [
   { name: "apply-patch", factory: applyPatch },
   { name: "bash", factory: bash },
@@ -42,10 +41,6 @@ const list: readonly PimInlineExtension[] = [
   { name: "write", factory: write },
 ];
 
-/**
- * The gate lives in the factory rather than in roster filtering: pi re-invokes
- * factories on reload, so a toggle lands in a running session.
- */
 function gated(): InlineExtension[] {
   return list.map(({ name, factory }) => ({
     name,

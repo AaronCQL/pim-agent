@@ -258,9 +258,47 @@ describe("painting", () => {
       },
     ]);
 
-    expect(host.querySelector(".bg-neutral-850")?.className).toContain(
-      "wrap-anywhere"
-    );
+    expect(
+      host.querySelector(".bg-neutral-850 .pim-markdown")?.className
+    ).toContain("wrap-anywhere");
+  });
+
+  // What was typed was written as markdown, so it is read back as markdown —
+  // and a chat message's own newlines survive it, which is why the card no
+  // longer carries `pre-wrap`.
+  test("a sent user message is drawn as markdown, line breaks kept", () => {
+    const host = replay([
+      {
+        seq: 1,
+        type: "message",
+        messageId: "m",
+        role: "user",
+        text: "look at `Card`:\n- it is **bold** now\n- and still two lines",
+        timestamp: 0,
+      },
+    ]);
+    const card = host.querySelector(".bg-neutral-850");
+
+    expect(card?.querySelector("code")?.textContent).toBe("Card");
+    expect(card?.querySelectorAll("li")).toHaveLength(2);
+    expect(card?.querySelector("strong")?.textContent).toBe("bold");
+  });
+
+  test("a fenced block in a user message scrolls instead of widening the card", () => {
+    const host = replay([
+      {
+        seq: 1,
+        type: "message",
+        messageId: "m",
+        role: "user",
+        text: "I like this:\n\n```\nAn opinionated distro of Pi, reachable from your terminal, browser, or Telegram.\n```",
+        timestamp: 0,
+      },
+    ]);
+    const card = host.querySelector(".bg-neutral-850");
+
+    expect(card?.className).toContain("max-w-full");
+    expect(card?.querySelector("pre")).not.toBeNull();
   });
 
   test("a dead turn is a tagged rose line where the answer would have been", () => {

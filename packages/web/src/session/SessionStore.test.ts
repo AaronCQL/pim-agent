@@ -626,7 +626,6 @@ test("session_state lands on the fields the sidebar and composer paint", () => {
 
   expect(target.state.agent).toBe("streaming");
   expect(target.state.model).toBe("sonnet");
-  expect(target.state.tps).toBe(42);
   expect(target.state.contextPercent).toBe(20.2);
   expect(target.state.contextWindow).toBe(1_000_000);
   expect(target.state.branch).toBe("trunk");

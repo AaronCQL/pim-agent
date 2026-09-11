@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { GIT_DIRTY_ICON } from "./powerline";
 import { renderFooterLine } from "./segments";
 
 function stripAnsi(s: string): string {
@@ -141,6 +142,30 @@ describe("renderFooterLine", () => {
       )
     );
     expect(noLevel).toContain("off");
+  });
+
+  test("counts the dirt rather than merely flagging it", () => {
+    const dirty = stripAnsi(
+      renderFooterLine(
+        120,
+        createCtx(),
+        { branch: "main", dirtyCount: 3, ahead: 0, behind: 0 },
+        0
+      )
+    );
+    expect(dirty).toContain(`${GIT_DIRTY_ICON}3`);
+
+    // A clean tree says nothing rather than saying zero.
+    const clean = stripAnsi(
+      renderFooterLine(
+        120,
+        createCtx(),
+        { branch: "main", dirtyCount: 0, ahead: 0, behind: 0 },
+        0
+      )
+    );
+    expect(clean).toContain("main");
+    expect(clean).not.toContain(GIT_DIRTY_ICON);
   });
 
   test("omits reasoning level for non-reasoning models", () => {

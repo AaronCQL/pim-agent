@@ -6,11 +6,6 @@ import type { AttachTarget, ConnectionStatus } from "../ws/WsClient";
 export type ReloadNotice = {
   readonly tone: "success" | "warning" | "error";
   readonly text: string;
-  /**
-   * The notice names a step the reader can take here. Only ever a reload:
-   * a tab the server has moved on from is repaired by fetching this page
-   * again, and nothing else on screen can do that for them.
-   */
   readonly action?: "reload";
 };
 
@@ -19,7 +14,6 @@ type Intent = {
   readonly phase: "updating" | "restarting" | "loaded";
   readonly target: AttachTarget;
   readonly skipped: string;
-  /** Whether any skip left the operator something to do; see `UpdateSkip`. */
   readonly blocking: boolean;
 };
 
@@ -27,17 +21,7 @@ type State = {
   pending: boolean;
   label: string;
   notice: ReloadNotice | undefined;
-  /**
-   * The reader has closed what was on screen. Kept apart from `notice` so a
-   * dismissal can also silence the progress line, which is not a notice and
-   * outlives any one of them: `pending` still gates the restart button while
-   * this is true. Every step the machine takes afterwards clears it, so the
-   * toast reporting how the update ended is not swallowed by a tap on the
-   * one that said it had started.
-   */
   dismissed: boolean;
-  pimVersion: string | undefined;
-  piVersion: string | undefined;
 };
 
 const TIMEOUT_MS = 180_000;
@@ -47,7 +31,7 @@ const TIMEOUT_NOTICE: ReloadNotice = {
   text: "Restart timed out. The server may still be updating; check it before trying again.",
 };
 
-/** Per-tab intent, not a reconnect policy: only the requesting tab navigates. */
+/** Per-tab restart intent: only the tab that asked for it navigates. */
 export class Reload {
   public readonly state: Store<State>;
   public readonly target: AttachTarget | undefined;
@@ -75,8 +59,6 @@ export class Reload {
       label: this.intent ? "Waiting for server…" : "",
       notice: expired ? TIMEOUT_NOTICE : undefined,
       dismissed: false,
-      pimVersion: undefined,
-      piVersion: undefined,
     });
     this.state = state;
     this.setState = setState;
@@ -131,8 +113,7 @@ export class Reload {
     if (status === "reconnecting") {
       this.disconnected = true;
     }
-    // Socket open is enough: an unwritten session may no longer exist, so
-    // waiting for its attach to succeed would strand the old bundle here.
+    // Socket open is enough: an unwritten session may not survive the restart.
     if (status === "open" && this.disconnected) {
       if (this.intent?.phase === "restarting") {
         this.refresh();
@@ -147,16 +128,11 @@ export class Reload {
   }
 
   public ingest(event: ServerEvent): void {
-    // Navigation is asynchronous; the old socket must not consume the toast
-    // intended for the next page while its document is still unloading.
+    // Navigation is async: the unloading page must not eat the next page's toast.
     if (this.navigating) {
       return;
     }
     if (event.type === "attached") {
-      this.setState((state) => {
-        state.pimVersion = event.pimVersion;
-        state.piVersion = event.piVersion;
-      });
       if (this.intent?.phase === "loaded") {
         const { skipped, blocking } = this.intent;
         this.finish({
@@ -257,8 +233,6 @@ export class Reload {
       state.notice = notice;
       state.dismissed = false;
     });
-    // Only a success is purely informational; a warning or an error names the
-    // manual step still owed, so it stays until the reader dismisses it.
     if (notice.tone === "success") {
       this.dismissTimer = setTimeout(() => this.dismiss(), DISMISS_MS);
     }
@@ -272,8 +246,7 @@ export class Reload {
         sessionStorage.removeItem(this.key);
       }
     } catch {
-      // Storage can be denied; the live restart still works without a toast
-      // carried across the navigation.
+      // Storage can be denied; the live restart still works.
     }
   }
 }
@@ -293,9 +266,7 @@ function readIntent(key: string): Intent | undefined {
         typeof saved.target.sessionId === "string") &&
       (saved.target.cwd === undefined || typeof saved.target.cwd === "string")
     ) {
-      // The bundle that wrote this one may predate `blocking` — the update to
-      // this very build is that case — so an absent flag reads as a note
-      // rather than discarding the toast the operator is waiting for.
+      // An older bundle wrote no `blocking`, so an absent flag reads as a note.
       return { ...saved, blocking: saved.blocking === true };
     }
   } catch {

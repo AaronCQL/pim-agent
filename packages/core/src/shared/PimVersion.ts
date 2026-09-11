@@ -1,4 +1,5 @@
-import ky from "ky";
+import { Fs } from "./Fs";
+import { createKy } from "./Http";
 
 const REGISTRY = "https://registry.npmjs.org";
 const DEFAULT_TIMEOUT_MS = 5_000;
@@ -14,15 +15,11 @@ type LatestOptions = {
 };
 
 async function read(url: URL): Promise<Manifest> {
-  try {
-    const pkg = (await Bun.file(url).json()) as Partial<Manifest>;
-    return {
-      name: typeof pkg.name === "string" ? pkg.name : "?",
-      version: typeof pkg.version === "string" ? pkg.version : "?",
-    };
-  } catch {
-    return { name: "?", version: "?" };
-  }
+  const pkg = await Fs.readJsonOr<Partial<Manifest> | null>(url, null);
+  return {
+    name: typeof pkg?.name === "string" ? pkg.name : "?",
+    version: typeof pkg?.version === "string" ? pkg.version : "?",
+  };
 }
 
 function self(): Promise<Manifest> {
@@ -33,12 +30,12 @@ async function current(): Promise<string> {
   return (await self()).version;
 }
 
-/** The npm package this pim was published as, and so the one to reinstall. */
+/** The npm package this pim was published as. */
 async function name(): Promise<string> {
   return (await self()).name;
 }
 
-/** Pi ships inside pim's install tree, so this is the pi a user actually runs. */
+/** The pi that ships inside pim's install tree. */
 async function pi(): Promise<string> {
   return (
     await read(
@@ -53,13 +50,12 @@ async function latest(
   options: LatestOptions = {}
 ): Promise<string | undefined> {
   const pkg = await self();
-  const client = options.fetch ? ky.create({ fetch: options.fetch }) : ky;
+  const client = createKy(options.fetch);
   try {
     const release = await client(
       `${REGISTRY}/${pkg.name.replace("/", "%2f")}/latest`,
       {
         timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        retry: 0,
         headers: { accept: "application/json" },
       }
     ).json<{ readonly version?: unknown }>();
@@ -91,7 +87,6 @@ function isNewer(candidate: string, installed: string): boolean {
       return part > right[index]!;
     }
   }
-  // Same core: the only step forward left is a prerelease reaching its release.
   return installed.includes("-") && !candidate.includes("-");
 }
 

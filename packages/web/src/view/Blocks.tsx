@@ -5,7 +5,7 @@ import type { IntraLineRange, ToolDiffLine } from "#core/shared/DiffLines";
 import { Languages } from "#core/shared/Languages";
 import { DiffLayout } from "#core/view/DiffLayout";
 import { Painting } from "#core/view/Painting";
-import type { DiffHunk, Span, ViewBlock } from "#core/view/ViewBlock";
+import type { BlockOf, DiffHunk, Span, ViewBlock } from "#core/view/ViewBlock";
 import { Markdown } from "../markdown/Markdown";
 import { CopyButton } from "../ui/CopyButton";
 import { Attachments } from "./Attachments";
@@ -21,11 +21,6 @@ import {
   toneClass,
 } from "./tokens";
 
-type BlockOf<TKind extends ViewBlock["kind"]> = Extract<
-  ViewBlock,
-  { kind: TKind }
->;
-
 type BlockPainter<TKind extends ViewBlock["kind"]> = Component<{
   readonly block: BlockOf<TKind>;
 }>;
@@ -34,12 +29,7 @@ type PainterMap = {
   readonly [TKind in ViewBlock["kind"]]: BlockPainter<TKind>;
 };
 
-/**
- * The recursive dispatcher. `list` and `section` hold
- * `ViewBlock[]` of their own, so recursion is forced by the type rather than
- * chosen; a `Record<kind, Component>` rather than a `<Switch>` is what makes a
- * kind added to the union without a painter a compile error at `PainterMap`.
- */
+/** The recursive block dispatcher; a kind with no painter fails to typecheck. */
 export function Blocks(props: { readonly blocks: readonly ViewBlock[] }) {
   return <For each={props.blocks}>{(block) => <Block block={block} />}</For>;
 }
@@ -78,13 +68,7 @@ function MarkdownBlock(props: { readonly block: BlockOf<"markdown"> }) {
   return <Markdown text={props.block.text} />;
 }
 
-/**
- * Spans are one line of text cut into tones, not a row of chips: producers
- * write whatever spacing they mean into the span text (`+1`, `/`, `-1`), the
- * same way the ANSI painter concatenates them. So they are laid out inline
- * with no gap, and `pre-wrap` keeps a heredoc's newlines and a separator's
- * padding spaces from being collapsed away at a span boundary.
- */
+// Producers write their own spacing into span text, so no gap and `pre-wrap`.
 function SpansBlock(props: { readonly block: BlockOf<"spans"> }) {
   return (
     <p class="whitespace-pre-wrap break-words">
@@ -95,10 +79,6 @@ function SpansBlock(props: { readonly block: BlockOf<"spans"> }) {
 
 function SpanText(props: { readonly span: Span }) {
   return (
-    // `code` gets no styling of its own: the whole UI is monospace, so a shell
-    // command in a tool title is already set in the face a pill would be
-    // announcing, and it is the row's subject — which reads at the body
-    // colour, like every other subject.
     <span
       class={{
         [toneClass(props.span.tone)]: true,
@@ -120,11 +100,6 @@ function SectionBlock(props: { readonly block: BlockOf<"section"> }) {
   );
 }
 
-/**
- * A fenced block, fence included: the mockup draws the ` ``` `+lang as dim
- * text above and below the code rather than implying it with a card, so the
- * payload reads exactly as it would in the terminal that produced it.
- */
 function CodeBlock(props: { readonly block: BlockOf<"code"> }) {
   const lines = createMemo(() =>
     Highlight.tokenize(props.block.text, Languages.resolve(props.block.lang))
@@ -167,20 +142,7 @@ function CodeBlock(props: { readonly block: BlockOf<"code"> }) {
   );
 }
 
-/**
- * A diff, drawn the way the terminal draws one: a numbered gutter, a sign,
- * syntax-highlighted code under a wash of green or red, and `⋯` where hunks
- * skip over unchanged lines. No `@@` headers and no per-hunk disclosure — the
- * gutter says where you are, and a payload you had to open a second time to
- * read was never worth opening the first.
- *
- * `w-max` is what makes the washes right: the rows sit in a horizontally
- * scrolling frame, and a row only as wide as the frame would have its
- * background stop mid-line the moment anything scrolled past the edge. The
- * gutter is `select-none`, so copying a diff yields the code and nothing else,
- * and tabs are sized rather than expanded, so the emphasis ranges — which
- * count characters of the original line — still land on the right ones.
- */
+// Tabs are sized, not expanded: emphasis ranges count characters of the original line.
 function DiffBlock(props: { readonly block: BlockOf<"diff"> }) {
   const lang = createMemo(() => Languages.fromPath(props.block.path));
   const width = createMemo(() => DiffLayout.gutterWidth(props.block.hunks));
@@ -208,9 +170,7 @@ function Hunk(props: {
   readonly lang: string | undefined;
   readonly width: number;
 }) {
-  // One tokenisation per side of the hunk, not one per line: see
-  // `DiffLayout.mapSides`. Memoised because it re-runs whenever a grammar
-  // finishes loading, and that is the only time it should.
+  // One tokenisation per side of the hunk, memoised: it re-runs when a grammar lands.
   const tokens = createMemo(() =>
     DiffLayout.mapSides(props.hunk, (block) =>
       Highlight.tokenize(block, props.lang)
@@ -259,28 +219,22 @@ function DiffRow(props: {
   );
 }
 
-/** `−` is the terminal's minus sign, and it lines up with `+`. */
+// `−` is the unicode minus, which lines up with `+`.
 const SIGNS = {
   context: " ",
   added: "+",
   removed: "−",
 } as const satisfies Record<ToolDiffLine["kind"], string>;
 
-type Piece = Token & { readonly emphasis: boolean };
+type Piece = Token & { readonly emphasis?: boolean };
 
-/**
- * Syntax tokens re-cut against the intra-line emphasis ranges — the words a
- * line actually changed, which the terminal paints in a stronger wash. The two
- * are independent cuts of the same characters, so a token straddling the edge
- * of a range has to be split at it; ranges count characters, tokens carry
- * them, and this walks both at once.
- */
+// Syntax tokens re-cut at the emphasis range edges; both count the same characters.
 function emphasize(
   tokens: readonly Token[],
   ranges: readonly IntraLineRange[] = []
 ): readonly Piece[] {
   if (ranges.length === 0) {
-    return tokens.map((token) => ({ ...token, emphasis: false }));
+    return tokens;
   }
 
   const pieces: Piece[] = [];
@@ -305,11 +259,6 @@ function emphasize(
   return pieces;
 }
 
-/**
- * Where a token spanning `[from, to)` has to be cut, as offsets into the
- * token itself and always ending at its end, so one pass over these produces
- * every piece the token is made of.
- */
 function cuts(
   ranges: readonly IntraLineRange[],
   from: number,
@@ -332,9 +281,6 @@ function inRange(ranges: readonly IntraLineRange[], at: number): boolean {
 
 function FileBlock(props: { readonly block: BlockOf<"file"> }) {
   return (
-    // The path is the subject wherever it appears — a `Read` title, a line of
-    // `Glob` output — so it takes the colour of what it sits in rather than
-    // one of its own; what trails it is detail, and recedes.
     <span>
       {props.block.path}
       <Show when={props.block.range}>
@@ -349,10 +295,6 @@ function FileBlock(props: { readonly block: BlockOf<"file"> }) {
   );
 }
 
-/**
- * The mockup's hanging indent rather than a browser list: the marker is dim,
- * sits in the negative text-indent, and wrapped lines align with the text.
- */
 function ListBlock(props: { readonly block: BlockOf<"list"> }) {
   return (
     <Dynamic component={props.block.ordered === true ? "ol" : "ul"}>
@@ -412,22 +354,25 @@ function LinkBlock(props: { readonly block: BlockOf<"link"> }) {
   );
 }
 
-function NoticeBlock(props: { readonly block: BlockOf<"notice"> }) {
+export function Notice(props: {
+  readonly severity: keyof typeof NOTICE_CLASSES;
+  readonly text: string;
+  readonly tag?: Element;
+}) {
   return (
     <p
-      class={`whitespace-pre-wrap ${NOTICE_CLASSES[props.block.severity]}`}
-      role={props.block.severity === "error" ? "alert" : undefined}
+      class={`whitespace-pre-wrap ${NOTICE_CLASSES[props.severity]}`}
+      role={props.severity === "error" ? "alert" : undefined}
     >
-      {props.block.text}
+      {props.tag === undefined ? props.text : [props.tag, props.text]}
     </p>
   );
 }
 
-/**
- * A file the agent sent. The one block that is not a description of what the
- * agent did but a thing handed to the reader, so it is drawn as the file
- * itself — the same tile an inbound attachment gets, at delivery size.
- */
+function NoticeBlock(props: { readonly block: BlockOf<"notice"> }) {
+  return <Notice severity={props.block.severity} text={props.block.text} />;
+}
+
 function AttachmentBlock(props: { readonly block: BlockOf<"attachment"> }) {
   return (
     <Attachments

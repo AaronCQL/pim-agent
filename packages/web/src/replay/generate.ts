@@ -6,17 +6,7 @@ import { SessionProjection } from "#server/SessionProjection";
 import { FIXTURE_CWD, FIXTURE_EVENTS, FIXTURE_JSONL } from "./fixture";
 import { pimTools } from "./tools";
 
-/**
- * Regenerates `fixtures/session.jsonl` by driving a real pi session against a
- * scripted model, then re-projects it into `fixtures/events.json`.
- *
- *   bun packages/web/src/replay/generate.ts
- *
- * Committed rather than run in CI: it starts a real agent, runs real tools,
- * and is the only way to get a session file that actually contains a diff, a
- * failing command and markdown. `FIXTURE_CWD` is a fixed path so the absolute
- * paths pi records stay stable across regenerations.
- */
+/** Regenerates the replay fixture: `bun packages/web/src/replay/generate.ts`. */
 
 const WORKSPACE = FIXTURE_CWD;
 const AGENT_DIR = join(WORKSPACE, ".agent");
@@ -30,7 +20,6 @@ export function farewell(name: string): string {
 }
 `;
 
-/** One scripted assistant turn: prose, then optionally one tool call. */
 type Turn = {
   readonly text: string;
   readonly call?: { readonly name: string; readonly args: unknown };

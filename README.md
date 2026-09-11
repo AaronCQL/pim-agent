@@ -255,4 +255,6 @@ bun dev
 
 `bun dev` runs `bun link` and launches `pim` from this checkout, with the local extensions loaded in-process. Restart `pim` to pick up edits: `/reload` reloads Pi's own resources, but Pim's extensions are already-imported modules and will not be re-read.
 
+For the web client, `bun run web:build` then `pim --mode web` serves the built bundle at <http://127.0.0.1:4319>. To work on the client itself, run `pim --mode web` in one terminal and `bun run web:dev` in another: Vite serves the client with HMR, and a dev build points its gateway at port 4319 regardless of where Vite is listening.
+
 See [AGENTS.md](./AGENTS.md) for the developer guide.

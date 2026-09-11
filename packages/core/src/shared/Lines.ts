@@ -5,9 +5,7 @@ function normalize(content: string): string {
   return stripUtf8Bom(content).replaceAll("\r\n", "\n").replaceAll("\r", "\n");
 }
 
-function split(content: string): readonly string[] {
-  const normalized = normalize(content);
-
+function splitNormalized(normalized: string): readonly string[] {
   if (normalized.length === 0) {
     return [];
   }
@@ -21,15 +19,10 @@ function split(content: string): readonly string[] {
   return parts;
 }
 
-function hasTrailingNewline(content: string): boolean {
-  return normalize(content).endsWith("\n");
+function split(content: string): readonly string[] {
+  return splitNormalized(normalize(content));
 }
 
-/**
- * Given a truncated head prefix of a larger file, the 1-based line to resume
- * reading at so the (possibly mid-line) cut point is re-read in full. Matches
- * how `read` numbers lines via `split`, so the hint lands on the right line.
- */
 function continuationLine(head: string): number {
   const { lines, hasTrailingNewline } = splitWithTrailingNewline(head);
   return Math.max(1, lines.length + (hasTrailingNewline ? 1 : 0));
@@ -40,19 +33,10 @@ function splitWithTrailingNewline(content: string): {
   readonly hasTrailingNewline: boolean;
 } {
   const normalized = normalize(content);
-
-  if (normalized.length === 0) {
-    return { lines: [], hasTrailingNewline: false };
-  }
-
-  const parts = normalized.split("\n");
-  const hasTrailingNewline = parts.at(-1) === "";
-
-  if (hasTrailingNewline) {
-    parts.pop();
-  }
-
-  return { lines: parts, hasTrailingNewline };
+  return {
+    lines: splitNormalized(normalized),
+    hasTrailingNewline: normalized.endsWith("\n"),
+  };
 }
 
 function stripUtf8Bom(content: string): string {
@@ -74,10 +58,9 @@ async function isBinary(file: Bun.BunFile): Promise<boolean> {
 
 export const Lines = {
   utf8Bom,
-  utf8BomBytes,
   normalize,
   split,
-  hasTrailingNewline,
+  splitNormalized,
   continuationLine,
   splitWithTrailingNewline,
   stripUtf8Bom,

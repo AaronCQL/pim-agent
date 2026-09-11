@@ -27,21 +27,15 @@ async function scan(
     if (!matcher.match(relativePath)) {
       continue;
     }
-    const absolutePath = join(absoluteRoot, relativePath);
-    if (GlobExclusions.ignores(excludes, absoluteRoot, absolutePath)) {
+    if (GlobExclusions.ignores(excludes, relativePath)) {
       continue;
     }
-    files.push(absolutePath);
+    files.push(join(absoluteRoot, relativePath));
   }
 
   return files;
 }
 
-/**
- * A bare directory (`src/telegram`) is a natural thing to reach for as a
- * pattern, but it matches nothing and silently returns zero results. Treat it
- * as `src/telegram/**\/*` instead of forcing a second, corrected call.
- */
 async function expandDirectory(
   absoluteRoot: string,
   pattern: string

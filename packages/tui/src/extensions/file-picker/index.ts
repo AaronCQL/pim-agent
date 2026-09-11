@@ -4,29 +4,19 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteProvider } from "@earendil-works/pi-tui";
 import type { FilePickerSuggestionEngine } from "#core/picker/FilePickerSuggestionEngine";
+import { AT_PREFIX, isDirectoryItem, sigilOffset } from "#core/picker/token";
 import { WorkerFilePickerSuggestionEngine } from "#core/picker/WorkerFilePickerSuggestionEngine";
+import { wrapProvider } from "../wrapProvider";
 
 const MAX_VISIBLE_ROWS = 50;
-const AT_PREFIX = /(?:^|\s)@(\S*)$/;
 
-// Pi cancels autocomplete after Tab; for directories we want to keep
-// drilling, so re-enter Tab on the next tick.
+// Pi cancels autocomplete after Tab; re-enter Tab next tick to keep drilling.
 function keepDrilling(): void {
   setTimeout(() => {
     try {
       process.stdin.emit("data", "\t");
     } catch {}
   }, 0);
-}
-
-function activeAtTokenFromMatch(
-  match: RegExpMatchArray,
-  cursorLine: number
-): ActiveAtToken {
-  const matchedText = match[0] ?? "";
-  const matchCol = match.index ?? 0;
-  const atCol = matchCol + (matchedText.startsWith("@") ? 0 : 1);
-  return { cursorLine, atCol };
 }
 
 function sameActiveAtToken(
@@ -55,7 +45,7 @@ export function createFilePickerProviderFactory(
   return (current: AutocompleteProvider): AutocompleteProvider => {
     let activeAtToken: ActiveAtToken | undefined;
 
-    return {
+    return wrapProvider(current, {
       async getSuggestions(lines, cursorLine, cursorCol, autocompleteOptions) {
         const line = lines[cursorLine] ?? "";
         const beforeCursor = line.slice(0, cursorCol);
@@ -72,7 +62,7 @@ export function createFilePickerProviderFactory(
         }
 
         const query = atMatch[1] ?? "";
-        const atToken = activeAtTokenFromMatch(atMatch, cursorLine);
+        const atToken = { cursorLine, atCol: sigilOffset(atMatch) };
         if (!sameActiveAtToken(activeAtToken, atToken)) {
           activeAtToken = atToken;
           refreshRelative();
@@ -105,8 +95,7 @@ export function createFilePickerProviderFactory(
       },
 
       applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
-        // Pi appends a trailing space after file completions; apply @ items
-        // ourselves so Tab inserts the bare path.
+        // Pi appends a trailing space after file completions; apply @ items here instead.
         if (prefix.startsWith("@")) {
           const line = lines[cursorLine] ?? "";
           const beforePrefix = line.slice(0, cursorCol - prefix.length);
@@ -123,7 +112,7 @@ export function createFilePickerProviderFactory(
           newLines[cursorLine] =
             `${beforePrefix}${item.value}${adjustedAfterCursor}`;
 
-          const isDirectory = item.label.endsWith("/");
+          const isDirectory = isDirectoryItem(item);
           const cursorOffset =
             isDirectory && hasTrailingQuote
               ? item.value.length - 1
@@ -152,14 +141,7 @@ export function createFilePickerProviderFactory(
         }
         return result;
       },
-
-      shouldTriggerFileCompletion(lines, cursorLine, cursorCol) {
-        return (
-          current.shouldTriggerFileCompletion?.(lines, cursorLine, cursorCol) ??
-          true
-        );
-      },
-    };
+    });
   };
 }
 

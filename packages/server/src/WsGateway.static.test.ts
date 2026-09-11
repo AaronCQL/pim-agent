@@ -148,7 +148,7 @@ test("an unbuilt client answers with build instructions, not a crash", async () 
   const response = await fetch(httpUrl());
 
   expect(response.status).toBe(503);
-  expect(await response.text()).toContain("bun run build:web");
+  expect(await response.text()).toContain("bun run web:build");
 });
 
 test("the default client directory points at the web package bundle", () => {

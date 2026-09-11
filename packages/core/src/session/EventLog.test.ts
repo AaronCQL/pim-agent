@@ -1,4 +1,3 @@
-import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -45,7 +44,7 @@ describe("EventLog replay", () => {
     const header = await new EventLog(FIXTURE).header();
     expect(header?.id).toBe("019fbcd4-6fe8-78eb-914d-6a736b04203e");
     expect(header?.cwd).toBe("/home/htpc/Desktop/dev/mmorpg");
-    expect(await new EventLog(FIXTURE).head()).toBe(7);
+    expect((await new EventLog(FIXTURE).read()).at(-1)?.seq).toBe(7);
   });
 
   test("resuming at an arbitrary seq loses nothing", async () => {
@@ -90,7 +89,7 @@ describe("EventLog replay", () => {
     const log = new EventLog(path);
     const partial = await log.read();
     expect(partial).toHaveLength(6);
-    expect(await log.head()).toBe(6);
+    expect(partial.at(-1)?.seq).toBe(6);
 
     await Bun.write(path, full);
     const rest = await log.read(6);
@@ -122,7 +121,6 @@ describe("EventLog replay", () => {
   test("a session that pi has not flushed yet reads as empty", async () => {
     const log = new EventLog(join(tmp, "never-written.jsonl"));
     expect(await log.read()).toEqual([]);
-    expect(await log.head()).toBe(0);
   });
 });
 
@@ -367,76 +365,5 @@ describe("EventLog settle time", () => {
     );
 
     expect((await log.digest()).settledAt).toBe(Date.parse(at(2)));
-  });
-});
-
-describe("EventLog in-flight turn", () => {
-  const assistant = (text: string, thinking = ""): AssistantMessage => ({
-    role: "assistant",
-    content: [
-      ...(thinking
-        ? [{ type: "thinking" as const, thinking, thinkingSignature: "" }]
-        : []),
-      { type: "text" as const, text },
-    ],
-    api: "anthropic-messages",
-    provider: "anthropic",
-    model: "m",
-    usage: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      cacheWrite1h: 0,
-      reasoning: 0,
-      totalTokens: 0,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-    },
-    stopReason: "stop",
-    timestamp: 0,
-  });
-
-  test("coalesces streaming deltas into one replayable block", () => {
-    const log = new EventLog(FIXTURE);
-    expect(log.inFlight).toBeUndefined();
-
-    log.observe({ type: "agent_start" });
-    log.observe({
-      type: "message_update",
-      message: assistant("Hel"),
-      assistantMessageEvent: { type: "text_delta" } as never,
-    });
-    log.observe({
-      type: "message_update",
-      message: assistant("Hello there", "hmm"),
-      assistantMessageEvent: { type: "text_delta" } as never,
-    });
-
-    expect(log.inFlight?.text).toBe("Hello there");
-    expect(log.inFlight?.thinking).toBe("hmm");
-  });
-
-  test("tracks running tools and clears once the agent settles", () => {
-    const log = new EventLog(FIXTURE);
-    log.observe({ type: "agent_start" });
-    log.observe({
-      type: "tool_execution_start",
-      toolCallId: "t1",
-      toolName: "read",
-      args: {},
-    });
-    expect(log.inFlight?.tools.map((t) => t.toolName)).toEqual(["read"]);
-
-    log.observe({
-      type: "tool_execution_end",
-      toolCallId: "t1",
-      toolName: "read",
-      result: {},
-      isError: false,
-    });
-    expect(log.inFlight?.tools).toEqual([]);
-
-    log.observe({ type: "agent_settled" });
-    expect(log.inFlight).toBeUndefined();
   });
 });

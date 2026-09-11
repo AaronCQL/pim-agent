@@ -1,10 +1,10 @@
 import { DiffLines, type ToolDiff } from "../../shared/DiffLines";
 import { Fs } from "../../shared/Fs";
+import { FsErrors } from "../../shared/FsErrors";
 
 const CONTEXT_LINES = 3;
 
-// Diff.diffLines is O(n*d); skip rendering for multi-MB writes. The write
-// itself still happens — only the diff is omitted.
+// Diff.diffLines is O(n*d): above this only the diff is skipped, never the write.
 const MAX_DIFF_BYTES = 2 * 1024 * 1024;
 
 export type WriteOutcome = {
@@ -16,7 +16,6 @@ export type WriteOutcome = {
     readonly thresholdBytes: number;
     readonly comparedBytes: number;
   };
-  // Surfaced in the result text since the renderer doesn't visualize EOF state.
   readonly trailingNewlineChange?: "added" | "removed";
 };
 
@@ -36,13 +35,14 @@ export async function writeContent(
   const created = prior === undefined;
   const priorBytes = prior === undefined ? 0 : Buffer.byteLength(prior, "utf8");
   const comparedBytes = Math.max(priorBytes, bytesWritten);
-
-  const oldSide =
-    prior === undefined
-      ? { lines: [], hasTrailingNewline: false }
-      : DiffLines.fromText(prior);
-  const newSide = DiffLines.fromText(content);
-  const trailingNewlineChange = diffEofChange(oldSide, newSide, created);
+  const priorNewline = prior?.endsWith("\n") ?? false;
+  const contentNewline = content.endsWith("\n");
+  const trailingNewlineChange =
+    created || priorNewline === contentNewline
+      ? undefined
+      : contentNewline
+        ? "added"
+        : "removed";
 
   if (comparedBytes > MAX_DIFF_BYTES) {
     return {
@@ -59,8 +59,8 @@ export async function writeContent(
 
   const diff = DiffLines.buildToolDiff(
     absolutePath,
-    oldSide,
-    newSide,
+    prior === undefined ? DiffLines.emptySide : DiffLines.fromText(prior),
+    DiffLines.fromText(content),
     CONTEXT_LINES
   );
 
@@ -72,30 +72,13 @@ export async function writeContent(
   };
 }
 
-function diffEofChange(
-  oldSide: { readonly hasTrailingNewline: boolean },
-  newSide: { readonly hasTrailingNewline: boolean },
-  created: boolean
-): "added" | "removed" | undefined {
-  if (created || oldSide.hasTrailingNewline === newSide.hasTrailingNewline) {
-    return undefined;
-  }
-
-  return newSide.hasTrailingNewline ? "added" : "removed";
-}
-
 async function readPriorContent(
   absolutePath: string
 ): Promise<string | undefined> {
   try {
     return await Bun.file(absolutePath).text();
   } catch (error) {
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      (error as { code: unknown }).code === "ENOENT"
-    ) {
+    if (FsErrors.code(error) === "ENOENT") {
       return undefined;
     }
 

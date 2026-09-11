@@ -5,6 +5,7 @@ import {
   type StoredAttachment,
 } from "#core/attachments/AttachmentStore";
 import { Paths } from "#core/shared/Paths";
+import { IMMUTABLE } from "./StaticClient";
 
 export type AttachmentEndpointDeps = {
   /** Defaults to `~/.pim/attachments`. */
@@ -12,11 +13,7 @@ export type AttachmentEndpointDeps = {
   readonly maxBytes?: number;
 };
 
-/** Big enough for a phone photo or a log dump, small enough to refuse a disk. */
 const DEFAULT_MAX_BYTES = 25 * 1024 * 1024;
-
-/** A stored name carries a stamp, so the bytes under it can never change. */
-const IMMUTABLE = "public, max-age=31536000, immutable";
 
 const PREFIX = "/attachment/";
 
@@ -25,47 +22,20 @@ export function defaultAttachmentsRoot(): string {
   return join(Paths.pimHomeDir(), "attachments");
 }
 
-/**
- * A WebSocket is exempt from the same-origin policy; this endpoint is not, and
- * in development the client is served by vite on its own port — so its upload
- * is a cross-origin request and dies in the browser before it is ever sent.
- * Allowing every origin gives away nothing the socket does not already give
- * away, since any page can open one against this port without asking.
- */
+// Every origin is allowed: in dev the client is served from vite's own port and its upload is cross-origin.
 function allow(response: Response): Response {
   response.headers.set("access-control-allow-origin", "*");
   response.headers.set("access-control-allow-headers", "content-type");
   return response;
 }
 
-/**
- * Where `serve` answers for a stored file, as a client asks for it: the last
- * two segments of the path and nothing else, so the server's own layout stays
- * on the server. A file stored under some other root — Telegram keeps its own
- * — resolves to a URL this server has no bytes for, and the client draws the
- * name instead of a picture it cannot fetch.
- */
+/** Where `serve` answers for a stored file: the last two path segments only, never the server's layout. */
 export function attachmentUrl(path: string): string {
   const scope = encodeURIComponent(basename(dirname(path)));
   return `${PREFIX}${scope}/${encodeURIComponent(basename(path))}`;
 }
 
-/**
- * The two directions bytes travel between a browser and the agent's disk:
- * `POST /upload?session=<id>` with a `multipart/form-data` `file` field, and
- * `GET /attachment/<session>/<file>` to see one again.
- *
- * The upload is the whole reason an attachment is not a picker: a client names
- * a file in a world the agent cannot see, so the bytes must be transferred
- * before the agent can be told anything at all — and what it is told is a
- * *server* path, never the client's, which is never recorded anywhere.
- *
- * The read direction exists because the prompt is not a gallery. What the
- * agent is told is a path, and a path is the last thing a person wants to
- * look at: the client fetches the bytes and paints the picture, over HTTP
- * rather than over the socket, so the browser's own cache answers the second
- * look at a conversation and a replay never carries an image twice.
- */
+/** `POST /upload?session=<id>` with a multipart `file` field, and `GET /attachment/<session>/<file>` to read it back. */
 export class AttachmentEndpoint {
   private readonly store: AttachmentStore;
   private readonly maxBytes: number;
@@ -93,11 +63,7 @@ export class AttachmentEndpoint {
     );
   }
 
-  /**
-   * Hands back bytes this server stored. Every segment goes back through the
-   * sanitising the write did, so a crafted name can only ever miss: nothing
-   * outside the scope it names is reachable, and a scope is a session.
-   */
+  // Every segment goes back through the write's sanitising, so a crafted name cannot escape its scope.
   private async serve(pathname: string): Promise<Response> {
     const [scope, name, ...rest] = pathname
       .slice(PREFIX.length)
@@ -161,10 +127,6 @@ export class AttachmentEndpoint {
         bytes: await file.arrayBuffer(),
         mimeType: file.type || "application/octet-stream",
         name: file.name,
-        // The client's own name for the bytes, so what a reader is shown a
-        // week later is `diagram.png` and not a UUID. It is a *hint*: the
-        // store sanitises and stamps it, and the result is the only name
-        // anything on this side ever uses.
         stem: stemOf(file.name),
       });
     } catch (err) {
@@ -181,11 +143,7 @@ export class AttachmentEndpoint {
     });
   }
 
-  /**
-   * Consume the uploads a prompt referenced. Consuming rather than reading
-   * keeps the inlined image bytes from outliving the one message that needed
-   * them; unknown ids are dropped, so a replayed command cannot re-attach.
-   */
+  /** Consume the uploads a prompt referenced; unknown ids are dropped, so a replayed command cannot re-attach. */
   public take(
     sessionId: string,
     ids: readonly string[]
@@ -220,7 +178,6 @@ function stemOf(name: string): string | undefined {
   return stem === "" ? undefined : stem;
 }
 
-/** A name that is not valid percent-encoding is a name nothing stored. */
 function decodeURIComponentSafely(segment: string): string {
   try {
     return decodeURIComponent(segment);

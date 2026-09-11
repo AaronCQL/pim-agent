@@ -15,19 +15,16 @@ export type PickerServiceDeps = {
 
 const DEFAULT_LIMIT = 50;
 
-/**
- * Answers one session's picker queries against the machine the agent runs on.
- *
- * Both halves are deliberately server-side. `@` names a file the *agent* must
- * open, and a skill is a capability loaded from the agent's disk — neither
- * means anything on a client, so neither is ever shipped there. What crosses
- * the wire is one query and at most `limit` ranked rows.
- */
+/** Answers one session's picker queries against the machine the agent runs on. */
 export class PickerService {
   private readonly deps: PickerServiceDeps;
-  private engine: InProcessFilePickerSuggestionEngine | undefined;
-  private engineCwd: string | undefined;
-  private catalogLoaded = false;
+  private fileCache:
+    | {
+        readonly cwd: string;
+        readonly engine: InProcessFilePickerSuggestionEngine;
+        loaded: boolean;
+      }
+    | undefined;
   private commandCache:
     | { readonly cwd: string; readonly items: readonly PickerItem[] }
     | undefined;
@@ -40,39 +37,35 @@ export class PickerService {
     query: string,
     limit = DEFAULT_LIMIT
   ): Promise<readonly PickerItem[]> {
-    const engine = this.fileEngine();
-    if (!this.catalogLoaded) {
-      await engine.refreshRelative();
-      this.catalogLoaded = true;
+    const cache = this.fileEngine();
+    if (!cache.loaded) {
+      await cache.engine.refreshRelative();
+      cache.loaded = true;
     }
-    return (await engine.rank(query, { limit })) ?? [];
+    return (await cache.engine.rank(query, { limit })) ?? [];
   }
 
   public commands(query: string, limit = DEFAULT_LIMIT): readonly PickerItem[] {
     return rankCommands(query, this.commandItems(), { limit });
   }
 
-  /**
-   * Drop everything derived from the filesystem. The cwd moved, or something
-   * wrote to it — either way the catalog and the skill list are now stale.
-   */
   public invalidate(): void {
-    this.engine = undefined;
-    this.engineCwd = undefined;
-    this.catalogLoaded = false;
+    this.fileCache = undefined;
     this.commandCache = undefined;
   }
 
-  private fileEngine(): InProcessFilePickerSuggestionEngine {
+  private fileEngine(): NonNullable<PickerService["fileCache"]> {
     const cwd = this.deps.cwd();
-    if (this.engine === undefined || this.engineCwd !== cwd) {
-      this.engine = new InProcessFilePickerSuggestionEngine({
-        loadRelativeCatalog: () => loadRelative({ root: cwd }),
-      });
-      this.engineCwd = cwd;
-      this.catalogLoaded = false;
+    if (this.fileCache?.cwd !== cwd) {
+      this.fileCache = {
+        cwd,
+        engine: new InProcessFilePickerSuggestionEngine({
+          loadRelativeCatalog: () => loadRelative({ root: cwd }),
+        }),
+        loaded: false,
+      };
     }
-    return this.engine;
+    return this.fileCache;
   }
 
   private commandItems(): readonly PickerItem[] {
@@ -83,11 +76,6 @@ export class PickerService {
     return [...this.commandCache.items, ...this.extensionItems()];
   }
 
-  /**
-   * Project-local `.agents/skills` hangs off the session cwd, so the skill
-   * list is a function of cwd and nothing else — which is why it is cached
-   * beside it rather than read from a live agent.
-   */
   private loadSkillItems(cwd: string): readonly PickerItem[] {
     try {
       const { skills } = loadSkills({

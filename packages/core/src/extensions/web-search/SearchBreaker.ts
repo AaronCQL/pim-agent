@@ -1,4 +1,3 @@
-import { chmod, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Fs } from "../../shared/Fs";
@@ -28,22 +27,12 @@ const DAY_MS = 86_400_000;
 
 const defaultProbeIntervalMs = 1_800_000;
 
-/**
- * Remembers which providers are quota-exhausted so a dead tier is skipped
- * instead of re-probed on every search. State lives on disk because the
- * Telegram daemon is long-lived and shares an IP-metered quota with any TUI
- * session on the same machine.
- *
- * Exhaustion is per-IP-per-day upstream, so trips default to expiring at the
- * next UTC midnight. A trip can be a false positive (a burst from another
- * process on the same IP), so a sidelined provider is still retried once per
- * probe interval; a rejected probe costs no quota.
- */
+/** Which providers are quota-exhausted, on disk; quota is per-IP-per-day, so trips expire at UTC midnight. */
 export class SearchBreaker {
   private readonly filePath: string;
   private readonly now: () => number;
   private readonly probeIntervalMs: number;
-  private writeQueue: Promise<unknown> = Promise.resolve();
+  private readonly writes = Fs.serialised();
 
   public constructor(options: SearchBreakerOptions = {}) {
     this.filePath =
@@ -80,13 +69,14 @@ export class SearchBreaker {
   }
 
   public async reset(provider: string): Promise<void> {
-    const state = await this.read();
+    await this.mutate((state) => {
+      if (state[provider] === undefined) {
+        return state;
+      }
 
-    if (state[provider] === undefined) {
-      return;
-    }
-
-    await this.mutate(({ [provider]: _removed, ...rest }) => rest);
+      const { [provider]: _removed, ...rest } = state;
+      return rest;
+    });
   }
 
   private async read(): Promise<BreakerState> {
@@ -119,19 +109,17 @@ export class SearchBreaker {
   private async mutate(
     update: (state: BreakerState) => BreakerState
   ): Promise<void> {
-    const task = async (): Promise<void> => {
-      const next = update(await this.read());
-      await mkdir(Paths.pimHomeDir(), { recursive: true, mode: 0o700 });
-      await chmod(Paths.pimHomeDir(), 0o700);
-      await Fs.writeAtomic(
-        this.filePath,
-        `${JSON.stringify(next, null, 2)}\n`,
-        0o600
-      );
-    };
+    await this.writes.run(async () => {
+      const state = await this.read();
+      const next = update(state);
 
-    this.writeQueue = this.writeQueue.then(task, task);
-    await this.writeQueue;
+      if (next === state) {
+        return;
+      }
+
+      await Paths.ensurePimHome();
+      await Fs.writeJson(this.filePath, next);
+    });
   }
 }
 

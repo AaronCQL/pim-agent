@@ -104,8 +104,11 @@ test("exposes pi's session uuid once an agent exists", async () => {
   const session = await buildSession();
   expect(session.sessionId).toBeUndefined();
 
-  await session.run(async () => {});
-  expect(session.sessionId).toBe(session.agentSession!.sessionId);
+  let uuid: string | undefined;
+  await session.run(async (agent) => {
+    uuid = agent.sessionId;
+  });
+  expect(session.sessionId).toBe(uuid);
 });
 
 test("re-emits session_start when the agent reloads mid-session", async () => {

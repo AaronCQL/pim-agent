@@ -18,12 +18,6 @@ export default function (pi: ExtensionAPI): void {
     }
   };
 
-  /**
-   * Takes the reading down. The widget outlives the session it is about —
-   * the UI is one screen every session borrows — so anything that ends this
-   * conversation has to clear it, or the next one opens under how long the
-   * last one clanked for.
-   */
   const clear = (ctx: ExtensionContext): void => {
     stopTimer();
     if (!ctx.hasUI) {
@@ -65,15 +59,12 @@ export default function (pi: ExtensionAPI): void {
     if (!ctx.hasUI) {
       return;
     }
-    // Trailing newline to separate from other widgets right below; newline will
-    // not show up when this widget is the only one shown
     const message = `⣿ Clanked for ${Format.formatElapsed(Date.now() - startedAt)}\n`;
     ctx.ui.setWidget(FINAL_WIDGET_ID, [ctx.ui.theme.fg("muted", message)]);
   });
 
-  // A new chat and a `/resume` both replace the conversation under the
-  // widget, which `session_shutdown` never hears about: it is the end of the
-  // process, not the end of a session.
+  // Not redundant with `session_shutdown`: that is process exit, and a new chat or `/resume`
+  // swaps the conversation under the widget without it.
   pi.on("session_before_switch", (_event, ctx) => {
     clear(ctx);
   });

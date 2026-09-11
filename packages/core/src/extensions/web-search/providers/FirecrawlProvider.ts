@@ -1,36 +1,26 @@
-import ky, { HTTPError, TimeoutError, type KyInstance } from "ky";
+import { Json } from "../../../shared/Json";
+import { createKy, type HttpFetch } from "../../../shared/Http";
+import type { KyInstance } from "ky";
 import {
-  isAbortError,
+  mapProviderError,
   normalizeSnippet,
-  parseRetryAfterMs,
-  ProviderQuotaError,
   ProviderSearchError,
   type ProviderSearchInput,
   type SearchProvider,
   type SearchResult,
 } from "./SearchProvider";
 
-type FirecrawlFetch = (
-  input: Parameters<typeof fetch>[0],
-  init?: Parameters<typeof fetch>[1]
-) => ReturnType<typeof fetch>;
-
 export type FirecrawlProviderOptions = {
   readonly endpoint?: string;
   readonly apiKey?: string;
-  readonly fetch?: FirecrawlFetch;
+  readonly fetch?: HttpFetch;
   readonly timeoutMs?: number;
 };
 
 const defaultEndpoint = "https://api.firecrawl.dev/v2/search";
 const defaultTimeoutMs = 20_000;
 
-/**
- * Firecrawl's search endpoint works with no credentials at all: the keyless
- * tier is the same URL with the `Authorization` header omitted, metered per IP
- * per day. It sends no rate-limit headers, so exhaustion is only observable as
- * a 429 on the call that trips it.
- */
+/** Firecrawl search; omitting `Authorization` is the keyless tier, whose exhaustion shows only as a 429. */
 export class FirecrawlProvider implements SearchProvider {
   public readonly name = "firecrawl";
 
@@ -46,11 +36,7 @@ export class FirecrawlProvider implements SearchProvider {
       options.apiKey === undefined || options.apiKey.length === 0
         ? {}
         : { Authorization: `Bearer ${options.apiKey}` };
-    this.ky = ky.create(
-      options.fetch === undefined
-        ? {}
-        : { fetch: options.fetch as typeof fetch }
-    );
+    this.ky = createKy(options.fetch);
   }
 
   public async search(
@@ -68,58 +54,28 @@ export class FirecrawlProvider implements SearchProvider {
           sources: ["web"],
         },
         timeout: this.timeoutMs,
-        retry: 0,
         ...(input.signal === undefined ? {} : { signal: input.signal }),
       });
     } catch (error) {
-      throw await this.toProviderError(error, input.signal);
+      throw this.toProviderError(error, input.signal);
     }
 
     return this.parse(await response.text());
   }
 
-  private async toProviderError(
-    error: unknown,
-    signal?: AbortSignal
-  ): Promise<unknown> {
-    if (signal?.aborted || isAbortError(error)) {
-      return error;
-    }
-
-    if (error instanceof HTTPError) {
-      const { status, headers } = error.response;
-
-      if (status === 429) {
-        // Firecrawl meters a rolling 24h window, not a calendar day, and
-        // reports the remainder in the body rather than a Retry-After header.
-        const retryAfterMs =
-          readRetryAfterMs(error.data) ??
-          parseRetryAfterMs(headers.get("retry-after"));
-
-        return new ProviderQuotaError(
-          this.name,
-          "Firecrawl rejected the request: keyless daily limit reached.",
-          retryAfterMs
-        );
-      }
-
-      return new ProviderSearchError(
-        this.name,
-        `Firecrawl request failed with HTTP ${status}.`
-      );
-    }
-
-    if (error instanceof TimeoutError) {
-      return new ProviderSearchError(
-        this.name,
-        `Firecrawl request timed out after ${this.timeoutMs}ms.`
-      );
-    }
-
-    return new ProviderSearchError(
-      this.name,
-      `Firecrawl request failed: ${describeError(error)}`
-    );
+  private toProviderError(error: unknown, signal?: AbortSignal): unknown {
+    return mapProviderError({
+      provider: this.name,
+      subject: "Firecrawl request",
+      error,
+      ...(signal === undefined ? {} : { signal }),
+      timeoutMs: this.timeoutMs,
+      quotaStatuses: [429],
+      quotaMessage:
+        "Firecrawl rejected the request: keyless daily limit reached.",
+      // Firecrawl meters a rolling 24h window and reports the remainder in the body, not Retry-After.
+      readRetryAfterMs,
+    });
   }
 
   private parse(body: string): readonly SearchResult[] {
@@ -134,7 +90,7 @@ export class FirecrawlProvider implements SearchProvider {
       );
     }
 
-    const record = asRecord(payload);
+    const record = Json.asRecord(payload);
 
     if (record?.["success"] === false) {
       throw new ProviderSearchError(
@@ -143,7 +99,7 @@ export class FirecrawlProvider implements SearchProvider {
       );
     }
 
-    const data = asRecord(record?.["data"]);
+    const data = Json.asRecord(record?.["data"]);
     const web = data?.["web"];
 
     if (!Array.isArray(web)) {
@@ -159,7 +115,7 @@ export class FirecrawlProvider implements SearchProvider {
   }
 
   private project(entry: unknown): SearchResult | undefined {
-    const record = asRecord(entry);
+    const record = Json.asRecord(entry);
     const url = readString(record?.["url"]);
 
     if (record === undefined || url === undefined) {
@@ -175,36 +131,14 @@ export class FirecrawlProvider implements SearchProvider {
 }
 
 function readRetryAfterMs(data: unknown): number | undefined {
-  const payload = typeof data === "string" ? tryParseJson(data) : data;
-  const seconds = asRecord(payload)?.["retry_after_seconds"];
+  const payload = typeof data === "string" ? Json.tryParseJson(data) : data;
+  const seconds = Json.asRecord(payload)?.["retry_after_seconds"];
 
   return typeof seconds === "number" && Number.isFinite(seconds)
     ? Math.max(0, seconds) * 1000
     : undefined;
 }
 
-function tryParseJson(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-}
-
 function readString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function asRecord(
-  value: unknown
-): Readonly<Record<string, unknown>> | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
-  }
-
-  return value as Readonly<Record<string, unknown>>;
-}
-
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

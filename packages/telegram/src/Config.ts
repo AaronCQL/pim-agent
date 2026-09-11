@@ -1,5 +1,6 @@
 import { join } from "node:path";
 
+import { Cli as Argv } from "#core/shared/Cli";
 import { Fs } from "#core/shared/Fs";
 import { Paths } from "#core/shared/Paths";
 
@@ -41,22 +42,7 @@ function parseArgs(args: ReadonlyArray<string>): Cli {
   let configDir: string | undefined;
   let printConfig = false;
 
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
-    if (!arg.startsWith("--")) {
-      continue;
-    }
-    const eqIdx = arg.indexOf("=");
-    const key = eqIdx >= 0 ? arg.slice(0, eqIdx) : arg;
-    const inline = eqIdx >= 0 ? arg.slice(eqIdx + 1) : undefined;
-    const take = (): string | undefined => {
-      if (inline !== undefined) {
-        return inline;
-      }
-      i += 1;
-      return args[i];
-    };
-
+  Argv.scan(args, (key, take) => {
     switch (key) {
       case "--token":
         token = take();
@@ -80,7 +66,7 @@ function parseArgs(args: ReadonlyArray<string>): Cli {
         take();
         break;
     }
-  }
+  });
   return { token, allow, cwd, model, configDir, printConfig };
 }
 

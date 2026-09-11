@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { abbreviateHome, clockTime, relativeTime, splitTail } from "./format";
+import { abbreviateHome, clockTime, elide, fit, relativeTime } from "./format";
 
 const NOW = Date.UTC(2026, 0, 2, 12, 0, 0);
 const ago = (ms: number): string => relativeTime(NOW - ms, NOW);
@@ -50,21 +50,50 @@ describe("clockTime", () => {
   });
 });
 
-describe("splitTail", () => {
-  test("cuts at the last separator, so the tail is what identifies it", () => {
-    expect(splitTail("~/src/deep/pim-agent")).toEqual([
-      "~/src/deep/",
-      "pim-agent",
-    ]);
+describe("elide", () => {
+  test("both ends of a branch survive, and the middle pays", () => {
+    expect(elide("chore/prerelease-cleanup", 20)).toBe("chore/prer…e-cleanup");
+    expect(elide("very-long-project", 10)).toBe("very-…ject");
   });
 
-  test("a separator too near either edge is ignored for the middle", () => {
-    expect(splitTail("feat/a-long-branch-name")).toEqual([
-      "feat/a-long-",
-      "branch-name",
-    ]);
-    expect(splitTail("feature/x")).toEqual(["featu", "re/x"]);
-    expect(splitTail("very-long-project")).toEqual(["very-long", "-project"]);
-    expect(splitTail("")).toEqual(["", ""]);
+  test("a prefix worth reading outlives the name it qualifies", () => {
+    // The odd cell goes to the head, so `feat/` still reads as one where the
+    // branch it names no longer does.
+    expect(elide("feat/keyboard-shortcuts", 12)).toBe("feat/k…tcuts");
+    expect(elide("feat/keyboard-shortcuts", 6)).toBe("fea…ts");
+    expect(elide("feat/keyboard-shortcuts", 2)).toBe("f…");
+  });
+
+  test("leaves a text its budget already fits alone", () => {
+    expect(elide("~/src/pim-agent", 15)).toBe("~/src/pim-agent");
+    expect(elide("main", 40)).toBe("main");
+  });
+
+  test("spends exactly its budget, ellipsis included", () => {
+    const text = "feat/a-long-branch-name";
+    for (let columns = 1; columns <= text.length; columns++) {
+      expect(elide(text, columns)).toHaveLength(columns);
+    }
+  });
+
+  test("paints nothing with no room for even the ellipsis", () => {
+    expect(elide("main", 0)).toBe("");
+    expect(elide("main", -3)).toBe("");
+    expect(elide("", 0)).toBe("");
+  });
+});
+
+describe("fit", () => {
+  const path = ["~/src/deep/pim-agent", "pim-agent"];
+
+  test("takes the whole path where it fits, the directory alone where it does not", () => {
+    expect(fit(path, 20)).toBe("~/src/deep/pim-agent");
+    expect(fit(path, 19)).toBe("pim-agent");
+    expect(fit(path, 9)).toBe("pim-agent");
+  });
+
+  test("cuts only what no choice of text can fit", () => {
+    expect(fit(path, 8)).toBe("pim-…ent");
+    expect(fit(["main"], 3)).toBe("m…n");
   });
 });

@@ -1,39 +1,28 @@
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { DiffRenderer } from "../shared/DiffRenderer";
 import { Renderer } from "../shared/Renderer";
-import { type BlockFrame, Painting } from "./Painting";
-import type { NoticeSeverity, Span, Tone, ViewBlock } from "./ViewBlock";
+import { type BlockFrame, Painting, type PainterMap } from "./Painting";
+import type {
+  BlockOf,
+  NoticeSeverity,
+  Span,
+  Tone,
+  ViewBlock,
+} from "./ViewBlock";
 
 export type { BlockFrame } from "./Painting";
 
-type BlockOf<TKind extends ViewBlock["kind"]> = Extract<
-  ViewBlock,
-  { kind: TKind }
->;
-
-type Painter<TKind extends ViewBlock["kind"]> = (
-  block: BlockOf<TKind>,
-  theme: Theme
-) => readonly string[];
-
-type PainterMap = { readonly [TKind in ViewBlock["kind"]]: Painter<TKind> };
-
-/**
- * Markdown wraps at the render-time width, so a body hands the source on to
- * the caller instead of pre-painted lines.
- */
 export type PaintedGroup =
-  | { readonly frame: BlockFrame; readonly lines: readonly string[] }
+  | {
+      readonly frame: Exclude<BlockFrame, "embed">;
+      readonly lines: readonly string[];
+    }
   | { readonly frame: "embed"; readonly markdown: string };
 
 function paint(blocks: readonly ViewBlock[], theme: Theme): string[] {
   return blocks.flatMap((block) => paintBlock(block, theme));
 }
 
-/**
- * Flattens title blocks to the one line a title renderer draws. Markdown is
- * handed over unpainted, since it needs the width the title renderer knows.
- */
 function paintTitle(
   blocks: readonly ViewBlock[],
   theme: Theme
@@ -48,20 +37,13 @@ function paintTitle(
   };
 }
 
-/** The theme colour a tone maps to, or undefined for the default colour. */
 function themeColorFor(tone: Tone | undefined): ThemeColor | undefined {
   return tone === undefined || tone === "default"
     ? undefined
     : TONE_COLORS[tone];
 }
 
-/**
- * Paints a body, keeping adjacent blocks that share a frame together so the
- * caller draws one container per run instead of one per block.
- */
 function paintBody(blocks: readonly ViewBlock[], theme: Theme): PaintedGroup[] {
-  // Markdown (the only `embed` here) never merges: it is handed over as
-  // source for the caller to wrap at the render-time width.
   return Painting.groupByFrame(
     blocks,
     FRAMES,
@@ -72,7 +54,7 @@ function paintBody(blocks: readonly ViewBlock[], theme: Theme): PaintedGroup[] {
       return { frame: "embed", markdown: first.text };
     }
     return {
-      frame: group.frame,
+      frame: group.frame as Exclude<BlockFrame, "embed">,
       lines: group.blocks.flatMap((block) => paintBlock(block, theme)),
     };
   });
@@ -96,10 +78,7 @@ const NOTICE_COLORS = {
 } as const satisfies Record<NoticeSeverity, ThemeColor>;
 
 function paintBlock(block: ViewBlock, theme: Theme): readonly string[] {
-  // Record lookup instead of a switch: a kind added to the union without a
-  // painter fails to typecheck at the `PainterMap` declaration.
-  const painter = PAINTERS[block.kind] as Painter<ViewBlock["kind"]>;
-  return painter(block, theme);
+  return Painting.dispatch(PAINTERS, block, theme);
 }
 
 function paintText(block: BlockOf<"text">, theme: Theme): readonly string[] {
@@ -113,7 +92,6 @@ function paintText(block: BlockOf<"text">, theme: Theme): readonly string[] {
   return lines.map((line) => theme.fg(TONE_COLORS[tone], line));
 }
 
-/** An empty span carries no content to style, so it contributes nothing. */
 function spansText(spans: readonly Span[], theme: Theme): string {
   return spans
     .filter((span) => span.text !== "")
@@ -133,10 +111,6 @@ function paintSpans(block: BlockOf<"spans">, theme: Theme): readonly string[] {
   return [spansText(block.spans, theme)];
 }
 
-/**
- * The leading blank is part of the heading: a section always opens a new group
- * and needs separating from whatever precedes it, in every painter.
- */
 function paintSection(
   block: BlockOf<"section">,
   theme: Theme
@@ -152,11 +126,6 @@ function paintSection(
   ];
 }
 
-/**
- * No syntax highlighting: pi's `highlightCode` reads the process-global theme,
- * which this painter deliberately does not depend on. `lang` still travels in
- * the model for painters that can use it (Markdown fences, web highlighters).
- */
 function paintCode(block: BlockOf<"code">, theme: Theme): readonly string[] {
   const lines = block.text.split("\n");
   const start = block.startLine;
@@ -165,7 +134,7 @@ function paintCode(block: BlockOf<"code">, theme: Theme): readonly string[] {
     return lines;
   }
 
-  const width = String(start + Math.max(0, lines.length - 1)).length;
+  const width = Painting.lineNumberWidth(start, lines.length);
   return lines.map(
     (line, index) =>
       theme.fg("muted", `${String(start + index).padStart(width)} `) + line
@@ -173,33 +142,25 @@ function paintCode(block: BlockOf<"code">, theme: Theme): readonly string[] {
 }
 
 function paintDiff(block: BlockOf<"diff">, theme: Theme): readonly string[] {
-  const rendered = DiffRenderer.render({
+  return DiffRenderer.renderLines({
     toolDiff: { path: block.path, hunks: block.hunks },
     theme,
   });
-  return rendered === "" ? [] : rendered.split("\n");
 }
 
 function paintFile(block: BlockOf<"file">, theme: Theme): readonly string[] {
-  const range = block.range ? Painting.formatRange(block.range) : "";
-  const truncated = block.truncated === true ? " (truncated)" : "";
+  const { range, truncated } = Painting.fileSuffix(block);
   const suffix = `${range}${truncated}`;
   return [suffix === "" ? block.path : block.path + theme.fg("muted", suffix)];
 }
 
 function paintList(block: BlockOf<"list">, theme: Theme): readonly string[] {
-  const markers = block.items.map((_, index) =>
-    block.ordered === true ? `${index + 1}.` : "•"
+  return Painting.hangingList(
+    block.items,
+    block.ordered === true,
+    (item) => paintBlock(item, theme),
+    (marker) => theme.fg("muted", marker)
   );
-  const width = Math.max(0, ...markers.map((marker) => marker.length)) + 1;
-  const indent = " ".repeat(width);
-
-  return block.items.flatMap((item, index) => {
-    const marker = theme.fg("muted", (markers[index] ?? "•").padEnd(width));
-    return paintBlock(item, theme).map((line, lineIndex) =>
-      lineIndex === 0 ? marker + line : indent + line
-    );
-  });
 }
 
 function paintKv(block: BlockOf<"kv">, theme: Theme): readonly string[] {
@@ -210,20 +171,13 @@ function paintKv(block: BlockOf<"kv">, theme: Theme): readonly string[] {
 }
 
 function paintLink(block: BlockOf<"link">, theme: Theme): readonly string[] {
-  if (block.label === "" || block.label === block.href) {
+  const label = Painting.linkLabel(block);
+  if (label === block.href) {
     return [theme.fg("mdLinkUrl", block.href)];
   }
-  return [
-    `${theme.fg("mdLink", block.label)} ${theme.fg("mdLinkUrl", block.href)}`,
-  ];
+  return [`${theme.fg("mdLink", label)} ${theme.fg("mdLinkUrl", block.href)}`];
 }
 
-/**
- * The name and nothing else. The URL is relative to a server this terminal is
- * not talking to, and the bytes it points at are a copy of a file that was
- * already on this machine — so the delivery is news, and the address of it is
- * not.
- */
 function paintAttachment(
   block: BlockOf<"attachment">,
   theme: Theme
@@ -231,11 +185,6 @@ function paintAttachment(
   return [`${theme.fg("muted", "sent")} ${block.name}`];
 }
 
-/**
- * The width-free fallback: a body defers markdown to the caller (see
- * `paintBody`), so this only runs where there is no width to wrap at, and the
- * source text is the closest honest rendering.
- */
 function paintMarkdown(block: BlockOf<"markdown">): readonly string[] {
   return block.text.split("\n");
 }
@@ -248,7 +197,7 @@ function paintNotice(
   return block.text.split("\n").map((line) => theme.fg(color, line));
 }
 
-const PAINTERS: PainterMap = {
+const PAINTERS: PainterMap<readonly string[], [Theme]> = {
   text: paintText,
   markdown: paintMarkdown,
   spans: paintSpans,
@@ -263,17 +212,11 @@ const PAINTERS: PainterMap = {
   notice: paintNotice,
 };
 
-// The terminal's deltas from the shared map: code is plain lines the gutter
-// may restyle, and diff paints its own leading column (`tight`).
 const FRAMES = {
   ...Painting.FRAMES,
   code: "flow",
   diff: "tight",
 } as const satisfies Record<ViewBlock["kind"], BlockFrame>;
 
-/**
- * Paints a `ViewBlock` tree to ANSI lines. Returns plain strings rather than
- * pi-tui components so the same output can be asserted in unit tests and
- * wrapped by whichever container the caller already uses.
- */
+/** Paints a `ViewBlock` tree to ANSI lines. */
 export const AnsiPainter = { paint, paintTitle, themeColorFor, paintBody };

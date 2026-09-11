@@ -28,7 +28,6 @@ const settled = (
   content: [],
   details: {
     editCount: 1,
-    warnings: [],
     noops: [],
     ranges: [],
     resolvedEdits: [],

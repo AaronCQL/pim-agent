@@ -9,23 +9,11 @@ export type RemotePickerQuery = (
   limit: number | undefined
 ) => Promise<readonly PickerItem[]>;
 
-/** Long enough to swallow a fast typist's keystroke, short enough to feel local. */
 const DEBOUNCE_MS = 30;
 
-/** Distinct queries kept between invalidations; oldest-first eviction beyond it. */
 const CACHE_LIMIT = 100;
 
-/**
- * The client half of the `@` picker: the same engine contract the TUI drives
- * in-process, answered by the server instead.
- *
- * Nothing about the catalog lives here. One query string goes out and at most
- * `limit` ranked rows come back, so a phone never holds a repo's path list —
- * this is an LSP completion request, not a synced index.
- *
- * Every API it touches exists in a browser as well as in Bun, because the
- * clients that drive it are the CLI probe *and* pim-web.
- */
+/** The client half of the `@` picker: the TUI's engine contract, answered by the server. Browser-safe APIs only. */
 export class RemoteFilePickerSuggestionEngine implements FilePickerSuggestionEngine {
   private readonly cache = new Map<string, readonly PickerItem[]>();
   private generation = 0;

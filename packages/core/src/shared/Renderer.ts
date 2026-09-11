@@ -19,14 +19,6 @@ export type RenderContext = {
   readonly isError: boolean;
 };
 
-export type StatefulToolCallTitleContext = RenderContext & {
-  readonly state: unknown;
-};
-
-export type StatefulToolCallTitleState = {
-  titleComponent?: Component;
-};
-
 export type MarkerStatus = "warning" | "error" | "success";
 
 export type PrefixSpec = {
@@ -82,11 +74,6 @@ class ToolTitle implements Component {
   public invalidate(): void {}
 }
 
-/**
- * A title whose text is markdown. It cannot reuse `ToolTitle`: markdown wraps
- * itself, so the wrap width is the room left after the marker and label rather
- * than the full width, and the rendered text carries its own colours.
- */
 class MarkdownTitle implements Component {
   private prefix = "";
   private title = "";
@@ -176,10 +163,6 @@ function markerColorFor(isPartial: boolean, isError: boolean): MarkerStatus {
   return "success";
 }
 
-/**
- * The text of a result's first content item, or "" when the result, its
- * content, or the text is missing — the body every text-shaped tool renders.
- */
 function firstText(
   result:
     | {
@@ -212,7 +195,6 @@ function extractErrorText(
   return text || fallback;
 }
 
-/** The marker + bold label + title text of a tool row, without the shell. */
 function toolTitleText(args: {
   readonly label: string;
   readonly title: string;
@@ -237,7 +219,6 @@ function titleHead(args: {
   );
 }
 
-/** Wraps title text in the component that pads and re-indents on overflow. */
 function makeTitleBlock(args: {
   readonly text: string;
   readonly theme: Theme;
@@ -257,7 +238,6 @@ function renderToolCallTitle(args: {
   readonly theme: Theme;
   readonly context: RenderContext;
   readonly labelColor?: ThemeColor;
-  /** Renders `title` as markdown instead of as pre-painted text. */
   readonly markdown?: boolean;
 }): Component {
   const { theme, context } = args;
@@ -286,37 +266,18 @@ function renderToolCallTitle(args: {
   });
 }
 
-function renderStatefulToolCallTitle(args: {
-  readonly label: string;
-  readonly title: string;
-  readonly theme: Theme;
-  readonly context: StatefulToolCallTitleContext;
-  readonly labelColor?: ThemeColor;
-}): Component {
-  const state = args.context.state as StatefulToolCallTitleState;
-  const component = renderToolCallTitle({
-    ...args,
-    context: {
-      ...args.context,
-      lastComponent: state.titleComponent ?? args.context.lastComponent,
-    },
-  });
-  state.titleComponent = component;
-  return component;
-}
-
 function makePrefixedBlock(args: {
-  readonly text: string;
+  readonly lines: readonly string[];
   readonly theme: Theme;
   readonly prefix: PrefixSpec;
   readonly lineColor?: ThemeColor;
 }): Component {
-  const { text, theme, prefix, lineColor } = args;
+  const { lines, theme, prefix, lineColor } = args;
   return {
     render(width: number): string[] {
       const inner = Math.max(1, width - prefix.width);
       const out: string[] = [];
-      for (const logical of text.split("\n")) {
+      for (const logical of lines) {
         for (const w of wrapTextWithAnsi(logical, inner)) {
           const body = lineColor ? theme.fg(lineColor, w) : w;
           out.push(theme.fg("toolOutput", prefix.prefix) + body);
@@ -328,7 +289,6 @@ function makePrefixedBlock(args: {
   };
 }
 
-/** Markdown lines at a fixed width, trimmed the way the tool rows expect. */
 function markdownLines(args: {
   readonly text: string;
   readonly theme: Theme;
@@ -340,7 +300,6 @@ function markdownLines(args: {
     .map((line) => line.trimEnd());
 }
 
-/** A gutter block whose text is markdown, wrapped at the render-time width. */
 function makeMarkdownBlock(args: {
   readonly text: string;
   readonly theme: Theme;
@@ -363,12 +322,6 @@ function makeMarkdownBlock(args: {
   };
 }
 
-/**
- * The gutter body of a failed call. Like every other row it stays shut until
- * the row is expanded, and once opened it shows the failure whole: an error is
- * read to be acted on, and a stack trace cut off at its tenth line is the part
- * that says least.
- */
 function renderErrorResult(args: {
   readonly result: AgentToolResult<unknown>;
   readonly options: ToolRenderResultOptions;
@@ -391,7 +344,7 @@ function renderErrorResult(args: {
 
   container.addChild(
     makePrefixedBlock({
-      text: body,
+      lines: body.split("\n"),
       theme,
       prefix: GAPPED_PREFIX,
       lineColor: "error",
@@ -411,7 +364,6 @@ export const Renderer = {
   toolTitleText,
   makeTitleBlock,
   renderToolCallTitle,
-  renderStatefulToolCallTitle,
   makePrefixedBlock,
   markdownLines,
   makeMarkdownBlock,

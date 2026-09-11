@@ -3,11 +3,9 @@ import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
 import { Fs } from "./Fs";
+import { Proc } from "./Proc";
 
-/**
- * Set by the units this file writes, and by nothing else: it is how a daemon
- * knows that exiting will bring it back rather than just end it.
- */
+// Set by the units this file writes and by nothing else: it tells a daemon an exit is a restart.
 const SUPERVISED_ENV = "PIM_SUPERVISED";
 
 /** One daemon the supervisor manages, named by the `--mode` it is started with. */
@@ -60,7 +58,7 @@ async function install(unit: Unit): Promise<void> {
         `gui/${uid}/${launchdLabel(unit)}`,
       ]);
     } catch {
-      // bootout fails when the service isn't currently loaded; safe to ignore before bootstrap
+      // bootout fails when the service isn't loaded; ignore before bootstrap.
     }
     await runOrThrow(["launchctl", "bootstrap", `gui/${uid}`, path]);
     console.log(`[install] bootstrapped ${launchdLabel(unit)}`);
@@ -133,11 +131,7 @@ function restart(): never {
   process.exit(0);
 }
 
-/**
- * A global install replaces the tree every pim daemon runs from, so restarting
- * only the one that was asked leaves the rest on old code — one machine in two
- * versions. `self` is left out: it exits last, under its own supervisor.
- */
+// A global install replaces every daemon's tree: restart the siblings or they run old code.
 async function restartSiblings(self: Unit): Promise<void> {
   if (process.platform === "linux") {
     for (const name of await installedUnits(
@@ -168,7 +162,6 @@ async function restartSiblings(self: Unit): Promise<void> {
   }
 }
 
-/** Whatever pim units exist, rather than the modes this build happens to know. */
 async function installedUnits(
   dir: string,
   pattern: string,
@@ -197,8 +190,7 @@ async function restartOrWarn(
 
 async function detectInstall(): Promise<Install> {
   const here = await realpath(Bun.fileURLToPath(import.meta.url));
-  // Start above the workspace packages so the walk lands on the published
-  // root (the one holding `.git`, `bin/pim.ts`, and the shipped version).
+  // Start above the workspace packages so the walk lands on the published root.
   const packageRoot = await findPackageRoot(
     join(dirname(here), "..", "..", "..", "..")
   );
@@ -329,29 +321,19 @@ function launchdPlist(unit: Unit, at: Install): string {
 }
 
 async function lingerEnabled(): Promise<boolean> {
-  const proc = Bun.spawn(["loginctl", "show-user", "--property=Linger"], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const code = await proc.exited;
-  if (code !== 0) {
-    return false;
-  }
-  const out = await new Response(proc.stdout).text();
-  return out.includes("Linger=yes");
+  const { code, stdout } = await Proc.run([
+    "loginctl",
+    "show-user",
+    "--property=Linger",
+  ]);
+  return code === 0 && stdout.includes("Linger=yes");
 }
 
 async function runOrThrow(
   cmd: ReadonlyArray<string>,
   cwd?: string
 ): Promise<void> {
-  const proc = Bun.spawn([...cmd], {
-    cwd,
-    stdout: "inherit",
-    stderr: "pipe",
-  });
-  const stderr = await new Response(proc.stderr).text();
-  const code = await proc.exited;
+  const { code, stderr } = await Proc.run(cmd, { cwd, stdout: "inherit" });
   if (code !== 0) {
     throw new Error(
       `${cmd.join(" ")} exit ${code}: ${stderr.trim() || "(no stderr)"}`

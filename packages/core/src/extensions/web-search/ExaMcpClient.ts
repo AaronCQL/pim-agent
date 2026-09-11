@@ -1,3 +1,4 @@
+import { Json } from "../../shared/Json";
 import { McpClient, type McpFetch } from "../../shared/McpClient";
 import { RateLimiter } from "../../shared/RateLimiter";
 import {
@@ -27,8 +28,7 @@ class ExaSearchError extends Error {
 
 const defaultEndpoint = "https://mcp.exa.ai/mcp";
 const toolName = "web_search_exa";
-// The keyless endpoint enforces a sliding window of 2 requests per second;
-// stay strictly under it so a 429 reliably means the daily cap, not QPS.
+// Stay under the keyless endpoint's 2 req/s window, or a 429 no longer means the daily cap.
 const maxRequestsPerWindow = 2;
 const windowMs = 1100;
 
@@ -40,7 +40,7 @@ export class ExaMcpClient {
       options.apiKey === undefined || options.apiKey.length === 0
         ? undefined
         : options.apiKey;
-    // Throttle only on the free tier; an API key lifts the request rate limit.
+    // Throttle only on the free tier; an API key lifts the rate limit.
     const rateLimiter =
       apiKey !== undefined
         ? undefined
@@ -73,7 +73,7 @@ export class ExaMcpClient {
 }
 
 function extractResults(result: unknown): readonly SearchResult[] {
-  const record = asRecord(result);
+  const record = Json.asRecord(result);
   const content = record?.["content"];
 
   if (!Array.isArray(content) || content.length === 0) {
@@ -89,7 +89,7 @@ function extractResults(result: unknown): readonly SearchResult[] {
 
   const resultObjects = findFirstObjectArray(
     textBlocks
-      .map((block) => tryParseJson(block))
+      .map((block) => Json.tryParseJson(block))
       .filter((value) => value !== undefined)
   );
 
@@ -101,7 +101,7 @@ function extractResults(result: unknown): readonly SearchResult[] {
 }
 
 function readTextBlock(block: unknown): string {
-  const record = asRecord(block);
+  const record = Json.asRecord(block);
 
   if (record?.["type"] !== "text" || typeof record["text"] !== "string") {
     throw new ExaSearchError("Exa returned malformed tool content.");
@@ -168,7 +168,7 @@ function readPlainTextSnippet(lines: readonly string[]): string {
   const snippetLines =
     highlightsIndex === -1 ? lines : lines.slice(highlightsIndex + 1);
   const skipPrefixes = ["title:", "url:", "published:", "author:"];
-  const snippet = snippetLines
+  return snippetLines
     .filter((line) => {
       if (line.startsWith("[...]")) {
         return false;
@@ -176,11 +176,7 @@ function readPlainTextSnippet(lines: readonly string[]): string {
       const lower = line.toLowerCase();
       return !skipPrefixes.some((prefix) => lower.startsWith(prefix));
     })
-    .join(" ")
-    .replace(/\s+/gu, " ")
-    .trim();
-
-  return snippet.length > 500 ? `${snippet.slice(0, 500)}...` : snippet;
+    .join(" ");
 }
 
 function findFirstObjectArray(
@@ -189,12 +185,12 @@ function findFirstObjectArray(
   for (const value of values) {
     if (
       Array.isArray(value) &&
-      value.every((item) => asRecord(item) !== undefined)
+      value.every((item) => Json.asRecord(item) !== undefined)
     ) {
       return value as readonly Readonly<Record<string, unknown>>[];
     }
 
-    const record = asRecord(value);
+    const record = Json.asRecord(value);
 
     if (record === undefined) {
       continue;
@@ -203,7 +199,7 @@ function findFirstObjectArray(
     for (const nestedValue of Object.values(record)) {
       if (
         Array.isArray(nestedValue) &&
-        nestedValue.every((item) => asRecord(item) !== undefined)
+        nestedValue.every((item) => Json.asRecord(item) !== undefined)
       ) {
         return nestedValue as readonly Readonly<Record<string, unknown>>[];
       }
@@ -252,22 +248,4 @@ function readOptionalResultString(
   const value = result[name];
 
   return typeof value === "string" ? value : undefined;
-}
-
-function tryParseJson(text: string): unknown | undefined {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-}
-
-function asRecord(
-  value: unknown
-): Readonly<Record<string, unknown>> | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
-  }
-
-  return value as Readonly<Record<string, unknown>>;
 }

@@ -3,14 +3,11 @@ import { basename } from "node:path";
 import { type Static, Type } from "typebox";
 
 import type { AttachmentStore } from "#core/attachments/AttachmentStore";
-import { FsErrors } from "#core/shared/FsErrors";
 import { Paths } from "#core/shared/Paths";
+import { SendFile } from "#core/shared/SendFile";
 import type { PimToolDefinition } from "#core/shared/Tools";
 import type { ToolView } from "#core/view/ViewBlock";
 import { attachmentUrl } from "./AttachmentEndpoint";
-
-/** Telegram's document ceiling, borrowed so one number governs both sends. */
-const MAX_FILE_BYTES = 50 * 1024 * 1024;
 
 const sendFileSchema = Type.Object({
   path: Type.String({
@@ -21,13 +18,8 @@ const sendFileSchema = Type.Object({
 
 type SendFileInput = Static<typeof sendFileSchema>;
 
-/**
- * What the view needs, persisted so a replay redraws it with no live state —
- * which is exactly an `attachment` block's payload, and is spread into one.
- */
 type SendFileDetails = {
   readonly name: string;
-  /** Server-relative; the client resolves it against its own gateway. */
   readonly url: string;
   readonly isImage: boolean;
 };
@@ -35,21 +27,10 @@ type SendFileDetails = {
 export type SendFileDeps = {
   readonly store: AttachmentStore;
   readonly cwd: string;
-  /** Pi's session uuid, read at call time; see `CustomToolContext`. */
+  /** Pi's session uuid, read at call time. */
   readonly sessionId: () => string | undefined;
 };
 
-/**
- * The web's answer to Telegram's `send_file`, and deliberately the same name:
- * a tool name is the agent's API, and which frontend is carrying the bytes is
- * an implementation detail of it.
- *
- * The file is *copied* into the attachment store rather than served where it
- * lies. The store's names are stamped and immutable and its endpoint is never
- * told a path, so a delivered file cannot change or disappear under the
- * transcript that references it — and a browser is never handed the ability to
- * name a path on the agent's disk.
- */
 function build(
   deps: SendFileDeps
 ): PimToolDefinition<typeof sendFileSchema, SendFileDetails> {
@@ -57,11 +38,11 @@ function build(
     ...defineTool({
       name: "send_file",
       label: "send_file",
-      description: `Send a local file to the user's web browser. Images appear inline. Max ${MAX_FILE_BYTES / (1024 * 1024)} MB.`,
+      description: `Send a local file to the user's web browser. Images appear inline. Max ${SendFile.MAX_BYTES / (1024 * 1024)} MB.`,
       parameters: sendFileSchema,
       async execute(_id, params) {
         const { path: rawPath } = params as SendFileInput;
-        const { path, size } = await validate(rawPath, deps.cwd);
+        const { path, size } = await SendFile.validate(rawPath, deps.cwd);
         const scope = deps.sessionId();
         if (!scope) {
           throw new Error("This session cannot send files yet.");
@@ -73,25 +54,18 @@ function build(
           isImage: stored.mimeType.startsWith("image/"),
         };
         return {
-          // The name and the size, never the URL: an address the model can
-          // repeat is a second copy of this delivery, unreadable as prose and
-          // dead in any transcript this server is not serving.
+          // Never the URL: an address the model can repeat is a second, dead copy of this delivery.
           content: [{ type: "text", text: `Sent ${details.name} (${size} B)` }],
           details,
         };
       },
     }),
-    // Reads the workspace and writes only into the store's own root, so the
-    // session's file picker is not stale afterwards.
     effect: { kind: "readOnly" },
     toViewModel: ({ args, result, cwd }): ToolView => {
       const details = result?.details;
       return {
         label: "Send File",
         icon: "upload",
-        // The same title every path-taking tool draws: relative to the cwd
-        // when it is inside it, and a placeholder while the argument is
-        // still streaming.
         title: [
           {
             kind: "file",
@@ -101,9 +75,6 @@ function build(
             ),
           },
         ],
-        // In `summary`, the part of a view that renders in every state:
-        // collapsed, expanded and mid-flight. It is the point of the row,
-        // not a payload to go looking for.
         ...(details === undefined
           ? {}
           : {
@@ -114,21 +85,4 @@ function build(
   };
 }
 
-async function validate(
-  rawPath: string,
-  cwd: string
-): Promise<{ readonly path: string; readonly size: number }> {
-  const path = Paths.resolve(rawPath, cwd);
-  const st = await FsErrors.statOrThrow(path);
-  if (!st.isFile()) {
-    throw new Error(`${rawPath} is not a regular file.`);
-  }
-  if (st.size > MAX_FILE_BYTES) {
-    throw new Error(
-      `${rawPath} is ${st.size} bytes; max allowed is ${MAX_FILE_BYTES}.`
-    );
-  }
-  return { path, size: st.size };
-}
-
-export const SendFileTool = { build, MAX_FILE_BYTES };
+export const SendFileTool = { build };

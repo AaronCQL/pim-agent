@@ -1,12 +1,4 @@
-/**
- * Which picker the caret is sitting in, if any.
- *
- * The two patterns are the ones the TUI pickers already use — `@` anywhere
- * after whitespace, `/` only at the start of a line — so the same draft
- * produces the same completions in a terminal and in a browser. Only the
- * cursor model differs: one caret offset into a whole textarea here, a
- * `(line, column)` pair there.
- */
+/** Which picker the caret is sitting in, if any. */
 export type PickerToken = {
   readonly kind: "file" | "command";
   readonly query: string;
@@ -14,8 +6,18 @@ export type PickerToken = {
   readonly start: number;
 };
 
-const AT_PREFIX = /(?:^|\s)@(\S*)$/;
-const SLASH_PREFIX = /^\/(\S*)$/;
+export const AT_PREFIX = /(?:^|\s)@(\S*)$/;
+export const SLASH_PREFIX = /^\/(\S*)$/;
+
+/** Offset of the sigil in an `AT_PREFIX` match, which also swallows the whitespace before it. */
+export function sigilOffset(match: RegExpMatchArray): number {
+  const matched = match[0] ?? "";
+  return (match.index ?? 0) + (matched.startsWith("@") ? 0 : 1);
+}
+
+export function isDirectoryItem(item: { readonly label: string }): boolean {
+  return item.label.endsWith("/");
+}
 
 export function activeToken(
   text: string,
@@ -33,12 +35,13 @@ export function activeToken(
   if (!at) {
     return undefined;
   }
-  const matched = at[0] ?? "";
-  const offset = (at.index ?? 0) + (matched.startsWith("@") ? 0 : 1);
-  return { kind: "file", query: at[1] ?? "", start: lineStart + offset };
+  return {
+    kind: "file",
+    query: at[1] ?? "",
+    start: lineStart + sigilOffset(at),
+  };
 }
 
-/** A stable identity for a token, so a memo only fires when the query moves. */
 export function tokenKey(token: PickerToken | undefined): string {
   return token === undefined ? "" : `${token.kind}\u0000${token.query}`;
 }
@@ -46,10 +49,7 @@ export function tokenKey(token: PickerToken | undefined): string {
 export type Completion = {
   readonly text: string;
   readonly caret: number;
-  /**
-   * A directory keeps the picker open so the next segment can be drilled into
-   * — the browser equivalent of the TUI's re-entered Tab.
-   */
+  /** A directory keeps the picker open so the next segment can be drilled into. */
   readonly keepOpen: boolean;
 };
 
@@ -59,13 +59,12 @@ export function applyCompletion(
   token: PickerToken,
   item: { readonly value: string; readonly label: string }
 ): Completion {
-  const isDirectory = item.label.endsWith("/");
   const inserted = token.kind === "file" ? `@${item.value}` : `${item.value} `;
   const head = text.slice(0, token.start);
   const tail = text.slice(caret);
   return {
     text: `${head}${inserted}${tail}`,
     caret: head.length + inserted.length,
-    keepOpen: token.kind === "file" && isDirectory,
+    keepOpen: token.kind === "file" && isDirectoryItem(item),
   };
 }

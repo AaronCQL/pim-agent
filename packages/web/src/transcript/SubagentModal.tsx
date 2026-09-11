@@ -1,49 +1,33 @@
 import { createEffect, createMemo, Show } from "solid-js";
 
 import type { SessionStore } from "../session/SessionStore";
-import { createScrollAnchor, observeHeight } from "../ui/anchor";
+import { createScrollAnchor, observeHeight } from "../ui/scroll";
 import { Modal } from "../ui/Modal";
 import { Spinner } from "../ui/Spinner";
 import { Body } from "../view/Blocks";
-import { toRows, type ToolRow } from "./rows";
+import { buildRows, extendRows, type ToolRow } from "./rows";
 import { Transcript } from "./Transcript";
 
-/**
- * A subagent's run, read over the conversation that asked for it.
- *
- * The body is the transcript component the conversation itself uses, on the
- * child's own log: the prompt is the child's first user message because it
- * *is* one, its replies are assistant messages, and its calls are ordinary
- * tool rows that expand to their whole payload. Nothing here can be typed
- * into, cancelled or steered — a watch is read-only, and the header says what
- * the run did rather than offering to change it.
- *
- * The header is read off the parent's own row for the call, which is the one
- * place that knows whether the child is still working: a run opened mid-flight
- * reads as running and settles under the reader when it settles.
- */
+/** A subagent's run, read-only, over the conversation that asked for it. */
 export function SubagentModal(props: { readonly store: SessionStore }) {
   const anchor = createScrollAnchor();
   const watched = () => props.store.state.subagent;
+  const durable = createMemo(() => buildRows(props.store.state.durable));
 
   const row = createMemo((): ToolRow | undefined => {
     const callId = watched()?.callId;
     if (callId === undefined) {
       return undefined;
     }
-    // The parent's transcript answers for the call in both its states: while
-    // it runs the view is in the live turn, and once it settles it is in the
-    // durable result. `toRows` is what reconciles those two, so asking it is
-    // what keeps this header from being a third opinion.
-    const found = toRows(
-      props.store.state.durable,
-      [],
-      props.store.state.live
-    ).find((candidate) => candidate.id === callId);
+    // `extendRows` reconciles the live and settled views of the call, so this
+    // header is not a third opinion.
+    const found = extendRows(durable(), [], props.store.state.live).find(
+      (candidate) => candidate.id === callId
+    );
     return found?.kind === "tool" ? found : undefined;
   });
 
-  createEffect(() => watched()?.events.length ?? 0, anchor.stick);
+  createEffect(() => watched()?.durable.length ?? 0, anchor.stick);
 
   return (
     <Modal
@@ -77,14 +61,13 @@ export function SubagentModal(props: { readonly store: SessionStore }) {
         onScroll={anchor.onScroll}
       >
         <div
-          // The child's rows grow after the flush that appended them, exactly
-          // as the conversation's do, so the same observer holds the end.
+          // Rows grow after the flush that appended them, so the observer holds the end.
           ref={observeHeight(anchor.stick)}
           class="mx-auto w-full max-w-3xl space-y-[--line] p-3 leading-[--line]"
         >
           <Show when={watched()}>
             {(child) => (
-              <Transcript events={child().events} live={child().live} />
+              <Transcript events={child().durable} live={child().live} />
             )}
           </Show>
         </div>

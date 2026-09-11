@@ -14,7 +14,6 @@ import {
   THINKING_LEVELS,
   type LogsMode,
   type TelegramConfig,
-  type ThinkingLevelOpt,
 } from "./Config";
 import { Markdown } from "./Markdown";
 import {
@@ -38,23 +37,16 @@ const CB_TEMPORARY = "temporary";
 
 type BotCommand = { readonly command: string; readonly description: string };
 
-export const BOT_COMMANDS: readonly BotCommand[] = [
-  { command: "chatid", description: "Show this chat's numeric ID" },
-  { command: "cancel", description: "Cancel the current turn" },
-  { command: "clear", description: "Reset chat history and context window" },
-  { command: "compact", description: "Compact the current session context" },
-  { command: "cd", description: "Show or change the working directory" },
-  { command: "model", description: "Show or change the AI model" },
-  { command: "effort", description: "Show or change thinking effort level" },
-  { command: "usage", description: "Show context window and session cost" },
-  { command: "logs", description: "Show or change log verbosity" },
-  {
-    command: "temporary",
-    description: "Toggle temporary chat (no history, fresh each message)",
-  },
-  { command: "update", description: "Update the bot to the latest version" },
-  { command: "commands", description: "Register all commands with Telegram" },
-];
+type CommandSpec = {
+  readonly name: string;
+  readonly description: string;
+  readonly queued?: (args: string) => boolean;
+  readonly run: (
+    self: Commands,
+    session: Session,
+    args: string
+  ) => Promise<void>;
+};
 
 const LOGS_DESCRIPTIONS: Record<LogsMode, string> = {
   off: "final message only",
@@ -62,6 +54,105 @@ const LOGS_DESCRIPTIONS: Record<LogsMode, string> = {
   text: "show tool use, and intermediate texts",
   verbose: "show tool use, intermediate texts, and thinking",
 };
+
+type Picker = {
+  readonly action: string;
+  readonly title: string;
+  readonly header: string;
+  readonly columns: number;
+  readonly values: (session: Session) => readonly string[];
+  readonly label: (value: string) => string;
+  readonly current: (session: Session) => string;
+  readonly apply: (
+    value: string
+  ) => ((session: Session) => Promise<void>) | undefined;
+  readonly body?: readonly string[];
+};
+
+const EFFORT_PICKER: Picker = {
+  action: CB_EFFORT,
+  title: "Effort",
+  header: "Effort",
+  columns: 3,
+  values: (session) => session.supportedThinkingLevels,
+  label: (value) => value,
+  current: (session) => session.currentThinkingLevel,
+  apply: (value) =>
+    isMember(THINKING_LEVELS, value)
+      ? (session) => session.setThinkingLevel(value)
+      : undefined,
+};
+
+const LOGS_PICKER: Picker = {
+  action: CB_LOGS,
+  title: "Logs",
+  header: "Level",
+  columns: 2,
+  values: () => LOGS_MODES,
+  label: (value) => value,
+  current: (session) => session.settings.logsMode ?? "text",
+  apply: (value) =>
+    isMember(LOGS_MODES, value)
+      ? (session) => session.setLogsMode(value)
+      : undefined,
+  body: [
+    "",
+    `<b>Options</b>:`,
+    ...LOGS_MODES.map(
+      (mode) =>
+        `• <code>${Markdown.escape(mode)}</code>: ${Markdown.escape(LOGS_DESCRIPTIONS[mode])}`
+    ),
+  ],
+};
+
+const TEMPORARY_PICKER: Picker = {
+  action: CB_TEMPORARY,
+  title: "Temporary",
+  header: "Temporary",
+  columns: 2,
+  values: () => ["0", "1"],
+  label: (value) => (value === "1" ? "on" : "off"),
+  current: (session) => (session.temporary ? "1" : "0"),
+  apply: (value) =>
+    value === "0" || value === "1"
+      ? (session) => session.setTemporary(value === "1")
+      : undefined,
+  body: [
+    "",
+    "When <b>on</b>, every message is independent and runs in a fresh session without any chat history.",
+  ],
+};
+
+const PICKERS: readonly Picker[] = [
+  EFFORT_PICKER,
+  LOGS_PICKER,
+  TEMPORARY_PICKER,
+];
+
+function buildPicker(
+  picker: Picker,
+  session: Session,
+  current: string
+): { readonly kb: InlineKeyboard; readonly html: string } {
+  const key = encodeId(session.id);
+  const kb = new InlineKeyboard();
+  const values = picker.values(session);
+  for (const [i, value] of values.entries()) {
+    const label = picker.label(value);
+    kb.text(
+      value === current ? `✅ ${label}` : label,
+      `${picker.action}:${value}:${key}`
+    );
+    if ((i + 1) % picker.columns === 0 && i < values.length - 1) {
+      kb.row();
+    }
+  }
+  const html = [
+    `<b>${picker.header}</b>: <code>${Markdown.escape(picker.label(current))}</code>`,
+    ...(picker.body ?? []),
+  ].join("\n");
+  return { kb, html };
+}
 
 function splitValueAndKey(
   s: string
@@ -85,6 +176,83 @@ export class Commands {
   private readonly api: Api;
   private readonly registry: SessionRegistry;
 
+  private static readonly COMMANDS: readonly CommandSpec[] = [
+    {
+      name: "chatid",
+      description: "Show this chat's numeric ID",
+      run: (self, session) => self.cmdChatId(session),
+    },
+    {
+      name: "cancel",
+      description: "Cancel the current turn",
+      run: (self, session) => self.cmdCancel(session),
+    },
+    {
+      name: "clear",
+      description: "Reset chat history and context window",
+      queued: () => true,
+      run: (self, session) => self.cmdClear(session),
+    },
+    {
+      name: "compact",
+      description: "Compact the current session context",
+      queued: () => true,
+      run: (self, session, args) => self.cmdCompact(session, args || undefined),
+    },
+    {
+      name: "cd",
+      description: "Show or change the working directory",
+      queued: (args) => args.length > 0,
+      run: (self, session, args) =>
+        args ? self.cmdCdWrite(session, args) : self.cmdCdRead(session),
+    },
+    {
+      name: "model",
+      description: "Show or change the AI model",
+      queued: (args) => args.length > 0,
+      run: (self, session, args) =>
+        args ? self.cmdModelWrite(session, args) : self.cmdModelRead(session),
+    },
+    {
+      name: "effort",
+      description: "Show or change thinking effort level",
+      run: (self, session) => self.cmdEffort(session),
+    },
+    {
+      name: "usage",
+      description: "Show context window and session cost",
+      run: (self, session) => self.cmdUsage(session),
+    },
+    {
+      name: "logs",
+      description: "Show or change log verbosity",
+      run: (self, session) => self.showPicker(LOGS_PICKER, session),
+    },
+    {
+      name: "temporary",
+      description: "Toggle temporary chat (no history, fresh each message)",
+      run: (self, session) => self.showPicker(TEMPORARY_PICKER, session),
+    },
+    {
+      name: "update",
+      description: "Update the bot to the latest version",
+      queued: () => true,
+      run: (self, session) => self.cmdUpdate(session),
+    },
+    {
+      name: "commands",
+      description: "Register all commands with Telegram",
+      run: (self, session) => self.cmdCommands(session),
+    },
+  ];
+
+  public static botCommands(): readonly BotCommand[] {
+    return Commands.COMMANDS.map(({ name, description }) => ({
+      command: name,
+      description,
+    }));
+  }
+
   public constructor(
     config: TelegramConfig,
     api: Api,
@@ -103,61 +271,17 @@ export class Commands {
     const [first, ...rest] = raw.trim().split(/\s+/);
     const name = (first ?? "").split("@")[0];
     const args = rest.join(" ").trim();
+    const spec = Commands.COMMANDS.find((one) => `/${one.name}` === name);
     try {
-      switch (name) {
-        case "/chatid":
-          await this.cmdChatId(session);
-          return;
-        case "/cancel":
-          await this.cmdCancel(session);
-          return;
-        case "/clear":
-          await this.runQueued(ctx, session, () => this.cmdClear(session));
-          return;
-        case "/compact":
-          await this.runQueued(ctx, session, () =>
-            this.cmdCompact(session, args || undefined)
-          );
-          return;
-        case "/cd":
-          if (!args) {
-            await this.cmdCdRead(session);
-            return;
-          }
-          await this.runQueued(ctx, session, () =>
-            this.cmdCdWrite(session, args)
-          );
-          return;
-        case "/model":
-          if (!args) {
-            await this.cmdModelRead(session);
-            return;
-          }
-          await this.runQueued(ctx, session, () =>
-            this.cmdModelWrite(session, args)
-          );
-          return;
-        case "/effort":
-          await this.cmdEffort(session);
-          return;
-        case "/usage":
-          await this.cmdUsage(session);
-          return;
-        case "/logs":
-          await this.cmdLogs(session);
-          return;
-        case "/temporary":
-          await this.cmdTemporary(session);
-          return;
-        case "/update":
-          await this.runQueued(ctx, session, () => this.cmdUpdate(session));
-          return;
-        case "/commands":
-          await this.cmdCommands(session);
-          return;
-        default:
-          await this.sendPlain(session.id, `Unknown command: ${name}`);
+      if (!spec) {
+        await this.sendPlain(session.id, `Unknown command: ${name}`);
+        return;
       }
+      if (spec.queued?.(args) === true) {
+        await this.runQueued(ctx, session, () => spec.run(this, session, args));
+        return;
+      }
+      await spec.run(this, session, args);
     } catch (err) {
       console.error(`[bot] command ${name} failed:`, err);
       await this.sendPlain(
@@ -232,49 +356,20 @@ export class Commands {
       await safeEditMessage(ctx, strikeOriginal(ctx, "Cancelled."));
       return;
     }
-    if (action === CB_EFFORT && keyPart) {
+    const picker = PICKERS.find((one) => one.action === action);
+    if (picker && keyPart) {
       const parts = splitValueAndKey(keyPart);
-      if (!parts || !isMember(THINKING_LEVELS, parts.value)) {
+      const applyTo = parts && picker.apply(parts.value);
+      if (!parts || !applyTo) {
         await ctx.answerCallbackQuery();
         return;
       }
       const session = this.registry.get(decodeId(parts.key));
-      await session.setThinkingLevel(parts.value);
-      await ctx.answerCallbackQuery({ text: `Effort: ${parts.value}` });
-      const { kb, html } = this.buildEffortPicker(
-        session.id,
-        parts.value,
-        session.supportedThinkingLevels
-      );
-      await safeEditMessage(ctx, html, kb);
-      return;
-    }
-    if (action === CB_LOGS && keyPart) {
-      const parts = splitValueAndKey(keyPart);
-      if (!parts || !isMember(LOGS_MODES, parts.value)) {
-        await ctx.answerCallbackQuery();
-        return;
-      }
-      const session = this.registry.get(decodeId(parts.key));
-      await session.setLogsMode(parts.value);
-      await ctx.answerCallbackQuery({ text: `Logs: ${parts.value}` });
-      const { kb, html } = this.buildLogsPicker(session.id, parts.value);
-      await safeEditMessage(ctx, html, kb);
-      return;
-    }
-    if (action === CB_TEMPORARY && keyPart) {
-      const parts = splitValueAndKey(keyPart);
-      if (!parts || (parts.value !== "0" && parts.value !== "1")) {
-        await ctx.answerCallbackQuery();
-        return;
-      }
-      const value = parts.value === "1";
-      const session = this.registry.get(decodeId(parts.key));
-      await session.setTemporary(value);
+      await applyTo(session);
       await ctx.answerCallbackQuery({
-        text: `Temporary: ${value ? "on" : "off"}`,
+        text: `${picker.title}: ${picker.label(parts.value)}`,
       });
-      const { kb, html } = this.buildTemporaryPicker(session.id, value);
+      const { kb, html } = buildPicker(picker, session, parts.value);
       await safeEditMessage(ctx, html, kb);
       return;
     }
@@ -429,107 +524,32 @@ export class Commands {
       );
       return;
     }
-    const current = session.currentThinkingLevel;
-    const { kb, html } = this.buildEffortPicker(session.id, current, supported);
+    await this.showPicker(EFFORT_PICKER, session);
+  }
+
+  private async showPicker(picker: Picker, session: Session): Promise<void> {
+    const { kb, html } = buildPicker(picker, session, picker.current(session));
     await this.sendWithFallback(session.id, html, kb);
-  }
-
-  private buildEffortPicker(
-    sessionId: SessionId,
-    currentLevel: ThinkingLevelOpt,
-    supported: readonly ThinkingLevelOpt[]
-  ): { readonly kb: InlineKeyboard; readonly html: string } {
-    const key = encodeId(sessionId);
-    const kb = new InlineKeyboard();
-    for (const [i, lvl] of supported.entries()) {
-      const label = lvl === currentLevel ? `✅ ${lvl}` : lvl;
-      kb.text(label, `${CB_EFFORT}:${lvl}:${key}`);
-      if ((i + 1) % 3 === 0 && i < supported.length - 1) {
-        kb.row();
-      }
-    }
-    const html = `<b>Effort</b>: <code>${Markdown.escape(currentLevel)}</code>`;
-    return { kb, html };
-  }
-
-  private buildLogsPicker(
-    sessionId: SessionId,
-    currentMode: LogsMode
-  ): { readonly kb: InlineKeyboard; readonly html: string } {
-    const key = encodeId(sessionId);
-    const kb = new InlineKeyboard();
-    const descriptions: string[] = [];
-    for (const [i, mode] of LOGS_MODES.entries()) {
-      const label = mode === currentMode ? `✅ ${mode}` : mode;
-      kb.text(label, `${CB_LOGS}:${mode}:${key}`);
-      if ((i + 1) % 2 === 0 && i < LOGS_MODES.length - 1) {
-        kb.row();
-      }
-      descriptions.push(
-        `• <code>${Markdown.escape(mode)}</code>: ${Markdown.escape(LOGS_DESCRIPTIONS[mode])}`
-      );
-    }
-    const html = [
-      `<b>Level</b>: <code>${Markdown.escape(currentMode)}</code>`,
-      "",
-      `<b>Options</b>:`,
-      ...descriptions,
-    ].join("\n");
-    return { kb, html };
   }
 
   private async cmdUsage(session: Session): Promise<void> {
     const lines: string[] = [];
-    const agent = session.agentSession;
-    if (agent) {
-      const usage = agent.getContextUsage();
-      const stats = agent.getSessionStats();
-      if (usage) {
-        const pct =
-          usage.percent !== null ? `${usage.percent.toFixed(1)}%` : "—";
-        const tok =
-          usage.tokens !== null ? usage.tokens.toLocaleString("en-US") : "—";
-        const ctx = usage.contextWindow.toLocaleString("en-US");
-        lines.push(`<b>Context</b>: <code>${tok}/${ctx} (${pct})</code>`);
-      }
-      lines.push(
-        `<b>Session Cost</b>: <code>$${(stats.cost ?? 0).toFixed(2)}</code>`
-      );
+    const usage = session.usage();
+    if (usage) {
+      const pct = usage.percent !== null ? `${usage.percent.toFixed(1)}%` : "—";
+      const tok =
+        usage.tokens !== null ? usage.tokens.toLocaleString("en-US") : "—";
+      const ctx = usage.contextWindow.toLocaleString("en-US");
+      lines.push(`<b>Context</b>: <code>${tok}/${ctx} (${pct})</code>`);
+    }
+    const cost = session.sessionCost();
+    if (cost !== undefined) {
+      lines.push(`<b>Session Cost</b>: <code>$${cost.toFixed(2)}</code>`);
     }
     lines.push(
       `<b>Cumulative Cost</b>: <code>$${(session.settings.cumulativeCost ?? 0).toFixed(2)}</code>`
     );
     await this.sendWithFallback(session.id, lines.join("\n"));
-  }
-
-  private async cmdLogs(session: Session): Promise<void> {
-    const current = session.settings.logsMode ?? "text";
-    const { kb, html } = this.buildLogsPicker(session.id, current);
-    await this.sendWithFallback(session.id, html, kb);
-  }
-
-  private async cmdTemporary(session: Session): Promise<void> {
-    const { kb, html } = this.buildTemporaryPicker(
-      session.id,
-      session.temporary
-    );
-    await this.sendWithFallback(session.id, html, kb);
-  }
-
-  private buildTemporaryPicker(
-    sessionId: SessionId,
-    current: boolean
-  ): { readonly kb: InlineKeyboard; readonly html: string } {
-    const key = encodeId(sessionId);
-    const kb = new InlineKeyboard()
-      .text(current ? "off" : "✅ off", `${CB_TEMPORARY}:0:${key}`)
-      .text(current ? "✅ on" : "on", `${CB_TEMPORARY}:1:${key}`);
-    const html = [
-      `<b>Temporary</b>: <code>${current ? "on" : "off"}</code>`,
-      "",
-      "When <b>on</b>, every message is independent and runs in a fresh session without any chat history.",
-    ].join("\n");
-    return { kb, html };
   }
 
   private async cmdUpdate(session: Session): Promise<void> {
@@ -563,8 +583,7 @@ export class Commands {
     const notes = outcome.skipped.map(
       (s) => `\nSkipped ${s.label}: ${s.reason}.`
     );
-    // The other daemons run from the same tree this just replaced, so they go
-    // first; this one restarts by exiting, which has to be last.
+    // Restart siblings first; this daemon restarts by exiting, so it must go last.
     await Supervisor.restartSiblings(TelegramUnit);
     if (!Supervisor.isSupervised()) {
       await progress(
@@ -711,6 +730,8 @@ async function reactSafe(
     console.warn(`[bot] react failed:`, err);
   });
 }
+
+export const BOT_COMMANDS: readonly BotCommand[] = Commands.botCommands();
 
 function strikeOriginal(
   ctx: Filter<Context, "callback_query:data">,

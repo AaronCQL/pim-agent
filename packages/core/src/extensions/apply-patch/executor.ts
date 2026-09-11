@@ -22,8 +22,6 @@ export type ApplyAction = {
   readonly movePath?: string;
 };
 
-// One rendered unit per file operation, pairing the action with its content
-// diff (undefined for a delete or a pure rename, which render as title only).
 export type ApplyEntry = {
   readonly action: ApplyAction;
   readonly diff: ToolDiff | undefined;
@@ -49,9 +47,6 @@ type PlannedAction = {
   readonly deletePath?: string;
 };
 
-// Only a content-less Update is a true no-op. Add/Delete/Move always change the
-// filesystem even when their content diff is empty (e.g. creating an empty file
-// or a pure rename), so they must not count toward the net-no-op rejection.
 function isNoOpUpdate(entry: PlannedAction): boolean {
   return entry.action.kind === "update" && entry.diff === undefined;
 }
@@ -120,13 +115,10 @@ async function planAdd(
 
   await ensureWritableParentPath(absolutePath, rawPath, cwd);
 
-  // Each `+` line contributes its content plus a newline, so `contents` already
-  // ends with a trailing newline (matching Codex's added-file output). Write it
-  // as-is so the file is properly terminated and matches the rendered diff.
   const newSide = DiffLines.fromText(contents);
   const diff = DiffLines.buildToolDiff(
     rawPath,
-    { lines: [], hasTrailingNewline: false },
+    DiffLines.emptySide,
     newSide,
     CONTEXT_LINES
   );
@@ -155,7 +147,7 @@ async function planDelete(
   const diff = DiffLines.buildToolDiff(
     rawPath,
     DiffLines.fromText(original.content),
-    { lines: [], hasTrailingNewline: false },
+    DiffLines.emptySide,
     CONTEXT_LINES
   );
 
@@ -351,11 +343,6 @@ async function findNonDirectoryParent(
   }
 }
 
-/**
- * Port of Codex `compute_replacements` + `apply_replacements`, operating on
- * logical lines (no trailing-newline sentinel). A sequential cursor advances
- * through the file; multi-chunk hunks are disambiguated by order.
- */
 function applyChunks(
   originalLines: readonly string[],
   chunks: readonly UpdateChunk[],
@@ -436,7 +423,7 @@ function applyChunks(
   replacements.sort((a, b) => a.start - b.start);
 
   const lines = [...originalLines];
-  for (const { start, oldLen, newLines } of [...replacements].reverse()) {
+  for (const { start, oldLen, newLines } of replacements.reverse()) {
     lines.splice(start, oldLen, ...newLines);
   }
   return lines;
@@ -479,7 +466,6 @@ function joinLines(
 
 type ReadFile = {
   readonly content: string;
-  readonly lines: readonly string[];
   readonly hadBom: boolean;
   readonly lineEnding: "\n" | "\r\n";
 };
@@ -504,7 +490,6 @@ async function readTextFile(
 
   return {
     content,
-    lines: Lines.splitWithTrailingNewline(content).lines,
     hadBom,
     lineEnding,
   };
@@ -512,11 +497,10 @@ async function readTextFile(
 
 async function writeFile(write: FileWrite): Promise<void> {
   try {
-    if (write.nlink > 1) {
-      await Bun.write(write.path, write.content);
-      return;
-    }
-    await Fs.writeAtomic(write.path, write.content, write.mode);
+    await Fs.writeKeepingLinks(write.path, write.content, {
+      ...(write.mode === undefined ? {} : { mode: write.mode }),
+      nlink: write.nlink,
+    });
   } catch (error) {
     throw new Error(formatWriteFailure(write, error));
   }

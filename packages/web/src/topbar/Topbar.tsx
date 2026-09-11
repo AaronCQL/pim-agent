@@ -1,52 +1,24 @@
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 
-import { abbreviateHome, baseName, splitTail } from "../format";
+import { abbreviateHome, baseName, fit } from "../format";
 import type { SessionStore } from "../session/SessionStore";
 import type { ConnectionStatus } from "../ws/WsClient";
 import { DirectoryModal } from "./DirectoryModal";
 
-/**
- * Half the row is every chip's ceiling, which is what makes a tight row
- * divide fairly between the two of them: a chip under its half is never
- * touched, so the long one gives up pixels until it is level with the short
- * one rather than both being trimmed together. Flex shrink alone divides an
- * overflow *in proportion to width*, which squeezes a chip that would have
- * fit whole. Shrink stays on underneath as the floor: when both chips are at
- * their ceiling and the row is narrower still, they are equal by then, so
- * proportional and fair are the same thing.
- */
 const CHIP =
-  "flex h-8 min-w-0 max-w-[50%] items-center gap-1.5 rounded-lg bg-neutral-850 px-2 text-sm text-neutral-350";
+  "flex h-8 max-w-max min-w-0 flex-1 items-center gap-1.5 rounded-lg bg-neutral-850 px-2 text-sm text-neutral-350";
 
-/**
- * How long a socket may be down before it is worth saying so. `WsClient`
- * retries on its own and a phone waking from sleep is usually back inside a
- * few hundred milliseconds; a mark that painted on every one of those would
- * be trained away long before the outage that matters.
- */
+// Not the footer's U+F069: that is a Nerd Font glyph, and no browser has the font.
+const DIRTY_MARK = "*";
+
 const GRACE_MS = 1500;
 
-/**
- * The row above the transcript: where the session is, and what its repository
- * is doing. Two chips rather than one, because they are different facts on
- * different clocks — the cwd moves only when something moves it, the git
- * reading is polled.
- *
- * Neither chip is given a width: both size to their own text, and give it up
- * only when the row runs out.
- *
- * The directory is the row's one control, and the only entrance to choosing
- * one: where the session works is the single fact up here that a reader can
- * change, so it is a button and the branch beside it stays a readout — what
- * git says is not settable by asking.
- *
- * It is also the only bar on screen at every width, which is why the
- * disconnected mark lives here rather than in the sidebar: the socket most
- * often dies on a phone, where the sidebar is a closed drawer.
- */
+// Sub-pixel slack, or a box a hair under its own text elides a text that fits.
+const SLACK = 0.02;
+
+/** The row above the transcript: where the session is, and what its repository is doing. */
 export function Topbar(props: {
   readonly store: SessionStore;
-  /** Phone-width, where only the chips' leading facts survive. */
   readonly compact: boolean;
   readonly onToggleSidebar: () => void;
   readonly onOpenSettings?: () => void;
@@ -57,11 +29,8 @@ export function Topbar(props: {
     () => props.store.state.connection,
     () => props.graceMs ?? GRACE_MS
   );
-  // A phone gets the directory alone. The route to it is the first thing a
-  // narrow row cannot afford and the last thing the reader needs there: the
-  // question on a phone is which project this is, not where it sits on disk.
-  const path = (cwd: string): string =>
-    props.compact ? baseName(cwd) : abbreviateHome(cwd);
+  const paths = (cwd: string): readonly string[] =>
+    props.compact ? [baseName(cwd)] : [abbreviateHome(cwd), baseName(cwd)];
 
   return (
     <div class="flex h-12 shrink-0 items-center gap-2 border-b border-neutral-700 px-3">
@@ -79,26 +48,20 @@ export function Topbar(props: {
           <button
             type="button"
             class={`${CHIP} hover:bg-neutral-800 hover:text-neutral-50`}
-            aria-label={`Working directory ${path(cwd())}, open another`}
+            aria-label={`Working directory ${abbreviateHome(cwd())}, open another`}
             title={cwd()}
             onClick={() => {
               setChoosing(true);
             }}
           >
             <span class="i-griddy-icons:folder size-4 shrink-0" />
-            <Elided text={path(cwd())} />
+            <Fitted texts={paths(cwd())} />
           </button>
         )}
       </Show>
 
-      {/* Holds the branch chip against the right edge while there is room,
-          and collapses to nothing before either chip is asked to shrink. */}
-      <div class="flex-1" />
+      <div class="ml-auto" />
 
-      {/* Nothing at all while the socket is up: a reader who is connected
-          does not need to be told so every second they are. Opens the
-          settings, because the address is the only part of a connection that
-          will not come back that a reader can change. */}
       <Show when={offline()}>
         <button
           type="button"
@@ -112,40 +75,43 @@ export function Topbar(props: {
         </button>
       </Show>
 
-      {/* Nothing to draw outside a git repository. */}
       <Show when={props.store.state.branch}>
         {(branch) => (
           <div class={CHIP} title={branch()}>
             <span class="i-griddy-icons:code-branch size-4 shrink-0" />
-            <Elided text={branch()} />
+            <Fitted texts={[branch()]} />
             <Show when={props.store.state.dirtyCount > 0}>
               <span
                 class="shrink-0 text-amber-400"
                 title={`${props.store.state.dirtyCount} changed files`}
               >
-                ●{props.store.state.dirtyCount}
+                {DIRTY_MARK}
+                {props.store.state.dirtyCount}
               </span>
             </Show>
-            {/* Divergence is the first thing to go when the row is tight:
-                it is the only fact here that is not about right now. */}
-            <Show when={!props.compact}>
-              <Show when={props.store.state.ahead > 0}>
-                <span class="shrink-0" title="Commits to push">
-                  ↑{props.store.state.ahead}
-                </span>
-              </Show>
-              <Show when={props.store.state.behind > 0}>
-                <span class="shrink-0 text-rose-400" title="Commits to pull">
-                  ↓{props.store.state.behind}
-                </span>
-              </Show>
+            <Show
+              when={
+                !props.compact &&
+                (props.store.state.ahead > 0 || props.store.state.behind > 0)
+              }
+            >
+              <span class="flex shrink-0 items-center">
+                <Show when={props.store.state.ahead > 0}>
+                  <span title="Commits to push">
+                    ↑{props.store.state.ahead}
+                  </span>
+                </Show>
+                <Show when={props.store.state.behind > 0}>
+                  <span class="text-rose-400" title="Commits to pull">
+                    ↓{props.store.state.behind}
+                  </span>
+                </Show>
+              </span>
             </Show>
           </div>
         )}
       </Show>
 
-      {/* Last, because it is not part of the row: an open dialog is in the
-          top layer and a closed one is not drawn at all. */}
       <DirectoryModal
         open={choosing()}
         store={props.store}
@@ -157,28 +123,46 @@ export function Topbar(props: {
   );
 }
 
-/**
- * Text that loses its middle, and only as much of it as it has to: the head
- * shrinks under an ellipsis, the tail never does.
- */
-function Elided(props: { readonly text: string }) {
-  const parts = (): readonly [string, string] => splitTail(props.text);
+function Fitted(props: { readonly texts: readonly string[] }) {
+  const [share, setShare] = createSignal(1);
+  const widest = (): string => props.texts[0] ?? "";
+  const columns = (): number => Math.floor(widest().length * share() + SLACK);
+
+  let box!: HTMLSpanElement;
+  let ghost!: HTMLSpanElement;
+  const observer = new ResizeObserver(() => {
+    const full = ghost.getBoundingClientRect().width;
+    setShare(full > 0 ? box.getBoundingClientRect().width / full : 1);
+  });
+  onCleanup(() => {
+    observer.disconnect();
+  });
+
   return (
-    <span class="flex min-w-0">
-      <span class="truncate">{parts()[0]}</span>
-      <span class="shrink-0">{parts()[1]}</span>
+    <span
+      ref={(element: HTMLSpanElement) => {
+        box = element;
+        observer.observe(element);
+      }}
+      class="relative min-w-0 overflow-hidden whitespace-pre"
+    >
+      {/* The chip is `max-w-max`, so measure a copy no cut touches, or the box
+          shrinks onto its own ellipsis. `inline-block`: inline boxes go unobserved. */}
+      <span
+        ref={(element: HTMLSpanElement) => {
+          ghost = element;
+          observer.observe(element);
+        }}
+        aria-hidden="true"
+        class="invisible inline-block"
+      >
+        {widest()}
+      </span>
+      <span class="absolute inset-0">{fit(props.texts, columns())}</span>
     </span>
   );
 }
 
-/**
- * Whether the socket has been down long enough to say so.
- *
- * `connecting` and `reconnecting` only. `outdated` is a healthy socket the
- * server refused on protocol version — the toast says so in words and the fix
- * is a reload, not a network — and `closed` is only ever set by teardown, so
- * both would be marks that misdescribe what is wrong.
- */
 function createOffline(
   status: () => ConnectionStatus,
   graceMs: () => number

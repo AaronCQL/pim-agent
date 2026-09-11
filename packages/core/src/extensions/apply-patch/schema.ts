@@ -10,13 +10,7 @@ export type ApplyPatchInput = Static<typeof applyPatchSchema>;
 
 const ALIAS_KEYS = ["patch", "patchText", "patch_text"] as const;
 
-/**
- * Forgive the JSON-key choice, trust the grammar. Accepts `{input}` (canonical,
- * handled above), `{patch}`, `{patchText}`/`{patch_text}`, or a bare string,
- * normalizing to `{input}` and stripping the alias key so the unknown-key
- * rejection in `Tools.wrap` passes. Validation of the actual envelope happens
- * in the parser.
- */
+/** Normalize a bare string or a `patch`/`patchText`/`patch_text` key to `{input}`, dropping the alias. */
 export function prepareApplyPatchArguments(rawArgs: unknown): ApplyPatchInput {
   if (typeof rawArgs === "string") {
     return { input: rawArgs };

@@ -1,16 +1,27 @@
-import type { ViewBlock } from "./ViewBlock";
+import type { BlockOf, ViewBlock } from "./ViewBlock";
 
-/**
- * How a block sits relative to the container a body is drawn in. `flow` is
- * ordinary output the container may restyle and re-wrap; `embed` is
- * preformatted and already styled, so the container must leave it alone;
- * `tight` is terminal-only — the block paints its own leading column, so the
- * gutter gives that column up; `heading` steps outside the container to
- * introduce a sub-item.
- */
+export type PainterMap<TOut, TArgs extends readonly unknown[] = []> = {
+  readonly [TKind in ViewBlock["kind"]]: (
+    block: BlockOf<TKind>,
+    ...args: TArgs
+  ) => TOut;
+};
+
+function dispatch<TOut, TArgs extends readonly unknown[]>(
+  painters: PainterMap<TOut, TArgs>,
+  block: ViewBlock,
+  ...args: TArgs
+): TOut {
+  const painter = painters[block.kind] as (
+    block: ViewBlock,
+    ...args: TArgs
+  ) => TOut;
+  return painter(block, ...args);
+}
+
+/** How a block sits in its container: `embed` must not be restyled or re-wrapped, `tight` paints its own leading column. */
 export type BlockFrame = "flow" | "embed" | "tight" | "heading";
 
-/** The frame each block kind takes on a surface with no gutter to defer to. */
 const FRAMES = {
   text: "flow",
   markdown: "embed",
@@ -31,12 +42,6 @@ export type FrameGroup<TFrame> = {
   readonly blocks: readonly ViewBlock[];
 };
 
-/**
- * Runs of consecutive same-frame blocks, so a caller draws one container per
- * run instead of one per block. A frame `mergeable` rejects keeps one block
- * per group even mid-run — a heading is a sub-item's own boundary, and an
- * ANSI markdown embed travels as a single source payload.
- */
 function groupByFrame<TFrame>(
   blocks: readonly ViewBlock[],
   frames: Readonly<Record<ViewBlock["kind"], TFrame>>,
@@ -55,10 +60,59 @@ function groupByFrame<TFrame>(
   return groups;
 }
 
-/** The `:12` / `:12-40` suffix a `file` block's range paints as. */
 function formatRange(range: readonly [number, number | undefined]): string {
   const [start, end] = range;
   return end === undefined ? `:${start}` : `:${start}-${end}`;
 }
 
-export const Painting = { FRAMES, groupByFrame, formatRange };
+function fileSuffix(block: {
+  readonly range?: readonly [number, number | undefined];
+  readonly truncated?: boolean;
+}): { readonly range: string; readonly truncated: string } {
+  return {
+    range: block.range ? formatRange(block.range) : "",
+    truncated: block.truncated === true ? " (truncated)" : "",
+  };
+}
+
+function linkLabel(block: {
+  readonly label: string;
+  readonly href: string;
+}): string {
+  return block.label === "" || block.label === block.href
+    ? block.href
+    : block.label;
+}
+
+function lineNumberWidth(start: number, count: number): number {
+  return String(start + Math.max(0, count - 1)).length;
+}
+
+function hangingList(
+  items: readonly ViewBlock[],
+  ordered: boolean,
+  paintItem: (item: ViewBlock) => readonly string[],
+  styleMarker: (marker: string) => string = (marker) => marker
+): string[] {
+  const markers = items.map((_, index) => (ordered ? `${index + 1}.` : "•"));
+  const width = Math.max(0, ...markers.map((marker) => marker.length)) + 1;
+  const indent = " ".repeat(width);
+
+  return items.flatMap((item, index) => {
+    const marker = styleMarker((markers[index] ?? "•").padEnd(width));
+    return paintItem(item).map((line, lineIndex) =>
+      lineIndex === 0 ? marker + line : indent + line
+    );
+  });
+}
+
+export const Painting = {
+  FRAMES,
+  dispatch,
+  groupByFrame,
+  formatRange,
+  fileSuffix,
+  linkLabel,
+  lineNumberWidth,
+  hangingList,
+};

@@ -26,16 +26,9 @@ For the `class` tier: instantiate at the composition root (`bin/pim.ts`, an exte
 
 ## Comments
 
-**Code says what; a comment says why, and only when the why is not visible.** A comment that could be deleted without losing information is a liability with no asset side.
+All code written MUST be self documenting. Write as little comments as possible. 
 
-Never write:
-
-- Restatement. If the signature is not the documentation, rename the function.
-- Pointers into `docs/` — no `.md` filename, no `§`. State the rule, not its address: a sentence survives a reorg and is wrong in a way review can catch.
-- Duplicated prose. If it exists in `docs/`, it exists once.
-- Plans. Intent about code that does not exist yet is guaranteed to be wrong later.
-- JSDoc tags restating a signature. TypeScript already states and checks it.
-- `TODO` / `FIXME` / `XXX`. An issue, a failing test, or nothing.
+Do NOT write comments containing rationale/justifications or layout decisions in JSX.
 
 ## Imports
 

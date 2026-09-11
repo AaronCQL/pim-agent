@@ -14,44 +14,20 @@ import type { ToolView } from "../view/ViewBlock";
 export type ToolViewInput<TParams extends TSchema, TDetails> = {
   /** Partially streamed while the call is in flight; treat fields as optional. */
   readonly args: Static<TParams>;
-  /**
-   * The result so far. Undefined until the call reports one, and a streaming
-   * snapshot rather than the final result while `isPartial` is true.
-   */
+  /** A streaming snapshot rather than the final result while `isPartial`. */
   readonly result?: AgentToolResult<TDetails>;
-  /**
-   * True while the call is still running. A `summary` renders in that state,
-   * so a view that styles "in flight" differently needs to see it.
-   */
   readonly isPartial: boolean;
   readonly cwd: string;
 };
 
-/**
- * What a call to this tool can do to the machine the agent runs on. Declaring
- * it next to the tool keeps the risk profile with the code that carries the
- * risk, instead of in a name list the next tool would silently miss. The
- * server reads it to decide whether a finished call may have invalidated the
- * file picker's answers.
- *
- * A tool that declares nothing is treated as `unbounded` — an unknown tool
- * (MCP, another extension pack) must not be able to declare itself harmless
- * by omission.
- */
+/** What a call to this tool can do to the host machine; declaring nothing means `unbounded`. */
 export type ToolEffect<TParams extends TSchema = TSchema> =
-  /** Nothing outside the agent's own session changes. */
   | { readonly kind: "readOnly" }
-  /** Mutates exactly the paths `paths` reads out of the call's arguments. */
   | {
       readonly kind: "writesPaths";
-      /**
-       * Paths as the model wrote them, relative or absolute; the caller
-       * resolves them against the session cwd. Throwing is allowed and means
-       * "cannot be determined", which is treated as `unbounded`.
-       */
+      /** Paths as the model wrote them; throwing means "unknown" and is treated as `unbounded`. */
       readonly paths: (args: Static<TParams>) => readonly string[];
     }
-  /** Effects the arguments do not bound. */
   | { readonly kind: "unbounded" };
 
 /** `ToolEffect` with its parameter type erased, for name-keyed lookup. */
@@ -59,26 +35,18 @@ export type ErasedToolEffect = ToolEffect<TSchema> & {
   readonly paths?: (args: unknown) => readonly string[];
 };
 
-/**
- * Pi's tool definition plus pim's optional view model. `toViewModel` must be
- * pure over `(args, result, cwd)` so a persisted session entry replays
- * identically with no live process state.
- */
+/** Pi's tool definition plus pim's view model, which must be pure over `(args, result, cwd)` to replay. */
 export type PimToolDefinition<
   TParams extends TSchema,
   TDetails = unknown,
   TState = unknown,
 > = ToolDefinition<TParams, TDetails, TState> & {
   readonly toViewModel?: (input: ToolViewInput<TParams, TDetails>) => ToolView;
-  /** Omitted means `unbounded`; see `ToolEffect`. */
+  /** Omitted means `unbounded`. */
   readonly effect?: ToolEffect<TParams>;
 };
 
-/**
- * A registered `toViewModel` with its parameter types erased, so a frontend
- * that only knows a tool by name (an event stream carries no schema) can still
- * ask for its view.
- */
+/** A registered `toViewModel` with its parameter types erased, for name-keyed lookup. */
 export type ToolViewFactory = (input: {
   readonly args: unknown;
   readonly result?: AgentToolResult<unknown>;
@@ -86,7 +54,6 @@ export type ToolViewFactory = (input: {
   readonly cwd: string;
 }) => ToolView;
 
-/** Renderer-owned plumbing that hands the result back to the title renderer. */
 type ViewRenderState<TDetails> = {
   viewResult?: AgentToolResult<TDetails>;
 };
@@ -106,39 +73,33 @@ type JsonSchema = {
 const viewFactories = new Map<string, ToolViewFactory>();
 const effects = new Map<string, ErasedToolEffect>();
 
-/**
- * What a registered tool declared it can do, or undefined when it declared
- * nothing. An absent entry reads as `unbounded`; see `ToolEffect`.
- */
+/** What a registered tool declared it can do; absent reads as `unbounded`. */
 function effectOf(toolName: string): ErasedToolEffect | undefined {
   return effects.get(toolName);
 }
 
-/**
- * The view model a registered tool paints itself with, or undefined for a
- * tool that has none (an MCP tool, or one not ported yet). Registration is
- * the only key-by-name map in the system: every frontend reads this instead
- * of keeping its own table of tool names.
- */
-function viewFor(toolName: string): ToolViewFactory | undefined {
-  return viewFactories.get(toolName);
+function baseView(
+  toolName: string,
+  call: {
+    readonly args: unknown;
+    readonly result?: AgentToolResult<unknown>;
+    readonly isPartial: boolean;
+    readonly cwd: string;
+  }
+): ToolView {
+  return (
+    viewFactories.get(toolName)?.(call) ?? genericView(toolName, call.args)
+  );
 }
 
-/**
- * The view for one call, with a generic fallback for a tool that registered
- * none. Every frontend paints tool rows through this, so an unported or MCP
- * tool still renders instead of disappearing.
- */
+const branchesOf = (schema?: JsonSchema): readonly JsonSchema[] | undefined =>
+  schema?.anyOf ?? schema?.oneOf;
+
+/** The view for one call, with a generic fallback for a tool that registered none. */
 function viewOf(input: {
   readonly name: string;
   readonly args: unknown;
   readonly result?: AgentToolResult<unknown>;
-  /**
-   * The call failed, so `result` is pi's synthetic error one. Without this
-   * the view is painted from that result like any other, and a tool whose
-   * body comes out of `details` — every diff-carrying one — renders a bare
-   * title row that reads exactly like a call that succeeded.
-   */
   readonly isError?: boolean;
   readonly isPartial: boolean;
   readonly cwd: string;
@@ -147,28 +108,12 @@ function viewOf(input: {
   if (isError === true) {
     return errorView(name, rest, result);
   }
-  return (
-    viewFor(name)?.({
-      ...rest,
-      ...(result === undefined ? {} : { result }),
-    }) ?? genericView(name, input.args)
-  );
+  return baseView(name, {
+    ...rest,
+    ...(result === undefined ? {} : { result }),
+  });
 }
 
-/**
- * A failed call: what was attempted, and why it did not happen. Painted from
- * the arguments alone, because pi's error result carries no `details` and a
- * renderer handed it would describe a result that never existed. The message
- * is the body, which is also the row's only claim to a disclosure — the same
- * split the TUI makes when it hands an errored call to `renderErrorResult`.
- *
- * It replaces whatever body the renderer produced rather than joining it: with
- * no result to paint from, a body is either empty or the placeholder blocks a
- * view emits while a call is still in flight, and neither is worth a line
- * under a failure. A live row loses the output it had streamed by the same
- * rule, which is the point — it then reads exactly as it will after a reload,
- * where the log holds nothing but the error either.
- */
 function errorView(
   name: string,
   call: {
@@ -178,7 +123,7 @@ function errorView(
   },
   result: AgentToolResult<unknown> | undefined
 ): ToolView {
-  const view = viewFor(name)?.(call) ?? genericView(name, call.args);
+  const view = baseView(name, call);
   const text =
     result === undefined ? "" : Renderer.extractErrorText(result, "");
   if (text === "") {
@@ -190,18 +135,7 @@ function errorView(
   };
 }
 
-/**
- * Wrap a tool definition so pi's validator errors get rewritten before they
- * reach the model. Pi runs `prepareArguments` before validation, so we call
- * pi's validator ourselves inside it, rewrite any throw, and return the
- * (coerced) args; pi's own second validation pass then sees clean input.
- * After successful validation we also reject unknown top-level keys, since
- * TypeBox object schemas accept them by default and typos like
- * `headlimit` vs `head_limit` would silently no-op.
- *
- * Use `Tools.register` for `pi.registerTool` callers; use `Tools.wrap` to
- * pass into `customTools`.
- */
+/** Wrap a tool definition so pi's validator errors are rewritten before reaching the model. */
 function wrap<TParams extends TSchema, TDetails = unknown, TState = unknown>(
   def: PimToolDefinition<TParams, TDetails, TState>
 ): ToolDefinition<TParams, TDetails, TState> {
@@ -258,12 +192,7 @@ function register<
   pi.registerTool(wrap(def));
 }
 
-/**
- * Rewrite a `validateToolArguments` error string into a clearer form.
- * `schema` is the tool's parameters schema, used to enumerate allowed values
- * for `anyOf`/`enum` failures. `args` is the validated input, used to pick
- * the matching branch of a discriminated union. Public for testing.
- */
+/** Rewrite a `validateToolArguments` error string into a clearer form. */
 function rewriteValidationError(
   toolName: string,
   schema: JsonSchema,
@@ -294,11 +223,6 @@ const GENERIC_ARG_KEYS = [
   "url",
 ] as const;
 
-/**
- * The view for a tool that ships no `toViewModel` — an MCP tool, or one from
- * another extension pack. Names the tool and echoes whichever argument reads
- * most like its subject, which is all a stranger's schema will honestly give.
- */
 function genericView(toolName: string, args: unknown): ToolView {
   const record =
     args && typeof args === "object" ? (args as Record<string, unknown>) : {};
@@ -315,10 +239,6 @@ function genericView(toolName: string, args: unknown): ToolView {
   };
 }
 
-/**
- * Build the renderers a `toViewModel` tool did not write itself. An explicit
- * `renderCall`/`renderResult` always wins, so adoption stays incremental.
- */
 function synthesizeRenderers<TParams extends TSchema, TDetails, TState>(
   def: PimToolDefinition<TParams, TDetails, TState>,
   toViewModel: (input: ToolViewInput<TParams, TDetails>) => ToolView
@@ -351,12 +271,7 @@ function synthesizeRenderers<TParams extends TSchema, TDetails, TState>(
       def.renderResult ??
       ((result, options, theme, context) => {
         const state = context.state as ViewRenderState<TDetails>;
-        // The title may depend on `details`, which only renderResult receives;
-        // stash it and redraw so the synthesized renderCall can see it too.
-        // The redraw has to wait for the current pass to finish: pi calls this
-        // from inside its own container rebuild, and invalidating re-entrantly
-        // makes that rebuild append this pass's component on top of the one the
-        // nested pass already added — the body would be painted twice.
+        // Defer the redraw: invalidating re-entrantly makes pi paint the body twice.
         if (!options.isPartial && state.viewResult === undefined) {
           state.viewResult = result;
           queueMicrotask(() => context.invalidate());
@@ -412,13 +327,6 @@ function parseIssues(message: string): Issue[] {
   return issues;
 }
 
-/**
- * Pi emits one error per anyOf branch plus a `must match a schema in anyOf`
- * parent error, producing 6+ noisy lines for a 6-variant union. Replace the
- * whole cluster with a single synthesised line. If the actual value has a
- * discriminator that matches one branch, surface only that branch's real
- * errors instead.
- */
 function collapseAnyOf(
   issues: readonly Issue[],
   schema: JsonSchema,
@@ -432,7 +340,7 @@ function collapseAnyOf(
       return;
     }
     const node = walkSchema(schema, issue.path);
-    const branches = node?.anyOf ?? node?.oneOf;
+    const branches = branchesOf(node);
     if (!node || !branches) {
       return;
     }
@@ -491,12 +399,6 @@ function describeAnyOf(branches: readonly JsonSchema[]): string {
   return `must match one of ${branches.length} allowed variants`;
 }
 
-/**
- * Format an enum value for an error message. Strings render bare so a weaker
- * model that retries off the message doesn't include the quotes in its next
- * attempt (e.g. `action: "\"create\""`). Non-strings keep JSON form for
- * disambiguation.
- */
 function displayValue(value: unknown): string {
   return typeof value === "string" ? value : JSON.stringify(value);
 }
@@ -668,12 +570,6 @@ function formatIssue(issue: Issue, schema: JsonSchema): string {
   return `${issue.path}: ${issue.message}`;
 }
 
-/**
- * Recursively unwrap quoted enum values. Weaker models sometimes send
- * `"\"create\""` instead of `"create"` because the JSON Schema and earlier
- * error messages show enum values quoted. Only unwraps when the inner value is
- * a valid enum/const match, so real typos still surface as errors.
- */
 function coerceQuotedEnums(
   value: unknown,
   schema: JsonSchema | undefined
@@ -704,8 +600,8 @@ function coerceQuotedEnums(
         mutated[key] = next;
       }
     }
-    if (schema.anyOf || schema.oneOf) {
-      const branches = (schema.anyOf ?? schema.oneOf) as readonly JsonSchema[];
+    const branches = branchesOf(schema);
+    if (branches) {
       const branch =
         matchDiscriminatedBranch(branches, mutated ?? value) ??
         branches.find((b) => b.type === "object" && b.properties);
@@ -749,7 +645,7 @@ function collectAllowedStrings(schema: JsonSchema): string[] | undefined {
   if (typeof schema.const === "string") {
     return [schema.const];
   }
-  const branches = schema.anyOf ?? schema.oneOf;
+  const branches = branchesOf(schema);
   if (branches) {
     const collected: string[] = [];
     for (const branch of branches) {
@@ -776,21 +672,6 @@ function stripWrappingQuotes(value: string): string {
   return value;
 }
 
-/**
- * Pi-ai intentionally coerces a lot of LLM-quirk inputs (`"42"` → 42,
- * `"true"` → true, single value → array, etc.) so weak/cheap models don't
- * fail on JSON shakiness. This is good. But two of those coercions are
- * almost certainly silent bugs:
- *
- * - `null` → `0` / `""` / `false` / `"null"` for primitive fields. `null`
- *   is never a sensible value for a non-nullable primitive; treating it as
- *   the type's zero value hides the model's confusion.
- * - `"42.5"` → `42` for an integer field. The float-shaped string means the
- *   model misunderstood the type; truncating loses information without
- *   recovering the intent.
- *
- * Reject both before pi's `Value.Convert` runs.
- */
 function checkStrictTypes(
   value: unknown,
   schema: JsonSchema | undefined,
@@ -858,7 +739,7 @@ function collectSchemaTypes(schema: JsonSchema): string[] {
       }
     }
   }
-  const branches = schema.anyOf ?? schema.oneOf;
+  const branches = branchesOf(schema);
   if (branches) {
     for (const b of branches) {
       for (const t of collectSchemaTypes(b)) {
@@ -913,7 +794,6 @@ function closestKey(
 
 export const Tools = {
   effectOf,
-  viewFor,
   viewOf,
   wrap,
   register,

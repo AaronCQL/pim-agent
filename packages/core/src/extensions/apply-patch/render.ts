@@ -7,8 +7,6 @@ import type { Span, ToolIcon, ToolView, ViewBlock } from "../../view/ViewBlock";
 import type { ApplyEntry } from "./executor";
 import { type applyPatchSchema, prepareApplyPatchArguments } from "./schema";
 
-// Rename separator. ➝ (U+279D) reads more vertically centered than → in most
-// terminal fonts; swap here if a font renders it double-width.
 const ARROW = "➝";
 
 export type ApplyPatchDetails = {
@@ -24,19 +22,11 @@ type EntryView = {
   readonly label: string;
   readonly icon: ToolIcon;
   readonly title: readonly Span[];
-  /** A composed rename title is not a plain path, so it is not a `file` block. */
   readonly path: string | undefined;
   readonly stats: readonly Span[];
-  /** Diff to render under the title; undefined => title only (delete, rename). */
   readonly body: ToolDiff | undefined;
 };
 
-/**
- * The first file owns the row title (mirroring the edit tool) so there is never
- * a blank row and an error still gets a header; before the result settles the
- * title comes from the raw patch text. Every further file is appended to the
- * body as its own section.
- */
 export function applyPatchView({
   args,
   result,
@@ -68,7 +58,6 @@ export function applyPatchView({
   };
 }
 
-/** A no-op update (rewrote identical content) has nothing to show; skip it. */
 function visibleEntries(
   details: ApplyPatchDetails | undefined
 ): readonly ApplyEntry[] {
@@ -77,10 +66,6 @@ function visibleEntries(
   );
 }
 
-/**
- * Normalizes first: a call streaming in can still be a bare patch string or
- * carry the text under an alias key, exactly as `prepareArguments` sees it.
- */
 function callPath(
   args: ApplyPatchViewInput["args"] | undefined,
   cwd: string
@@ -107,7 +92,6 @@ function describeEntry(entry: ApplyEntry, cwd: string): EntryView {
 
   switch (entry.action.kind) {
     case "add":
-      // A new file: reuse the write-tool look (green content body).
       return {
         label: "Write",
         icon: "edit",
@@ -116,7 +100,6 @@ function describeEntry(entry: ApplyEntry, cwd: string): EntryView {
         body: entry.diff,
       };
     case "delete":
-      // Title only with a -N stat; don't dump the removed file as a red diff.
       return {
         label: "Delete",
         icon: "trash",
@@ -125,7 +108,6 @@ function describeEntry(entry: ApplyEntry, cwd: string): EntryView {
         body: undefined,
       };
     case "move":
-      // A pure move has no body; a move with content changes renders as an edit.
       return {
         label: entry.diff ? "Edit" : "Move",
         icon: "edit",
@@ -169,10 +151,6 @@ function sectionBlock(entry: EntryView): ViewBlock {
   };
 }
 
-/**
- * Collapses a rename to the segments that actually changed, striking the old
- * ones: `aaa/{bbb ➝ ccc}/t.txt`.
- */
 function moveTitle(oldPath: string, newPath: string): readonly Span[] {
   const oldParts = oldPath.split("/");
   const newParts = newPath.split("/");

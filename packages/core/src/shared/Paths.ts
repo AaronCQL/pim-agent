@@ -1,8 +1,16 @@
+import { chmod, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, relative, resolve as pathResolve, sep } from "node:path";
 
 function pimHomeDir(): string {
   return expandHome(process.env.PIM_HOME_DIR ?? "~/.pim");
+}
+
+async function ensurePimHome(): Promise<string> {
+  const dir = pimHomeDir();
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  await chmod(dir, 0o700);
+  return dir;
 }
 
 function resolve(value: string, baseDir: string): string {
@@ -41,6 +49,16 @@ function displayRelative(path: string, cwd: string): string {
   return rel;
 }
 
+function compare(left: string, right: string): number {
+  if (left < right) {
+    return -1;
+  }
+  if (left > right) {
+    return 1;
+  }
+  return 0;
+}
+
 function titleOr(
   path: string | undefined,
   cwd: string,
@@ -51,10 +69,12 @@ function titleOr(
 
 export const Paths = {
   pimHomeDir,
+  ensurePimHome,
   resolve,
   toForwardSlashes,
   expandHome,
   abbreviateHome,
   displayRelative,
   titleOr,
+  compare,
 };

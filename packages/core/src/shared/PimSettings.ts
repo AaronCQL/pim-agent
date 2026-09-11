@@ -1,4 +1,3 @@
-import { chmod, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
@@ -35,47 +34,26 @@ const Schema = Type.Object({
 
 type Settings = Static<typeof Schema>;
 
-let cache: Settings | undefined;
-let cachePath: string | undefined;
-let loadPromise: Promise<Settings> | undefined;
-let loadPromisePath: string | undefined;
-let writeQueue: Promise<unknown> = Promise.resolve();
+let loaded: Promise<Settings> | undefined;
+let loadedPath: string | undefined;
+const writes = Fs.serialised();
 
 function path(): string {
   return join(Paths.pimHomeDir(), "settings.json");
 }
 
-async function load(): Promise<Settings> {
+function load(): Promise<Settings> {
   const settingsPath = path();
-  if (cache !== undefined && cachePath === settingsPath) {
-    return cache;
+  if (loadedPath !== settingsPath) {
+    loaded = undefined;
+    loadedPath = settingsPath;
   }
-  if (loadPromisePath !== settingsPath) {
-    loadPromise = undefined;
-    loadPromisePath = settingsPath;
-  }
-  loadPromise ??= (async () => {
-    let raw: unknown;
-    try {
-      raw = await Bun.file(settingsPath).json();
-    } catch {
-      raw = {};
-    }
+  loaded ??= (async () => {
+    const raw = await Fs.readJsonOr<unknown>(settingsPath, {});
     const filled = Value.Default(Schema, raw);
-    const settings: Settings = Value.Check(Schema, filled)
-      ? filled
-      : Value.Create(Schema);
-    cache = settings;
-    cachePath = settingsPath;
-    return settings;
+    return Value.Check(Schema, filled) ? filled : Value.Create(Schema);
   })();
-  return loadPromise;
-}
-
-async function ensureHomeDir(): Promise<void> {
-  const dir = Paths.pimHomeDir();
-  await mkdir(dir, { recursive: true, mode: 0o700 });
-  await chmod(dir, 0o700);
+  return loaded;
 }
 
 async function getExaApiKey(): Promise<string | undefined> {
@@ -108,28 +86,29 @@ async function get<K extends keyof Settings>(key: K): Promise<Settings[K]> {
   return (await load())[key];
 }
 
-async function set<K extends keyof Settings>(
+function set<K extends keyof Settings>(
   key: K,
   value: Settings[K]
 ): Promise<void> {
-  const task = async (): Promise<void> => {
+  return update(key, () => value);
+}
+
+function update<K extends keyof Settings>(
+  key: K,
+  mutate: (current: Settings[K]) => Settings[K]
+): Promise<void> {
+  return writes.run(async () => {
     const current = await load();
-    const next: Settings = { ...current, [key]: value };
+    const next: Settings = { ...current, [key]: mutate(current[key]) };
     if (!Value.Check(Schema, next)) {
       throw new Error(`Invalid value for pim setting "${String(key)}"`);
     }
     const settingsPath = path();
-    cache = next;
-    cachePath = settingsPath;
-    await ensureHomeDir();
-    await Fs.writeAtomic(
-      settingsPath,
-      `${JSON.stringify(next, null, 2)}\n`,
-      0o600
-    );
-  };
-  writeQueue = writeQueue.then(task, task);
-  await writeQueue;
+    loaded = Promise.resolve(next);
+    loadedPath = settingsPath;
+    await Paths.ensurePimHome();
+    await Fs.writeJson(settingsPath, next);
+  });
 }
 
 export const PimSettings = {
@@ -139,4 +118,5 @@ export const PimSettings = {
   getFirecrawlApiKey,
   get,
   set,
+  update,
 };

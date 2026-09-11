@@ -2,14 +2,11 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 import { AttachmentStore } from "#core/attachments/AttachmentStore";
 import { SessionRegistry } from "#core/session/SessionRegistry";
+import { Cli as Argv } from "#core/shared/Cli";
 import { Tools } from "#core/shared/Tools";
 import { defaultAttachmentsRoot } from "./AttachmentEndpoint";
 import { SendFileTool } from "./SendFileTool";
-import { WsGateway } from "./WsGateway";
-
-const DEFAULT_PORT = "4319";
-/** Loopback only: the server has full host access and no authentication. */
-const DEFAULT_HOSTNAME = "127.0.0.1";
+import { DEFAULT_HOSTNAME, DEFAULT_PORT, WsGateway } from "./WsGateway";
 
 export type Cli = {
   readonly port: string;
@@ -18,34 +15,14 @@ export type Cli = {
   readonly clientDir: string | undefined;
 };
 
-/**
- * Tolerant on purpose: the same argv reaches here through `pim --mode web`,
- * so unknown flags and the mode positional must not be fatal.
- */
 export function parseArgs(args: ReadonlyArray<string>): Cli {
-  // PORT is honoured because a supervisor or container assigns it, but an
-  // explicit `--port` always wins.
-  let port = process.env["PORT"] ?? DEFAULT_PORT;
+  // An explicit `--port` always wins over `PORT`.
+  let port = process.env["PORT"] ?? String(DEFAULT_PORT);
   let hostname = DEFAULT_HOSTNAME;
   let cwd = process.cwd();
   let clientDir: string | undefined;
 
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
-    if (!arg.startsWith("--")) {
-      continue;
-    }
-    const eqIdx = arg.indexOf("=");
-    const key = eqIdx >= 0 ? arg.slice(0, eqIdx) : arg;
-    const inline = eqIdx >= 0 ? arg.slice(eqIdx + 1) : undefined;
-    const take = (): string | undefined => {
-      if (inline !== undefined) {
-        return inline;
-      }
-      i += 1;
-      return args[i];
-    };
-
+  Argv.scan(args, (key, take) => {
     switch (key) {
       case "--port":
         port = take() ?? port;
@@ -62,7 +39,7 @@ export function parseArgs(args: ReadonlyArray<string>): Cli {
       default:
         break;
     }
-  }
+  });
   return { port, hostname, cwd, clientDir };
 }
 
@@ -73,8 +50,6 @@ export async function start(args: ReadonlyArray<string>): Promise<void> {
     throw new Error(`--port must be a port number, got "${values.port}"`);
   }
 
-  // One root, both directions: what a browser uploads and what the agent
-  // sends back are the same kind of stored file, answered by the same route.
   const attachmentsRoot = defaultAttachmentsRoot();
   const store = new AttachmentStore(attachmentsRoot);
 
@@ -102,7 +77,6 @@ export async function start(args: ReadonlyArray<string>): Promise<void> {
     `pim-server listening on ${gateway.url} (web UI: http://${values.hostname}:${gateway.port})\n`
   );
 
-  // Resolves only on shutdown, so callers can `await start()` and then exit.
   await new Promise<void>((resolve) => {
     for (const signal of ["SIGINT", "SIGTERM"] as const) {
       process.once(signal, () => {

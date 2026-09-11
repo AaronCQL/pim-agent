@@ -37,34 +37,58 @@ const LIGHT_BG: DiffBackgrounds = {
 const CLEAR_TO_EOL = "\x1b[K";
 const BG_RESET = "\x1b[49m";
 
-function render(options: DiffRenderOptions): string {
+const KINDS = {
+  context: { sign: " ", role: "toolDiffContext" },
+  added: {
+    sign: "+",
+    role: "toolDiffAdded",
+    bg: "added",
+    emph: "addedEmph",
+  },
+  removed: {
+    sign: "−",
+    role: "toolDiffRemoved",
+    bg: "removed",
+    emph: "removedEmph",
+  },
+} as const satisfies Record<
+  ToolDiffLine["kind"],
+  {
+    readonly sign: string;
+    readonly role: string;
+    readonly bg?: keyof DiffBackgrounds;
+    readonly emph?: keyof DiffBackgrounds;
+  }
+>;
+
+function renderLines(options: DiffRenderOptions): string[] {
   const { toolDiff, theme } = options;
 
   if (toolDiff.hunks.length === 0) {
-    return "";
+    return [];
   }
 
-  const lang = Languages.fromPath(toolDiff.path);
-  const highlighter = makeHighlighter(lang);
+  const highlighter = makeHighlighter(Languages.fromPath(toolDiff.path));
   const numberWidth = DiffLayout.gutterWidth(toolDiff.hunks);
   const backgrounds = backgroundsFor(theme);
-  const blocks: string[] = [];
+  const separator = renderHunkSeparator(theme, numberWidth);
+  const lines: string[] = [];
 
-  for (let index = 0; index < toolDiff.hunks.length; index += 1) {
-    const hunk = toolDiff.hunks[index];
-
-    if (hunk === undefined) {
-      continue;
+  for (const [index, hunk] of toolDiff.hunks.entries()) {
+    if (index > 0) {
+      lines.push(separator);
     }
 
-    blocks.push(renderHunk(hunk, highlighter, theme, numberWidth, backgrounds));
-
-    if (index < toolDiff.hunks.length - 1) {
-      blocks.push(renderHunkSeparator(theme, numberWidth));
-    }
+    lines.push(
+      ...renderHunk(hunk, highlighter, theme, numberWidth, backgrounds)
+    );
   }
 
-  return blocks.join("\n");
+  return lines;
+}
+
+function render(options: DiffRenderOptions): string {
+  return renderLines(options).join("\n");
 }
 
 function highlightHunkLines(
@@ -98,22 +122,18 @@ function renderHunk(
   theme: Theme,
   numberWidth: number,
   backgrounds: DiffBackgrounds
-): string {
+): readonly string[] {
   const highlightedLines = highlightHunkLines(hunk, highlighter);
-  const rendered: string[] = [];
 
-  for (let i = 0; i < hunk.lines.length; i += 1) {
-    const line = hunk.lines[i];
-    const content = highlightedLines[i];
-
-    if (line === undefined || content === undefined) {
-      continue;
-    }
-
-    rendered.push(renderLine(line, content, theme, numberWidth, backgrounds));
-  }
-
-  return rendered.join("\n");
+  return hunk.lines.map((line, i) =>
+    renderLine(
+      line,
+      highlightedLines[i] ?? line.text,
+      theme,
+      numberWidth,
+      backgrounds
+    )
+  );
 }
 
 function renderLine(
@@ -134,30 +154,18 @@ function applyLineEmphasis(
   backgrounds: DiffBackgrounds
 ): string {
   const ranges = line.emphasis;
+  const kind = KINDS[line.kind];
 
-  if (ranges === undefined || ranges.length === 0) {
+  if (ranges === undefined || ranges.length === 0 || !("emph" in kind)) {
     return content;
   }
 
-  if (line.kind === "added") {
-    return applyEmphasis(
-      content,
-      ranges,
-      backgrounds.added,
-      backgrounds.addedEmph
-    );
-  }
-
-  if (line.kind === "removed") {
-    return applyEmphasis(
-      content,
-      ranges,
-      backgrounds.removed,
-      backgrounds.removedEmph
-    );
-  }
-
-  return content;
+  return applyEmphasis(
+    content,
+    ranges,
+    backgrounds[kind.bg],
+    backgrounds[kind.emph]
+  );
 }
 
 function applyEmphasis(
@@ -236,15 +244,11 @@ function applyBackground(
   text: string,
   backgrounds: DiffBackgrounds
 ): string {
-  if (kind === "added") {
-    return `${backgrounds.added}${text}${CLEAR_TO_EOL}${BG_RESET}`;
-  }
+  const spec = KINDS[kind];
 
-  if (kind === "removed") {
-    return `${backgrounds.removed}${text}${CLEAR_TO_EOL}${BG_RESET}`;
-  }
-
-  return text;
+  return "bg" in spec
+    ? `${backgrounds[spec.bg]}${text}${CLEAR_TO_EOL}${BG_RESET}`
+    : text;
 }
 
 function formatPrefix(
@@ -253,30 +257,9 @@ function formatPrefix(
   numberWidth: number
 ): string {
   const numLabel = formatLineNumber(DiffLayout.lineNumber(line), numberWidth);
-  const sign = signFor(line.kind);
-  const gutter = `${numLabel} ${sign} `;
+  const kind = KINDS[line.kind];
 
-  if (line.kind === "added") {
-    return theme.fg("toolDiffAdded", gutter);
-  }
-
-  if (line.kind === "removed") {
-    return theme.fg("toolDiffRemoved", gutter);
-  }
-
-  return theme.fg("toolDiffContext", gutter);
-}
-
-function signFor(kind: ToolDiffLine["kind"]): string {
-  if (kind === "added") {
-    return "+";
-  }
-
-  if (kind === "removed") {
-    return "−";
-  }
-
-  return " ";
+  return theme.fg(kind.role, `${numLabel} ${kind.sign} `);
 }
 
 function formatLineNumber(value: number | undefined, width: number): string {
@@ -294,6 +277,7 @@ function renderHunkSeparator(theme: Theme, numberWidth: number): string {
 
 export const DiffRenderer = {
   render,
+  renderLines,
   highlightHunkLines,
   applyEmphasis,
 };

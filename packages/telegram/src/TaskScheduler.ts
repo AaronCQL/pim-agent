@@ -119,36 +119,39 @@ export class TaskScheduler {
     return true;
   }
 
-  public async setStatus(
+  public setStatus(
     sessionId: SessionId,
     id: string,
     status: "active" | "paused"
   ): Promise<ScheduledTask | undefined> {
-    const t = await this.find(sessionId, id);
-    if (!t) {
-      return undefined;
-    }
-    if (t.status === status) {
-      return t;
-    }
-    const updated: ScheduledTask = { ...t, status };
-    await TaskStore.save(this.configDir, updated);
-    return updated;
+    return this.mutate(sessionId, id, (t) =>
+      t.status === status ? undefined : { ...t, status }
+    );
   }
 
-  public async updatePrompt(
+  public updatePrompt(
     sessionId: SessionId,
     id: string,
     prompt: string
+  ): Promise<ScheduledTask | undefined> {
+    return this.mutate(sessionId, id, (t) =>
+      t.prompt === prompt ? undefined : { ...t, prompt }
+    );
+  }
+
+  private async mutate(
+    sessionId: SessionId,
+    id: string,
+    patch: (task: ScheduledTask) => ScheduledTask | undefined
   ): Promise<ScheduledTask | undefined> {
     const t = await this.find(sessionId, id);
     if (!t) {
       return undefined;
     }
-    if (t.prompt === prompt) {
+    const updated = patch(t);
+    if (!updated) {
       return t;
     }
-    const updated: ScheduledTask = { ...t, prompt };
     await TaskStore.save(this.configDir, updated);
     return updated;
   }

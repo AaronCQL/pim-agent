@@ -3,10 +3,13 @@ import { join } from "node:path";
 
 import { Git } from "./Git";
 import { PimVersion } from "./PimVersion";
+import { Proc } from "./Proc";
 import { Supervisor, type Install } from "./Supervisor";
 
-/** Relative to `packages/web`, which is the vite root `build:web` cds into. */
-const STAGING_OUT_DIR = "dist/staging";
+const STAGING = "staging";
+
+// Relative to `packages/web`: the vite root `web:build` cds into.
+const STAGING_OUT_DIR = `dist/${STAGING}`;
 
 type ClientDirs = {
   readonly staging: string;
@@ -14,7 +17,7 @@ type ClientDirs = {
   readonly previous: string;
 };
 
-/** A spawned command, or filesystem work — never both, so a plan reads as argv. */
+/** A spawned command, or filesystem work — never both. */
 export type UpdateStep =
   | {
       readonly label: string;
@@ -23,12 +26,7 @@ export type UpdateStep =
     }
   | { readonly label: string; readonly act: () => Promise<void> };
 
-/**
- * Work the plan declined to do. `blocking` is the difference between the two
- * kinds a reader has to tell apart: a note leaves nothing owed — the run did
- * everything that was asked of it — while a blocking skip means it did less,
- * and only the operator can close the gap.
- */
+/** Work the plan declined to do; `blocking` means the run did less than asked. */
 export type UpdateSkip = {
   readonly label: string;
   readonly reason: string;
@@ -65,20 +63,13 @@ export type UpdateOptions = {
 function clientDirs(packageRoot: string): ClientDirs {
   const dist = join(packageRoot, "packages", "web", "dist");
   return {
-    staging: join(dist, "staging"),
+    staging: join(dist, STAGING),
     client: join(dist, "client"),
     previous: join(dist, "previous"),
   };
 }
 
-/**
- * `vite build` empties its outDir, so building straight into `dist/client`
- * would delete the working bundle before knowing the new one compiles, and a
- * compile error would leave the server serving its 503 build hint with no way
- * back. The build lands beside it and is swapped in only on success;
- * `StaticClient` reads from disk per request, so the swap is what goes live.
- * The bundle it replaces is kept for a manual rollback.
- */
+// `vite build` empties its outDir: build to staging and swap, or a failed build deletes the live bundle.
 async function swapClient(packageRoot: string): Promise<void> {
   const dirs = clientDirs(packageRoot);
   await rm(dirs.previous, { recursive: true, force: true });
@@ -103,10 +94,6 @@ function plan(facts: UpdateFacts): UpdatePlan {
         cwd: at.packageRoot,
       });
     } else {
-      // An operator editing the checkout asked for their own edits to take
-      // effect. Pulling under uncommitted work — never mind stashing it — is
-      // worse than doing less, so the pull is dropped and reported. Nothing is
-      // owed afterwards: loading those edits was the request.
       skipped.push({
         label: "git pull",
         reason: "the working tree has uncommitted changes",
@@ -120,7 +107,7 @@ function plan(facts: UpdateFacts): UpdatePlan {
     });
     steps.push({
       label: "build the web client",
-      command: ["bun", "run", "build:web", "--", "--outDir", STAGING_OUT_DIR],
+      command: ["bun", "run", "web:build", "--", "--outDir", STAGING_OUT_DIR],
       cwd: at.packageRoot,
     });
     steps.push({
@@ -131,15 +118,13 @@ function plan(facts: UpdateFacts): UpdatePlan {
   }
 
   if (latest === undefined) {
-    // The operator asked for a restart as much as an update, and the installed
-    // version still runs: report the miss and let the rest of the run stand.
     skipped.push({
       label: "install",
       reason: "the npm registry could not be reached",
       blocking: true,
     });
   } else {
-    // The exact version, never `@latest`: a tag cannot be reported truthfully.
+    // Install the exact version, never `@latest`: a tag cannot be reported truthfully.
     steps.push({
       label: `install ${packageName}@${latest}`,
       command: ["bun", "install", "-g", `${packageName}@${latest}`],
@@ -147,7 +132,6 @@ function plan(facts: UpdateFacts): UpdatePlan {
       cwd: undefined,
     });
   }
-  // Nothing to build in prod: the npm tarball ships the client prebuilt.
   return { steps, skipped };
 }
 
@@ -163,7 +147,7 @@ async function gather(): Promise<UpdateFacts> {
   return { at, packageName, cleanTree, latest };
 }
 
-/** Never restarts or exits: the caller owns that, and has its own work first. */
+/** Never restarts or exits: the caller owns that. */
 async function run(options: UpdateOptions = {}): Promise<UpdateOutcome> {
   const from = await PimVersion.current();
   const { steps, skipped } = plan(await gather());
@@ -198,13 +182,7 @@ async function runOrThrow(
   cmd: ReadonlyArray<string>,
   cwd: string | undefined
 ): Promise<void> {
-  const proc = Bun.spawn([...cmd], {
-    cwd,
-    stdout: "inherit",
-    stderr: "pipe",
-  });
-  const stderr = await new Response(proc.stderr).text();
-  const code = await proc.exited;
+  const { code, stderr } = await Proc.run(cmd, { cwd, stdout: "inherit" });
   if (code !== 0) {
     throw new Error(
       `exit ${code}: ${stderr.trim().split("\n").slice(-5).join("\n") || "(no stderr)"}`
