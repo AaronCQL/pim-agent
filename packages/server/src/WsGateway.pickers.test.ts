@@ -19,6 +19,7 @@ let tmp: string;
 let cwd: string;
 let agentDir: string;
 let previousAgentDir: string | undefined;
+let previousHome: string | undefined;
 let modelServer: ReturnType<typeof Bun.serve> | undefined;
 let registry: SessionRegistry;
 let gateway: WsGateway;
@@ -142,6 +143,8 @@ beforeEach(async () => {
   await Bun.write(join(cwd, "README.md"), "# hi\n");
   previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = agentDir;
+  previousHome = process.env.HOME;
+  process.env.HOME = join(tmp, "home");
   await Bun.write(
     join(agentDir, "models.json"),
     JSON.stringify({
@@ -183,6 +186,7 @@ afterEach(async () => {
   } else {
     process.env.PI_CODING_AGENT_DIR = previousAgentDir;
   }
+  process.env.HOME = previousHome;
   await rm(tmp, { recursive: true, force: true });
 });
 

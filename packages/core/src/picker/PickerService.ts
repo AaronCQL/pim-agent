@@ -1,4 +1,7 @@
 import { type AgentSession, loadSkills } from "@earendil-works/pi-coding-agent";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 
 import { loadRelative } from "./catalog";
 import { rankCommands } from "./commandRanker";
@@ -14,6 +17,25 @@ export type PickerServiceDeps = {
 };
 
 const DEFAULT_LIMIT = 50;
+
+/**
+ * The `.agents/skills` roots pi reads and `loadSkills` does not: every one from
+ * the cwd up to the repository root, plus the user's own.
+ */
+function agentsSkillDirs(cwd: string): string[] {
+  const dirs: string[] = [];
+  let dir = resolve(cwd);
+  for (;;) {
+    dirs.push(join(dir, ".agents", "skills"));
+    const parent = dirname(dir);
+    if (existsSync(join(dir, ".git")) || parent === dir) {
+      break;
+    }
+    dir = parent;
+  }
+  dirs.push(join(process.env.HOME ?? homedir(), ".agents", "skills"));
+  return dirs;
+}
 
 /** Answers one session's picker queries against the machine the agent runs on. */
 export class PickerService {
@@ -81,7 +103,7 @@ export class PickerService {
       const { skills } = loadSkills({
         cwd,
         agentDir: this.deps.agentDir,
-        skillPaths: [],
+        skillPaths: agentsSkillDirs(cwd),
         includeDefaults: true,
       });
       return skills.map((skill) => ({

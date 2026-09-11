@@ -20,10 +20,14 @@ describe("activeToken", () => {
     expect(at("me@example|")).toBeUndefined();
   });
 
-  test("matches `/` only at the start of a line", () => {
+  test("matches `/` at the start of a line and after whitespace", () => {
     expect(at("/ski|")).toMatchObject({ kind: "command", query: "ski" });
-    expect(at("say /ski|")).toBeUndefined();
+    expect(at("say /ski|")).toMatchObject({ kind: "command", query: "ski" });
     expect(at("hi\n/ski|")).toMatchObject({ kind: "command", query: "ski" });
+  });
+
+  test("does not match a `/` glued to a word, as in a path", () => {
+    expect(at("src/pick|")).toBeUndefined();
   });
 
   test("stops matching once the token has whitespace after it", () => {
@@ -70,5 +74,21 @@ describe("applyCompletion", () => {
         label: "/skill:review",
       })
     ).toEqual({ text: "/skill:review ", caret: 14, keepOpen: false });
+  });
+
+  test("a command mid-line replaces only its own sigil and query", () => {
+    const text = "now /ski please";
+    const token = activeToken(text, 8)!;
+
+    expect(
+      applyCompletion(text, 8, token, {
+        value: "/skill:review",
+        label: "/skill:review",
+      })
+    ).toEqual({
+      text: "now /skill:review please",
+      caret: 17,
+      keepOpen: false,
+    });
   });
 });

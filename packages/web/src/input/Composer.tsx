@@ -60,7 +60,9 @@ export function Composer(props: {
 
   const token = createMemo(() => activeToken(text(), caret()));
   const key = createMemo(() => tokenKey(token()));
-  const open = createMemo(() => key() !== "" && dismissed() !== key());
+  const open = createMemo(
+    () => key() !== "" && dismissed() !== key() && items().length > 0
+  );
   const attachments = createMemo(() =>
     props.store.attachmentsOf(props.store.state.sessionId)
   );
@@ -143,7 +145,7 @@ export function Composer(props: {
 
   const navigation = createComboboxNavigation({
     count: () => items().length,
-    open: () => open() && items().length > 0,
+    open,
     onSelect: (index) => {
       commit(index);
     },
@@ -410,7 +412,6 @@ export function Composer(props: {
         activeIndex={navigation.activeIndex()}
         onActivate={navigation.setActiveIndex}
         onSelect={commit}
-        emptyLabel={token()?.kind === "file" ? "no files" : "no commands"}
       />
     </div>
   );

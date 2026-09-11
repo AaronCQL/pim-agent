@@ -276,7 +276,7 @@ test("a reply that arrives after a newer one never lands", async () => {
   expect(options(host)[0]?.textContent).toContain("ab-row.ts");
 });
 
-test("a slash opens only at the start of a line, and a directory keeps it open", async () => {
+test("a slash opens anywhere on a line, and a directory keeps it open", async () => {
   const store = offline();
   answers(store, () => rows("src/", "src/index.ts"));
   commands(store, () => [{ value: "/skill", label: "/skill" }]);
@@ -287,9 +287,15 @@ test("a slash opens only at the start of a line, and a directory keeps it open",
   await until(() => options(host).length > 0, "the command rows");
   expect(options(host)[0]?.textContent).toContain("/skill");
 
-  type(input, "say /ski");
+  type(input, "src/ski");
   flush();
   expect(options(host)).toHaveLength(0);
+
+  type(input, "say /ski");
+  await until(() => options(host).length > 0, "the rows for a mid-line slash");
+  press(input, "Enter");
+  flush();
+  expect(input.value).toBe("say /skill ");
 
   type(input, "hi\n/ski");
   await until(() => options(host).length > 0, "the command rows again");
@@ -306,6 +312,23 @@ test("a slash opens only at the start of a line, and a directory keeps it open",
   expect(input.value).toBe("@src/");
   expect(input.selectionStart).toBe(5);
   await until(() => options(host).length > 0, "the picker to stay open");
+});
+
+test("a query nothing matches shows no picker at all", async () => {
+  const store = offline();
+  answers(store, () => rows());
+  commands(store, () => []);
+  store.ingest(attached());
+  const { host, input } = paint(store);
+
+  type(input, "@nope");
+  await until(() => store.state.sessionId === "s1", "the attached session");
+  flush();
+  expect(panel(host)).toBeUndefined();
+
+  type(input, "/nope");
+  flush();
+  expect(panel(host)).toBeUndefined();
 });
 
 test("the picker asks for fifty files and twenty commands", async () => {
@@ -677,7 +700,7 @@ test("switching session swaps the box, the rows and the files", async () => {
   expect(input.value).toBe("@gre");
   expect(host.querySelectorAll("img")).toHaveLength(1);
   expect(options(host)).toHaveLength(0);
-  expect(panel(host)?.textContent).toBe("no files");
+  expect(panel(host)).toBeUndefined();
 
   type(input, "@gret");
   await until(() => options(host).length > 0, "the rows for the next token");

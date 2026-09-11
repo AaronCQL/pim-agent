@@ -109,7 +109,8 @@ export function Combobox(props: {
   readonly onActivate: (index: number) => void;
   readonly anchor: () => HTMLElement;
   readonly match?: boolean;
-  readonly emptyLabel: string;
+  /** Omitted where an empty list means no popover at all. */
+  readonly emptyLabel?: string;
   readonly header?: Element;
 }) {
   let list!: HTMLUListElement;
@@ -141,8 +142,8 @@ export function Combobox(props: {
         role="listbox"
         class="max-h-64 min-h-0 w-full overflow-y-auto"
       >
-        <Show when={props.items.length === 0}>
-          <li class="px-2 py-1 text-neutral-500">{props.emptyLabel}</li>
+        <Show when={props.items.length === 0 ? props.emptyLabel : undefined}>
+          {(label) => <li class="px-2 py-1 text-neutral-500">{label()}</li>}
         </Show>
         <For each={props.items}>
           {(item, index) => {

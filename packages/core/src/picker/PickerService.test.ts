@@ -8,11 +8,17 @@ import { PickerService } from "./PickerService";
 let tmp: string;
 let agentDir: string;
 let cwd: string;
+let home: string | undefined;
 
-async function skill(root: string, name: string, description: string) {
-  await mkdir(join(root, ".pi", "skills", name), { recursive: true });
+async function skill(
+  root: string,
+  name: string,
+  description: string,
+  dir = ".pi"
+) {
+  await mkdir(join(root, dir, "skills", name), { recursive: true });
   await Bun.write(
-    join(root, ".pi", "skills", name, "SKILL.md"),
+    join(root, dir, "skills", name, "SKILL.md"),
     `---\nname: ${name}\ndescription: ${description}\n---\n\nbody\n`
   );
 }
@@ -25,6 +31,8 @@ beforeEach(async () => {
   tmp = await mkdtemp(join(tmpdir(), "pim-picker-service-"));
   agentDir = join(tmp, "agent");
   cwd = join(tmp, "work");
+  home = process.env.HOME;
+  process.env.HOME = join(tmp, "home");
   await mkdir(agentDir, { recursive: true });
   await mkdir(join(cwd, "src"), { recursive: true });
   await Bun.write(join(cwd, "src", "Renderer.ts"), "export {};\n");
@@ -33,6 +41,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  process.env.HOME = home;
   await rm(tmp, { recursive: true, force: true });
 });
 
@@ -76,4 +85,15 @@ test("picks up a file written after the last query once invalidated", async () =
 
   picker.invalidate();
   expect((await picker.files("Late", 10))[0]?.value).toBe("src/Latecomer.ts");
+});
+
+test("skills also come from the `.agents` roots, the user's included", async () => {
+  await skill(process.env.HOME!, "simplify", "Tidy the code.", ".agents");
+  await skill(cwd, "review", "Read the diff.", ".agents");
+
+  expect(
+    service()
+      .commands("")
+      .map((item) => item.value)
+  ).toEqual(["/skill:review", "/skill:simplify"]);
 });

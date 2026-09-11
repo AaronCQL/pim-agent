@@ -7,12 +7,12 @@ export type PickerToken = {
 };
 
 export const AT_PREFIX = /(?:^|\s)@(\S*)$/;
-export const SLASH_PREFIX = /^\/(\S*)$/;
+export const SLASH_PREFIX = /(?:^|\s)\/(\S*)$/;
 
-/** Offset of the sigil in an `AT_PREFIX` match, which also swallows the whitespace before it. */
+/** Offset of the sigil in a match that also swallows the whitespace before it. */
 export function sigilOffset(match: RegExpMatchArray): number {
   const matched = match[0] ?? "";
-  return (match.index ?? 0) + (matched.startsWith("@") ? 0 : 1);
+  return (match.index ?? 0) + (/^\s/.test(matched) ? 1 : 0);
 }
 
 export function isDirectoryItem(item: { readonly label: string }): boolean {
@@ -28,7 +28,11 @@ export function activeToken(
 
   const slash = SLASH_PREFIX.exec(beforeCaret);
   if (slash) {
-    return { kind: "command", query: slash[1] ?? "", start: lineStart };
+    return {
+      kind: "command",
+      query: slash[1] ?? "",
+      start: lineStart + sigilOffset(slash),
+    };
   }
 
   const at = AT_PREFIX.exec(beforeCaret);
@@ -59,9 +63,12 @@ export function applyCompletion(
   token: PickerToken,
   item: { readonly value: string; readonly label: string }
 ): Completion {
-  const inserted = token.kind === "file" ? `@${item.value}` : `${item.value} `;
   const head = text.slice(0, token.start);
   const tail = text.slice(caret);
+  const inserted =
+    token.kind === "file"
+      ? `@${item.value}`
+      : `${item.value}${/^\s/.test(tail) ? "" : " "}`;
   return {
     text: `${head}${inserted}${tail}`,
     caret: head.length + inserted.length,
