@@ -170,6 +170,46 @@ test("the dot marks a session that has answered since anything read it", async (
   expect(marked.querySelectorAll('[aria-label="Unread"]')).toHaveLength(0);
 });
 
+/**
+ * The session was started in the terminal, so nothing this browser did could
+ * have made it ask for the list again. The server says the tree moved and the
+ * row appears where the user is already looking.
+ */
+test("a session another process started arrives without being asked for", async () => {
+  const store = new SessionStore({ url: "ws://127.0.0.1:1" });
+  let sessions: readonly SessionSummaryView[] = SESSIONS;
+  store.client.send = async () => ({
+    type: "response",
+    id: "1",
+    success: true,
+    sessions,
+  });
+  const host = mountPoint();
+  render(() => <Sidebar store={store} />, host);
+  flush();
+  await listed(host);
+  expect(host.querySelectorAll("li")).toHaveLength(2);
+
+  sessions = [
+    ...SESSIONS,
+    {
+      sessionId: "cccccccc-3333",
+      cwd: "/home/ada/dev/pim",
+      createdAt: 0,
+      settledAt: 1,
+      title: "Started in the terminal",
+    },
+  ];
+  store.ingest({ type: "sessions_changed" });
+  flush();
+  for (let hop = 0; hop < 20 && host.querySelectorAll("li").length < 3; hop++) {
+    await Promise.resolve();
+    flush();
+  }
+
+  expect(host.textContent).toContain("Started in the terminal");
+});
+
 test("picking a row attaches to it and tells the host to get out of the way", async () => {
   const navigated: number[] = [];
   const { host, switched } = paint(() => navigated.push(1));
@@ -334,6 +374,7 @@ test("a running turn spins where the age would be", async () => {
   });
   store.ingest({
     type: "session_state",
+    writable: true,
     cwd: "/home/ada/dev/pim",
     model: "m",
     thinking: "off",

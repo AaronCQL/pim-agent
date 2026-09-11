@@ -12,8 +12,8 @@ Plain layered directories under `packages/*` — no workspaces, no per-directory
 
 | Package | Contents |
 | --- | --- |
-| `packages/core` | Tools, schemas, `shared/`, `view/` (`ViewBlock`/`ToolView` + ANSI/Markdown painters), `session/` (`SessionHost`, `EventLog`, `SessionRegistry`), `picker/`, `attachments/`, and the daemon `Supervisor` (systemd/launchd units, one per `--mode`). Frontend-agnostic; depends on nothing else in `packages/`. |
-| `packages/tui` | Terminal frontend: splash, autocomplete over `core/picker`, footer, themes. |
+| `packages/core` | Tools, schemas, `shared/`, `view/` (`ViewBlock`/`ToolView` + ANSI/Markdown painters), `session/` (`SessionHost`, `EventLog`, `SessionRegistry`, plus the turn lease one surface takes over a session file it shares with another: `SessionLease` + `WriteMark`), `picker/`, `attachments/`, and the daemon `Supervisor` (systemd/launchd units, one per `--mode`). Frontend-agnostic; depends on nothing else in `packages/`. |
+| `packages/tui` | Terminal frontend: splash, autocomplete over `core/picker`, footer, themes, and `session-lease` (holds the turn lease, refuses input the browser is mid-turn on, auto-`/sync`s a session the browser moved on). |
 | `packages/telegram` | Telegram frontend: grammy bot, chat-keyed sessions, its `Supervisor` unit descriptor. |
 | `packages/protocol` | Versioned wire types. Server and web **only** — never the TUI; nothing browser-specific. Shipped. |
 | `packages/server` | `WsGateway` (resume handshake, fanout, model catalogue), `SessionCatalogue` (session listing, digests, unread state), `SessionProjection` (JSONL → wire events), `SessionStream` (live state, git, context usage), probe CLI. Shipped as source. |

@@ -1,11 +1,10 @@
-import type {
-  AgentSession,
-  AgentSessionEvent,
-} from "@earendil-works/pi-coding-agent";
+import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import { PickerService } from "#core/picker/PickerService";
 import { MessageText } from "#core/session/MessageText";
-import type { SessionHost } from "#core/session/SessionHost";
+import type { LeaseState, SessionHost } from "#core/session/SessionHost";
+import { SessionLease, type LeaseRecord } from "#core/session/SessionLease";
+import { FileWatch } from "#core/shared/FileWatch";
 import { Git, type GitState } from "#core/shared/Git";
 import { Tools } from "#core/shared/Tools";
 import type { ToolView } from "#core/view/ViewBlock";
@@ -38,15 +37,33 @@ type LiveMessage = {
 
 const GIT_TTL_MS = 5_000;
 
+function sameLease(a: LeaseState, b: LeaseState): boolean {
+  return (
+    a.writable === b.writable &&
+    a.heldBy?.pid === b.heldBy?.pid &&
+    a.heldBy?.frontend === b.heldBy?.frontend
+  );
+}
+
 /** One session's view of the world, shared by every client attached to it and kept running when none are. */
 export class SessionStream {
   public readonly sessionId: string;
   public readonly host: SessionHost;
   public readonly picker: PickerService;
+  private readonly sessionPath: string;
   private readonly projection: SessionProjection;
   private readonly listeners = new Set<StreamListener>();
+  private readonly pollMs: number | undefined;
   private liveTurn: LiveMessage[] = [];
   private unsubscribe: (() => void) | undefined;
+  private unsubscribeLease: (() => void) | undefined;
+  private unsubscribeForeign: (() => void) | undefined;
+  private unwatch: (() => void) | undefined;
+  private holder: LeaseRecord | undefined;
+  private lease: LeaseState = { writable: true };
+  private draining: Promise<void> = Promise.resolve();
+  private drainQueued = false;
+  private sentSeq = 0;
   private liveMessageId = 0;
   private turnStartedAt = 0;
   private git: GitState = Git.EMPTY;
@@ -57,10 +74,14 @@ export class SessionStream {
   public constructor(
     sessionId: string,
     host: SessionHost,
-    sessionPath: string
+    sessionPath: string,
+    /** How often the file watch falls back to a poll; the default is a second. */
+    pollMs?: number
   ) {
     this.sessionId = sessionId;
     this.host = host;
+    this.sessionPath = sessionPath;
+    this.pollMs = pollMs;
     this.projection = new SessionProjection(sessionPath, () => host.cwd);
     this.picker = new PickerService({
       cwd: () => host.cwd,
@@ -69,15 +90,60 @@ export class SessionStream {
     });
   }
 
-  public start(agent: AgentSession): void {
-    this.unsubscribe ??= agent.subscribe((event) => {
+  /** Follow the host, not one agent: a rehydrated session is a new `AgentSession`. */
+  public start(): void {
+    this.unsubscribe ??= this.host.subscribe((event) => {
       this.onAgentEvent(event);
+    });
+    this.unsubscribeLease ??= this.host.onLeaseChange(() => {
+      void this.pushLease();
+    });
+    this.unsubscribeForeign ??= this.host.onForeignWrite(() => {
+      this.push({
+        type: "error",
+        message:
+          "Another process is writing this session; its history may be inconsistent.",
+      });
     });
   }
 
-  /** Project whatever pi has appended since the last read; returns the head. */
+  /**
+   * Watch the lease and the session file while a client is reading: un-greying
+   * has to feel instant, and a turn another process runs reaches the browser
+   * only through the file, which emits no agent event here. Idle sessions pay
+   * nothing.
+   */
+  public watchFiles(active: boolean): void {
+    if (active === (this.unwatch !== undefined)) {
+      return;
+    }
+    if (!active) {
+      this.unwatch?.();
+      this.unwatch = undefined;
+      return;
+    }
+    const stops = [
+      SessionLease.watch(this.sessionPath, () => {
+        void this.pushLease();
+      }),
+      FileWatch.file(
+        this.sessionPath,
+        () => {
+          this.scheduleDrain();
+        },
+        this.pollMs
+      ),
+    ];
+    this.unwatch = (): void => {
+      for (const stop of stops) {
+        stop();
+      }
+    };
+  }
+
+  /** Project whatever pi has appended since the last read, telling every client; returns the head. */
   public async refresh(): Promise<number> {
-    await this.projection.drain();
+    await this.flushDurable();
     return this.projection.head;
   }
 
@@ -90,7 +156,7 @@ export class SessionStream {
 
   /** Everything a client at `fromSeq` has not seen: the durable tail, the in-flight turn coalesced, then state. */
   public async replay(fromSeq: number): Promise<readonly StreamEvent[]> {
-    await this.projection.drain();
+    await Promise.all([this.flushDurable(), this.readLease()]);
     return [...this.projection.since(fromSeq), ...this.inFlight()];
   }
 
@@ -159,6 +225,7 @@ export class SessionStream {
       thinking: this.host.currentThinkingLevel,
       cost: this.host.settings.cumulativeCost ?? 0,
       status: this.host.status,
+      ...this.leaseState(),
       ...(tps === undefined ? {} : { tps }),
       ...(turnElapsedMs === undefined ? {} : { turnElapsedMs }),
       ...(usage?.percent === null || usage === undefined
@@ -169,6 +236,51 @@ export class SessionStream {
           }),
       ...(branch === null ? {} : { branch, dirtyCount, ahead, behind }),
     };
+  }
+
+  /**
+   * Two sources, and both are needed: the host knows only about a mutation of
+   * its own parked behind someone else, and reads writable for a session
+   * merely sitting idle under a foreign lease — which the cached record covers.
+   */
+  private leaseState(): LeaseState {
+    const own = this.host.leaseState;
+    if (!own.writable) {
+      return own;
+    }
+    const holder = this.holder;
+    // Our own turn: the lease exists because this process took it.
+    if (
+      holder === undefined ||
+      (holder.pid === process.pid && holder.frontend === "daemon")
+    ) {
+      return { writable: true };
+    }
+    return {
+      writable: false,
+      heldBy: { frontend: holder.frontend, pid: holder.pid },
+    };
+  }
+
+  /**
+   * Re-reads the holder; true when what a client would render changed. Our own
+   * lease comes and goes on every turn we take and says nothing, so only a
+   * holder that is not us ever moves this.
+   */
+  private async readLease(): Promise<boolean> {
+    this.holder = await SessionLease.read(this.sessionPath);
+    const next = this.leaseState();
+    if (sameLease(this.lease, next)) {
+      return false;
+    }
+    this.lease = next;
+    return true;
+  }
+
+  private async pushLease(): Promise<void> {
+    if (await this.readLease()) {
+      this.emit(this.sessionState());
+    }
   }
 
   private gitState(): GitState {
@@ -205,6 +317,11 @@ export class SessionStream {
   public dispose(): void {
     this.unsubscribe?.();
     this.unsubscribe = undefined;
+    this.unsubscribeLease?.();
+    this.unsubscribeLease = undefined;
+    this.unsubscribeForeign?.();
+    this.unsubscribeForeign = undefined;
+    this.watchFiles(false);
     this.listeners.clear();
   }
 
@@ -397,10 +514,40 @@ export class SessionStream {
     return found === undefined ? undefined : found.message.tools[found.at];
   }
 
+  /**
+   * Serialised: two reads in flight would race on `sentSeq` and hand a client
+   * the same lines twice, or out of order. The agent-event path and the file
+   * watch both come through here, so they can only ever queue behind one
+   * another.
+   */
+  private flushDurable(): Promise<void> {
+    const done = this.draining.then(() => this.drainDurable());
+    this.draining = done.catch(() => {});
+    return done;
+  }
+
+  // A burst of appends is one drain: a trigger waits for the read already running, and one arriving after that starts gets its own.
+  private scheduleDrain(): void {
+    if (this.drainQueued) {
+      return;
+    }
+    this.drainQueued = true;
+    void this.draining
+      .then(() => {
+        this.drainQueued = false;
+        return this.flushDurable();
+      })
+      .catch(() => {});
+  }
+
   // One frame: a retire split from the durable message that caused it paints the step twice.
-  private async flushDurable(): Promise<void> {
+  private async drainDurable(): Promise<void> {
+    await this.projection.drain();
+    // The watermark is what every listener has been offered, so one client's read cannot swallow another's tail.
+    const fresh = this.projection.since(this.sentSeq);
+    this.sentSeq = this.projection.head;
     const batch: StreamEvent[] = [];
-    for (const event of await this.projection.drain()) {
+    for (const event of fresh) {
       batch.push(event);
       if (event.type === "message" && event.role === "assistant") {
         const retired = this.retireLive();

@@ -531,7 +531,20 @@ test("finishes a turn with zero clients attached", async () => {
   starter.kill();
 
   const host = registry.peek(sessionId)!;
-  while (host.status !== "idle" || host.isStreaming) {
+  // The reply landing on disk is the edge that cannot be missed: a queued turn
+  // waiting on its lease is idle too, and so is one that has already finished.
+  const settled = async (): Promise<boolean> => {
+    const path = host.settings.sessionPath;
+    if (path === undefined || host.status !== "idle" || host.isStreaming) {
+      return false;
+    }
+    // Pi withholds the file itself until the first assistant message.
+    const text = await Bun.file(path)
+      .text()
+      .catch(() => "");
+    return text.includes(REPLY);
+  };
+  while (!(await settled())) {
     await Bun.sleep(1);
   }
 

@@ -16,6 +16,7 @@ import commandPicker from "#tui/extensions/command-picker/index";
 import filePicker from "#tui/extensions/file-picker/index";
 import footer from "#tui/extensions/footer/index";
 import pim from "#tui/extensions/pim/index";
+import sessionLease from "#tui/extensions/session-lease/index";
 import tps from "#tui/extensions/tps/index";
 import workingIndicator from "#tui/extensions/working-indicator/index";
 import { themeCliArgs } from "#tui/themes/themeCliArgs";
@@ -28,6 +29,7 @@ const extensionFactories: readonly PimInlineExtension[] = [
   { name: "file-picker", factory: filePicker },
   { name: "footer", factory: footer },
   { name: "pim", factory: pim },
+  { name: "session-lease", factory: sessionLease },
   { name: "tps", factory: tps },
   { name: "working-indicator", factory: workingIndicator },
 ];

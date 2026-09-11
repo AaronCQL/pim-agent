@@ -23,6 +23,7 @@ function stocked(cwd: string, branch: string): SessionStore {
   });
   store.ingest({
     type: "session_state",
+    writable: true,
     cwd,
     model: "sonnet",
     thinking: "medium",

@@ -1,11 +1,9 @@
-import type {
-  AgentSession,
-  AgentSessionEvent,
-} from "@earendil-works/pi-coding-agent";
+import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { mkdtemp, rm } from "node:fs/promises";
+import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 
 import type { SessionHost } from "#core/session/SessionHost";
 import type { EphemeralEvent, ServerEvent } from "#protocol/ServerEvent";
@@ -16,6 +14,7 @@ let path: string;
 let stream: SessionStream;
 let seen: ServerEvent[];
 let emit: (event: AgentSessionEvent) => void;
+let reportForeign: () => void;
 
 /**
  * A name this file owns. Tool views are registered process-wide by name, and
@@ -25,7 +24,7 @@ let emit: (event: AgentSessionEvent) => void;
  */
 const TOOL = "stream_probe";
 
-/** Enough of a host for the stream to read a cwd and a status off. */
+/** Enough of a host for the stream to read a cwd and a status off, and to subscribe to. */
 function host(): SessionHost {
   return {
     cwd: tmp,
@@ -36,6 +35,16 @@ function host(): SessionHost {
     currentModelId: "test/echo",
     currentThinkingLevel: "off",
     tps: undefined,
+    leaseState: { writable: true },
+    onLeaseChange: () => () => {},
+    onForeignWrite: (listener: () => void) => {
+      reportForeign = listener;
+      return () => {};
+    },
+    subscribe: (listener: (event: AgentSessionEvent) => void) => {
+      emit = listener;
+      return () => {};
+    },
   } as unknown as SessionHost;
 }
 
@@ -163,6 +172,13 @@ function durableThinking(): readonly string[] {
   );
 }
 
+/** Every durable message a client was handed, whole, so a second copy of one shows up. */
+function durableMessages(): readonly string[] {
+  return received().flatMap((event) =>
+    event.type === "message" ? [`${event.role}: ${event.text}`] : []
+  );
+}
+
 beforeEach(async () => {
   tmp = await mkdtemp(join(tmpdir(), "pim-stream-test-"));
   path = join(tmp, "session.jsonl");
@@ -181,12 +197,7 @@ beforeEach(async () => {
   stream.subscribe((event) => {
     seen.push(event);
   });
-  stream.start({
-    subscribe: (listener: (event: AgentSessionEvent) => void) => {
-      emit = listener;
-      return () => {};
-    },
-  } as unknown as AgentSession);
+  stream.start();
   emit(agentEvent({ type: "agent_start" }));
 });
 
@@ -343,13 +354,8 @@ test("the state carries the age of the turn, and only while one is running", () 
     } as unknown as SessionHost,
     path
   );
-  let start!: (event: AgentSessionEvent) => void;
-  running.start({
-    subscribe: (listener: (event: AgentSessionEvent) => void) => {
-      start = listener;
-      return () => {};
-    },
-  } as unknown as AgentSession);
+  running.start();
+  const start = emit;
 
   const real = Date.now;
   let now = real();
@@ -378,3 +384,66 @@ function stateOf(
   }
   return event;
 }
+
+/**
+ * The transcript is file-derived and stays right, but a writer that took no
+ * lease may have forked the history behind it, and only the client can judge
+ * what to do about that.
+ */
+test("tells attached clients when the host sees a write it cannot account for", () => {
+  reportForeign();
+  expect(received().filter((event) => event.type === "error")).toEqual([
+    {
+      type: "error",
+      message:
+        "Another process is writing this session; its history may be inconsistent.",
+    },
+  ]);
+});
+
+/**
+ * A turn run in the terminal reaches this process as nothing but lines in the
+ * file: the agent it belongs to lives elsewhere, so not one `AgentSessionEvent`
+ * fires here. `fs.watch` is stubbed away because it reports nothing at all on
+ * some filesystems, which leaves the poll as the only thing that can notice.
+ */
+test("carries a foreign turn to a client on the poll alone, with no agent event", async () => {
+  const watching = spyOn(fs, "watch");
+  watching.mockImplementation((() => {
+    throw new Error("this filesystem reports nothing");
+  }) as never);
+  try {
+    stream.dispose();
+    seen = [];
+    stream = new SessionStream("s1", host(), path, 5);
+    stream.subscribe((event) => {
+      seen.push(event);
+    });
+    stream.start();
+    stream.watchFiles(true);
+    expect(watching).toHaveBeenCalled();
+
+    await persist("u1", {
+      role: "user",
+      content: [{ type: "text", text: "from the terminal" }],
+    });
+    await persistAssistant("a1", [{ type: "text", text: "and the reply" }]);
+    await until(
+      () => durableMessages().length === 2,
+      "the foreign turn to be tailed"
+    );
+    expect(durableMessages()).toEqual([
+      "user: from the terminal",
+      "assistant: and the reply",
+    ]);
+    // Nothing was streamed, so nothing is standing live over the two entries.
+    expect(liveIds().size).toBe(0);
+
+    // Every later read is a read past the same cursor, whoever asks for it.
+    await stream.refresh();
+    await stream.replay(0);
+    expect(durableMessages()).toHaveLength(2);
+  } finally {
+    watching.mockRestore();
+  }
+});

@@ -106,6 +106,12 @@ export class EventLog {
     return undefined;
   }
 
+  /** The `seq` of the last complete line, without parsing any of them. */
+  public async head(): Promise<number> {
+    await this.read(Number.MAX_SAFE_INTEGER);
+    return this.cursor.seq;
+  }
+
   /** Title and settle time for the catalogue, read from the two ends of the file. */
   public async digest(): Promise<SessionDigest> {
     const file = Bun.file(this.path);

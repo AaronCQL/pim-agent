@@ -223,6 +223,7 @@ describe("the shell, painted from events alone", () => {
     store.ingest(attached());
     store.ingest({
       type: "session_state",
+      writable: true,
       cwd: "/repo",
       model: "sonnet",
       thinking: "medium",
@@ -254,6 +255,7 @@ describe("the shell, painted from events alone", () => {
     store.ingest(attached());
     store.ingest({
       type: "session_state",
+      writable: true,
       cwd: "/home/ada/src/repo",
       model: "sonnet",
       thinking: "medium",
@@ -292,6 +294,7 @@ describe("the shell, painted from events alone", () => {
     store.ingest(attached());
     store.ingest({
       type: "session_state",
+      writable: true,
       cwd: "/repo",
       model: "sonnet",
       thinking: "medium",
@@ -315,6 +318,7 @@ describe("the shell, painted from events alone", () => {
     const host = paint(store);
     const state = (modelLabel?: string): ServerEvent => ({
       type: "session_state",
+      writable: true,
       cwd: "/repo",
       model: "anthropic/claude-opus-5",
       ...(modelLabel === undefined ? {} : { modelLabel }),
@@ -361,6 +365,7 @@ describe("the shell, painted from events alone", () => {
     store.ingest(attached());
     store.ingest({
       type: "session_state",
+      writable: true,
       cwd: "/repo",
       model: "sonnet",
       thinking: "medium",
@@ -379,6 +384,7 @@ describe("the shell, painted from events alone", () => {
     // next step is measured from that.
     store.ingest({
       type: "session_state",
+      writable: true,
       cwd: "/repo",
       model: "sonnet",
       thinking: "high",
@@ -402,6 +408,7 @@ describe("the shell, painted from events alone", () => {
     const started = now;
     const state = (status: SessionStatus): ServerEvent => ({
       type: "session_state",
+      writable: true,
       cwd: "/repo",
       model: "sonnet",
       thinking: "medium",
@@ -465,6 +472,7 @@ describe("the shell, painted from events alone", () => {
     const started = now;
     const state = (status: SessionStatus): ServerEvent => ({
       type: "session_state",
+      writable: true,
       cwd: "/repo",
       model: "sonnet",
       thinking: "medium",
@@ -545,6 +553,7 @@ describe("the shell, painted from events alone", () => {
 
       store.ingest({
         type: "session_state",
+        writable: true,
         cwd: "/repo",
         model: "sonnet",
         thinking: "medium",
@@ -560,6 +569,7 @@ describe("the shell, painted from events alone", () => {
       now += 5_000;
       store.ingest({
         type: "session_state",
+        writable: true,
         cwd: "/repo",
         model: "sonnet",
         thinking: "medium",
@@ -611,6 +621,7 @@ describe("the shell, painted from events alone", () => {
     });
     store.ingest({
       type: "session_state",
+      writable: true,
       cwd: "/repo",
       model: "sonnet",
       thinking: "off",
@@ -781,6 +792,7 @@ describe("the shell, painted from events alone", () => {
     store.ingest(attached());
     store.ingest({
       type: "session_state",
+      writable: true,
       cwd: "/repo",
       model: "sonnet",
       thinking: "medium",

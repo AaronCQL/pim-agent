@@ -2,6 +2,7 @@ import { EventLog } from "#core/session/EventLog";
 import type { SessionDigest } from "#core/session/EventLog";
 import type { ReadCursors } from "#core/session/ReadCursors";
 import type { SessionRegistry } from "#core/session/SessionRegistry";
+import { FileWatch } from "#core/shared/FileWatch";
 import type { Command } from "#protocol/Command";
 import type {
   ServerEvent,
@@ -21,6 +22,9 @@ export type SessionCatalogueDeps = {
 
 const DEFAULT_SESSION_LIMIT = 50;
 
+/** Long enough that a turn's entries are one announcement, short enough that a new session appears while the user is still looking. */
+const ANNOUNCE_MS = 500;
+
 type CachedDigest = SessionDigest & { readonly modifiedAt: number };
 
 export class SessionCatalogue {
@@ -28,9 +32,35 @@ export class SessionCatalogue {
   private readonly digests = new Map<string, CachedDigest>();
   private readonly activity = new Map<string, SessionStatus>();
   private readonly settled = new Map<string, number>();
+  private readonly watches = new Map<string, () => void>();
+  private watching = false;
+  private announcing: ReturnType<typeof setTimeout> | undefined;
 
   public constructor(deps: SessionCatalogueDeps) {
     this.deps = deps;
+  }
+
+  /**
+   * Follow the sessions tree while anyone is connected. A session the terminal
+   * or a vanilla `pi` starts is a file this process never hears about
+   * otherwise, and a list nobody asked to re-fetch is a list that never learns
+   * about it.
+   */
+  public watch(active: boolean): void {
+    if (active === this.watching) {
+      return;
+    }
+    this.watching = active;
+    if (!active) {
+      for (const stop of this.watches.values()) {
+        stop();
+      }
+      this.watches.clear();
+      clearTimeout(this.announcing);
+      this.announcing = undefined;
+      return;
+    }
+    this.follow();
   }
 
   public async list(
@@ -102,6 +132,41 @@ export class SessionCatalogue {
     this.digests.clear();
     this.activity.clear();
     this.settled.clear();
+  }
+
+  // One watch per directory, never a recursive one: `fs.watch` recursion is unsupported on some platforms and silent on others.
+  private follow(): void {
+    const root = this.deps.registry.sessionsRoot;
+    const wanted = new Set([root, ...FileWatch.subdirectories(root)]);
+    for (const [path, stop] of this.watches) {
+      if (!wanted.has(path)) {
+        stop();
+        this.watches.delete(path);
+      }
+    }
+    for (const path of wanted) {
+      if (!this.watches.has(path)) {
+        this.watches.set(
+          path,
+          FileWatch.directory(path, () => {
+            this.onTreeChange();
+          })
+        );
+      }
+    }
+  }
+
+  // Debounced: a turn writes a dozen entries, and re-listing is a read of every session header.
+  private onTreeChange(): void {
+    if (this.announcing !== undefined || !this.watching) {
+      return;
+    }
+    this.announcing = setTimeout(() => {
+      this.announcing = undefined;
+      this.follow();
+      this.deps.announce({ type: "sessions_changed" });
+    }, ANNOUNCE_MS);
+    this.announcing.unref?.();
   }
 
   // A running session must be answered for by its last idle reading: mid-turn the file's time is the line just written.

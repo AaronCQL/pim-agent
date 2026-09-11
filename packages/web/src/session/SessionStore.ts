@@ -8,6 +8,7 @@ import type { AttachmentRef, CommandDraft } from "#protocol/Command";
 import type {
   AttachmentView,
   DurableEvent,
+  EphemeralEvent,
   ModelView,
   ServerEvent,
   SessionStatus,
@@ -52,6 +53,12 @@ export type ModelCatalogue = {
   readonly thinkingLevels: readonly string[];
 };
 
+/** Who holds this session's turn lease, when it is not us. */
+export type LeaseHolder = Extract<
+  EphemeralEvent,
+  { readonly type: "session_state" }
+>["heldBy"];
+
 /** A file the server is holding for the next message. */
 export type UploadedAttachment = {
   readonly id: string;
@@ -71,6 +78,9 @@ export type SessionState = {
   thinking: string;
   cost: number;
   agent: SessionStatus;
+  /** False while another process holds this session's turn lease. */
+  writable: boolean;
+  heldBy: LeaseHolder;
   turnElapsedMs: number | undefined;
   contextPercent: number | undefined;
   contextWindow: number | undefined;
@@ -82,6 +92,8 @@ export type SessionState = {
   live: LiveMessage[];
   optimistic: OptimisticMessage[];
   activity: Record<string, SessionStatus>;
+  /** Bumped whenever the server says the sessions on disk moved; a listing read before it is stale. */
+  catalogue: number;
   loading: boolean;
   error: string | undefined;
   unread: Record<string, boolean>;
@@ -151,6 +163,8 @@ export class SessionStore {
       thinking: "",
       cost: 0,
       agent: "idle",
+      writable: true,
+      heldBy: undefined,
       turnElapsedMs: undefined,
       contextPercent: undefined,
       contextWindow: undefined,
@@ -162,6 +176,7 @@ export class SessionStore {
       live: [],
       optimistic: [],
       activity: {},
+      catalogue: 0,
       loading: false,
       error: undefined,
       unread: {},
@@ -257,6 +272,26 @@ export class SessionStore {
     return this.state.agent !== "idle";
   }
 
+  /** Another surface holds the turn lease, so every intent that would write is refused. */
+  public isHeld(): boolean {
+    return !this.state.writable;
+  }
+
+  /**
+   * Why this session takes no writing right now, in the words the composer
+   * wears; absent when it takes them. The other surface is mid-turn.
+   */
+  public heldNotice(): string | undefined {
+    if (!this.isHeld()) {
+      return undefined;
+    }
+    const where =
+      this.state.heldBy?.frontend === "tui"
+        ? "in the terminal"
+        : "in another window";
+    return `Running ${where} — you can continue when this turn ends.`;
+  }
+
   /** Whether that session's agent is working, attached or not. */
   public isRunning(sessionId: string): boolean {
     return (this.state.activity[sessionId] ?? "idle") !== "idle";
@@ -287,6 +322,10 @@ export class SessionStore {
         delete draft.attachments[sessionId];
       });
       await local.run(this).catch(() => undefined);
+      return;
+    }
+    // The lease is the other surface's until its turn ends; the message keeps.
+    if (this.isHeld()) {
       return;
     }
     const carried: readonly AttachmentView[] = attachments.map(
@@ -356,6 +395,9 @@ export class SessionStore {
   }
 
   private async reclaim(draft: CommandDraft): Promise<string> {
+    if (this.isHeld()) {
+      return "";
+    }
     const response = await this.client.send(draft).catch(() => undefined);
     const restored = response?.restored ?? [];
     if (restored.length > 0) {
@@ -606,6 +648,9 @@ export class SessionStore {
     type: "set_model" | "set_thinking",
     value: string
   ): Promise<void> {
+    if (this.isHeld()) {
+      return;
+    }
     await this.client
       .send({ type, sessionId: this.state.sessionId, value })
       .catch(() => undefined);
@@ -725,6 +770,8 @@ export class SessionStore {
             draft.durable = [];
             draft.optimistic = [];
             draft.agent = draft.activity[event.sessionId] ?? "idle";
+            draft.writable = true;
+            draft.heldBy = undefined;
             draft.turnElapsedMs = undefined;
             draft.loading = event.head > 0;
           }
@@ -775,6 +822,11 @@ export class SessionStore {
           draft.unread[event.sessionId] = false;
         });
         return;
+      case "sessions_changed":
+        this.setState((draft) => {
+          draft.catalogue += 1;
+        });
+        return;
       case "session_state":
         this.setState((draft) => {
           // Last event of a replay, so the log is complete.
@@ -785,6 +837,8 @@ export class SessionStore {
           draft.thinking = event.thinking;
           draft.cost = event.cost;
           draft.agent = event.status;
+          draft.writable = event.writable;
+          draft.heldBy = event.heldBy;
           draft.turnElapsedMs = event.turnElapsedMs;
           draft.activity[draft.sessionId] = event.status;
           draft.contextPercent = event.contextPercent;

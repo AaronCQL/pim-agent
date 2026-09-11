@@ -15,6 +15,7 @@ const EXTENSIONS = {
   grep: "grep tool",
   pim: "This menu",
   read: "read tool",
+  "session-lease": "Cross-surface turn lease and /sync",
   subagent: "subagent tool",
   "system-prompt": "Pim system prompt",
   todo: "todo tool",
@@ -31,7 +32,7 @@ const NAMES = Object.keys(EXTENSIONS) as readonly PimExtensionName[];
 
 const DEFAULT_DISABLED: readonly PimExtensionName[] = ["todo", "tps"];
 
-const REQUIRED: readonly PimExtensionName[] = ["_init", "pim"];
+const REQUIRED: readonly PimExtensionName[] = ["_init", "pim", "session-lease"];
 
 function isRequired(name: string): boolean {
   return (REQUIRED as readonly string[]).includes(name);
