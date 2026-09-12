@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, rename, rm, unlink } from "node:fs/promises";
+import { chmod, mkdtemp, rm, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, expect, test } from "bun:test";
@@ -38,7 +38,8 @@ const landed = (root: string): Promise<string> =>
 const stagedPaths = (root: string): Promise<string> =>
   read(root, ["diff", "--cached", "--name-only"]);
 
-const tracked = (root: string): Promise<string> => read(root, ["ls-files"]);
+const committed = (root: string): Promise<string> =>
+  read(root, ["ls-tree", "-r", "--name-only", "HEAD"]);
 
 const refusal = (result: CommitResult): string =>
   result.ok ? "" : result.error;
@@ -121,9 +122,10 @@ test("a path with a space in it is one path, not two", async () => {
   expect(await status(root)).toBe("");
 });
 
-test("a rename committed by both of its names leaves nothing behind", async () => {
+test("a staged rename committed by both of its names leaves nothing behind", async () => {
   const root = await repo();
-  await rename(join(root, "a.txt"), join(root, "moved.txt"));
+  await git(root, ["mv", "a.txt", "moved.txt"]);
+  expect(await status(root)).toBe("R  a.txt -> moved.txt");
 
   const result = await Git.commit(root, {
     message: "move a",
@@ -131,7 +133,7 @@ test("a rename committed by both of its names leaves nothing behind", async () =
   });
 
   expect(result.ok).toBe(true);
-  expect((await tracked(root)).split("\n")).toEqual([
+  expect((await committed(root)).split("\n")).toEqual([
     "b.txt",
     "moved.txt",
     "sp ace.txt",

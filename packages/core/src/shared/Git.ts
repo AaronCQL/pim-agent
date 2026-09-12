@@ -1,4 +1,4 @@
-import { isAbsolute } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 import { Lines } from "./Lines";
 import { Proc, type ProcOptions, type ProcResult } from "./Proc";
@@ -341,20 +341,33 @@ async function commit(
       error: `${outside === "" ? "an empty path" : outside} is not a path inside this repository`,
     };
   }
-  const staged = await git(
-    cwd,
-    ["add", "-A", "--", ...request.paths],
-    COMMIT_OPTIONS
+  /**
+   * `git add` refuses a pathspec that matches nothing on disk, and a staged
+   * rename's old name matches nothing: it is gone from both the worktree and
+   * the index. A deletion is the same. `git commit -- <paths>` reads those two
+   * off HEAD and the index by itself, so only the paths still on disk are
+   * worth adding, and a pick made entirely of them needs no `add` at all.
+   */
+  const onDisk = await Promise.all(
+    request.paths.map((path) => Bun.file(join(cwd, path)).exists())
   );
-  if (staged.code !== 0) {
-    return {
-      ok: false,
-      error: failure(
-        staged,
-        "could not stage the picked files",
-        COMMIT_TIMEOUT
-      ),
-    };
+  const addable = request.paths.filter((_, index) => onDisk[index]);
+  if (addable.length > 0) {
+    const staged = await git(
+      cwd,
+      ["add", "-A", "--", ...addable],
+      COMMIT_OPTIONS
+    );
+    if (staged.code !== 0) {
+      return {
+        ok: false,
+        error: failure(
+          staged,
+          "could not stage the picked files",
+          COMMIT_TIMEOUT
+        ),
+      };
+    }
   }
   const written = await git(
     cwd,
