@@ -1,4 +1,4 @@
-import { createMemo, For } from "solid-js";
+import { createMemo, For, Show, type Element } from "solid-js";
 
 import type {
   ToolDiffHunk,
@@ -42,6 +42,9 @@ export function SplitDiff(props: {
   readonly total?: number;
   readonly busy?: boolean;
   readonly onOpen?: (gap: DiffGap) => void;
+  /** Given only where a gutter is a target; the column it was tapped in is the side. */
+  readonly onPickLine?: (line: ToolDiffLine, side: Side) => void;
+  readonly after?: (line: ToolDiffLine, side: Side) => Element;
 }) {
   const lang = createMemo(() => Languages.fromPath(props.path));
   const width = createMemo(() => DiffLayout.gutterWidth(props.hunks));
@@ -63,7 +66,13 @@ export function SplitDiff(props: {
               onOpen={open}
             />
           ) : (
-            <SplitHunk hunk={part.hunk} lang={lang()} width={width()} />
+            <SplitHunk
+              hunk={part.hunk}
+              lang={lang()}
+              width={width()}
+              onPickLine={props.onPickLine}
+              after={props.after}
+            />
           )
         }
       </For>
@@ -75,6 +84,8 @@ export function SplitHunk(props: {
   readonly hunk: ToolDiffHunk;
   readonly lang: string | undefined;
   readonly width: number;
+  readonly onPickLine?: (line: ToolDiffLine, side: Side) => void;
+  readonly after?: (line: ToolDiffLine, side: Side) => Element;
 }) {
   const pairs = createMemo(() => DiffPairs.pair(props.hunk));
 
@@ -97,13 +108,25 @@ export function SplitHunk(props: {
             side="old"
             tokens={tokens()}
             width={props.width}
+            onPickLine={props.onPickLine}
           />
           <SplitCell
             line={pair.right}
             side="new"
             tokens={tokens()}
             width={props.width}
+            onPickLine={props.onPickLine}
           />
+          <Show when={props.after !== undefined}>
+            <div class="col-span-full">
+              {pair.left === undefined
+                ? undefined
+                : props.after?.(pair.left, "old")}
+              {pair.right === undefined
+                ? undefined
+                : props.after?.(pair.right, "new")}
+            </div>
+          </Show>
         </>
       )}
     </For>
@@ -115,6 +138,7 @@ function SplitCell(props: {
   readonly side: Side;
   readonly tokens: Tokens;
   readonly width: number;
+  readonly onPickLine?: (line: ToolDiffLine, side: Side) => void;
 }) {
   const kind = (): ToolDiffLineKind => props.line?.kind ?? "context";
   // A half the other side has no counterpart for: shaded, never an empty line.
@@ -122,12 +146,13 @@ function SplitCell(props: {
   // gutter of a filler is left on the page, numberless and untinted.
   const row = (): string =>
     props.line === undefined ? DIFF_FILLER_CLASS : DIFF_ROW_CLASSES[kind()];
-  const gutter = (): string => {
-    // Each half counts in its own file: the old side numbers the old, the new the new.
-    const number =
-      props.side === "old" ? props.line?.oldLine : props.line?.newLine;
-    return ` ${String(number ?? "").padStart(props.width)} ${SIGNS[kind()]} `;
-  };
+  // Each half counts in its own file: the old side numbers the old, the new the new.
+  const number = (): number | undefined =>
+    props.side === "old" ? props.line?.oldLine : props.line?.newLine;
+  const gutter = (): string =>
+    ` ${String(number() ?? "").padStart(props.width)} ${SIGNS[kind()]} `;
+  const frame = (): string =>
+    `${DIFF_ROW_CLASSES[kind()]} ${DIFF_GUTTER_CLASSES[kind()]} ${props.side === "new" ? "border-l border-neutral-850" : ""}`;
   const pieces = (): readonly Piece[] => {
     const line = props.line;
     if (line === undefined) {
@@ -141,11 +166,27 @@ function SplitCell(props: {
 
   return (
     <>
-      <span
-        class={`select-none whitespace-pre ${DIFF_ROW_CLASSES[kind()]} ${DIFF_GUTTER_CLASSES[kind()]} ${props.side === "new" ? "border-l border-neutral-850" : ""}`}
+      <Show
+        when={props.onPickLine !== undefined && props.line !== undefined}
+        fallback={
+          <span class={`select-none whitespace-pre ${frame()}`}>
+            {gutter()}
+          </span>
+        }
       >
-        {gutter()}
-      </span>
+        <button
+          type="button"
+          aria-label={`Comment on ${props.side} line ${number() ?? ""}`}
+          class={`select-none whitespace-pre text-left hover:bg-neutral-500/15 ${frame()}`}
+          onClick={() => {
+            if (props.line !== undefined) {
+              props.onPickLine?.(props.line, props.side);
+            }
+          }}
+        >
+          {gutter()}
+        </button>
+      </Show>
       <span
         data-side={props.side}
         class={`pr-1ch whitespace-pre-wrap wrap-anywhere ${row()}`}

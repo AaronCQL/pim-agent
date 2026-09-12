@@ -9,6 +9,7 @@ import {
 } from "solid-js";
 
 import { Composer } from "./input/Composer";
+import { Comments, ReviewComments } from "./diff/Comments";
 import { DiffStore } from "./diff/DiffStore";
 import { DiffView } from "./diff/DiffView";
 import { Picked } from "./diff/Picked";
@@ -53,6 +54,7 @@ export function Shell(props: {
   const [reviewing, setReviewing] = createSignal(false);
   const diff = new DiffStore(props.store);
   const picked = new Picked();
+  const comments = new Comments();
   const back = createBackGuard(() => {
     setReviewing(false);
   });
@@ -60,6 +62,12 @@ export function Shell(props: {
     () => desktop(),
     (isDesktop) => {
       setSidebar(isDesktop);
+    }
+  );
+  createEffect(
+    () => diff.cwd(),
+    (cwd) => {
+      comments.load(cwd);
     }
   );
   let scroller: HTMLDivElement | undefined;
@@ -212,13 +220,15 @@ export function Shell(props: {
 
             <div class="relative min-h-0 flex-1">
               <Show when={reviewing()} fallback={<Conversation />}>
-                <DiffView
-                  diff={diff}
-                  picked={picked}
-                  settings={props.settings}
-                  inset={inset()}
-                  onClose={converse}
-                />
+                <ReviewComments value={() => comments}>
+                  <DiffView
+                    diff={diff}
+                    picked={picked}
+                    settings={props.settings}
+                    inset={inset()}
+                    onClose={converse}
+                  />
+                </ReviewComments>
               </Show>
 
               <div

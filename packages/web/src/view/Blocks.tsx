@@ -184,6 +184,9 @@ export function UnifiedHunk(props: {
   readonly hunk: DiffHunk;
   readonly lang: string | undefined;
   readonly width: number;
+  /** Given only where a gutter is a target: a reader anchoring a comment to the line. */
+  readonly onPickLine?: (line: ToolDiffLine) => void;
+  readonly after?: (line: ToolDiffLine) => Element;
 }) {
   // One tokenisation per side of the hunk, memoised: it re-runs when a grammar lands.
   const tokens = createMemo(() =>
@@ -199,38 +202,66 @@ export function UnifiedHunk(props: {
           line={line}
           tokens={tokens()[index()] ?? [{ text: line.text }]}
           width={props.width}
+          onPickLine={props.onPickLine}
+          after={props.after}
         />
       )}
     </For>
   );
 }
 
+/** A unified row belongs to the side it changed: what was taken away, or what stands there now. */
+export function diffSide(line: ToolDiffLine): "old" | "new" {
+  return line.kind === "removed" ? "old" : "new";
+}
+
 function DiffRow(props: {
   readonly line: ToolDiffLine;
   readonly tokens: readonly Token[];
   readonly width: number;
+  readonly onPickLine?: (line: ToolDiffLine) => void;
+  readonly after?: (line: ToolDiffLine) => Element;
 }) {
   const kind = () => props.line.kind;
   const gutter = () =>
     ` ${String(DiffLayout.lineNumber(props.line) ?? "").padStart(props.width)} ${SIGNS[kind()]} `;
 
   return (
-    <div class={`whitespace-pre ${DIFF_ROW_CLASSES[kind()]}`}>
-      <span class={`select-none ${DIFF_GUTTER_CLASSES[kind()]}`}>
-        {gutter()}
-      </span>
-      <For each={emphasize(props.tokens, props.line.emphasis)}>
-        {(piece) => (
-          <span
-            class={`${syntaxClass(piece.role)} ${
-              piece.emphasis ? DIFF_EMPHASIS_CLASSES[kind()] : ""
-            }`}
+    <>
+      <div class={`whitespace-pre ${DIFF_ROW_CLASSES[kind()]}`}>
+        <Show
+          when={props.onPickLine !== undefined}
+          fallback={
+            <span class={`select-none ${DIFF_GUTTER_CLASSES[kind()]}`}>
+              {gutter()}
+            </span>
+          }
+        >
+          <button
+            type="button"
+            aria-label={`Comment on ${diffSide(props.line)} line ${DiffLayout.lineNumber(props.line) ?? ""}`}
+            class={`select-none hover:bg-neutral-500/15 ${DIFF_GUTTER_CLASSES[kind()]}`}
+            onClick={() => {
+              props.onPickLine?.(props.line);
+            }}
           >
-            {piece.text}
-          </span>
-        )}
-      </For>
-    </div>
+            {gutter()}
+          </button>
+        </Show>
+        <For each={emphasize(props.tokens, props.line.emphasis)}>
+          {(piece) => (
+            <span
+              class={`${syntaxClass(piece.role)} ${
+                piece.emphasis ? DIFF_EMPHASIS_CLASSES[kind()] : ""
+              }`}
+            >
+              {piece.text}
+            </span>
+          )}
+        </For>
+      </div>
+      {props.after?.(props.line)}
+    </>
   );
 }
 

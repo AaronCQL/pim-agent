@@ -1,10 +1,28 @@
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  Show,
+  untrack,
+  useContext,
+  type Element,
+} from "solid-js";
 
-import type { ToolDiffHunk } from "#core/shared/DiffLines";
+import type { ToolDiffHunk, ToolDiffLine } from "#core/shared/DiffLines";
 import { DiffExpand, type DiffGap } from "#core/view/DiffExpand";
 import type { ChangeStatus, ChangeSummary } from "#protocol/Diff";
 import { Fitted } from "../ui/Fitted";
+import { QUIET } from "../ui/classes";
 import { Spinner } from "../ui/Spinner";
+import { diffSide } from "../view/Blocks";
+import { CommentCard } from "./CommentCard";
+import {
+  ReviewComments,
+  type Comment,
+  type CommentAnchor,
+  type CommentSide,
+} from "./Comments";
 import type { FileState } from "./DiffStore";
 import { FileTitle, type Role } from "./FileTitle";
 import { SplitDiff } from "./SplitHunk";
@@ -47,6 +65,10 @@ function bytes(count: number): string {
   return `${unit === 0 ? size : size.toFixed(1)} ${UNITS[unit]}`;
 }
 
+function numberOf(line: ToolDiffLine, side: CommentSide): number | undefined {
+  return side === "old" ? line.oldLine : line.newLine;
+}
+
 /** One changed file: what happened to it, and its hunks once a reader asks. */
 export function FileRow(props: {
   readonly file: ChangeSummary;
@@ -60,6 +82,12 @@ export function FileRow(props: {
   readonly split: boolean;
 }) {
   const [open, setOpen] = createSignal(false);
+  const comments = useContext(ReviewComments)();
+  /** The comment a second tap on a gutter widens, rather than starting another. */
+  const [writing, setWriting] = createSignal<{
+    readonly id: string;
+    readonly side?: CommentSide;
+  }>();
 
   createEffect(
     () => props.picked,
@@ -108,6 +136,76 @@ export function FileRow(props: {
     if (next) {
       props.onExpand();
     }
+  };
+
+  const badge = createMemo(() => comments?.count(props.file.path) ?? 0);
+
+  const fileComments = createMemo<readonly Comment[]>(() =>
+    comments === undefined
+      ? []
+      : comments
+          .list(props.file.path)
+          .filter((comment) => comment.start === undefined)
+  );
+
+  const card = (comment: Comment): Element => (
+    <CommentCard
+      comment={comment}
+      outdated={comment.fingerprint !== props.file.fingerprint}
+      focus={comment.id === untrack(writing)?.id}
+      onWrite={(text) => {
+        comments?.write(comment.id, text);
+      }}
+      onRemove={() => {
+        comments?.remove(comment.id);
+        setWriting((held) => (held?.id === comment.id ? undefined : held));
+      }}
+    />
+  );
+
+  // A handler reads the file rather than tracking it, and Solid asks to be told so.
+  const anchorOf = (): CommentAnchor =>
+    untrack(() => ({
+      path: props.file.path,
+      fingerprint: props.file.fingerprint,
+    }));
+
+  /** Opens a comment and keeps it, so the next tap widens it rather than starting another. */
+  const start = (anchor: CommentAnchor): void => {
+    const id = comments?.open(anchor);
+    if (id !== undefined) {
+      setWriting({ id, side: anchor.side });
+    }
+  };
+
+  // A unified row belongs to the one side it has; a split column says which it is.
+  const pick = (line: ToolDiffLine, side = diffSide(line)): void => {
+    const number = numberOf(line, side);
+    if (number === undefined) {
+      return;
+    }
+    const pending = untrack(writing);
+    if (pending !== undefined && pending.side === side) {
+      comments?.extend(pending.id, number);
+      setWriting(undefined);
+      return;
+    }
+    start({ ...anchorOf(), side, line: number, quote: line.text });
+  };
+
+  const anchored = (line: ToolDiffLine, side = diffSide(line)): Element => {
+    const number = numberOf(line, side);
+    return (
+      <For
+        each={
+          number === undefined
+            ? []
+            : comments?.at(props.file.path, side, number)
+        }
+      >
+        {(comment) => card(comment)}
+      </For>
+    );
   };
 
   return (
@@ -171,6 +269,15 @@ export function FileRow(props: {
               </For>
             )}
           </Fitted>
+          <Show when={badge() > 0}>
+            <span class="flex shrink-0 items-center gap-1 text-neutral-400 tabular-nums">
+              <span
+                class="i-griddy-icons:chat-bubble-dots size-4"
+                aria-hidden="true"
+              />
+              {badge()}
+            </span>
+          </Show>
           <Show
             when={!props.file.binary}
             fallback={<span class={`shrink-0 ${LEAD}`}>binary</span>}
@@ -195,6 +302,22 @@ export function FileRow(props: {
 
       <Show when={open()}>
         <div class="px-3 pb-2 text-sm">
+          <Show when={comments !== undefined}>
+            <button
+              type="button"
+              class={`${QUIET} my-1 flex items-center gap-1.5`}
+              onClick={() => {
+                start(anchorOf());
+              }}
+            >
+              <span
+                class="i-griddy-icons:chat-bubble-dots size-4 shrink-0"
+                aria-hidden="true"
+              />
+              add comment
+            </button>
+            <For each={fileComments()}>{(comment) => card(comment)}</For>
+          </Show>
           <Show when={props.state?.kind === "loading"}>
             <span class={`flex items-center gap-2 ${LEAD}`}>
               <Spinner />
@@ -219,6 +342,8 @@ export function FileRow(props: {
                     total={ready()?.total}
                     busy={opening()}
                     onOpen={props.onOpen}
+                    onPickLine={comments === undefined ? undefined : pick}
+                    after={comments === undefined ? undefined : anchored}
                   />
                 }
               >
@@ -228,6 +353,8 @@ export function FileRow(props: {
                   total={ready()?.total}
                   busy={opening()}
                   onOpen={props.onOpen}
+                  onPickLine={comments === undefined ? undefined : pick}
+                  after={comments === undefined ? undefined : anchored}
                 />
               </Show>
             </Show>
