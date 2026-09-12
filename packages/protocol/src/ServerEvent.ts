@@ -1,5 +1,5 @@
 import type { DirectoryListing } from "#core/shared/Directories";
-import type { GitBranch } from "#core/shared/Git";
+import type { CommitResult, GitBranch } from "#core/shared/Git";
 import type { PickerItem } from "#core/picker/PickerItem";
 import type { LeaseFrontend } from "#core/session/SessionLease";
 import type { UpdateSkip } from "#core/shared/Updater";
@@ -241,6 +241,8 @@ export type ResponseEvent = {
   readonly directory?: DirectoryListing;
   /** The cwd's local branches, for `list_branches`. */
   readonly branches?: readonly GitBranch[];
+  /** The commit that landed, for `commit`. */
+  readonly commit?: Pick<Extract<CommitResult, { readonly ok: true }>, "sha">;
   /** The change list, for `list_changes`. */
   readonly changes?: ChangeList;
   /** One file's hunks, for `file_diff`. */

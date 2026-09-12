@@ -117,6 +117,15 @@ export type Command =
       readonly type: "pull" | "push";
       readonly sessionId: string;
     }
+  /** Path-limited: exactly `paths` are staged and committed, everything else changed stays dirty. Refused mid-turn, like `checkout`. */
+  | {
+      readonly id: string;
+      readonly type: "commit";
+      readonly sessionId: string;
+      readonly message: string;
+      /** A renamed file contributes both of its names, or its old one is left behind. */
+      readonly paths: readonly string[];
+    }
   /** Read-only view of a subagent's transcript; `callId` is the parent's tool call and `sessionId` must be this connection's session. */
   | {
       readonly id: string;

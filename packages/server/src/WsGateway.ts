@@ -61,6 +61,7 @@ type Outcome = {
   readonly thinkingLevels?: readonly string[];
   readonly directory?: DirectoryListing;
   readonly branches?: readonly GitBranch[];
+  readonly commit?: { readonly sha: string };
   readonly changes?: ChangeList;
   readonly fileDiff?: FileDiff;
   readonly fileLines?: FileLines;
@@ -328,6 +329,8 @@ export class WsGateway {
           Git.checkout(cwd, command.branch)
         );
       }
+      case "commit":
+        return await this.commit(this.requireStream(connection), command);
       case "pull":
       case "push":
         return await this.runGit(
@@ -500,6 +503,26 @@ export class WsGateway {
     }
     const result = await this.git.run(cwd, () => operation(cwd));
     return result.ok ? {} : { error: result.error };
+  }
+
+  /** `GitMonitor.run` answers an outcome and cannot carry a sha, so the new commit comes back out through a closure. */
+  private async commit(
+    stream: SessionStream,
+    command: Command & { readonly type: "commit" }
+  ): Promise<Outcome> {
+    let sha: string | undefined;
+    const outcome = await this.runGit(stream, true, async (cwd) => {
+      const result = await Git.commit(cwd, {
+        message: command.message,
+        paths: command.paths,
+      });
+      if (!result.ok) {
+        return { ok: false, error: result.error };
+      }
+      sha = result.sha;
+      return { ok: true };
+    });
+    return sha === undefined ? outcome : { commit: { sha } };
   }
 
   private repoBusy(cwd: string): boolean {
