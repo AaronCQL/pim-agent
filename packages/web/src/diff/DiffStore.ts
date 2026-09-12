@@ -43,6 +43,13 @@ export type DiffState = {
   /** `ready` only once a list has landed, so an empty overlay never claims a clean tree it has not read. */
   status: "idle" | "loading" | "ready";
   error: string | undefined;
+  /** The commit card's message, held here so leaving review mode does not lose it. */
+  message: string;
+  committing: boolean;
+  /** Why the last commit was refused. */
+  failure: string | undefined;
+  /** The short sha this card last wrote, shown until the next pick. */
+  committed: string | undefined;
 };
 
 /** A working copy's change set: what it is measured against, and the hunks read so far. */
@@ -58,6 +65,8 @@ export class DiffStore {
   private readonly session: SessionStore;
   private queue: Promise<unknown> = Promise.resolve();
   private generation = 0;
+  /** The next change to the repository is our own commit landing, not somebody else's edit. */
+  private expected = false;
 
   public constructor(session: SessionStore) {
     this.session = session;
@@ -69,6 +78,10 @@ export class DiffStore {
       stale: false,
       status: "idle",
       error: undefined,
+      message: "",
+      committing: false,
+      failure: undefined,
+      committed: undefined,
     });
     const [diffs, setDiffs] = createStore<Record<string, FileState>>({});
     const [files, setFiles] = createSignal<readonly ChangeSummary[]>([]);
@@ -92,7 +105,12 @@ export class DiffStore {
       () => this.session.state.dirtyCount,
       (count, previous) => {
         if (previous !== undefined && count !== previous) {
-          this.markStale();
+          if (this.expected) {
+            this.expected = false;
+            void this.refresh();
+          } else {
+            this.markStale();
+          }
         }
       }
     );
@@ -156,6 +174,11 @@ export class DiffStore {
     });
   }
 
+  /** The change the repository is about to report is ours: re-read on it rather than calling the list stale. */
+  public expectChange(): void {
+    this.expected = true;
+  }
+
   /** Another working copy: every file, hunk and count read against the last one is void. */
   public reset(): void {
     this.generation += 1;
@@ -168,7 +191,52 @@ export class DiffStore {
       draft.stale = false;
       draft.status = "idle";
       draft.error = undefined;
+      draft.message = "";
+      draft.failure = undefined;
+      draft.committed = undefined;
     });
+  }
+
+  public setMessage(message: string): void {
+    this.setState((draft) => {
+      draft.message = message;
+    });
+  }
+
+  /** A new pick starts another commit, so the last one's receipt is done being read. */
+  public forgetCommit(): void {
+    this.setState((draft) => {
+      draft.failure = undefined;
+      draft.committed = undefined;
+    });
+  }
+
+  /** Commits the typed message over exactly these paths, then re-reads the list it emptied. */
+  public async commit(paths: readonly string[]): Promise<void> {
+    if (untrack(() => this.state.committing)) {
+      return;
+    }
+    this.setState((draft) => {
+      draft.committing = true;
+      draft.failure = undefined;
+      draft.committed = undefined;
+    });
+    try {
+      const message = untrack(() => this.state.message);
+      const sha = await this.enqueue(() => this.session.commit(message, paths));
+      this.setState((draft) => {
+        draft.committing = false;
+        draft.message = "";
+        draft.committed = sha;
+      });
+      this.expectChange();
+      await this.refresh();
+    } catch (error) {
+      this.setState((draft) => {
+        draft.committing = false;
+        draft.failure = (error as Error).message;
+      });
+    }
   }
 
   public setBase(base: BaseKind): void {

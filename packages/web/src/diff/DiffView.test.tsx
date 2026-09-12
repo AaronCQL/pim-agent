@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { flush } from "solid-js";
 
 import { git, makeRepo } from "#core/shared/fixtures/repo";
+import { Proc } from "#core/shared/Proc";
 import type { ChangeList, FileDiff } from "#protocol/Diff";
 import type { CommandDraft } from "#protocol/Command";
 import type { ResponseEvent } from "#protocol/ServerEvent";
@@ -37,6 +38,9 @@ beforeEach(async () => {
   repo = join(harness.tmp, "repo");
   await mkdir(repo, { recursive: true });
   await makeRepo(repo);
+  // `Git.commit` runs without the fixture's identity env, so the repository carries its own.
+  await git(repo, ["config", "user.email", "pim@example.com"]);
+  await git(repo, ["config", "user.name", "pim"]);
   store = new SessionStore({
     url: harness.url,
     cwd: repo,
@@ -105,6 +109,28 @@ function rows(host: HTMLElement): readonly HTMLButtonElement[] {
 
 function labels(host: HTMLElement): readonly string[] {
   return rows(host).map((row) => row.getAttribute("aria-label") ?? "");
+}
+
+function ticks(host: HTMLElement): readonly HTMLButtonElement[] {
+  return [...host.querySelectorAll<HTMLButtonElement>("[role='checkbox']")];
+}
+
+function card(host: HTMLElement): HTMLTextAreaElement | null {
+  return host.querySelector<HTMLTextAreaElement>(
+    "textarea[aria-label='Commit message']"
+  );
+}
+
+function write(host: HTMLElement, message: string): void {
+  const box = card(host) as HTMLTextAreaElement;
+  box.value = message;
+  box.dispatchEvent(new Event("input", { bubbles: true }));
+  flush();
+}
+
+async function gitOut(args: readonly string[]): Promise<string> {
+  const { stdout } = await Proc.run(["git", ...args], { cwd: repo });
+  return stdout.trim();
 }
 
 function settle(test: () => boolean, label: string): Promise<void> {
@@ -655,4 +681,164 @@ test("a gap too wide to swallow opens a step against each hunk", async () => {
     "the second step"
   );
   expect(asked("read_lines")).toHaveLength(2);
+});
+
+test("nothing picked is nothing to commit", async () => {
+  await seed();
+  const host = await open();
+  await settle(() => rows(host).length === 2, "both rows");
+
+  expect(card(host)).toBeNull();
+
+  ticks(host)[0]?.click();
+  await settle(() => card(host) !== null, "the commit card");
+
+  expect(host.textContent).toContain("Commit 1 file");
+  ticks(host)[1]?.click();
+  await settle(
+    () => host.textContent?.includes("Commit 2 files") === true,
+    "both picks"
+  );
+  const box = card(host)?.parentElement as HTMLElement;
+  expect(box.textContent).toContain("+2");
+  expect(box.textContent).toContain("−2");
+});
+
+test("a commit writes exactly the picked files and leaves the rest dirty", async () => {
+  await seed();
+  const host = await open();
+  await settle(() => rows(host).length === 2, "both rows");
+
+  ticks(host)[0]?.click();
+  await settle(() => card(host) !== null, "the commit card");
+  write(host, "the reviewed change");
+  clickText(host, "Commit");
+
+  await settle(() => rows(host).length === 1, "the list the commit emptied");
+  expect(await gitOut(["log", "-1", "--pretty=%s"])).toBe(
+    "the reviewed change"
+  );
+  expect(await gitOut(["diff", "--name-only"])).toBe("src/beta.ts");
+  expect(labels(host)).toEqual(["src/beta.ts"]);
+  expect(host.textContent).toContain(
+    `committed ${await gitOut(["rev-parse", "--short", "HEAD"])}`
+  );
+  expect(card(host)).toBeNull();
+});
+
+/*
+ * A move is two names in one row, and a commit of only the new one leaves the
+ * old path behind in the tree; both go on the pathspec.
+ */
+test("a picked rename goes on the commit by both of its names", async () => {
+  await seed();
+  await git(repo, ["add", "-A"]);
+  await git(repo, ["commit", "-m", "edits"]);
+  await git(repo, ["mv", "src/beta.ts", "src/gamma.ts"]);
+  const host = await open();
+  await settle(() => rows(host).length === 1, "the renamed row");
+
+  ticks(host)[0]?.click();
+  await settle(() => card(host) !== null, "the commit card");
+  write(host, "renamed");
+  clickText(host, "Commit");
+
+  await settle(() => asked("commit").length === 1, "the commit");
+  expect(asked("commit")).toEqual([
+    {
+      type: "commit",
+      sessionId: store.state.sessionId,
+      message: "renamed",
+      paths: ["src/gamma.ts", "src/beta.ts"],
+    },
+  ]);
+});
+
+test("a refused commit keeps the picks and the message that was refused", async () => {
+  await seed();
+  watch((command) =>
+    command.type === "commit"
+      ? {
+          type: "response",
+          id: "stub",
+          success: false,
+          error: "the agent is working in this repository",
+        }
+      : undefined
+  );
+  const host = paint();
+  await settle(() => rows(host).length === 2, "both rows");
+
+  ticks(host)[0]?.click();
+  await settle(() => card(host) !== null, "the commit card");
+  write(host, "half a tree");
+  clickText(host, "Commit");
+
+  await settle(
+    () => host.textContent?.includes("the agent is working") === true,
+    "the refusal"
+  );
+  expect(card(host)?.value).toBe("half a tree");
+  expect(ticks(host)[0]?.getAttribute("aria-checked")).toBe("true");
+  expect(await gitOut(["log", "-1", "--pretty=%s"])).toBe("seed");
+});
+
+/*
+ * The write we just made is reported back to us as the repository moving, and
+ * a list already re-read against it is not stale — it is the newest there is.
+ */
+test("a commit of our own re-reads the list rather than calling it stale", async () => {
+  await seed();
+  watch((command) =>
+    command.type === "commit"
+      ? {
+          type: "response",
+          id: "stub",
+          success: true,
+          commit: { sha: "a1b2c3d" },
+        }
+      : undefined
+  );
+  const host = paint();
+  await settle(() => rows(host).length === 2, "both rows");
+
+  ticks(host)[0]?.click();
+  await settle(() => card(host) !== null, "the commit card");
+  write(host, "the reviewed change");
+  clickText(host, "Commit");
+
+  await settle(
+    () => asked("list_changes").length === 2,
+    "the re-read the commit asks for"
+  );
+  dirty(7);
+
+  await settle(
+    () => asked("list_changes").length === 3,
+    "the re-read the state frame asks for"
+  );
+  expect(host.textContent).not.toContain("The repository has changed");
+  expect(host.textContent).toContain("committed a1b2c3d");
+});
+
+test("a half-written message survives leaving the review and coming back", async () => {
+  await seed();
+  watch();
+  const host = shell();
+  openDiff(host);
+  await settle(() => rows(host).length === 2, "the change set's rows");
+
+  ticks(host)[0]?.click();
+  await settle(() => card(host) !== null, "the commit card");
+  write(host, "half written");
+
+  host
+    .querySelector<HTMLButtonElement>("[aria-label='Back to the conversation']")
+    ?.click();
+  flush();
+  expect(changesPane(host)).toBeNull();
+
+  openDiff(host);
+  await settle(() => card(host) !== null, "the card again");
+  expect(card(host)?.value).toBe("half written");
 });

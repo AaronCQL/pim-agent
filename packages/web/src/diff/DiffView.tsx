@@ -1,9 +1,11 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 
+import type { ChangeSummary } from "#protocol/Diff";
 import type { Settings } from "../settings/Settings";
 import { ICON, QUIET } from "../ui/classes";
 import { Menu, type MenuOption } from "../ui/Menu";
 import { observeWidth } from "../ui/scroll";
+import { CommitCard } from "./CommitCard";
 import { DiffStore, type BaseKind } from "./DiffStore";
 import { FileRow } from "./FileRow";
 import { Picked } from "./Picked";
@@ -82,6 +84,30 @@ export function DiffView(props: {
 
   const all = createMemo(() => props.diff.files().length);
   const every = createMemo(() => all() > 0 && props.picked.count() === all());
+
+  // Walked from the marks rather than from the rows: asking every file whether
+  // it is picked would make each one a source of this list.
+  const chosen = createMemo<readonly ChangeSummary[]>(() => {
+    if (props.picked.count() === 0) {
+      return [];
+    }
+    const marks = props.picked.state;
+    const paths = new Set(Object.keys(marks));
+    return props.diff
+      .files()
+      .filter(
+        (file) => paths.has(file.path) && marks[file.path] === file.fingerprint
+      );
+  });
+
+  createEffect(
+    () => props.picked.count(),
+    (count, previous) => {
+      if (previous !== undefined && count > previous) {
+        props.diff.forgetCommit();
+      }
+    }
+  );
 
   return (
     <section aria-label="Changes" class="flex h-full min-h-0 flex-col">
@@ -253,6 +279,23 @@ export function DiffView(props: {
           <p class="px-3 py-2 text-sm text-amber-400">
             More files changed than this list holds.
           </p>
+        </Show>
+        <Show
+          when={chosen().length > 0 || props.diff.state.committed !== undefined}
+        >
+          <CommitCard
+            files={chosen()}
+            message={props.diff.state.message}
+            committing={props.diff.state.committing}
+            failure={props.diff.state.failure}
+            committed={props.diff.state.committed}
+            onMessage={(message) => {
+              props.diff.setMessage(message);
+            }}
+            onCommit={(paths) => {
+              void props.diff.commit(paths);
+            }}
+          />
         </Show>
       </div>
     </section>

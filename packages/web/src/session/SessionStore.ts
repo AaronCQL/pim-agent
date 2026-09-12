@@ -564,6 +564,23 @@ export class SessionStore {
     return response.fileLines;
   }
 
+  /** Stages and commits exactly these paths; answers the short sha git wrote. */
+  public async commit(
+    message: string,
+    paths: readonly string[]
+  ): Promise<string> {
+    const response = await this.client.send({
+      type: "commit",
+      sessionId: this.attached(),
+      message,
+      paths,
+    });
+    if (!response.success || !response.commit) {
+      throw new Error(response.error ?? "git refused the commit");
+    }
+    return response.commit.sha;
+  }
+
   /**
    * Re-reads the repository for a picture that may have aged — the tab coming
    * back, a menu opening. `fetch` asks the remote first, which is the only
