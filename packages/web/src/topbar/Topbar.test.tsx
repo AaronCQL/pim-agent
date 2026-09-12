@@ -49,6 +49,7 @@ function paint(
         store={store}
         compact={compact}
         onToggleSidebar={() => {}}
+        onOpenDiff={() => {}}
         onOpenSettings={onOpenSettings}
         // The grace period is what the mark is *for*; a test that waited it
         // out would be paying 1.5s to assert a `setTimeout`.

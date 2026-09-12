@@ -44,7 +44,14 @@ afterEach(async () => {
 function paint(): HTMLElement {
   const host = mountPoint();
   dispose = render(
-    () => <Topbar store={store} compact={false} onToggleSidebar={() => {}} />,
+    () => (
+      <Topbar
+        store={store}
+        compact={false}
+        onToggleSidebar={() => {}}
+        onOpenDiff={() => {}}
+      />
+    ),
     host
   );
   flush();
@@ -198,7 +205,8 @@ test("the Diff button is a read, so a working agent never disables it", async ()
 
   const diff = action(host, "Read what has changed");
   expect(diff.disabled).toBe(false);
-  expect(diff.textContent).toContain("3");
+  // The chip already carries the count; the button is just the way in.
+  expect(diff.textContent?.trim()).toBe("Diff");
 
   diff.click();
   flush();

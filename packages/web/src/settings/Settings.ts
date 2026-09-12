@@ -5,12 +5,15 @@ import {
   type StoreSetter,
 } from "solid-js";
 
+import { SplitMode } from "../diff/SplitMode";
+
 const KEY = "pim.settings";
 const DEV_PORT = 4319;
 
 type Preferences = {
   serverUrl: string;
   hideThinking: boolean;
+  diffSplit: SplitMode;
 };
 
 /** Whether the transcript hides what the model thought; outside the shell it shows everything. */
@@ -49,11 +52,16 @@ export class Settings {
     this.apply({ ...this.current, hideThinking: hide });
   }
 
+  public setDiffSplit(mode: SplitMode): void {
+    this.apply({ ...this.current, diffSplit: mode });
+  }
+
   private apply(next: Preferences): void {
     this.current = next;
     this.setState((state) => {
       state.serverUrl = next.serverUrl;
       state.hideThinking = next.hideThinking;
+      state.diffSplit = next.diffSplit;
     });
     try {
       localStorage.setItem(KEY, JSON.stringify(next));
@@ -72,9 +80,10 @@ function read(): Preferences {
       serverUrl:
         typeof saved?.serverUrl === "string" ? saved.serverUrl.trim() : "",
       hideThinking: saved?.hideThinking === true,
+      diffSplit: SplitMode.parse(saved?.diffSplit),
     };
   } catch {
-    return { serverUrl: "", hideThinking: false };
+    return { serverUrl: "", hideThinking: false, diffSplit: "auto" };
   }
 }
 

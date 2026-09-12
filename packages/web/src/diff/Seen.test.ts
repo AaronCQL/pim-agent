@@ -6,9 +6,11 @@ import { flush } from "solid-js";
 
 import type { ChangeList, ChangeSummary } from "#protocol/Diff";
 import { SessionStore } from "../session/SessionStore";
+import { Settings } from "../settings/Settings";
 import { mountPoint } from "../test/dom";
 import { until } from "../test/gateway";
-import { DiffOverlay } from "./DiffOverlay";
+import { DiffStore } from "./DiffStore";
+import { DiffView } from "./DiffView";
 import { FileRow } from "./FileRow";
 import { Seen } from "./Seen";
 
@@ -151,13 +153,6 @@ test("loading forgets paths this list no longer names, and nobody else's", () =>
   });
 });
 
-test("a working copy with nothing ticked leaves no entry behind", () => {
-  const seen = loaded([summary("alpha.ts", "f1")]);
-  seen.clear();
-  flush();
-  expect(stored()).toEqual({});
-});
-
 test("a full quota is not an error a click can raise", () => {
   const files = [summary("alpha.ts", "f1")];
   const seen = loaded(files);
@@ -168,36 +163,11 @@ test("a full quota is not an error a click can raise", () => {
     flush();
     expect(seen.isSeen(files[0]!)).toBe(true);
     expect(() => {
-      seen.markAll(files);
-    }).not.toThrow();
-    expect(() => {
-      seen.clear();
+      seen.toggle(files[0]!);
     }).not.toThrow();
   });
 
-  expect(refused).toBe(3);
-});
-
-test("the counter tracks every way a row is ticked", () => {
-  const files = [
-    summary("alpha.ts", "f1"),
-    summary("src/beta.ts", "f2"),
-    summary("gamma.ts", "f3"),
-  ];
-  const seen = loaded(files);
-  expect(seen.count()).toBe(0);
-
-  seen.toggle(files[0]!);
-  flush();
-  expect(seen.count()).toBe(1);
-
-  seen.markAll(files);
-  flush();
-  expect(seen.count()).toBe(3);
-
-  seen.clear();
-  flush();
-  expect(seen.count()).toBe(0);
+  expect(refused).toBe(2);
 });
 
 test("ticking a row collapses it, dims it, and fills its box", () => {
@@ -209,10 +179,12 @@ test("ticking a row collapses it, dims it, and fills its box", () => {
       createComponent(FileRow, {
         file: files[0]!,
         state: undefined,
+        split: false,
         get seen() {
           return seen.isSeen(files[0]!);
         },
         onExpand: () => {},
+        onOpen: () => {},
         onToggleSeen: () => {
           seen.toggle(files[0]!);
         },
@@ -237,7 +209,7 @@ test("ticking a row collapses it, dims it, and fills its box", () => {
   expect(box.innerHTML).toContain("i-griddy-icons:checkbox-filled");
 });
 
-/** The overlay against a store that answers the change list and nothing else. */
+/** The view against a store that answers the change list and nothing else. */
 function store(answer: () => Promise<ChangeList>): SessionStore {
   const session = new SessionStore({ url: "ws://127.0.0.1:1", cwd: REPO });
   spyOn(session, "listChanges").mockImplementation(answer);
@@ -249,9 +221,11 @@ function paint(session: SessionStore): HTMLElement {
   const host = mountPoint();
   dispose = render(
     () =>
-      createComponent(DiffOverlay, {
-        open: true,
-        store: session,
+      createComponent(DiffView, {
+        diff: new DiffStore(session),
+        seen: new Seen(),
+        settings: new Settings(),
+        inset: 0,
         onClose: () => {},
       }),
     host
@@ -271,12 +245,6 @@ function box(host: HTMLElement, path: string): HTMLButtonElement {
   return host.querySelector<HTMLButtonElement>(`[aria-label='Seen ${path}']`)!;
 }
 
-function press(host: HTMLElement, label: string): HTMLButtonElement {
-  return [...host.querySelectorAll("button")].find(
-    (button) => button.textContent === label
-  )!;
-}
-
 function order(host: HTMLElement): readonly string[] {
   return [...host.querySelectorAll("[role='checkbox']")].map(
     (button) => button.getAttribute("aria-label") ?? ""
@@ -291,7 +259,6 @@ test("a tick outlives the overlay that made it", async () => {
 
   box(host, "alpha.ts").click();
   flush();
-  expect(host.textContent).toContain("1 of 2 reviewed");
   expect(order(host)).toEqual(["Seen alpha.ts", "Seen src/beta.ts"]);
 
   const reopened = paint(session);
@@ -300,27 +267,6 @@ test("a tick outlives the overlay that made it", async () => {
   expect(box(reopened, "src/beta.ts").getAttribute("aria-checked")).toBe(
     "false"
   );
-  expect(reopened.textContent).toContain("1 of 2 reviewed");
-  session.dispose();
-});
-
-test("the header ticks every row and takes it all back, in git's order", async () => {
-  const files = [summary("alpha.ts", "f1"), summary("src/beta.ts", "f2")];
-  const session = store(() => Promise.resolve(changes(files)));
-  const host = paint(session);
-  await settle(() => order(host).length === 2, "both rows");
-
-  press(host, "mark all seen").click();
-  flush();
-  expect(host.textContent).toContain("2 of 2 reviewed");
-  expect(order(host)).toEqual(["Seen alpha.ts", "Seen src/beta.ts"]);
-  expect(stored()[REPO]).toEqual({ "alpha.ts": "f1", "src/beta.ts": "f2" });
-
-  press(host, "clear").click();
-  flush();
-  expect(host.textContent).toContain("0 of 2 reviewed");
-  expect(stored()[REPO]).toBeUndefined();
-  expect(order(host)).toEqual(["Seen alpha.ts", "Seen src/beta.ts"]);
   session.dispose();
 });
 
@@ -343,6 +289,5 @@ test("a list still in flight is not a working copy with nothing in it", async ()
 
   await settle(() => order(host).length === 1, "the row");
   expect(box(host, "alpha.ts").getAttribute("aria-checked")).toBe("true");
-  expect(host.textContent).toContain("1 of 1 reviewed");
   session.dispose();
 });

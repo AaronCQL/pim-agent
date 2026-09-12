@@ -4,7 +4,7 @@ import type { PickerItem } from "#core/picker/PickerItem";
 import type { LeaseFrontend } from "#core/session/SessionLease";
 import type { UpdateSkip } from "#core/shared/Updater";
 import type { NoticeSeverity, ToolView } from "#core/view/ViewBlock";
-import type { ChangeList, FileDiff } from "./Diff";
+import type { ChangeList, FileDiff, FileLines } from "./Diff";
 import type { ProtocolVersion } from "./Protocol";
 
 export type SessionStatus = "idle" | "thinking" | "streaming" | "tool";
@@ -245,6 +245,8 @@ export type ResponseEvent = {
   readonly changes?: ChangeList;
   /** One file's hunks, for `file_diff`. */
   readonly fileDiff?: FileDiff;
+  /** The lines behind one gap, for `read_lines`. */
+  readonly fileLines?: FileLines;
   /** For `cancel` and `dequeue`: queued messages pi gave back, now owned by the client that asked. */
   readonly restored?: readonly string[];
 };

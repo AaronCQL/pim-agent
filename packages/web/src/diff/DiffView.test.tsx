@@ -10,11 +10,14 @@ import { git, makeRepo } from "#core/shared/fixtures/repo";
 import type { ChangeList, FileDiff } from "#protocol/Diff";
 import type { CommandDraft } from "#protocol/Command";
 import type { ResponseEvent } from "#protocol/ServerEvent";
+import { Shell } from "../App";
 import { SessionStore } from "../session/SessionStore";
+import { Settings } from "../settings/Settings";
 import { mountPoint } from "../test/dom";
 import { GatewayHarness, until } from "../test/gateway";
-import { Topbar } from "../topbar/Topbar";
-import { DiffOverlay } from "./DiffOverlay";
+import { DiffStore } from "./DiffStore";
+import { DiffView } from "./DiffView";
+import { Seen } from "./Seen";
 
 /**
  * The change set of a real repository, read over the real gateway: the rows are
@@ -79,7 +82,15 @@ function asked(type: CommandDraft["type"]): readonly CommandDraft[] {
 function paint(): HTMLElement {
   const host = mountPoint();
   dispose = render(
-    () => <DiffOverlay open={true} store={store} onClose={() => {}} />,
+    () => (
+      <DiffView
+        diff={new DiffStore(store)}
+        seen={new Seen()}
+        settings={new Settings()}
+        inset={0}
+        onClose={() => {}}
+      />
+    ),
     host
   );
   flush();
@@ -169,9 +180,92 @@ test("the list is every file the base says changed", async () => {
 
   await settle(() => rows(host).length === 2, "both rows");
   expect(labels(host)).toEqual(["alpha.ts", "src/beta.ts"]);
-  expect(host.textContent).toContain("2 files");
   expect(host.textContent).toContain("+2");
   expect(host.textContent).toContain("−2");
+});
+
+/*
+ * A file's stat is the one a diff tool's own title carries: `+1/−1`, the
+ * slash binding the two counts so neither reads as a stray number on a bar
+ * that also holds a path. A file that only grew has one count and no slash to
+ * divide it from — a trailing `/` would promise a removal that never happened.
+ */
+test("added and removed are divided by a slash, and only when both are there", async () => {
+  await seed();
+  await Bun.write(join(repo, "gamma.ts"), "only\nmore\n");
+  const host = await open();
+
+  await settle(() => rows(host).length === 3, "all three rows");
+  const [alpha, , gamma] = rows(host);
+  expect(alpha?.textContent).toContain("+1/−1");
+  expect(gamma?.textContent).toContain("+2");
+  expect(gamma?.textContent).not.toContain("/−");
+  // The whole tree's stat over the pane reads the same way.
+  expect(host.querySelector("header")?.textContent).toContain("+4/−2");
+});
+
+/*
+ * A diff is read by scrolling, and a hunk halfway down a long file says
+ * nothing about which file it belongs to. The title bar pins to the top of the
+ * list for as long as any of its file is on screen, and is opaque while it is
+ * there: the bar of the next file slides over this one on its way past, and
+ * two see-through bars would be legible through each other. It claims no
+ * layer of its own, or it would ride over the composer floating at the foot
+ * rather than passing behind it.
+ */
+test("a file's title bar pins to the top of the list, opaque", async () => {
+  await seed();
+  const host = await open();
+  await settle(() => rows(host).length === 2, "both rows");
+
+  const bar = (): HTMLElement => rows(host)[0]?.parentElement as HTMLElement;
+  expect(bar().className).toContain("sticky");
+  expect(bar().className).toContain("top-0");
+  expect(bar().className).toContain("bg-neutral-925");
+  expect(bar().className).not.toMatch(/\bz-\d/);
+
+  rows(host)[0]?.click();
+  await settle(() => host.textContent?.includes("THREE") === true, "the hunks");
+  expect(bar().className).toContain("sticky");
+  expect(bar().className).toContain("bg-neutral-850");
+});
+
+/*
+ * A row is a thing to click, so all of it is the button: the padding that
+ * gives the row its height belongs to the button rather than the bar around
+ * it, or the top and bottom few pixels of every row swallow a click. The seen
+ * box stretches the same way, for the same reason.
+ */
+test("the row is the button, top to bottom", async () => {
+  await seed();
+  const host = await open();
+  await settle(() => rows(host).length === 2, "both rows");
+
+  const row = rows(host)[0] as HTMLElement;
+  const bar = row.parentElement as HTMLElement;
+  expect(bar.className).not.toMatch(/\bpy-/);
+  expect(row.className).toContain("py-1.5");
+  expect(
+    host.querySelector<HTMLElement>("[role='checkbox']")?.className
+  ).toContain("self-stretch");
+});
+
+/*
+ * A move is one path, not two: everything the old and new names agree on is
+ * said once and the segments that changed are braced, exactly as the patch
+ * tool titles a move — same arrow, same strike through what is gone.
+ */
+test("a renamed file reads as one braced path", async () => {
+  await seed();
+  await git(repo, ["add", "-A"]);
+  await git(repo, ["commit", "-m", "edits"]);
+  await git(repo, ["mv", "src/beta.ts", "src/gamma.ts"]);
+  const host = await open();
+
+  await settle(() => rows(host).length === 1, "the renamed row");
+  const row = rows(host)[0] as HTMLElement;
+  expect(row.textContent).toContain("src/{beta.ts ➝ gamma.ts}");
+  expect(row.querySelector(".line-through")?.textContent).toBe("beta.ts");
 });
 
 test("expanding reads the file once, and never again", async () => {
@@ -220,7 +314,7 @@ test("changing the base reads the list again and forgets the hunks", async () =>
   host.querySelector<HTMLButtonElement>("[aria-haspopup='listbox']")?.click();
   flush();
   [...host.querySelectorAll<HTMLElement>("[role='option']")]
-    .find((option) => option.textContent?.includes("index vs HEAD"))
+    .find((option) => option.textContent?.includes("Staged"))
     ?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
 
   await settle(() => rows(host).length === 1, "the staged list");
@@ -269,14 +363,38 @@ test("a clean tree says so", async () => {
   expect(rows(host)).toEqual([]);
 });
 
-test("the Diff button opens the overlay while an agent is working", async () => {
-  await seed();
+/** The shell's own Diff button, with the change set as its destination. */
+function shell(): HTMLElement {
   const host = mountPoint();
   dispose = render(
-    () => <Topbar store={store} compact={false} onToggleSidebar={() => {}} />,
+    () => <Shell store={store} settings={new Settings()} />,
     host
   );
   flush();
+  return host;
+}
+
+function changesPane(host: HTMLElement): HTMLElement | null {
+  return host.querySelector<HTMLElement>("section[aria-label='Changes']");
+}
+
+/** The bottom-origin scroller, which is the transcript and nothing else. */
+function transcript(host: HTMLElement): HTMLElement | null {
+  return host.querySelector<HTMLElement>("div.h-full.flex-col-reverse");
+}
+
+function openDiff(host: HTMLElement): void {
+  host.querySelector<HTMLButtonElement>("[aria-haspopup='listbox']")?.click();
+  flush();
+  host
+    .querySelector<HTMLButtonElement>("[title='Read what has changed']")
+    ?.click();
+  flush();
+}
+
+test("the Diff button opens the change set while an agent is working", async () => {
+  await seed();
+  const host = shell();
   store.ingest({
     type: "session_state",
     writable: true,
@@ -301,10 +419,62 @@ test("the Diff button opens the overlay while an agent is working", async () => 
   expect(diff?.disabled).toBe(false);
 
   diff?.click();
-  await settle(() => rows(host).length === 2, "the overlay's rows");
-  expect(
-    host.querySelector<HTMLDialogElement>("[aria-label='Changes']")?.open
-  ).toBe(true);
+  await settle(() => rows(host).length === 2, "the change set's rows");
+  expect(changesPane(host)).not.toBeNull();
+});
+
+/**
+ * The change set takes the transcript's place rather than covering it, and the
+ * composer stays where it was: a hunk can be read and answered without going
+ * back first.
+ */
+test("the change set replaces the transcript and keeps the composer", async () => {
+  await seed();
+  watch();
+  const host = shell();
+  store.ingest({
+    seq: 1,
+    type: "message",
+    messageId: "u1",
+    role: "user",
+    text: "the conversation so far",
+    timestamp: 0,
+  });
+  flush();
+  expect(transcript(host)?.textContent).toContain("the conversation so far");
+
+  openDiff(host);
+  await settle(() => rows(host).length === 2, "the change set's rows");
+
+  expect(transcript(host)).toBeNull();
+  expect(host.querySelector("textarea")).not.toBeNull();
+  expect(host.querySelector("dialog[open]")).toBeNull();
+
+  host
+    .querySelector<HTMLButtonElement>("[aria-label='Back to the conversation']")
+    ?.click();
+  flush();
+  expect(changesPane(host)).toBeNull();
+  expect(transcript(host)?.textContent).toContain("the conversation so far");
+});
+
+/** Reopening reads the rows out of the store that outlived the last visit. */
+test("closing and reopening does not read the repository again", async () => {
+  await seed();
+  watch();
+  const host = shell();
+  openDiff(host);
+  await settle(() => rows(host).length === 2, "the change set's rows");
+  const reads = asked("list_changes").length;
+
+  host
+    .querySelector<HTMLButtonElement>("[aria-label='Back to the conversation']")
+    ?.click();
+  flush();
+  openDiff(host);
+
+  await settle(() => rows(host).length === 2, "the rows again");
+  expect(asked("list_changes").length).toBe(reads);
 });
 
 test("the list paints five hundred rows, and the next five hundred on request", async () => {
@@ -393,4 +563,90 @@ test("a binary file reads as one row and the size of each side", async () => {
   );
   expect(host.textContent).toContain("1.2 kB → 3.4 kB");
   expect(host.querySelector("img")).toBeNull();
+});
+
+/** A committed file long enough to leave gaps, edited at both ends. */
+async function longFile(
+  lines: number,
+  edits: readonly number[]
+): Promise<void> {
+  const text = Array.from({ length: lines }, (_, at) => `line ${at + 1}`);
+  await Bun.write(join(repo, "long.ts"), `${text.join("\n")}\n`);
+  await git(repo, ["add", "-A"]);
+  await git(repo, ["commit", "-m", "long"]);
+  for (const edit of edits) {
+    text[edit - 1] = `LINE ${edit}`;
+  }
+  await Bun.write(join(repo, "long.ts"), `${text.join("\n")}\n`);
+}
+
+function gaps(host: HTMLElement): readonly HTMLButtonElement[] {
+  return [
+    ...host.querySelectorAll<HTMLButtonElement>("button[aria-label^='Show ']"),
+  ];
+}
+
+/** The rows the hunks skip, counted and offered rather than merely marked. */
+test("a gap says how many lines it hides, and opens them when clicked", async () => {
+  await longFile(60, [3, 55]);
+  const host = await open();
+  await settle(() => rows(host).length === 1, "the row");
+
+  rows(host)[0]?.click();
+  await settle(() => gaps(host).length === 2, "both gaps");
+
+  expect(host.textContent).toContain("45 lines unchanged");
+  expect(host.textContent).toContain("2 lines unchanged");
+  expect(host.textContent).not.toContain("line 30");
+
+  gaps(host)[0]?.click();
+  await settle(
+    () => host.textContent?.includes("line 30") === true,
+    "the lines behind the gap"
+  );
+
+  expect(asked("read_lines")).toEqual([
+    {
+      type: "read_lines",
+      sessionId: store.state.sessionId,
+      base: { kind: "worktree" },
+      path: "long.ts",
+      spans: [{ start: 7, end: 51 }],
+    },
+  ]);
+  expect(host.textContent).not.toContain("45 lines unchanged");
+  expect(host.textContent).toContain("2 lines unchanged");
+});
+
+/** A gap no reader wants whole opens a step at a time, from each hunk it touches. */
+test("a gap too wide to swallow opens a step against each hunk", async () => {
+  await longFile(400, [3, 395]);
+  const host = await open();
+  await settle(() => rows(host).length === 1, "the row");
+
+  rows(host)[0]?.click();
+  await settle(() => gaps(host).length > 0, "the gap");
+  expect(host.textContent).toContain("385 lines unchanged");
+
+  gaps(host)[0]?.click();
+  await settle(
+    () => host.textContent?.includes("line 7") === true,
+    "the first step"
+  );
+
+  expect(asked("read_lines")[0]).toMatchObject({
+    spans: [
+      { start: 7, end: 31 },
+      { start: 367, end: 391 },
+    ],
+  });
+  expect(host.textContent).toContain("line 391");
+  expect(host.textContent).toContain("335 lines unchanged");
+
+  gaps(host)[0]?.click();
+  await settle(
+    () => host.textContent?.includes("285 lines unchanged") === true,
+    "the second step"
+  );
+  expect(asked("read_lines")).toHaveLength(2);
 });

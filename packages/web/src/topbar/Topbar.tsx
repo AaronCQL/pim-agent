@@ -1,10 +1,9 @@
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 
-import { DiffOverlay } from "../diff/DiffOverlay";
 import { abbreviateHome, baseName } from "../format";
 import type { SessionStore } from "../session/SessionStore";
 import type { ConnectionStatus } from "../ws/WsClient";
-import { CHIP } from "../ui/classes";
+import { CHIP_BUTTON } from "../ui/classes";
 import { Fitted } from "../ui/Fitted";
 import { BranchMenu } from "./BranchMenu";
 import { DirectoryModal } from "./DirectoryModal";
@@ -16,11 +15,11 @@ export function Topbar(props: {
   readonly store: SessionStore;
   readonly compact: boolean;
   readonly onToggleSidebar: () => void;
+  readonly onOpenDiff: () => void;
   readonly onOpenSettings?: () => void;
   readonly graceMs?: number;
 }) {
   const [choosing, setChoosing] = createSignal(false);
-  const [reviewing, setReviewing] = createSignal(false);
   const offline = createOffline(
     () => props.store.state.connection,
     () => props.graceMs ?? GRACE_MS
@@ -43,7 +42,7 @@ export function Topbar(props: {
         {(cwd) => (
           <button
             type="button"
-            class={`${CHIP} hover:bg-neutral-800 hover:text-neutral-50`}
+            class={CHIP_BUTTON}
             aria-label={`Working directory ${abbreviateHome(cwd())}, open another`}
             title={cwd()}
             onClick={() => {
@@ -77,9 +76,7 @@ export function Topbar(props: {
             store={props.store}
             branch={branch()}
             compact={props.compact}
-            onOpenDiff={() => {
-              setReviewing(true);
-            }}
+            onOpenDiff={props.onOpenDiff}
           />
         )}
       </Show>
@@ -91,16 +88,6 @@ export function Topbar(props: {
           setChoosing(false);
         }}
       />
-
-      <Show when={reviewing()}>
-        <DiffOverlay
-          open={true}
-          store={props.store}
-          onClose={() => {
-            setReviewing(false);
-          }}
-        />
-      </Show>
     </div>
   );
 }

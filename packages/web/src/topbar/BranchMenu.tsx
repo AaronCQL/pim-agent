@@ -3,7 +3,7 @@ import { createMemo, createSignal, onCleanup, Show } from "solid-js";
 import type { GitBranch } from "#core/shared/Git";
 import { relativeTime } from "../format";
 import type { SessionStore } from "../session/SessionStore";
-import { CHIP, PILL } from "../ui/classes";
+import { CHIP_BUTTON, PILL } from "../ui/classes";
 import {
   Combobox,
   createComboboxNavigation,
@@ -176,8 +176,6 @@ export function BranchMenu(props: {
     readonly operation: "pull" | "push";
     readonly icon: string;
     readonly label: string;
-    readonly count: number;
-    readonly tone?: string;
     readonly title: string;
     readonly disabled: boolean;
   }) => (
@@ -199,9 +197,6 @@ export function BranchMenu(props: {
         <Spinner />
       </Show>
       {sync.label}
-      <Show when={sync.count > 0}>
-        <span class={sync.tone}>{sync.count}</span>
-      </Show>
     </button>
   );
 
@@ -214,7 +209,7 @@ export function BranchMenu(props: {
         aria-expanded={panel.open() ? "true" : "false"}
         aria-label={`Branch ${props.branch}, switch or sync`}
         title={props.branch}
-        class={`${CHIP} hover:bg-neutral-800 hover:text-neutral-50`}
+        class={CHIP_BUTTON}
         onClick={panel.toggle}
         onKeyDown={(event: KeyboardEvent) => {
           navigation.onKeyDown(event);
@@ -264,8 +259,6 @@ export function BranchMenu(props: {
                 operation="pull"
                 icon="i-griddy-icons:arrow-down"
                 label="Pull"
-                count={state().behind}
-                tone="text-rose-400"
                 title="Fast-forward from the remote"
                 disabled={frozen()}
               />
@@ -273,7 +266,6 @@ export function BranchMenu(props: {
                 operation="push"
                 icon="i-griddy-icons:arrow-up"
                 label="Push"
-                count={state().ahead}
                 title="Publish this branch"
                 disabled={running() !== undefined}
               />
@@ -288,9 +280,6 @@ export function BranchMenu(props: {
               >
                 <span class="i-griddy-icons:code-compare size-4 shrink-0" />
                 Diff
-                <Show when={state().dirtyCount > 0}>
-                  <span class="text-amber-400">{state().dirtyCount}</span>
-                </Show>
               </button>
             </div>
 

@@ -14,6 +14,9 @@ export const QUIET =
 export const CHIP =
   "flex h-8 max-w-max min-w-0 flex-1 items-center gap-1.5 rounded-lg bg-neutral-850 px-2 text-sm text-neutral-350";
 
+/** A topbar chip that is pressed: the stated chip, lit under a pointer. */
+export const CHIP_BUTTON = `${CHIP} hover:bg-neutral-800 hover:text-neutral-50`;
+
 /** A composer pill: dark and quiet until a pointer picks it out with a ring. */
 export const PILL =
   "flex items-center justify-center gap-1.5 rounded-full bg-neutral-900 text-neutral-350 ring-neutral-600 hover:text-neutral-100 hover:ring-1";

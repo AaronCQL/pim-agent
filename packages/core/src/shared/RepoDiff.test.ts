@@ -397,7 +397,7 @@ describe("the long tail of one file", () => {
       added: 0,
       removed: 0,
     });
-    expect(diff).toEqual({ path: "a.txt", hunks: [] });
+    expect(diff).toEqual({ path: "a.txt", hunks: [], total: 3 });
   });
 
   test("a symlink diffs as the path it points at", async () => {
@@ -484,7 +484,7 @@ describe("the long tail of one file", () => {
       added: 0,
       removed: 0,
     });
-    expect(diff).toEqual({ path: "empty.txt", hunks: [] });
+    expect(diff).toEqual({ path: "empty.txt", hunks: [], total: 0 });
 
     await git(root, ["add", "-A"]);
     const staged = await RepoDiff.listChanges(
@@ -504,7 +504,7 @@ describe("the long tail of one file", () => {
       added: 0,
       removed: 0,
     });
-    expect(tracked).toEqual({ path: "empty.txt", hunks: [] });
+    expect(tracked).toEqual({ path: "empty.txt", hunks: [], total: 0 });
   });
 
   test("a path gitattributes marks -diff is reported as binary", async () => {
@@ -724,5 +724,134 @@ describe("the calls themselves", () => {
     expect(
       (await RepoDiff.listChanges(root, { kind: "worktree" }, monitor)).files
     ).toEqual([]);
+  });
+});
+
+describe("the lines behind a gap", () => {
+  /** A file long enough that a diff of it leaves gaps to open. */
+  function long(): string {
+    return `${Array.from({ length: 60 }, (_, at) => `line ${at + 1}`).join("\n")}\n`;
+  }
+
+  test("a span comes back whole, 1-based and inclusive", async () => {
+    const root = await repo();
+    await write(root, "long.txt", long());
+    await commit(root, "long");
+    await write(root, "long.txt", long().replace("line 1\n", "LINE 1\n"));
+
+    const read = await RepoDiff.readLines(
+      root,
+      { kind: "worktree" },
+      "long.txt",
+      [
+        { start: 10, end: 12 },
+        { start: 20, end: 20 },
+      ],
+      monitor
+    );
+
+    expect(read).toEqual({
+      path: "long.txt",
+      runs: [
+        { start: 10, lines: ["line 10", "line 11", "line 12"] },
+        { start: 20, lines: ["line 20"] },
+      ],
+    });
+  });
+
+  test("a span running past either end of the file is clamped to it", async () => {
+    const root = await repo();
+
+    const read = await RepoDiff.readLines(
+      root,
+      { kind: "worktree" },
+      "a.txt",
+      [
+        { start: 0, end: 2 },
+        { start: 40, end: 80 },
+      ],
+      monitor
+    );
+
+    expect(read.runs).toEqual([{ start: 1, lines: ["one", "two"] }]);
+  });
+
+  test("a staged base reads the index, not the working tree beside it", async () => {
+    const root = await repo();
+    await write(root, "a.txt", "one\nstaged\nthree\n");
+    await git(root, ["add", "-A"]);
+    await write(root, "a.txt", "one\nworktree\nthree\n");
+
+    const read = await RepoDiff.readLines(
+      root,
+      { kind: "staged" },
+      "a.txt",
+      [{ start: 2, end: 2 }],
+      monitor
+    );
+
+    expect(read.runs).toEqual([{ start: 2, lines: ["staged"] }]);
+  });
+
+  test("an untracked file is read as it lies", async () => {
+    const root = await repo();
+    await write(root, "loose.txt", "fresh\nink\n");
+
+    const read = await RepoDiff.readLines(
+      root,
+      { kind: "worktree" },
+      "loose.txt",
+      [{ start: 2, end: 2 }],
+      monitor
+    );
+
+    expect(read.runs).toEqual([{ start: 2, lines: ["ink"] }]);
+  });
+
+  test("a file with no side to read says so", async () => {
+    const root = await repo();
+
+    await expect(
+      RepoDiff.readLines(
+        root,
+        { kind: "worktree" },
+        "gone.txt",
+        [{ start: 1, end: 1 }],
+        monitor
+      )
+    ).rejects.toThrow(/could not read gone.txt/);
+  });
+
+  test("a clipped diff says nothing about where the file ends", async () => {
+    const root = await repo();
+    const lines = Array.from({ length: 5000 }, (_, at) => `line ${at + 1}`);
+    await write(root, "huge.txt", `${lines.join("\n")}\n`);
+
+    const diff = await RepoDiff.fileDiff(
+      root,
+      { kind: "worktree" },
+      "huge.txt",
+      monitor
+    );
+
+    expect(diff.truncated).toBe(true);
+    expect(diff.total).toBeUndefined();
+  });
+
+  test("a diff carries the file's length, so a reader knows where it ends", async () => {
+    const root = await repo();
+    await write(root, "long.txt", long());
+    await commit(root, "long");
+    await write(root, "long.txt", long().replace("line 1\n", "LINE 1\n"));
+
+    const diff = await RepoDiff.fileDiff(
+      root,
+      { kind: "worktree" },
+      "long.txt",
+      monitor
+    );
+
+    expect(diff.total).toBe(60);
+    expect(diff.hunks).toHaveLength(1);
   });
 });

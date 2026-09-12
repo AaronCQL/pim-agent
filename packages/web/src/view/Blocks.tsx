@@ -23,6 +23,7 @@ import { ImageTile } from "../ui/ImageTile";
 import { Attachments } from "./Attachments";
 import { Highlight, type Token } from "./highlight";
 import {
+  DIFF_GAP_CLASS,
   DIFF_EMPHASIS_CLASSES,
   DIFF_GUTTER_CLASSES,
   DIFF_ROW_CLASSES,
@@ -165,11 +166,13 @@ function DiffBlock(props: { readonly block: BlockOf<"diff"> }) {
         {(hunk, index) => (
           <>
             <Show when={index() > 0}>
-              <div class={`whitespace-pre ${DIFF_GUTTER_CLASSES.context}`}>
+              <div
+                class={`whitespace-pre ${DIFF_GAP_CLASS} ${DIFF_GUTTER_CLASSES.context}`}
+              >
                 {`${" ".repeat(width() + 1)}   ⋯`}
               </div>
             </Show>
-            <Hunk hunk={hunk} lang={lang()} width={width()} />
+            <UnifiedHunk hunk={hunk} lang={lang()} width={width()} />
           </>
         )}
       </For>
@@ -177,7 +180,7 @@ function DiffBlock(props: { readonly block: BlockOf<"diff"> }) {
   );
 }
 
-function Hunk(props: {
+export function UnifiedHunk(props: {
   readonly hunk: DiffHunk;
   readonly lang: string | undefined;
   readonly width: number;

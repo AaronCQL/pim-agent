@@ -17,7 +17,7 @@ import { PimVersion } from "#core/shared/PimVersion";
 import { SubagentLogs } from "#core/shared/SubagentLogs";
 import type { UpdateOutcome } from "#core/shared/Updater";
 import type { Command } from "#protocol/Command";
-import type { ChangeList, FileDiff } from "#protocol/Diff";
+import type { ChangeList, FileDiff, FileLines } from "#protocol/Diff";
 import { CLOSE_PROTOCOL_MISMATCH, PROTOCOL_VERSION } from "#protocol/Protocol";
 import type {
   ModelView,
@@ -63,6 +63,7 @@ type Outcome = {
   readonly branches?: readonly GitBranch[];
   readonly changes?: ChangeList;
   readonly fileDiff?: FileDiff;
+  readonly fileLines?: FileLines;
   readonly restored?: readonly string[];
   readonly after?: () => void;
 };
@@ -309,6 +310,16 @@ export class WsGateway {
             command.path,
             this.git,
             command.context
+          ),
+        };
+      case "read_lines":
+        return {
+          fileLines: await RepoDiff.readLines(
+            this.requireStream(connection).host.cwd,
+            command.base,
+            command.path,
+            command.spans,
+            this.git
           ),
         };
       case "checkout": {

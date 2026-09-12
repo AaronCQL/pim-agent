@@ -52,6 +52,24 @@ export type FileDiff = {
   /** Byte size of each side of a binary file, when git or the working tree can say. */
   readonly oldBytes?: number;
   readonly newBytes?: number;
+  /** Lines in the side context is read from; absent on a clipped diff, whose end is not the file's. */
+  readonly total?: number;
+};
+
+/** A stretch of one file, 1-based and inclusive, numbered on the side `readLines` reads. */
+export type LineSpan = {
+  readonly start: number;
+  readonly end: number;
+};
+
+export type LineRun = {
+  readonly start: number;
+  readonly lines: readonly string[];
+};
+
+export type FileLines = {
+  readonly path: string;
+  readonly runs: readonly LineRun[];
 };
 
 const DEFAULT_CONTEXT = 3;
@@ -64,6 +82,12 @@ const PATCH_TEXT_LIMIT = 1_000_000;
 
 /** Past this an untracked file is reported as binary rather than read. */
 const UNTRACKED_BYTE_LIMIT = 1_000_000;
+
+/** Past this a file is diffed but never read whole, so no gap of it can be opened. */
+const CONTEXT_BYTE_LIMIT = 1_000_000;
+
+/** Most lines one `readLines` hands back, however many spans asked. */
+const CONTEXT_LINE_LIMIT = 2000;
 
 const NUL_SCAN_BYTES = 8192;
 
@@ -396,7 +420,7 @@ async function untrackedDiff(
     DiffLines.fromText(file.text),
     context
   );
-  return clipped(path, diff?.hunks ?? [], false);
+  return clipped(path, diff?.hunks ?? [], false, file.lines);
 }
 
 type Clip = {
@@ -476,14 +500,44 @@ function clipHunks(hunks: readonly ToolDiffHunk[]): Clip {
 function clipped(
   path: string,
   hunks: readonly ToolDiffHunk[],
-  cut: boolean
+  cut: boolean,
+  total: number | undefined
 ): FileDiff {
   const clip = clipHunks(hunks);
+  const whole = !clip.truncated && !cut;
   return {
     path,
     hunks: clip.hunks,
-    ...(clip.truncated || cut ? { truncated: true } : {}),
+    ...(whole ? {} : { truncated: true }),
+    ...(total === undefined || !whole ? {} : { total }),
   };
+}
+
+/**
+ * The text of the side a gap is read from: the new one, which is the index
+ * blob where the base has staged it and the working tree everywhere else. A
+ * file too big to hold, or gone from the side asked for, has no text at all.
+ */
+async function sideText(
+  cwd: string,
+  path: string,
+  entry: Entry | undefined
+): Promise<string | undefined> {
+  if (entry?.headSha !== undefined) {
+    const result = await git(cwd, ["cat-file", "blob", entry.headSha]);
+    return result.code === 0 && result.stdout.length <= CONTEXT_BYTE_LIMIT
+      ? result.stdout
+      : undefined;
+  }
+  const file = Bun.file(join(cwd, path));
+  if (file.size > CONTEXT_BYTE_LIMIT || !(await file.exists())) {
+    return undefined;
+  }
+  return await file.text().catch(() => undefined);
+}
+
+function totalOf(text: string | undefined): number | undefined {
+  return text === undefined ? undefined : DiffLines.fromText(text).lines.length;
 }
 
 async function blobSize(
@@ -578,19 +632,22 @@ async function fileDiff(
       return await untrackedDiff(cwd, path, context);
     }
     const paths = entry?.oldPath === undefined ? [path] : [entry.oldPath, path];
-    const patch = await read(
-      cwd,
-      [
-        "diff",
-        "--no-color",
-        `-U${String(context)}`,
-        "--find-renames",
-        ...args,
-        "--",
-        ...paths,
-      ],
-      `could not diff ${path}`
-    );
+    const [patch, text] = await Promise.all([
+      read(
+        cwd,
+        [
+          "diff",
+          "--no-color",
+          `-U${String(context)}`,
+          "--find-renames",
+          ...args,
+          "--",
+          ...paths,
+        ],
+        `could not diff ${path}`
+      ),
+      sideText(cwd, path, entry),
+    ]);
     if (BINARY_PATCH.test(patch)) {
       return await binaryDiff(cwd, path, entry);
     }
@@ -598,8 +655,48 @@ async function fileDiff(
     return clipped(
       path,
       DiffPatch.fromUnified(path, clip.text)?.hunks ?? [],
-      clip.cut
+      clip.cut,
+      totalOf(text)
     );
+  });
+}
+
+/** The lines a reader asked to see of a file they are already reading a diff of, as they are. */
+async function readLines(
+  cwd: string,
+  base: DiffBase,
+  path: string,
+  spans: readonly LineSpan[],
+  monitor: GitMonitor
+): Promise<FileLines> {
+  return await serialise(monitor, cwd, async () => {
+    const args = await baseArgs(cwd, base);
+    const entry = (await rawEntries(cwd, args)).find(
+      (candidate) => candidate.path === path
+    );
+    const text = await sideText(cwd, path, entry);
+    if (text === undefined) {
+      throw new Error(`could not read ${path}`);
+    }
+    const lines = DiffLines.fromText(text).lines;
+    const runs: LineRun[] = [];
+    let budget = CONTEXT_LINE_LIMIT;
+
+    for (const span of spans) {
+      const start = Math.max(1, Math.trunc(span.start));
+      const end = Math.min(
+        lines.length,
+        Math.trunc(span.end),
+        start + budget - 1
+      );
+      if (end < start) {
+        continue;
+      }
+      runs.push({ start, lines: lines.slice(start - 1, end) });
+      budget -= end - start + 1;
+    }
+
+    return { path, runs };
   });
 }
 
@@ -624,4 +721,4 @@ async function serialise<T>(
   return held.value;
 }
 
-export const RepoDiff = { listChanges, fileDiff };
+export const RepoDiff = { listChanges, fileDiff, readLines };

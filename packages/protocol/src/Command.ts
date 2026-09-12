@@ -1,4 +1,4 @@
-import type { DiffBase } from "./Diff";
+import type { DiffBase, LineSpan } from "./Diff";
 import type { ProtocolVersion } from "./Protocol";
 
 /** A file already uploaded via `POST /upload`, by the id that endpoint answered with; never a client-local path. */
@@ -94,6 +94,15 @@ export type Command =
       readonly base: DiffBase;
       readonly path: string;
       readonly context?: number;
+    }
+  /** The file's own lines behind a gap between hunks, asked for when a reader opens one. */
+  | {
+      readonly id: string;
+      readonly type: "read_lines";
+      readonly sessionId: string;
+      readonly base: DiffBase;
+      readonly path: string;
+      readonly spans: readonly LineSpan[];
     }
   /** Refused while any session in the same directory is mid-turn: the agent may be halfway through an edit. */
   | {

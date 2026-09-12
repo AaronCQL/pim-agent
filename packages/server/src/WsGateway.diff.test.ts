@@ -164,6 +164,24 @@ test("file_diff takes the context it is sent", async () => {
   ]);
 });
 
+test("read_lines answers the file's own lines behind a gap", async () => {
+  const probe = await connect();
+
+  const response = await probe.send({
+    type: "read_lines",
+    sessionId: sessionOf(probe),
+    base: { kind: "worktree" },
+    path: "sp ace.txt",
+    spans: [{ start: 2, end: 3 }],
+  });
+
+  expect(response.success).toBe(true);
+  expect(response.fileLines).toEqual({
+    path: "sp ace.txt",
+    runs: [{ start: 2, lines: ["two", "three"] }],
+  });
+});
+
 test("an untracked file diffs against nothing", async () => {
   const probe = await connect();
 

@@ -1,12 +1,4 @@
-import {
-  createSignal,
-  createStore,
-  untrack,
-  type Accessor,
-  type Setter,
-  type Store,
-  type StoreSetter,
-} from "solid-js";
+import { createStore, untrack, type Store, type StoreSetter } from "solid-js";
 
 import type { ChangeSummary } from "#protocol/Diff";
 
@@ -21,19 +13,14 @@ export class Seen {
   public readonly state: Store<Marks>;
   private readonly setState: StoreSetter<Marks>;
   private readonly all: Record<string, Marks>;
-  private readonly ticked: Accessor<number>;
-  private readonly setTicked: Setter<number>;
   private where: string;
 
   public constructor() {
     this.all = read();
     this.where = "";
     const [state, setState] = createStore<Marks>({});
-    const [ticked, setTicked] = createSignal(0);
     this.state = state;
     this.setState = setState;
-    this.ticked = ticked;
-    this.setTicked = setTicked;
   }
 
   /** Adopts a working copy's ticks, forgetting every path this list no longer names. */
@@ -48,19 +35,11 @@ export class Seen {
       }
     }
     this.where = cwd;
-    this.put(
-      kept,
-      Object.keys(kept).filter((path) => kept[path] === listed[path]).length
-    );
+    this.put(kept);
   }
 
   public isSeen(file: ChangeSummary): boolean {
     return this.state[file.path] === file.fingerprint;
-  }
-
-  /** How many rows of the list last loaded are ticked at the fingerprint they carry now. */
-  public count(): number {
-    return this.ticked();
   }
 
   public toggle(file: ChangeSummary): void {
@@ -68,22 +47,12 @@ export class Seen {
       () => [file.path, file.fingerprint] as const
     );
     const next = { ...this.marks() };
-    const off = next[path] === fingerprint;
-    if (off) {
+    if (next[path] === fingerprint) {
       delete next[path];
     } else {
       next[path] = fingerprint;
     }
-    this.put(next, untrack(this.ticked) + (off ? -1 : 1));
-  }
-
-  public markAll(files: readonly ChangeSummary[]): void {
-    const listed = fingerprints(files);
-    this.put({ ...this.marks(), ...listed }, Object.keys(listed).length);
-  }
-
-  public clear(): void {
-    this.put({}, 0);
+    this.put(next);
   }
 
   // The written copy, read synchronously: a store write only lands on the next flush.
@@ -91,7 +60,7 @@ export class Seen {
     return this.all[this.where] ?? {};
   }
 
-  private put(marks: Marks, ticked: number): void {
+  private put(marks: Marks): void {
     if (Object.keys(marks).length === 0) {
       delete this.all[this.where];
     } else {
@@ -109,7 +78,6 @@ export class Seen {
         }
       }
     });
-    this.setTicked(ticked);
     try {
       localStorage.setItem(KEY, JSON.stringify(this.all));
     } catch {

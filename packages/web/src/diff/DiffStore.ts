@@ -1,4 +1,5 @@
 import {
+  createEffect,
   createSignal,
   createStore,
   untrack,
@@ -9,6 +10,7 @@ import {
 } from "solid-js";
 
 import type { ChangeSummary, DiffBase, FileDiff } from "#protocol/Diff";
+import { DiffExpand, type DiffGap } from "#core/view/DiffExpand";
 import type { SessionStore } from "../session/SessionStore";
 
 /** The bases the selector offers; `commit` and `branch` exist on the wire and have no UI. */
@@ -19,7 +21,15 @@ export type BaseKind = Extract<
 
 export type FileState =
   | { readonly kind: "loading" }
-  | { readonly kind: "ready"; readonly diff: FileDiff }
+  | {
+      readonly kind: "ready";
+      readonly diff: FileDiff;
+      /** Lines behind a gap this reader has since opened, by their new-side number. */
+      readonly lines: ReadonlyMap<number, string>;
+      readonly opening: boolean;
+      /** Why the last gap a reader opened stayed shut. */
+      readonly failed?: string;
+    }
   | { readonly kind: "error"; readonly message: string };
 
 export type DiffState = {
@@ -35,7 +45,7 @@ export type DiffState = {
   error: string | undefined;
 };
 
-/** One overlay's change set: what it is measured against, and the hunks read so far. */
+/** A working copy's change set: what it is measured against, and the hunks read so far. */
 export class DiffStore {
   public readonly state: Store<DiffState>;
   private readonly setState: StoreSetter<DiffState>;
@@ -68,11 +78,34 @@ export class DiffStore {
     this.setDiffs = setDiffs;
     this.files = files;
     this.setFiles = setFiles;
+
+    createEffect(
+      () => this.session.state.cwd,
+      (cwd, previous) => {
+        if (previous !== undefined && cwd !== previous) {
+          this.reset();
+        }
+      }
+    );
+
+    createEffect(
+      () => this.session.state.dirtyCount,
+      (count, previous) => {
+        if (previous !== undefined && count !== previous) {
+          this.markStale();
+        }
+      }
+    );
   }
 
   /** What is known about one file's hunks; absent until a reader expands it. */
   public fileState(path: string): FileState | undefined {
     return this.diffs[path];
+  }
+
+  /** The working copy these changes were read from. */
+  public cwd(): string {
+    return this.session.state.cwd;
   }
 
   /** Re-reads the file list and drops every hunk read against the last one. */
@@ -123,6 +156,21 @@ export class DiffStore {
     });
   }
 
+  /** Another working copy: every file, hunk and count read against the last one is void. */
+  public reset(): void {
+    this.generation += 1;
+    this.forget();
+    this.setFiles([]);
+    this.setState((draft) => {
+      draft.added = 0;
+      draft.removed = 0;
+      draft.truncated = false;
+      draft.stale = false;
+      draft.status = "idle";
+      draft.error = undefined;
+    });
+  }
+
   public setBase(base: BaseKind): void {
     if (untrack(() => this.state.base) === base) {
       return;
@@ -150,7 +198,7 @@ export class DiffStore {
         return;
       }
       this.setDiffs((draft) => {
-        draft[path] = { kind: "ready", diff };
+        draft[path] = { kind: "ready", diff, lines: new Map(), opening: false };
       });
     } catch (error) {
       if (mine !== this.generation) {
@@ -160,6 +208,44 @@ export class DiffStore {
         draft[path] = {
           kind: "error",
           message: (error as Error).message,
+        };
+      });
+    }
+  }
+
+  /** Reads the lines behind one gap and splices them into the file already open. */
+  public async open(path: string, gap: DiffGap): Promise<void> {
+    const state = untrack(() => this.diffs[path]);
+    if (state?.kind !== "ready" || state.opening) {
+      return;
+    }
+    const mine = this.generation;
+    this.setDiffs((draft) => {
+      draft[path] = { ...state, opening: true, failed: undefined };
+    });
+    try {
+      const read = await this.enqueue(() =>
+        this.session.readLines(path, this.base(), DiffExpand.spans(gap))
+      );
+      if (mine !== this.generation) {
+        return;
+      }
+      const lines = new Map(state.lines);
+      for (const run of read.runs) {
+        run.lines.forEach((text, index) => lines.set(run.start + index, text));
+      }
+      this.setDiffs((draft) => {
+        draft[path] = { ...state, lines, opening: false, failed: undefined };
+      });
+    } catch (error) {
+      if (mine !== this.generation) {
+        return;
+      }
+      this.setDiffs((draft) => {
+        draft[path] = {
+          ...state,
+          opening: false,
+          failed: (error as Error).message,
         };
       });
     }

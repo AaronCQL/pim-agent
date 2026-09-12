@@ -6,7 +6,13 @@ import { RemoteFilePickerSuggestionEngine } from "#core/picker/RemoteFilePickerS
 import type { DirectoryListing } from "#core/shared/Directories";
 import type { GitBranch } from "#core/shared/Git";
 import type { AttachmentRef, CommandDraft } from "#protocol/Command";
-import type { ChangeList, DiffBase, FileDiff } from "#protocol/Diff";
+import type {
+  ChangeList,
+  DiffBase,
+  FileDiff,
+  FileLines,
+  LineSpan,
+} from "#protocol/Diff";
 import type {
   AttachmentView,
   DurableEvent,
@@ -537,6 +543,25 @@ export class SessionStore {
       throw new Error(response.error ?? `could not diff ${path}`);
     }
     return response.fileDiff;
+  }
+
+  /** The file's own lines behind a gap, asked for only once a reader opens one. */
+  public async readLines(
+    path: string,
+    base: DiffBase,
+    spans: readonly LineSpan[]
+  ): Promise<FileLines> {
+    const response = await this.client.send({
+      type: "read_lines",
+      sessionId: this.attached(),
+      base,
+      path,
+      spans,
+    });
+    if (!response.success || !response.fileLines) {
+      throw new Error(response.error ?? `could not read ${path}`);
+    }
+    return response.fileLines;
   }
 
   /**
