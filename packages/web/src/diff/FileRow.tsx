@@ -19,7 +19,6 @@ import { diffSide } from "../view/Blocks";
 import { CommentCard } from "./CommentCard";
 import {
   ReviewComments,
-  type Comment,
   type CommentAnchor,
   type CommentSide,
 } from "./Comments";
@@ -54,6 +53,8 @@ const ROLES = {
 } as const satisfies Record<Role, string>;
 
 const UNITS = ["B", "kB", "MB", "GB"] as const;
+
+const NO_IDS: readonly string[] = [];
 
 function bytes(count: number): string {
   let size = count;
@@ -140,27 +141,25 @@ export function FileRow(props: {
 
   const badge = createMemo(() => comments?.count(props.file.path) ?? 0);
 
-  const fileComments = createMemo<readonly Comment[]>(() =>
-    comments === undefined
-      ? []
-      : comments
-          .list(props.file.path)
-          .filter((comment) => comment.start === undefined)
-  );
-
-  const card = (comment: Comment): Element => (
-    <CommentCard
-      comment={comment}
-      outdated={comment.fingerprint !== props.file.fingerprint}
-      focus={comment.id === untrack(writing)?.id}
-      onWrite={(text) => {
-        comments?.write(comment.id, text);
-      }}
-      onRemove={() => {
-        comments?.remove(comment.id);
-        setWriting((held) => (held?.id === comment.id ? undefined : held));
-      }}
-    />
+  // The cards are listed by id: a comment is a new object on every keystroke,
+  // and a list of those would rebuild the box it was typed into.
+  const card = (id: string): Element => (
+    <Show when={comments?.one(id)}>
+      {(held) => (
+        <CommentCard
+          comment={held()}
+          outdated={held().fingerprint !== props.file.fingerprint}
+          focus={id === untrack(writing)?.id}
+          onWrite={(text) => {
+            comments?.write(id, text);
+          }}
+          onRemove={() => {
+            comments?.remove(id);
+            setWriting((pending) => (pending?.id === id ? undefined : pending));
+          }}
+        />
+      )}
+    </Show>
   );
 
   // A handler reads the file rather than tracking it, and Solid asks to be told so.
@@ -199,11 +198,11 @@ export function FileRow(props: {
       <For
         each={
           number === undefined
-            ? []
-            : comments?.at(props.file.path, side, number)
+            ? NO_IDS
+            : comments?.ids(props.file.path, side, number)
         }
       >
-        {(comment) => card(comment)}
+        {(id) => card(id)}
       </For>
     );
   };
@@ -226,35 +225,16 @@ export function FileRow(props: {
           so a row you are merely pointing at never passes for the open one.
           Only the bar — the hunks below stay on the page, or the lit block
           would be the file rather than its handle. */}
-      {/* The bar carries no padding of its own: the expand button does, so the
-          whole height of the row answers a click rather than the line of text
-          in the middle of it. */}
+      {/* Both buttons stretch the full height of the bar, so the whole row
+          answers a click rather than the line of text in the middle of it. */}
       <div
-        class={`sticky top-0 z-1 flex w-full items-center gap-2 pl-3 text-sm ${open() ? "bg-neutral-850" : "bg-neutral-925 hover:bg-neutral-900"}`}
+        class={`sticky top-0 z-1 flex w-full items-center gap-2 px-3 text-sm ${open() ? "bg-neutral-850" : "bg-neutral-925 hover:bg-neutral-900"}`}
       >
-        <button
-          type="button"
-          role="checkbox"
-          aria-checked={props.picked ? "true" : "false"}
-          aria-label={`Pick ${props.file.path}`}
-          title="Include in the commit"
-          class="flex w-5 shrink-0 items-center justify-center self-stretch rounded text-neutral-500 hover:text-neutral-100"
-          onClick={props.onTogglePicked}
-        >
-          <span
-            class={
-              props.picked
-                ? "i-griddy-icons:checkbox-filled size-4 text-indigo-400"
-                : "i-griddy-icons:checkbox size-4"
-            }
-            aria-hidden="true"
-          />
-        </button>
         <button
           type="button"
           aria-expanded={open() ? "true" : "false"}
           aria-label={props.file.path}
-          class="flex min-w-0 flex-1 items-center gap-2 py-1.5 pr-3 text-left"
+          class="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left"
           onClick={toggle}
         >
           <span
@@ -298,6 +278,24 @@ export function FileRow(props: {
             </span>
           </Show>
         </button>
+        <button
+          type="button"
+          role="checkbox"
+          aria-checked={props.picked ? "true" : "false"}
+          aria-label={`Pick ${props.file.path}`}
+          title="Include in the commit"
+          class="flex w-5 shrink-0 items-center justify-center self-stretch rounded text-neutral-500 hover:text-neutral-100"
+          onClick={props.onTogglePicked}
+        >
+          <span
+            class={
+              props.picked
+                ? "i-griddy-icons:checkbox-filled size-4 text-indigo-400"
+                : "i-griddy-icons:checkbox size-4"
+            }
+            aria-hidden="true"
+          />
+        </button>
       </div>
 
       <Show when={open()}>
@@ -316,7 +314,9 @@ export function FileRow(props: {
               />
               add comment
             </button>
-            <For each={fileComments()}>{(comment) => card(comment)}</For>
+            <For each={comments?.ids(props.file.path) ?? NO_IDS}>
+              {(id) => card(id)}
+            </For>
           </Show>
           <Show when={props.state?.kind === "loading"}>
             <span class={`flex items-center gap-2 ${LEAD}`}>

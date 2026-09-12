@@ -97,6 +97,19 @@ function say(host: HTMLElement, text: string): void {
   flush();
 }
 
+/** One keystroke, as a browser reports it: the value already carries the character. */
+function press(
+  field: HTMLTextAreaElement,
+  text: string,
+  caret = text.length
+): void {
+  field.value = text;
+  field.selectionStart = caret;
+  field.selectionEnd = caret;
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+  flush();
+}
+
 test("a one-line comment says which line, a range says both", () => {
   expect(paint(comment()).host.textContent).toContain("line 141");
   expect(paint(comment({ end: 147 })).host.textContent).toContain(
@@ -127,6 +140,17 @@ test("a card blurred with nothing in it deletes itself", () => {
   box(written.host).dispatchEvent(new FocusEvent("blur"));
   flush();
   expect(written.removed).toBe(0);
+});
+
+/** The card reads what is in the box, not what its props said when it mounted. */
+test("a card blurred on what was just typed into it is kept", () => {
+  const card = paint(comment());
+  press(box(card.host), "worth keeping");
+  box(card.host).dispatchEvent(new FocusEvent("blur"));
+  flush();
+
+  expect(card.removed).toBe(0);
+  expect(card.written).toEqual(["worth keeping"]);
 });
 
 test("the cross deletes a comment that has something in it", () => {
@@ -309,12 +333,93 @@ test("the bar counts the comments its file is carrying", () => {
   flush();
   gutter(host, "Comment on new line 3").click();
   flush();
+  say(host, "the first range");
   gutter(host, "Comment on new line 2").click();
   flush();
+  say(host, "the second one");
 
   expect(comments.count(PATH)).toBe(2);
   expect(bar(PATH)).toContain("2");
   expect(bar(OTHER)).not.toContain("2");
+});
+
+/** A comment is a new object on every keystroke, and the card it is typed
+    into must outlive all of them. */
+test("typing keeps every character, and the box it is typed into", () => {
+  const comments = loaded();
+  const host = rows(comments, [summary(PATH)]);
+
+  gutter(host, "Comment on new line 2").click();
+  flush();
+  const field = box(host);
+  expect(document.activeElement).toBe(field);
+
+  for (const text of ["M", "Mo", "Mov", "Move"]) {
+    press(field, text);
+    expect(box(host)).toBe(field);
+    expect(field.isConnected).toBe(true);
+    expect(document.activeElement).toBe(field);
+  }
+
+  expect(host.querySelectorAll("textarea").length).toBe(1);
+  expect(comments.count(PATH)).toBe(1);
+  expect(comments.list(PATH)[0]?.text).toBe("Move");
+});
+
+test("a character typed into the middle leaves the caret after it", () => {
+  const comments = loaded();
+  const host = rows(comments, [summary(PATH)]);
+
+  gutter(host, "Comment on new line 2").click();
+  flush();
+  const field = box(host);
+  press(field, "move ths line");
+  press(field, "move this line", 8);
+
+  expect(box(host)).toBe(field);
+  expect(box(host).selectionStart).toBe(8);
+  expect(comments.list(PATH)[0]?.text).toBe("move this line");
+});
+
+test("a comment blurred on what was typed into it stays under its row", () => {
+  const comments = loaded();
+  const host = rows(comments, [summary(PATH)]);
+
+  gutter(host, "Comment on new line 2").click();
+  flush();
+  press(box(host), "worth keeping");
+  box(host).dispatchEvent(new FocusEvent("blur"));
+  flush();
+
+  expect(comments.count(PATH)).toBe(1);
+  expect(comments.list(PATH)[0]?.text).toBe("worth keeping");
+  expect(host.querySelectorAll("textarea").length).toBe(1);
+});
+
+test("a comment blurred before a word is typed goes away", () => {
+  const comments = loaded();
+  const host = rows(comments, [summary(PATH)]);
+
+  gutter(host, "Comment on new line 2").click();
+  flush();
+  box(host).dispatchEvent(new FocusEvent("blur"));
+  flush();
+
+  expect(comments.count(PATH)).toBe(0);
+  expect(host.querySelectorAll("textarea").length).toBe(0);
+});
+
+test("the pick box is the last thing on the bar, and not flush to its edge", () => {
+  const comments = loaded();
+  const host = rows(comments, [summary(PATH)]);
+  const title = host.querySelector<HTMLElement>("[aria-expanded]")!;
+  const bar = title.parentElement!;
+
+  expect(
+    [...bar.children].map((child) => child.getAttribute("aria-label"))
+  ).toEqual([PATH, `Pick ${PATH}`]);
+  expect(title.textContent).toContain("+1");
+  expect(bar.className).toContain("px-3");
 });
 
 test("the file itself can be commented on, with no line to its name", () => {

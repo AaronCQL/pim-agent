@@ -104,6 +104,37 @@ test("a comment is opened empty, written into, and read back by its path", () =>
   expect(comments.count("other.ts")).toBe(0);
 });
 
+/** The ids are what a row lists, so an edit must leave them exactly as they lay. */
+test("a keystroke moves the comment and nothing else", () => {
+  const comments = loaded();
+  const id = comments.open(anchor(12));
+  comments.open(anchor(12));
+  flush();
+  const before = comments.ids(PATH, "new", 12);
+
+  comments.write(id, "m");
+  flush();
+  comments.write(id, "mo");
+  flush();
+
+  expect(comments.ids(PATH, "new", 12)).toBe(before);
+  expect(before[0]).toBe(id);
+  expect(before.length).toBe(2);
+  expect(comments.one(id)?.text).toBe("mo");
+  expect(comments.count(PATH)).toBe(2);
+});
+
+test("a comment on the file itself is listed under no line", () => {
+  const comments = loaded();
+  const id = comments.open({ path: PATH, fingerprint: "f1" });
+  comments.open(anchor(12));
+  flush();
+
+  expect(comments.ids(PATH)).toEqual([id]);
+  expect(comments.ids(PATH, "new", 12).length).toBe(1);
+  expect(comments.one("nobody")).toBeUndefined();
+});
+
 test("a comment outlives the tab that wrote it", async () => {
   const comments = loaded();
   comments.write(comments.open(anchor(12)), "still here");

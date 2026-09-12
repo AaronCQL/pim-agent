@@ -62,8 +62,8 @@ export function CommentCard(props: {
         onInput={(event) => {
           props.onWrite(event.currentTarget.value);
         }}
-        onBlur={() => {
-          if (untrack(() => props.comment.text).trim() === "") {
+        onBlur={(event) => {
+          if (event.currentTarget.value.trim() === "") {
             props.onRemove();
           }
         }}

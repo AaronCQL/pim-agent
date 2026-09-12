@@ -36,18 +36,22 @@ export type CommentAnchor = {
   readonly quote?: string;
 };
 
+const NO_IDS: readonly string[] = [];
 const NONE: readonly Comment[] = [];
 
 /** What a reader has written against a working copy's changes, kept in this browser. */
 export class Comments {
+  /** Per id, so a keystroke wakes the one card it was typed into. */
+  private readonly byId: Store<Record<string, Comment>>;
+  private readonly setById: StoreSetter<Record<string, Comment>>;
   /** Per path, so a row tracks its own file's comments and no other row's. */
-  private readonly lists: Store<Record<string, readonly Comment[]>>;
-  private readonly setLists: StoreSetter<Record<string, readonly Comment[]>>;
+  private readonly lists: Store<Record<string, readonly string[]>>;
+  private readonly setLists: StoreSetter<Record<string, readonly string[]>>;
   private readonly counts: Store<Record<string, number>>;
   private readonly setCounts: StoreSetter<Record<string, number>>;
-  /** Per anchored line: a long diff would otherwise put a reader on one list per row. */
-  private readonly anchors: Store<Record<string, readonly Comment[]>>;
-  private readonly setAnchors: StoreSetter<Record<string, readonly Comment[]>>;
+  /** Per anchored spot: a long diff would otherwise put a reader on one list per row. */
+  private readonly anchors: Store<Record<string, readonly string[]>>;
+  private readonly setAnchors: StoreSetter<Record<string, readonly string[]>>;
   private readonly everything: Accessor<readonly Comment[]>;
   private readonly setEverything: Setter<readonly Comment[]>;
   private readonly held: Record<string, readonly Comment[]>;
@@ -60,14 +64,17 @@ export class Comments {
     this.where = "";
     this.sequence = 0;
     this.writing = false;
-    const [lists, setLists] = createStore<Record<string, readonly Comment[]>>(
+    const [byId, setById] = createStore<Record<string, Comment>>({});
+    const [lists, setLists] = createStore<Record<string, readonly string[]>>(
       {}
     );
     const [counts, setCounts] = createStore<Record<string, number>>({});
     const [anchors, setAnchors] = createStore<
-      Record<string, readonly Comment[]>
+      Record<string, readonly string[]>
     >({});
     const [everything, setEverything] = createSignal<readonly Comment[]>(NONE);
+    this.byId = byId;
+    this.setById = setById;
     this.lists = lists;
     this.setLists = setLists;
     this.counts = counts;
@@ -88,16 +95,34 @@ export class Comments {
   }
 
   public list(path: string): readonly Comment[] {
-    return this.lists[path] ?? NONE;
+    return this.lookup(this.lists[path] ?? NO_IDS);
   }
 
   public count(path: string): number {
     return this.counts[path] ?? 0;
   }
 
+  /**
+   * The ids anchored to one line of one side, or to the file itself when no
+   * line is named. An id outlives every edit of the comment it names, so the
+   * card a reader is typing into is never rebuilt under them.
+   */
+  public ids(
+    path: string,
+    side?: CommentSide,
+    line?: number
+  ): readonly string[] {
+    return this.anchors[anchorKey(path, side, line)] ?? NO_IDS;
+  }
+
   /** The comments anchored to one line of one side, in the order they were written. */
   public at(path: string, side: CommentSide, line: number): readonly Comment[] {
-    return this.anchors[anchorKey(path, side, line)] ?? NONE;
+    return this.lookup(this.ids(path, side, line));
+  }
+
+  /** One comment as it reads now; a card holds an id and asks for the rest. */
+  public one(id: string): Comment | undefined {
+    return this.byId[id];
   }
 
   /** Every comment on this working copy, in the order they were written. */
@@ -161,12 +186,18 @@ export class Comments {
     this.mutate(() => NONE);
   }
 
+  private lookup(ids: readonly string[]): readonly Comment[] {
+    return ids
+      .map((id) => this.byId[id])
+      .filter((comment) => comment !== undefined);
+  }
+
   private mutate(
     change: (list: readonly Comment[]) => readonly Comment[]
   ): void {
     const current = this.held[this.where] ?? NONE;
     const next = change(current);
-    if (same(current, next)) {
+    if (unchanged(current, next)) {
       return;
     }
     if (next.length === 0) {
@@ -181,18 +212,25 @@ export class Comments {
   private publish(list: readonly Comment[]): void {
     const byPath = group(list, (comment) => comment.path);
     this.setEverything(list);
+    this.setById((draft) => {
+      sync(
+        draft,
+        new Map(list.map((comment) => [comment.id, comment])),
+        identical
+      );
+    });
     this.setLists((draft) => {
-      sync(draft, byPath, same);
+      sync(draft, byPath, unchanged);
     });
     this.setCounts((draft) => {
       sync(
         draft,
         new Map([...byPath].map(([path, held]) => [path, held.length])),
-        (left, right) => left === right
+        identical
       );
     });
     this.setAnchors((draft) => {
-      sync(draft, group(list.filter(anchored), lineKey), same);
+      sync(draft, group(list, spotKey), unchanged);
     });
   }
 
@@ -218,30 +256,26 @@ export const ReviewComments = createContext<() => Comments | undefined>(
   () => undefined
 );
 
-function anchorKey(path: string, side: CommentSide, line: number): string {
-  return `${path}\n${side}:${line}`;
+function anchorKey(path: string, side?: CommentSide, line?: number): string {
+  return `${path}\n${side ?? ""}:${line ?? ""}`;
 }
 
-function anchored(comment: Comment): boolean {
-  return comment.side !== undefined && comment.start !== undefined;
-}
-
-function lineKey(comment: Comment): string {
-  return anchorKey(comment.path, comment.side ?? "new", comment.start ?? 0);
+function spotKey(comment: Comment): string {
+  return anchorKey(comment.path, comment.side, comment.start);
 }
 
 function group(
   list: readonly Comment[],
   keyOf: (comment: Comment) => string
-): ReadonlyMap<string, readonly Comment[]> {
-  const groups = new Map<string, Comment[]>();
+): ReadonlyMap<string, readonly string[]> {
+  const groups = new Map<string, string[]>();
   for (const comment of list) {
     const key = keyOf(comment);
     const held = groups.get(key);
     if (held === undefined) {
-      groups.set(key, [comment]);
+      groups.set(key, [comment.id]);
     } else {
-      held.push(comment);
+      held.push(comment.id);
     }
   }
   return groups;
@@ -265,14 +299,18 @@ function sync<T>(
   }
 }
 
-function same(
-  left: readonly Comment[] | undefined,
-  right: readonly Comment[]
+function identical<T>(left: T | undefined, right: T): boolean {
+  return left === right;
+}
+
+function unchanged<T>(
+  left: readonly T[] | undefined,
+  right: readonly T[]
 ): boolean {
   return (
     left !== undefined &&
     left.length === right.length &&
-    left.every((comment, at) => comment === right[at])
+    left.every((item, at) => item === right[at])
   );
 }
 
