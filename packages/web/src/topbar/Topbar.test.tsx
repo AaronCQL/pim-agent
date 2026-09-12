@@ -10,7 +10,7 @@ import { mountPoint } from "../test/dom";
 import { until } from "../test/gateway";
 import { Topbar } from "./Topbar";
 
-function stocked(cwd: string, branch: string): SessionStore {
+function stocked(cwd: string, branch: string, dirtyCount = 3): SessionStore {
   const store = new SessionStore({ url: "ws://127.0.0.1:1" });
   store.ingest({
     type: "attached",
@@ -30,7 +30,7 @@ function stocked(cwd: string, branch: string): SessionStore {
     cost: 0,
     status: "idle",
     branch,
-    dirtyCount: 3,
+    dirtyCount,
     ahead: 2,
     behind: 1,
   });
@@ -40,7 +40,9 @@ function stocked(cwd: string, branch: string): SessionStore {
 function paint(
   store: SessionStore,
   compact: boolean,
-  onOpenSettings = (): void => {}
+  onOpenSettings = (): void => {},
+  onToggleDiff = (): void => {},
+  reviewing = false
 ): HTMLElement {
   const host = mountPoint();
   render(
@@ -48,7 +50,9 @@ function paint(
       <Topbar
         store={store}
         compact={compact}
+        reviewing={reviewing}
         onToggleSidebar={() => {}}
+        onToggleDiff={onToggleDiff}
         onOpenSettings={onOpenSettings}
         // The grace period is what the mark is *for*; a test that waited it
         // out would be paying 1.5s to assert a `setTimeout`.
@@ -59,6 +63,16 @@ function paint(
   );
   flush();
   return host;
+}
+
+function changes(host: HTMLElement): HTMLButtonElement {
+  const found = host
+    .querySelector(".i-griddy-icons\\:file-edit")
+    ?.closest("button");
+  if (!found) {
+    throw new Error("the changes segment is not painted");
+  }
+  return found;
 }
 
 function mark(host: HTMLElement): HTMLButtonElement | null {
@@ -140,7 +154,7 @@ describe("the topbar's chips", () => {
 
     expect(host.textContent).toContain("~/src/pim-agent");
     expect(host.textContent).toContain("main");
-    expect(host.textContent).toContain("*3");
+    expect(changes(host).textContent).toBe("3");
     // The pair reads as one drift, unsplit by the chip's gap, as in the footer.
     expect(host.textContent).toContain("↑2↓1");
   });
@@ -152,9 +166,55 @@ describe("the topbar's chips", () => {
     expect(host.textContent).not.toContain("~/src");
     // Which branch and how dirty survive; how far it has drifted does not.
     expect(host.textContent).toContain("main");
-    expect(host.textContent).toContain("*3");
+    expect(changes(host).textContent).toBe("3");
     expect(host.textContent).not.toContain("↑2");
     expect(host.textContent).not.toContain("↓1");
+  });
+
+  test("the changes segment leads straight to the diff", () => {
+    const toggled: number[] = [];
+    const host = paint(
+      stocked("/home/ada/src/pim-agent", "main"),
+      false,
+      () => {},
+      () => toggled.push(1)
+    );
+
+    expect(changes(host).getAttribute("aria-label")).toBe(
+      "Review changes, 3 changed files"
+    );
+    changes(host).click();
+    expect(toggled).toHaveLength(1);
+  });
+
+  test("the segment is the way back out of the change set it opened", () => {
+    const host = paint(
+      stocked("/home/ada/src/pim-agent", "main"),
+      false,
+      () => {},
+      () => {},
+      true
+    );
+
+    expect(changes(host).getAttribute("aria-pressed")).toBe("true");
+    expect(changes(host).getAttribute("aria-label")).toBe(
+      "Back to the conversation"
+    );
+  });
+
+  /**
+   * A clean tree still has a way in — the diff view says so itself — and a
+   * segment that came and went would move the branch chip under the pointer
+   * every time an agent wrote a file.
+   */
+  test("a clean tree keeps the segment, without the count", () => {
+    const host = paint(stocked("/home/ada/src/pim-agent", "main", 0), false);
+
+    expect(changes(host).getAttribute("aria-label")).toBe(
+      "Review changes, working tree clean"
+    );
+    expect(changes(host).textContent).toBe("");
+    expect(host.querySelector(".text-amber-400")).toBeNull();
   });
 
   /**

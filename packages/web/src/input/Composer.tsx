@@ -30,12 +30,26 @@ function keepFocus(event: MouseEvent): void {
   event.preventDefault();
 }
 
+function comments(count: number): string {
+  return `${count} comment${count === 1 ? "" : "s"}`;
+}
+
 /** The draft, the pickers over it, and the two ways bytes get in. */
 export function Composer(props: {
   readonly store: SessionStore;
   readonly onSend: () => void;
   /** A message taken back out of pi's queue to be edited here; a new object each time. */
   readonly recalled?: { readonly text: string };
+  /** What a reader has written over a diff, waiting to ride the next message. */
+  readonly review?: {
+    readonly count: number;
+    /** The composed block, appended after whatever the user typed. */
+    readonly text: () => string;
+    /** Called only after `prompt` reports the message was sent. */
+    readonly sent: () => void;
+    readonly discard: () => void;
+    readonly open: () => void;
+  };
 }) {
   const [text, setText] = createSignal("");
   const [caret, setCaret] = createSignal(0);
@@ -87,6 +101,11 @@ export function Composer(props: {
       props.store.isBusy() && text().trim() === "" && attachments().length === 0
   );
   const held = createMemo(() => props.store.heldNotice());
+  const pending = createMemo(() =>
+    props.review !== undefined && props.review.count > 0
+      ? props.review
+      : undefined
+  );
   const modelOptions = createMemo(() =>
     catalogue().models.map(({ id, label, provider }) => ({
       value: id,
@@ -181,7 +200,12 @@ export function Composer(props: {
 
   async function submit(): Promise<void> {
     const draft = text();
-    if ((draft.trim() === "" && attachments().length === 0) || held()) {
+    const review = pending();
+    const carried = review === undefined ? "" : review.text();
+    if (
+      (draft.trim() === "" && attachments().length === 0 && carried === "") ||
+      held()
+    ) {
       return;
     }
     setText("");
@@ -189,7 +213,12 @@ export function Composer(props: {
     setItems([]);
     input.value = "";
     props.onSend();
-    await props.store.prompt(draft);
+    const went = await props.store.prompt(
+      [draft, carried].filter(Boolean).join("\n\n")
+    );
+    if (went && review !== undefined) {
+      review.sent();
+    }
   }
 
   async function stop(): Promise<void> {
@@ -248,7 +277,48 @@ export function Composer(props: {
           void uploads.absorb([...(event.dataTransfer?.files ?? [])]);
         }}
       >
-        <Attachments files={tiles()} variant="compact" />
+        <Show when={pending() !== undefined || tiles().length > 0}>
+          <div class="flex flex-wrap items-center gap-2">
+            <Show when={pending()}>
+              {(review) => (
+                <span class="flex items-center gap-1 rounded-full bg-neutral-900 py-1 pr-1 pl-2.5 text-sm text-neutral-350 ring-1 ring-neutral-750">
+                  <button
+                    type="button"
+                    aria-label="Read the review"
+                    title="Read the review"
+                    class="flex items-center gap-1.5 hover:text-neutral-50"
+                    onMouseDown={keepFocus}
+                    onClick={() => {
+                      review().open();
+                    }}
+                  >
+                    <span
+                      class="i-griddy-icons:chat-bubble-dots size-4 shrink-0"
+                      aria-hidden="true"
+                    />
+                    {comments(review().count)}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Discard the review"
+                    title="Discard the review"
+                    class="flex items-center justify-center rounded-full p-1 hover:text-neutral-50"
+                    onMouseDown={keepFocus}
+                    onClick={() => {
+                      review().discard();
+                    }}
+                  >
+                    <span
+                      class="i-griddy-icons:close size-3.5"
+                      aria-hidden="true"
+                    />
+                  </button>
+                </span>
+              )}
+            </Show>
+            <Attachments files={tiles()} variant="compact" />
+          </div>
+        </Show>
 
         <textarea
           ref={(element: HTMLTextAreaElement) => {

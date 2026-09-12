@@ -73,6 +73,21 @@ export const DIFF_GUTTER_CLASSES = {
   removed: "text-rose-400",
 } as const satisfies Record<ToolDiffLineKind, string>;
 
+/**
+ * The half of a split pair whose side has no line there: not a blank line, but
+ * no line at all. Hatched, defined in `styles.css` — the two say different
+ * things and a reader has to be able to tell them apart at a glance. The text
+ * column wears it alone: a gradient restarts in every box it is given, so a
+ * hatched gutter beside a hatched line would show the phase break between them.
+ */
+export const DIFF_FILLER_CLASS = "pim-diff-filler";
+
+/**
+ * The gap between two hunks: code that exists and is not being shown. A flat
+ * wash, because unlike a filler it stands for something a reader could ask for.
+ */
+export const DIFF_GAP_CLASS = "bg-neutral-500/10";
+
 export function toneClass(tone: Tone | undefined): string {
   return TONE_CLASSES[tone ?? "default"];
 }

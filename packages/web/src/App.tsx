@@ -9,6 +9,10 @@ import {
 } from "solid-js";
 
 import { Composer } from "./input/Composer";
+import { Comments, ReviewComments } from "./diff/Comments";
+import { DiffStore } from "./diff/DiffStore";
+import { DiffView } from "./diff/DiffView";
+import { Review } from "./diff/Review";
 import { GatewayOrigin } from "./session/Gateway";
 import { SessionStore } from "./session/SessionStore";
 import { Toast } from "./session/Toast";
@@ -22,6 +26,7 @@ import { Transcript } from "./transcript/Transcript";
 import { Topbar } from "./topbar/Topbar";
 import { observeHeight } from "./ui/scroll";
 import { Drawer } from "./ui/Drawer";
+import { createBackGuard } from "./ui/history";
 import { createMediaQuery, DESKTOP } from "./ui/media";
 
 export function App() {
@@ -38,7 +43,7 @@ export function App() {
   return <Shell store={store} settings={settings} />;
 }
 
-/** The three regions: sidebar, topbar, and the transcript with the composer floating over its foot. */
+/** The three regions: sidebar, topbar, and the transcript — or the change set — with the composer floating over its foot. */
 export function Shell(props: {
   readonly store: SessionStore;
   readonly settings: Settings;
@@ -46,16 +51,50 @@ export function Shell(props: {
   const desktop = createMediaQuery(DESKTOP);
   const [sidebar, setSidebar] = createSignal(untrack(desktop));
   const [configuring, setConfiguring] = createSignal(false);
+  const [reviewing, setReviewing] = createSignal(false);
+  const diff = new DiffStore(props.store);
+  const comments = new Comments();
+  const back = createBackGuard(() => {
+    setReviewing(false);
+  });
   createEffect(
     () => desktop(),
     (isDesktop) => {
       setSidebar(isDesktop);
     }
   );
-  let scroller!: HTMLDivElement;
+  createEffect(
+    () => diff.cwd(),
+    (cwd) => {
+      comments.load(cwd);
+    }
+  );
+  let scroller: HTMLDivElement | undefined;
   const [inset, setInset] = createSignal(0);
   // An object rather than the string, so taking back the same words twice is two recalls.
   const [recalled, setRecalled] = createSignal<{ text: string }>();
+
+  const review = (): void => {
+    // A second arm behind one release leaves an entry that swallows the next Back.
+    if (untrack(reviewing)) {
+      return;
+    }
+    setReviewing(true);
+    back.arm();
+  };
+
+  const converse = (): void => {
+    setReviewing(false);
+    back.release();
+  };
+
+  const toggleReview = (): void => {
+    if (untrack(reviewing)) {
+      converse();
+      return;
+    }
+    review();
+  };
 
   const recall = (): void => {
     void props.store.dequeue().then((text) => {
@@ -66,8 +105,32 @@ export function Shell(props: {
   };
 
   const jump = (): void => {
-    scroller.scrollTop = 0;
+    if (scroller) {
+      scroller.scrollTop = 0;
+    }
   };
+
+  const navigate = (): void => {
+    converse();
+    jump();
+  };
+
+  const pending = createMemo(() => ({
+    count: comments.all().length,
+    text: () =>
+      untrack(() =>
+        Review.compose(diff.state.base, comments.all(), diff.files())
+      ),
+    sent: () => {
+      comments.clear();
+      converse();
+    },
+    discard: () => {
+      comments.clear();
+    },
+    open: review,
+  }));
+
   const hasTranscript = createMemo(
     (): boolean =>
       props.store.state.durable.length > 0 ||
@@ -75,7 +138,8 @@ export function Shell(props: {
       props.store.liveSize() > 0
   );
   const showSplash = createMemo(
-    (): boolean => !props.store.state.loading && !hasTranscript()
+    (): boolean =>
+      !reviewing() && !props.store.state.loading && !hasTranscript()
   );
 
   // `dvh` does not follow the software keyboard on iOS; only the visual viewport shrinks.
@@ -88,6 +152,34 @@ export function Shell(props: {
   onCleanup(() => {
     viewport?.removeEventListener("resize", resizeViewport);
   });
+
+  const Conversation = () => (
+    <div
+      ref={(element: HTMLDivElement) => {
+        scroller = element;
+      }}
+      class="flex h-full flex-col-reverse overflow-y-auto"
+    >
+      <div
+        class="mx-auto min-h-full w-full max-w-3xl flex-none space-y-[--line] p-3 leading-[--line]"
+        style={{ "padding-bottom": `calc(${inset()}px + var(--line))` }}
+      >
+        <Show when={!props.store.state.loading} fallback={<Skeleton />}>
+          <Show when={hasTranscript()}>
+            <Transcript
+              events={props.store.state.durable}
+              trailing={props.store.trailing()}
+              live={props.store.state.live}
+              onEdit={recall}
+              onOpenSubagent={(callId) => {
+                void props.store.watch(callId);
+              }}
+            />
+          </Show>
+        </Show>
+      </div>
+    </div>
+  );
 
   return (
     <GatewayOrigin value={() => props.store.httpUrl}>
@@ -105,7 +197,7 @@ export function Shell(props: {
             <div class="w-xs shrink-0 border-r border-neutral-700">
               <Sidebar
                 store={props.store}
-                onNavigate={jump}
+                onNavigate={navigate}
                 onOpenSettings={() => {
                   setConfiguring(true);
                 }}
@@ -126,7 +218,7 @@ export function Shell(props: {
                 store={props.store}
                 onNavigate={() => {
                   setSidebar(false);
-                  jump();
+                  navigate();
                 }}
                 onOpenSettings={() => {
                   setSidebar(false);
@@ -140,45 +232,27 @@ export function Shell(props: {
             <Topbar
               store={props.store}
               compact={!desktop()}
+              reviewing={reviewing()}
               onToggleSidebar={() => {
                 setSidebar((open) => !open);
               }}
+              onToggleDiff={toggleReview}
               onOpenSettings={() => {
                 setConfiguring(true);
               }}
             />
 
             <div class="relative min-h-0 flex-1">
-              <div
-                ref={(element: HTMLDivElement) => {
-                  scroller = element;
-                }}
-                class="flex h-full flex-col-reverse overflow-y-auto"
-              >
-                <div
-                  class="mx-auto min-h-full w-full max-w-3xl flex-none space-y-[--line] p-3 leading-[--line]"
-                  style={{
-                    "padding-bottom": `calc(${inset()}px + var(--line))`,
-                  }}
-                >
-                  <Show
-                    when={!props.store.state.loading}
-                    fallback={<Skeleton />}
-                  >
-                    <Show when={hasTranscript()}>
-                      <Transcript
-                        events={props.store.state.durable}
-                        trailing={props.store.trailing()}
-                        live={props.store.state.live}
-                        onEdit={recall}
-                        onOpenSubagent={(callId) => {
-                          void props.store.watch(callId);
-                        }}
-                      />
-                    </Show>
-                  </Show>
-                </div>
-              </div>
+              <Show when={reviewing()} fallback={<Conversation />}>
+                <ReviewComments value={() => comments}>
+                  <DiffView
+                    diff={diff}
+                    settings={props.settings}
+                    inset={inset()}
+                    onClose={converse}
+                  />
+                </ReviewComments>
+              </Show>
 
               <div
                 ref={observeHeight(setInset)}
@@ -210,6 +284,7 @@ export function Shell(props: {
                       store={props.store}
                       onSend={jump}
                       recalled={recalled()}
+                      review={pending()}
                     />
                   </div>
                 </div>

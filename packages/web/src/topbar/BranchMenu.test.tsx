@@ -44,7 +44,15 @@ afterEach(async () => {
 function paint(): HTMLElement {
   const host = mountPoint();
   dispose = render(
-    () => <Topbar store={store} compact={false} onToggleSidebar={() => {}} />,
+    () => (
+      <Topbar
+        store={store}
+        compact={false}
+        reviewing={false}
+        onToggleSidebar={() => {}}
+        onToggleDiff={() => {}}
+      />
+    ),
     host
   );
   flush();

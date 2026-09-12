@@ -1,5 +1,7 @@
+import { isAbsolute, join } from "node:path";
+
 import { Lines } from "./Lines";
-import { Proc, type ProcResult } from "./Proc";
+import { Proc, type ProcOptions, type ProcResult } from "./Proc";
 
 export type GitState = {
   readonly branch: string | null;
@@ -30,6 +32,16 @@ export type GitOutcome =
   | { readonly ok: true }
   | { readonly ok: false; readonly error: string };
 
+export type CommitRequest = {
+  readonly message: string;
+  /** Exactly what is committed; a rename contributes both of its names. */
+  readonly paths: readonly string[];
+};
+
+export type CommitResult =
+  | { readonly ok: true; readonly sha: string }
+  | { readonly ok: false; readonly error: string };
+
 const EMPTY: GitState = {
   branch: null,
   dirtyCount: 0,
@@ -57,6 +69,8 @@ const BRANCH_LIMIT = 200;
 
 const NETWORK_TIMEOUT_MS = 60_000;
 
+const COMMIT_TIMEOUT_MS = 120_000;
+
 const ERROR_LIMIT = 400;
 
 /** No surface behind a daemon can answer a credential prompt, so every network call must fail instead of waiting on one. */
@@ -68,8 +82,22 @@ const NETWORK_ENV: Readonly<Record<string, string | undefined>> = {
   GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? "ssh -o BatchMode=yes",
 };
 
-function git(cwd: string, args: readonly string[]): Promise<ProcResult> {
-  return Proc.run(["git", ...args], { cwd });
+/** A commit runs hooks and may sign, neither of which may open an editor on a machine nobody is sitting at. */
+const COMMIT_OPTIONS: ProcOptions = {
+  env: { GIT_EDITOR: "true" },
+  timeoutMs: COMMIT_TIMEOUT_MS,
+};
+
+const NETWORK_TIMEOUT = `timed out after ${NETWORK_TIMEOUT_MS / 1000}s — the remote never answered`;
+
+const COMMIT_TIMEOUT = `timed out after ${COMMIT_TIMEOUT_MS / 1000}s — a hook or a signing key is still waiting on something`;
+
+function git(
+  cwd: string,
+  args: readonly string[],
+  options: ProcOptions = {}
+): Promise<ProcResult> {
+  return Proc.run(["git", ...args], { cwd, ...options });
 }
 
 function network(cwd: string, args: readonly string[]): Promise<ProcResult> {
@@ -257,9 +285,13 @@ async function listBranches(cwd: string): Promise<readonly GitBranch[]> {
   );
 }
 
-function failure(result: ProcResult, fallback: string): string {
+function failure(
+  result: ProcResult,
+  fallback: string,
+  timeout = NETWORK_TIMEOUT
+): string {
   if (result.timedOut) {
-    return `timed out after ${NETWORK_TIMEOUT_MS / 1000}s — the remote never answered`;
+    return timeout;
   }
   const said = (result.stderr.trim() || result.stdout.trim()).replace(
     /^(?:error|fatal):\s*/,
@@ -281,6 +313,83 @@ async function checkout(cwd: string, branch: string): Promise<GitOutcome> {
   );
 }
 
+/** A path git is allowed to be pointed at: inside the repository, and named relative to it. */
+function escapes(path: string): boolean {
+  return path === "" || isAbsolute(path) || path.split(/[/\\]/).includes("..");
+}
+
+/**
+ * Commits exactly `paths` and nothing else: everything else changed stays
+ * dirty, and an unrelated path someone had staged stays staged. Untracked
+ * paths are added first, or a path-limited commit of one finds no such file.
+ */
+async function commit(
+  cwd: string,
+  request: CommitRequest
+): Promise<CommitResult> {
+  const message = request.message.trim();
+  if (message === "") {
+    return { ok: false, error: "a commit needs a message" };
+  }
+  if (request.paths.length === 0) {
+    return { ok: false, error: "nothing was picked to commit" };
+  }
+  const outside = request.paths.find(escapes);
+  if (outside !== undefined) {
+    return {
+      ok: false,
+      error: `${outside === "" ? "an empty path" : outside} is not a path inside this repository`,
+    };
+  }
+  /**
+   * `git add` refuses a pathspec that matches nothing on disk, and a staged
+   * rename's old name matches nothing: it is gone from both the worktree and
+   * the index. A deletion is the same. `git commit -- <paths>` reads those two
+   * off HEAD and the index by itself, so only the paths still on disk are
+   * worth adding, and a pick made entirely of them needs no `add` at all.
+   */
+  const onDisk = await Promise.all(
+    request.paths.map((path) => Bun.file(join(cwd, path)).exists())
+  );
+  const addable = request.paths.filter((_, index) => onDisk[index]);
+  if (addable.length > 0) {
+    const staged = await git(
+      cwd,
+      ["add", "-A", "--", ...addable],
+      COMMIT_OPTIONS
+    );
+    if (staged.code !== 0) {
+      return {
+        ok: false,
+        error: failure(
+          staged,
+          "could not stage the picked files",
+          COMMIT_TIMEOUT
+        ),
+      };
+    }
+  }
+  const written = await git(
+    cwd,
+    ["commit", "-m", message, "--", ...request.paths],
+    COMMIT_OPTIONS
+  );
+  if (written.code !== 0) {
+    return {
+      ok: false,
+      error: failure(written, "could not commit", COMMIT_TIMEOUT),
+    };
+  }
+  const head = await git(cwd, ["rev-parse", "--short", "HEAD"]);
+  const sha = head.stdout.trim();
+  return head.code === 0 && sha !== ""
+    ? { ok: true, sha }
+    : {
+        ok: false,
+        error: failure(head, "the commit landed but its sha is unreadable"),
+      };
+}
+
 async function fetch(cwd: string): Promise<GitOutcome> {
   return outcome(await network(cwd, ["fetch", "--quiet"]), "could not fetch");
 }
@@ -292,16 +401,23 @@ async function pull(cwd: string): Promise<GitOutcome> {
   );
 }
 
+/** The remote branch HEAD tracks, or undefined when the branch is local-only or HEAD is detached. */
+async function upstreamOf(cwd: string): Promise<string | undefined> {
+  const { code, stdout } = await git(cwd, [
+    "rev-parse",
+    "--abbrev-ref",
+    "--symbolic-full-name",
+    "@{upstream}",
+  ]);
+  const name = stdout.trim();
+  return code === 0 && name !== "" ? name : undefined;
+}
+
 /** Publishes the branch, adopting the remote as its upstream the first time it is pushed. */
 async function push(cwd: string): Promise<GitOutcome> {
   const [head, upstream] = await Promise.all([
     git(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]),
-    git(cwd, [
-      "rev-parse",
-      "--abbrev-ref",
-      "--symbolic-full-name",
-      "@{upstream}",
-    ]),
+    upstreamOf(cwd),
   ]);
   if (head.code !== 0) {
     return {
@@ -309,7 +425,7 @@ async function push(cwd: string): Promise<GitOutcome> {
       error: "HEAD is detached, so there is nothing to push",
     };
   }
-  if (upstream.code === 0) {
+  if (upstream !== undefined) {
     return outcome(await network(cwd, ["push"]), "could not push");
   }
   const remote = await remoteOf(cwd);
@@ -348,7 +464,9 @@ export const Git = {
   parseVisits,
   fetchStatus,
   listBranches,
+  upstreamOf,
   checkout,
+  commit,
   fetch,
   pull,
   push,

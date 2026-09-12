@@ -3,7 +3,7 @@ import { createMemo, createSignal, onCleanup, Show } from "solid-js";
 import type { GitBranch } from "#core/shared/Git";
 import { relativeTime } from "../format";
 import type { SessionStore } from "../session/SessionStore";
-import { CHIP, PILL } from "../ui/classes";
+import { CHIP_SEGMENT, PILL } from "../ui/classes";
 import {
   Combobox,
   createComboboxNavigation,
@@ -12,9 +12,6 @@ import {
 import { createDisclosure } from "../ui/disclosure";
 import { Fitted } from "../ui/Fitted";
 import { Spinner } from "../ui/Spinner";
-
-// Not the footer's U+F069: that is a Nerd Font glyph, and no browser has the font.
-const DIRTY_MARK = "*";
 
 const SYNC = `${PILL} h-7 flex-1 px-3 text-sm disabled:text-neutral-600 disabled:hover:text-neutral-600 disabled:hover:ring-0`;
 
@@ -73,7 +70,7 @@ function live(branch: GitBranch, now: number): boolean {
   );
 }
 
-/** The repository chip: where the work is, and the two directions it can move. */
+/** The branch segment: where the work is, and the two directions it can move. */
 export function BranchMenu(props: {
   readonly store: SessionStore;
   readonly branch: string;
@@ -175,8 +172,6 @@ export function BranchMenu(props: {
     readonly operation: "pull" | "push";
     readonly icon: string;
     readonly label: string;
-    readonly count: number;
-    readonly tone?: string;
     readonly title: string;
     readonly disabled: boolean;
   }) => (
@@ -198,14 +193,11 @@ export function BranchMenu(props: {
         <Spinner />
       </Show>
       {sync.label}
-      <Show when={sync.count > 0}>
-        <span class={sync.tone}>{sync.count}</span>
-      </Show>
     </button>
   );
 
   return (
-    <div ref={panel.root} class="relative min-w-0">
+    <div ref={panel.root} class="flex min-w-0 flex-1">
       <button
         ref={panel.trigger}
         type="button"
@@ -213,7 +205,7 @@ export function BranchMenu(props: {
         aria-expanded={panel.open() ? "true" : "false"}
         aria-label={`Branch ${props.branch}, switch or sync`}
         title={props.branch}
-        class={`${CHIP} hover:bg-neutral-800 hover:text-neutral-50`}
+        class={`${CHIP_SEGMENT} flex-1 rounded-l-lg`}
         onClick={panel.toggle}
         onKeyDown={(event: KeyboardEvent) => {
           navigation.onKeyDown(event);
@@ -221,15 +213,6 @@ export function BranchMenu(props: {
       >
         <span class="i-griddy-icons:code-branch size-4 shrink-0" />
         <Fitted texts={[props.branch]} />
-        <Show when={state().dirtyCount > 0}>
-          <span
-            class="shrink-0 text-amber-400"
-            title={`${state().dirtyCount} changed files`}
-          >
-            {DIRTY_MARK}
-            {state().dirtyCount}
-          </span>
-        </Show>
         <Show
           when={!props.compact && (state().ahead > 0 || state().behind > 0)}
         >
@@ -263,8 +246,6 @@ export function BranchMenu(props: {
                 operation="pull"
                 icon="i-griddy-icons:arrow-down"
                 label="Pull"
-                count={state().behind}
-                tone="text-rose-400"
                 title="Fast-forward from the remote"
                 disabled={frozen()}
               />
@@ -272,7 +253,6 @@ export function BranchMenu(props: {
                 operation="push"
                 icon="i-griddy-icons:arrow-up"
                 label="Push"
-                count={state().ahead}
                 title="Publish this branch"
                 disabled={running() !== undefined}
               />

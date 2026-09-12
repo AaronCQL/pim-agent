@@ -1,6 +1,6 @@
 import { createMemo, createSignal, Show, untrack } from "solid-js";
 
-import { PILL } from "./classes";
+import { CHIP_BUTTON, PILL } from "./classes";
 import {
   Combobox,
   createComboboxNavigation,
@@ -28,13 +28,17 @@ function matching(
   );
 }
 
-/** A chip that opens a `Combobox` of choices above itself. */
+/** A chip that opens a `Combobox` of choices beside itself. */
 export function Menu(props: {
   readonly label: string;
   readonly icon: string;
   readonly options: readonly MenuOption[];
   readonly value?: string;
   readonly title?: string;
+  /** Which shape the trigger takes: a composer pill by default, or a topbar chip. */
+  readonly shape?: "pill" | "chip";
+  /** Which side of the trigger the list takes; above it by default, as the composer sits at the foot. */
+  readonly place?: "above" | "below";
   /** Places a filter box at the top of the list, with this as its placeholder. */
   readonly search?: string;
   readonly onOpen?: () => void;
@@ -89,7 +93,7 @@ export function Menu(props: {
         aria-haspopup="listbox"
         aria-expanded={panel.open() ? "true" : "false"}
         {...(props.title === undefined ? {} : { title: props.title })}
-        class={`${PILL} px-3 py-1.5`}
+        class={props.shape === "chip" ? CHIP_BUTTON : `${PILL} px-3 py-1.5`}
         onClick={panel.toggle}
         onKeyDown={(event: KeyboardEvent) => {
           navigation.onKeyDown(event);
@@ -102,6 +106,7 @@ export function Menu(props: {
       <Combobox
         open={panel.open()}
         anchor={panel.anchor}
+        place={props.place}
         items={rows()}
         activeIndex={navigation.activeIndex()}
         onActivate={navigation.setActiveIndex}

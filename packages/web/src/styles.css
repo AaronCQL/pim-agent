@@ -249,3 +249,28 @@ button {
 .pim-markdown hr {
   border-color: rgb(64 64 64);
 }
+
+/* The half of a split diff row whose side has no line there at all. Hatched
+   rather than tinted: absence is not a change, and a flat wash would read as
+   one more diff colour. No background under the stripes — the texture alone
+   is the whole statement, and it keeps whatever the row sits on.
+
+   It paints the text column only, never the gutter beside it: a gradient is
+   positioned per box, so two boxes side by side each restart the pattern at
+   their own left edge and the phase jump reads as a crack down the row. One
+   box, one continuous hatch, and the gutter stays plain.
+
+   The geometry is tied to the --line grid so stacked fillers tile without a
+   seam. At 45° a gradient repeats every axis period × √2, horizontally and
+   vertically alike, so an axis period of --line/(2√2) puts two whole tiles
+   in every row: any filler, wrapped or not, is a whole number of tiles tall
+   and its neighbour continues it. That lands the stripes 10px apart at 2px
+   thick — sparse enough to read as texture under a row of code rather than
+   as a block of its own. */
+.pim-diff-filler {
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgb(255 255 255 / 7%) 0 2px,
+    transparent 2px calc(var(--line) / 2.828)
+  );
+}

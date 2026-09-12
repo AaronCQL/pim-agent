@@ -43,6 +43,8 @@ export type UpdateFacts = {
   readonly packageName: string;
   /** A dev checkout with no uncommitted changes; irrelevant to a prod install. */
   readonly cleanTree: boolean;
+  /** The dev checkout's branch tracks a remote one, so a pull has somewhere to pull from; irrelevant to a prod install. */
+  readonly tracked: boolean;
   /** The newest published release, or undefined when the registry was silent. */
   readonly latest: string | undefined;
 };
@@ -81,13 +83,24 @@ async function swapClient(packageRoot: string): Promise<void> {
   await rename(dirs.staging, dirs.client);
 }
 
+/** Why this checkout cannot be pulled, or undefined when it can. */
+function pullBlocker(facts: UpdateFacts): string | undefined {
+  if (!facts.tracked) {
+    return "this branch has no upstream to pull from";
+  }
+  return facts.cleanTree
+    ? undefined
+    : "the working tree has uncommitted changes";
+}
+
 function plan(facts: UpdateFacts): UpdatePlan {
   const steps: UpdateStep[] = [];
   const skipped: UpdateSkip[] = [];
-  const { at, packageName, cleanTree, latest } = facts;
+  const { at, packageName, latest } = facts;
 
   if (at.kind === "dev") {
-    if (cleanTree) {
+    const blocked = pullBlocker(facts);
+    if (blocked === undefined) {
       steps.push({
         label: "git pull",
         command: ["git", "pull", "--ff-only"],
@@ -96,7 +109,7 @@ function plan(facts: UpdateFacts): UpdatePlan {
     } else {
       skipped.push({
         label: "git pull",
-        reason: "the working tree has uncommitted changes",
+        reason: blocked,
         blocking: false,
       });
     }
@@ -137,14 +150,17 @@ function plan(facts: UpdateFacts): UpdatePlan {
 
 async function gather(): Promise<UpdateFacts> {
   const at = await Supervisor.detectInstall();
-  const [packageName, cleanTree, latest] = await Promise.all([
+  const [packageName, cleanTree, tracked, latest] = await Promise.all([
     PimVersion.name(),
     at.kind === "dev"
       ? Git.fetchStatus(at.packageRoot).then((git) => git.dirtyCount === 0)
       : Promise.resolve(true),
+    at.kind === "dev"
+      ? Git.upstreamOf(at.packageRoot).then((at) => at !== undefined)
+      : Promise.resolve(true),
     at.kind === "prod" ? PimVersion.latest() : Promise.resolve(undefined),
   ]);
-  return { at, packageName, cleanTree, latest };
+  return { at, packageName, cleanTree, tracked, latest };
 }
 
 /** Never restarts or exits: the caller owns that. */

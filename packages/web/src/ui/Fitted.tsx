@@ -1,3 +1,4 @@
+import type { JSX } from "@solidjs/web/jsx-runtime";
 import { createSignal, onCleanup } from "solid-js";
 
 import { fit } from "../format";
@@ -5,8 +6,16 @@ import { fit } from "../format";
 // Sub-pixel slack, or a box a hair under its own text elides a text that fits.
 const SLACK = 0.02;
 
-/** The first of `texts` the box has room for, measured rather than guessed. */
-export function Fitted(props: { readonly texts: readonly string[] }) {
+/**
+ * The first of `texts` the box has room for, measured rather than guessed.
+ * A child paints the room itself, in character cells, when what fits is more
+ * than one string — the count is what it was measured in either way.
+ */
+export function Fitted(props: {
+  readonly texts: readonly string[];
+  readonly class?: string;
+  readonly children?: (columns: number) => JSX.Element;
+}) {
   const [share, setShare] = createSignal(1);
   const widest = (): string => props.texts[0] ?? "";
   const columns = (): number => Math.floor(widest().length * share() + SLACK);
@@ -27,7 +36,7 @@ export function Fitted(props: { readonly texts: readonly string[] }) {
         box = element;
         observer.observe(element);
       }}
-      class="relative min-w-0 overflow-hidden whitespace-pre"
+      class={`relative min-w-0 overflow-hidden whitespace-pre ${props.class ?? ""}`}
     >
       {/* The chip is `max-w-max`, so measure a copy no cut touches, or the box
           shrinks onto its own ellipsis. `inline-block`: inline boxes go unobserved. */}
@@ -41,7 +50,11 @@ export function Fitted(props: { readonly texts: readonly string[] }) {
       >
         {widest()}
       </span>
-      <span class="absolute inset-0">{fit(props.texts, columns())}</span>
+      <span class="absolute inset-0">
+        {props.children === undefined
+          ? fit(props.texts, columns())
+          : props.children(columns())}
+      </span>
     </span>
   );
 }

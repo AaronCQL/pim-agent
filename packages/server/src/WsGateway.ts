@@ -9,6 +9,7 @@ import { Directories } from "#core/shared/Directories";
 import type { DirectoryListing } from "#core/shared/Directories";
 import { Git, type GitBranch, type GitOutcome } from "#core/shared/Git";
 import { GitMonitor } from "#core/shared/GitMonitor";
+import { RepoDiff } from "#core/shared/RepoDiff";
 import { ReadCursors } from "#core/session/ReadCursors";
 import type { SessionHost } from "#core/session/SessionHost";
 import type { SessionRegistry } from "#core/session/SessionRegistry";
@@ -16,6 +17,7 @@ import { PimVersion } from "#core/shared/PimVersion";
 import { SubagentLogs } from "#core/shared/SubagentLogs";
 import type { UpdateOutcome } from "#core/shared/Updater";
 import type { Command } from "#protocol/Command";
+import type { ChangeList, FileDiff, FileLines } from "#protocol/Diff";
 import { CLOSE_PROTOCOL_MISMATCH, PROTOCOL_VERSION } from "#protocol/Protocol";
 import type {
   ModelView,
@@ -59,6 +61,10 @@ type Outcome = {
   readonly thinkingLevels?: readonly string[];
   readonly directory?: DirectoryListing;
   readonly branches?: readonly GitBranch[];
+  readonly commit?: { readonly sha: string };
+  readonly changes?: ChangeList;
+  readonly fileDiff?: FileDiff;
+  readonly fileLines?: FileLines;
   readonly restored?: readonly string[];
   readonly after?: () => void;
 };
@@ -288,12 +294,43 @@ export class WsGateway {
             this.requireStream(connection).host.cwd
           ),
         };
+      // Reading the repository never moves it, so neither of these takes the `repoBusy` refusal.
+      case "list_changes":
+        return {
+          changes: await RepoDiff.listChanges(
+            this.requireStream(connection).host.cwd,
+            command.base,
+            this.git
+          ),
+        };
+      case "file_diff":
+        return {
+          fileDiff: await RepoDiff.fileDiff(
+            this.requireStream(connection).host.cwd,
+            command.base,
+            command.path,
+            this.git,
+            command.context
+          ),
+        };
+      case "read_lines":
+        return {
+          fileLines: await RepoDiff.readLines(
+            this.requireStream(connection).host.cwd,
+            command.base,
+            command.path,
+            command.spans,
+            this.git
+          ),
+        };
       case "checkout": {
         const stream = this.requireStream(connection);
         return await this.runGit(stream, true, (cwd) =>
           Git.checkout(cwd, command.branch)
         );
       }
+      case "commit":
+        return await this.commit(this.requireStream(connection), command);
       case "pull":
       case "push":
         return await this.runGit(
@@ -466,6 +503,26 @@ export class WsGateway {
     }
     const result = await this.git.run(cwd, () => operation(cwd));
     return result.ok ? {} : { error: result.error };
+  }
+
+  /** `GitMonitor.run` answers an outcome and cannot carry a sha, so the new commit comes back out through a closure. */
+  private async commit(
+    stream: SessionStream,
+    command: Command & { readonly type: "commit" }
+  ): Promise<Outcome> {
+    let sha: string | undefined;
+    const outcome = await this.runGit(stream, true, async (cwd) => {
+      const result = await Git.commit(cwd, {
+        message: command.message,
+        paths: command.paths,
+      });
+      if (!result.ok) {
+        return { ok: false, error: result.error };
+      }
+      sha = result.sha;
+      return { ok: true };
+    });
+    return sha === undefined ? outcome : { commit: { sha } };
   }
 
   private repoBusy(cwd: string): boolean {
