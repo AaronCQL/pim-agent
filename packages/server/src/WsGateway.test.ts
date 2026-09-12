@@ -200,11 +200,38 @@ function durable(probe: ProbeClient): readonly DurableEvent[] {
   return probe.events.filter(isDurableEvent);
 }
 
-function idle(probe: ProbeClient, from: number): Promise<ServerEvent> {
-  return probe.waitFor(
-    (event) => event.type === "session_state" && event.status === "idle",
-    { from, timeoutMs: 20_000 }
-  );
+/**
+ * The end of this probe's turn — not merely an event that says "idle".
+ *
+ * A `session_state` is pushed whenever anything the panel shows changes, and
+ * the git watcher's first read pushes one of its own. That read is a handful
+ * of subprocesses, so where it lands is a race: on this machine it arrives
+ * before the caller's `from`, and on a slower one it arrives after `from` but
+ * before the prompt has started work — carrying the status the session still
+ * legitimately had, which is idle. Waiting on the event alone then hands the
+ * test back mid-turn, and the turn-sensitive assertion after it fails for a
+ * reason that has nothing to do with what it was testing.
+ *
+ * The host's own status is the truth the event is only a snapshot of, so an
+ * idle event counts as the turn's end only when the host still agrees. When
+ * it does not, the turn is running and its real end is yet to be pushed.
+ */
+async function idle(probe: ProbeClient, from: number): Promise<ServerEvent> {
+  let cursor = from;
+  for (;;) {
+    const event = await probe.waitFor(
+      (candidate) =>
+        candidate.type === "session_state" && candidate.status === "idle",
+      { from: cursor, timeoutMs: 20_000 }
+    );
+    const host = registry.peek(probe.sessionId ?? "");
+    if (host === undefined || host.status === "idle") {
+      return event;
+    }
+    // Stale, and so is everything buffered behind it while the host works:
+    // only an event pushed from here on can be the end of this turn.
+    cursor = probe.events.length;
+  }
 }
 
 /** Polls, because a prompt is accepted long before pi has queued it. */
