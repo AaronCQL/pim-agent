@@ -292,16 +292,23 @@ async function pull(cwd: string): Promise<GitOutcome> {
   );
 }
 
+/** The remote branch HEAD tracks, or undefined when the branch is local-only or HEAD is detached. */
+async function upstreamOf(cwd: string): Promise<string | undefined> {
+  const { code, stdout } = await git(cwd, [
+    "rev-parse",
+    "--abbrev-ref",
+    "--symbolic-full-name",
+    "@{upstream}",
+  ]);
+  const name = stdout.trim();
+  return code === 0 && name !== "" ? name : undefined;
+}
+
 /** Publishes the branch, adopting the remote as its upstream the first time it is pushed. */
 async function push(cwd: string): Promise<GitOutcome> {
   const [head, upstream] = await Promise.all([
     git(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]),
-    git(cwd, [
-      "rev-parse",
-      "--abbrev-ref",
-      "--symbolic-full-name",
-      "@{upstream}",
-    ]),
+    upstreamOf(cwd),
   ]);
   if (head.code !== 0) {
     return {
@@ -309,7 +316,7 @@ async function push(cwd: string): Promise<GitOutcome> {
       error: "HEAD is detached, so there is nothing to push",
     };
   }
-  if (upstream.code === 0) {
+  if (upstream !== undefined) {
     return outcome(await network(cwd, ["push"]), "could not push");
   }
   const remote = await remoteOf(cwd);
@@ -348,6 +355,7 @@ export const Git = {
   parseVisits,
   fetchStatus,
   listBranches,
+  upstreamOf,
   checkout,
   fetch,
   pull,
