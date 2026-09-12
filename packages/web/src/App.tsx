@@ -13,6 +13,7 @@ import { Comments, ReviewComments } from "./diff/Comments";
 import { DiffStore } from "./diff/DiffStore";
 import { DiffView } from "./diff/DiffView";
 import { Picked } from "./diff/Picked";
+import { Review } from "./diff/Review";
 import { GatewayOrigin } from "./session/Gateway";
 import { SessionStore } from "./session/SessionStore";
 import { Toast } from "./session/Toast";
@@ -107,6 +108,22 @@ export function Shell(props: {
     converse();
     jump();
   };
+
+  const pending = createMemo(() => ({
+    count: comments.all().length,
+    text: () =>
+      untrack(() =>
+        Review.compose(diff.state.base, comments.all(), diff.files())
+      ),
+    sent: () => {
+      comments.clear();
+      converse();
+    },
+    discard: () => {
+      comments.clear();
+    },
+    open: review,
+  }));
 
   const hasTranscript = createMemo(
     (): boolean =>
@@ -261,6 +278,7 @@ export function Shell(props: {
                       store={props.store}
                       onSend={jump}
                       recalled={recalled()}
+                      review={pending()}
                     />
                   </div>
                 </div>

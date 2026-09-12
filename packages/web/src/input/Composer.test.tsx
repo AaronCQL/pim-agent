@@ -2,7 +2,7 @@ import "../test/dom";
 
 import { render } from "@solidjs/web";
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { flush } from "solid-js";
+import { createSignal, flush } from "solid-js";
 
 import type { PickerItem } from "#core/picker/PickerItem";
 import { PROTOCOL_VERSION } from "#protocol/Protocol";
@@ -129,7 +129,13 @@ type Painted = {
   readonly trace: string[];
 };
 
-function paint(store: SessionStore, trace: string[] = []): Painted {
+type ReviewProp = NonNullable<Parameters<typeof Composer>[0]["review"]>;
+
+function paint(
+  store: SessionStore,
+  trace: string[] = [],
+  review?: () => ReviewProp | undefined
+): Painted {
   const host = mountPoint();
   render(
     () => (
@@ -138,6 +144,7 @@ function paint(store: SessionStore, trace: string[] = []): Painted {
         onSend={() => {
           trace.push("onSend");
         }}
+        review={review?.()}
       />
     ),
     host
@@ -469,6 +476,7 @@ test("the one button sends, steers or stops, and never takes the focus", async (
     await new Promise<void>((resolve) => {
       release = resolve;
     });
+    return true;
   }) as typeof store.prompt;
   store.ingest(attached());
   store.ingest(sessionState());
@@ -586,6 +594,7 @@ test("Enter sends where there is a keyboard and a modifier where there is not", 
   const said: string[] = [];
   store.prompt = (async (text: string) => {
     said.push(text);
+    return true;
   }) as typeof store.prompt;
   store.ingest(attached());
   store.ingest(sessionState());
@@ -641,6 +650,7 @@ test("with no physical keyboard Enter is the newline and a modifier is the send"
   const said: string[] = [];
   store.prompt = (async (text: string) => {
     said.push(text);
+    return true;
   }) as typeof store.prompt;
   store.ingest(attached());
   store.ingest(sessionState());
@@ -741,4 +751,108 @@ test("a foreign lease wears the reason and keeps the words typed", async () => {
     "the message to go once the lease frees"
   );
   expect(seen[0]?.text).toBe("your turn is mine now");
+});
+
+/** A review the shell would hand down, whose count the test moves. */
+function reviewProp(
+  count: () => number,
+  trace: string[],
+  block = "REVIEW BLOCK"
+): ReviewProp {
+  return {
+    get count() {
+      return count();
+    },
+    text: () => block,
+    sent: () => {
+      trace.push("sent");
+    },
+    discard: () => {
+      trace.push("discard");
+    },
+    open: () => {
+      trace.push("open");
+    },
+  };
+}
+
+test("the review chip counts, opens and discards, and hides at zero", () => {
+  const store = offline();
+  answers(store, () => ({}));
+  store.ingest(attached());
+  store.ingest(sessionState());
+  const [count, setCount] = createSignal(0);
+  const trace: string[] = [];
+  const prop = reviewProp(count, trace);
+  const { host } = paint(store, [], () => prop);
+  const chip = (): HTMLButtonElement | null =>
+    host.querySelector<HTMLButtonElement>('[aria-label="Read the review"]');
+
+  expect(chip()).toBeNull();
+
+  setCount(2);
+  flush();
+  expect(chip()?.textContent).toBe("2 comments");
+
+  setCount(1);
+  flush();
+  expect(chip()?.textContent).toBe("1 comment");
+
+  chip()!.click();
+  flush();
+  expect(trace).toEqual(["open"]);
+
+  host
+    .querySelector<HTMLButtonElement>('[aria-label="Discard the review"]')!
+    .click();
+  flush();
+  expect(trace).toEqual(["open", "discard"]);
+
+  setCount(0);
+  flush();
+  expect(chip()).toBeNull();
+});
+
+test("one message carries the words and the review, and only a send clears it", async () => {
+  const store = offline();
+  answers(store, () => ({}));
+  const said: string[] = [];
+  const sent: string[] = [];
+  let goes = true;
+  store.prompt = (async (text: string) => {
+    said.push(text);
+    return goes;
+  }) as typeof store.prompt;
+  store.ingest(attached());
+  store.ingest(sessionState());
+  const { host, input } = paint(store, [], () => ({
+    count: 2,
+    text: () => "REVIEW BLOCK",
+    // What went, so a send that was refused cannot pass for one that went.
+    sent: () => {
+      sent.push(said[said.length - 1] ?? "");
+    },
+    discard: () => {},
+    open: () => {},
+  }));
+  const send = (): void => {
+    host.querySelector<HTMLButtonElement>('[aria-label="Send"]')!.click();
+  };
+
+  type(input, "have a look");
+  send();
+  await until(() => sent.length === 1, "the review to be reported sent");
+  expect(said).toEqual(["have a look\n\nREVIEW BLOCK"]);
+
+  goes = false;
+  type(input, "again");
+  send();
+  await until(() => said.length === 2, "the message the store refuses");
+  expect(said[1]).toBe("again\n\nREVIEW BLOCK");
+
+  goes = true;
+  send();
+  await until(() => sent.length === 2, "the review sent on its own");
+  expect(said[2]).toBe("REVIEW BLOCK");
+  expect(sent).toEqual(["have a look\n\nREVIEW BLOCK", "REVIEW BLOCK"]);
 });

@@ -317,14 +317,16 @@ export class SessionStore {
 
   /**
    * Says the message. Into a running turn it joins whatever that turn is
-   * already holding rather than queueing behind it.
+   * already holding rather than queueing behind it. Answers whether it went:
+   * a refusal and a held lease both leave the words unsaid, and whatever the
+   * caller was going to clear on the strength of the send still stands.
    */
-  public async prompt(text: string): Promise<void> {
+  public async prompt(text: string): Promise<boolean> {
     const trimmed = text.trim();
     const sessionId = this.state.sessionId;
     const attachments = this.attachmentsOf(sessionId);
     if (trimmed === "" && attachments.length === 0) {
-      return;
+      return false;
     }
     const local = LOCAL_COMMANDS.find((command) => command.value === trimmed);
     if (local) {
@@ -333,11 +335,11 @@ export class SessionStore {
         delete draft.attachments[sessionId];
       });
       await local.run(this).catch(() => undefined);
-      return;
+      return true;
     }
     // The lease is the other surface's until its turn ends; the message keeps.
     if (this.isHeld()) {
-      return;
+      return false;
     }
     const carried: readonly AttachmentView[] = attachments.map(
       ({ name, url, isImage }) => ({ name, url, isImage })
@@ -392,7 +394,9 @@ export class SessionStore {
       this.setState((draft) => {
         draft.error = (err as Error).message;
       });
+      return false;
     }
+    return true;
   }
 
   /** Stop the turn, and answer with the queued message that was never said. */
