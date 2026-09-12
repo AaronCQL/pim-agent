@@ -274,8 +274,11 @@ describe("the shell, painted from events alone", () => {
     expect(host.textContent).toContain("~/src/repo");
     expect(host.innerHTML).toContain("i-griddy-icons:code-branch");
     expect(host.textContent).toContain("feat/new-stuff");
-    // Dirt is a count, not a flag, and divergence rides along beside it.
-    expect(host.textContent).toContain("*3");
+    // Dirt is a count on its own segment; divergence stays with the branch.
+    expect(host.innerHTML).toContain("i-griddy-icons:file-edit");
+    expect(
+      host.querySelector('[aria-label^="Review changes"]')?.textContent
+    ).toBe("3");
     expect(host.textContent).toContain("↑2");
     expect(host.textContent).toContain("↓1");
 

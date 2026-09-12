@@ -215,11 +215,9 @@ function rows(
           <FileRow
             file={file}
             state={ready(file)}
-            picked={false}
             split={split}
             onExpand={() => {}}
             onOpen={() => {}}
-            onTogglePicked={() => {}}
           />
         ))}
       </ReviewComments>
@@ -409,7 +407,7 @@ test("a comment blurred before a word is typed goes away", () => {
   expect(host.querySelectorAll("textarea").length).toBe(0);
 });
 
-test("the pick box is the last thing on the bar, and not flush to its edge", () => {
+test("the title is the whole bar, and not flush to its edge", () => {
   const comments = loaded();
   const host = rows(comments, [summary(PATH)]);
   const title = host.querySelector<HTMLElement>("[aria-expanded]")!;
@@ -417,7 +415,7 @@ test("the pick box is the last thing on the bar, and not flush to its edge", () 
 
   expect(
     [...bar.children].map((child) => child.getAttribute("aria-label"))
-  ).toEqual([PATH, `Pick ${PATH}`]);
+  ).toEqual([PATH]);
   expect(title.textContent).toContain("+1");
   expect(bar.className).toContain("px-3");
 });

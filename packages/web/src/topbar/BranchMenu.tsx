@@ -3,7 +3,7 @@ import { createMemo, createSignal, onCleanup, Show } from "solid-js";
 import type { GitBranch } from "#core/shared/Git";
 import { relativeTime } from "../format";
 import type { SessionStore } from "../session/SessionStore";
-import { CHIP_BUTTON, PILL } from "../ui/classes";
+import { CHIP_SEGMENT, PILL } from "../ui/classes";
 import {
   Combobox,
   createComboboxNavigation,
@@ -12,9 +12,6 @@ import {
 import { createDisclosure } from "../ui/disclosure";
 import { Fitted } from "../ui/Fitted";
 import { Spinner } from "../ui/Spinner";
-
-// Not the footer's U+F069: that is a Nerd Font glyph, and no browser has the font.
-const DIRTY_MARK = "*";
 
 const SYNC = `${PILL} h-7 flex-1 px-3 text-sm disabled:text-neutral-600 disabled:hover:text-neutral-600 disabled:hover:ring-0`;
 
@@ -73,12 +70,11 @@ function live(branch: GitBranch, now: number): boolean {
   );
 }
 
-/** The repository chip: where the work is, and the two directions it can move. */
+/** The branch segment: where the work is, and the two directions it can move. */
 export function BranchMenu(props: {
   readonly store: SessionStore;
   readonly branch: string;
   readonly compact: boolean;
-  readonly onOpenDiff: () => void;
 }) {
   const [branches, setBranches] = createSignal<readonly GitBranch[]>([]);
   const [running, setRunning] = createSignal<Operation>();
@@ -201,7 +197,7 @@ export function BranchMenu(props: {
   );
 
   return (
-    <div ref={panel.root} class="relative min-w-0">
+    <div ref={panel.root} class="flex min-w-0 flex-1">
       <button
         ref={panel.trigger}
         type="button"
@@ -209,7 +205,7 @@ export function BranchMenu(props: {
         aria-expanded={panel.open() ? "true" : "false"}
         aria-label={`Branch ${props.branch}, switch or sync`}
         title={props.branch}
-        class={CHIP_BUTTON}
+        class={`${CHIP_SEGMENT} flex-1 rounded-l-lg`}
         onClick={panel.toggle}
         onKeyDown={(event: KeyboardEvent) => {
           navigation.onKeyDown(event);
@@ -217,15 +213,6 @@ export function BranchMenu(props: {
       >
         <span class="i-griddy-icons:code-branch size-4 shrink-0" />
         <Fitted texts={[props.branch]} />
-        <Show when={state().dirtyCount > 0}>
-          <span
-            class="shrink-0 text-amber-400"
-            title={`${state().dirtyCount} changed files`}
-          >
-            {DIRTY_MARK}
-            {state().dirtyCount}
-          </span>
-        </Show>
         <Show
           when={!props.compact && (state().ahead > 0 || state().behind > 0)}
         >
@@ -269,18 +256,6 @@ export function BranchMenu(props: {
                 title="Publish this branch"
                 disabled={running() !== undefined}
               />
-              <button
-                type="button"
-                class={SYNC}
-                title="Read what has changed"
-                onClick={() => {
-                  panel.close();
-                  props.onOpenDiff();
-                }}
-              >
-                <span class="i-griddy-icons:code-compare size-4 shrink-0" />
-                Diff
-              </button>
             </div>
 
             <Show when={state().repoBusy}>

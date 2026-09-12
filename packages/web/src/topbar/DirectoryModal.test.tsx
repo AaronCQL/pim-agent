@@ -54,8 +54,9 @@ function paint(): HTMLElement {
       <Topbar
         store={store}
         compact={false}
+        reviewing={false}
         onToggleSidebar={() => {}}
-        onOpenDiff={() => {}}
+        onToggleDiff={() => {}}
       />
     ),
     host

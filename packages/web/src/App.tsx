@@ -12,7 +12,6 @@ import { Composer } from "./input/Composer";
 import { Comments, ReviewComments } from "./diff/Comments";
 import { DiffStore } from "./diff/DiffStore";
 import { DiffView } from "./diff/DiffView";
-import { Picked } from "./diff/Picked";
 import { Review } from "./diff/Review";
 import { GatewayOrigin } from "./session/Gateway";
 import { SessionStore } from "./session/SessionStore";
@@ -54,7 +53,6 @@ export function Shell(props: {
   const [configuring, setConfiguring] = createSignal(false);
   const [reviewing, setReviewing] = createSignal(false);
   const diff = new DiffStore(props.store);
-  const picked = new Picked();
   const comments = new Comments();
   const back = createBackGuard(() => {
     setReviewing(false);
@@ -88,6 +86,14 @@ export function Shell(props: {
   const converse = (): void => {
     setReviewing(false);
     back.release();
+  };
+
+  const toggleReview = (): void => {
+    if (untrack(reviewing)) {
+      converse();
+      return;
+    }
+    review();
   };
 
   const recall = (): void => {
@@ -226,10 +232,11 @@ export function Shell(props: {
             <Topbar
               store={props.store}
               compact={!desktop()}
+              reviewing={reviewing()}
               onToggleSidebar={() => {
                 setSidebar((open) => !open);
               }}
-              onOpenDiff={review}
+              onToggleDiff={toggleReview}
               onOpenSettings={() => {
                 setConfiguring(true);
               }}
@@ -240,7 +247,6 @@ export function Shell(props: {
                 <ReviewComments value={() => comments}>
                   <DiffView
                     diff={diff}
-                    picked={picked}
                     settings={props.settings}
                     inset={inset()}
                     onClose={converse}

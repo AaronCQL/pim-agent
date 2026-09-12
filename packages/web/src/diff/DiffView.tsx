@@ -1,15 +1,21 @@
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  Show,
+  untrack,
+} from "solid-js";
 
-import type { ChangeSummary } from "#protocol/Diff";
 import type { Settings } from "../settings/Settings";
-import { ICON, QUIET } from "../ui/classes";
+import { ACTION, ICON, QUIET } from "../ui/classes";
 import { Menu, type MenuOption } from "../ui/Menu";
 import { observeWidth } from "../ui/scroll";
-import { CommitCard } from "./CommitCard";
+import { CommitModal } from "./CommitModal";
 import { DiffStore, type BaseKind } from "./DiffStore";
 import { FileRow } from "./FileRow";
-import { Picked } from "./Picked";
 import { SplitMode } from "./SplitMode";
+import { Stat } from "./Stat";
 
 const BASES = [
   { value: "worktree", label: "Worktree" },
@@ -34,7 +40,6 @@ const PAGE = 500;
 /** Every file the chosen base says has changed, each opening onto its hunks. */
 export function DiffView(props: {
   readonly diff: DiffStore;
-  readonly picked: Picked;
   readonly settings: Settings;
   /** What the composer floating over the foot covers, so the last row clears it. */
   readonly inset: number;
@@ -42,6 +47,7 @@ export function DiffView(props: {
 }) {
   const [visible, setVisible] = createSignal(PAGE);
   const [width, setWidth] = createSignal(0);
+  const [writing, setWriting] = createSignal(false);
   const measure = observeWidth(setWidth);
 
   const split = createMemo(() =>
@@ -64,50 +70,19 @@ export function DiffView(props: {
     }
   );
 
-  createEffect(
-    () => ({
-      cwd: props.diff.cwd(),
-      files: props.diff.files(),
-      // A list nobody has read yet is not a working copy with nothing in it.
-      read:
-        props.diff.state.status === "ready" &&
-        props.diff.state.error === undefined,
-    }),
-    ({ cwd, files, read }) => {
-      if (read) {
-        props.picked.load(cwd, files);
-      }
-    }
-  );
-
   const shown = createMemo(() => props.diff.files().slice(0, visible()));
 
   const all = createMemo(() => props.diff.files().length);
-  const every = createMemo(() => all() > 0 && props.picked.count() === all());
 
-  // Walked from the marks rather than from the rows: asking every file whether
-  // it is picked would make each one a source of this list.
-  const chosen = createMemo<readonly ChangeSummary[]>(() => {
-    if (props.picked.count() === 0) {
-      return [];
-    }
-    const marks = props.picked.state;
-    const paths = new Set(Object.keys(marks));
-    return props.diff
-      .files()
-      .filter(
-        (file) => paths.has(file.path) && marks[file.path] === file.fingerprint
-      );
-  });
-
-  createEffect(
-    () => props.picked.count(),
-    (count, previous) => {
-      if (previous !== undefined && count > previous) {
-        props.diff.forgetCommit();
+  // The receipt is read back in the pane the commit emptied, so the modal is
+  // only kept open by a refusal.
+  const commit = (paths: readonly string[]): void => {
+    void props.diff.commit(paths).then(() => {
+      if (untrack(() => props.diff.state.failure) === undefined) {
+        setWriting(false);
       }
-    }
-  );
+    });
+  };
 
   return (
     <section aria-label="Changes" class="flex h-full min-h-0 flex-col">
@@ -133,66 +108,38 @@ export function DiffView(props: {
               props.diff.setBase(value as BaseKind);
             }}
           />
-          <Menu
-            label={labelOf(LAYOUTS, props.settings.state.diffSplit)}
-            icon="i-griddy-icons:columns-two"
-            options={LAYOUTS}
-            value={props.settings.state.diffSplit}
-            title="How each file's hunks are laid out"
-            shape="chip"
-            place="below"
-            onSelect={(value) => {
-              props.settings.setDiffSplit(SplitMode.parse(value));
-            }}
-          />
+          <div class="hidden sm:block">
+            <Menu
+              label={labelOf(LAYOUTS, props.settings.state.diffSplit)}
+              icon="i-griddy-icons:columns-two"
+              options={LAYOUTS}
+              value={props.settings.state.diffSplit}
+              title="How each file's hunks are laid out"
+              shape="chip"
+              place="below"
+              onSelect={(value) => {
+                props.settings.setDiffSplit(SplitMode.parse(value));
+              }}
+            />
+          </div>
           <div class="ml-auto flex shrink-0 items-center gap-2">
+            <Stat
+              added={props.diff.state.added}
+              removed={props.diff.state.removed}
+            />
             <Show when={all() > 0}>
-              <span class="text-sm text-neutral-400 tabular-nums">
-                {props.picked.count()}/{all()}
-              </span>
               <button
                 type="button"
-                aria-label={every() ? "Clear every pick" : "Pick every file"}
-                title={
-                  every()
-                    ? "Leave nothing in the commit"
-                    : "Include every file in the commit"
-                }
-                class={ICON}
+                class={ACTION}
+                title="Write a commit from these changes"
                 onClick={() => {
-                  if (every()) {
-                    props.picked.clear();
-                  } else {
-                    props.picked.pickAll(props.diff.files());
-                  }
+                  props.diff.forgetCommit();
+                  setWriting(true);
                 }}
               >
-                <span
-                  class={
-                    every()
-                      ? "i-griddy-icons:checkbox-filled size-5 text-indigo-400"
-                      : "i-griddy-icons:checkbox size-5"
-                  }
-                  aria-hidden="true"
-                />
+                Commit
               </button>
             </Show>
-            {/* The whole tree's stat, read the same way a file's own is. */}
-            <span class="flex items-center text-sm text-neutral-400 tabular-nums">
-              <Show when={props.diff.state.added > 0}>
-                <span class="text-emerald-400">+{props.diff.state.added}</span>
-              </Show>
-              <Show
-                when={
-                  props.diff.state.added > 0 && props.diff.state.removed > 0
-                }
-              >
-                <span class="text-neutral-600">/</span>
-              </Show>
-              <Show when={props.diff.state.removed > 0}>
-                <span class="text-rose-400">−{props.diff.state.removed}</span>
-              </Show>
-            </span>
           </div>
         </div>
         <Show when={props.diff.state.stale}>
@@ -213,6 +160,13 @@ export function DiffView(props: {
               refresh
             </button>
           </div>
+        </Show>
+        <Show when={props.diff.state.committed}>
+          {(sha) => (
+            <div class="px-3 pb-2 text-sm text-emerald-400">
+              committed {sha()}
+            </div>
+          )}
         </Show>
       </header>
 
@@ -245,16 +199,12 @@ export function DiffView(props: {
             <FileRow
               file={file}
               state={props.diff.fileState(file.path)}
-              picked={props.picked.isPicked(file)}
               split={split()}
               onExpand={() => {
                 void props.diff.expand(file.path);
               }}
               onOpen={(gap) => {
                 void props.diff.open(file.path, gap);
-              }}
-              onTogglePicked={() => {
-                props.picked.toggle(file);
               }}
             />
           )}
@@ -280,24 +230,22 @@ export function DiffView(props: {
             More files changed than this list holds.
           </p>
         </Show>
-        <Show
-          when={chosen().length > 0 || props.diff.state.committed !== undefined}
-        >
-          <CommitCard
-            files={chosen()}
-            message={props.diff.state.message}
-            committing={props.diff.state.committing}
-            failure={props.diff.state.failure}
-            committed={props.diff.state.committed}
-            onMessage={(message) => {
-              props.diff.setMessage(message);
-            }}
-            onCommit={(paths) => {
-              void props.diff.commit(paths);
-            }}
-          />
-        </Show>
       </div>
+
+      <CommitModal
+        open={writing()}
+        files={props.diff.files()}
+        message={props.diff.state.message}
+        committing={props.diff.state.committing}
+        failure={props.diff.state.failure}
+        onClose={() => {
+          setWriting(false);
+        }}
+        onMessage={(message) => {
+          props.diff.setMessage(message);
+        }}
+        onCommit={commit}
+      />
     </section>
   );
 }

@@ -43,12 +43,12 @@ export type DiffState = {
   /** `ready` only once a list has landed, so an empty overlay never claims a clean tree it has not read. */
   status: "idle" | "loading" | "ready";
   error: string | undefined;
-  /** The commit card's message, held here so leaving review mode does not lose it. */
+  /** The commit message, held here so closing the modal does not lose it. */
   message: string;
   committing: boolean;
   /** Why the last commit was refused. */
   failure: string | undefined;
-  /** The short sha this card last wrote, shown until the next pick. */
+  /** The short sha last written, read back in the pane the commit emptied. */
   committed: string | undefined;
 };
 
@@ -203,10 +203,13 @@ export class DiffStore {
     });
   }
 
-  /** A new pick starts another commit, so the last one's receipt is done being read. */
+  /**
+   * Drops the receipt for the last commit. The sha stands until a reader goes
+   * to write the next one: it answers "did that land?", and that question is
+   * over the moment they are writing another.
+   */
   public forgetCommit(): void {
     this.setState((draft) => {
-      draft.failure = undefined;
       draft.committed = undefined;
     });
   }

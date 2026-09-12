@@ -1,5 +1,4 @@
 import {
-  createEffect,
   createMemo,
   createSignal,
   For,
@@ -11,8 +10,7 @@ import {
 
 import type { ToolDiffHunk, ToolDiffLine } from "#core/shared/DiffLines";
 import { DiffExpand, type DiffGap } from "#core/view/DiffExpand";
-import type { ChangeStatus, ChangeSummary } from "#protocol/Diff";
-import { Fitted } from "../ui/Fitted";
+import type { ChangeSummary } from "#protocol/Diff";
 import { QUIET } from "../ui/classes";
 import { Spinner } from "../ui/Spinner";
 import { diffSide } from "../view/Blocks";
@@ -23,34 +21,12 @@ import {
   type CommentSide,
 } from "./Comments";
 import type { FileState } from "./DiffStore";
-import { FileTitle, type Role } from "./FileTitle";
+import { FileLabel } from "./FileLabel";
+import { Stat } from "./Stat";
 import { SplitDiff } from "./SplitHunk";
 import { UnifiedDiff } from "./UnifiedDiff";
 
-const LETTERS = {
-  added: "A",
-  modified: "M",
-  deleted: "D",
-  renamed: "R",
-  untracked: "U",
-} as const satisfies Record<ChangeStatus, string>;
-
-const LETTER_CLASSES = {
-  added: "text-emerald-400",
-  modified: "text-amber-400",
-  deleted: "text-rose-400",
-  renamed: "text-indigo-300",
-  untracked: "text-neutral-400",
-} as const satisfies Record<ChangeStatus, string>;
-
-/** What leads to the name, the name itself, and the half of a move that is
-    gone — struck exactly as the patch tool strikes it. */
 const LEAD = "text-neutral-400";
-const ROLES = {
-  lead: LEAD,
-  name: "text-neutral-100",
-  gone: `${LEAD} line-through`,
-} as const satisfies Record<Role, string>;
 
 const UNITS = ["B", "kB", "MB", "GB"] as const;
 
@@ -74,9 +50,7 @@ function numberOf(line: ToolDiffLine, side: CommentSide): number | undefined {
 export function FileRow(props: {
   readonly file: ChangeSummary;
   readonly state: FileState | undefined;
-  readonly picked: boolean;
   readonly onExpand: () => void;
-  readonly onTogglePicked: () => void;
   /** Reads the file's own lines behind one gap and shows them. */
   readonly onOpen: (gap: DiffGap) => void;
   /** Old beside new rather than one column of both, as the pane's width allows. */
@@ -90,21 +64,8 @@ export function FileRow(props: {
     readonly side?: CommentSide;
   }>();
 
-  createEffect(
-    () => props.picked,
-    (picked) => {
-      if (picked) {
-        setOpen(false);
-      }
-    }
-  );
-
   const ready = createMemo(() =>
     props.state?.kind === "ready" ? props.state.diff : undefined
-  );
-
-  const readings = createMemo(() =>
-    FileTitle.readings(props.file.path, props.file.oldPath)
   );
 
   const hunks = createMemo<readonly ToolDiffHunk[]>(() => {
@@ -225,7 +186,7 @@ export function FileRow(props: {
           so a row you are merely pointing at never passes for the open one.
           Only the bar — the hunks below stay on the page, or the lit block
           would be the file rather than its handle. */}
-      {/* Both buttons stretch the full height of the bar, so the whole row
+      {/* The button stretches the full height of the bar, so the whole row
           answers a click rather than the line of text in the middle of it. */}
       <div
         class={`sticky top-0 z-1 flex w-full items-center gap-2 px-3 text-sm ${open() ? "bg-neutral-850" : "bg-neutral-925 hover:bg-neutral-900"}`}
@@ -238,17 +199,10 @@ export function FileRow(props: {
           onClick={toggle}
         >
           <span
-            class={`w-3 shrink-0 font-bold ${LETTER_CLASSES[props.file.status]}`}
-          >
-            {LETTERS[props.file.status]}
-          </span>
-          <Fitted class="flex-1" texts={[FileTitle.widest(readings())]}>
-            {(columns) => (
-              <For each={FileTitle.fit(readings(), columns)}>
-                {(piece) => <span class={ROLES[piece.role]}>{piece.text}</span>}
-              </For>
-            )}
-          </Fitted>
+            class={`i-griddy-icons:chevron-right-small-filled size-4 shrink-0 text-neutral-400 transition-transform ${open() ? "rotate-90" : ""}`}
+            aria-hidden="true"
+          />
+          <FileLabel file={props.file} />
           <Show when={badge() > 0}>
             <span class="flex shrink-0 items-center gap-1 text-neutral-400 tabular-nums">
               <span
@@ -262,39 +216,8 @@ export function FileRow(props: {
             when={!props.file.binary}
             fallback={<span class={`shrink-0 ${LEAD}`}>binary</span>}
           >
-            {/* `+12/−3`, the stat a diff tool's own title carries: the slash
-                binds the two counts into one reading, so neither is mistaken
-                for a number belonging to something else on the bar. */}
-            <span class="flex shrink-0 tabular-nums">
-              <Show when={props.file.added > 0}>
-                <span class="text-emerald-400">+{props.file.added}</span>
-              </Show>
-              <Show when={props.file.added > 0 && props.file.removed > 0}>
-                <span class="text-neutral-600">/</span>
-              </Show>
-              <Show when={props.file.removed > 0}>
-                <span class="text-rose-400">−{props.file.removed}</span>
-              </Show>
-            </span>
+            <Stat added={props.file.added} removed={props.file.removed} />
           </Show>
-        </button>
-        <button
-          type="button"
-          role="checkbox"
-          aria-checked={props.picked ? "true" : "false"}
-          aria-label={`Pick ${props.file.path}`}
-          title="Include in the commit"
-          class="flex w-5 shrink-0 items-center justify-center self-stretch rounded text-neutral-500 hover:text-neutral-100"
-          onClick={props.onTogglePicked}
-        >
-          <span
-            class={
-              props.picked
-                ? "i-griddy-icons:checkbox-filled size-4 text-indigo-400"
-                : "i-griddy-icons:checkbox size-4"
-            }
-            aria-hidden="true"
-          />
         </button>
       </div>
 

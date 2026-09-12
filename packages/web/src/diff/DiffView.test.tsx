@@ -18,7 +18,6 @@ import { mountPoint } from "../test/dom";
 import { GatewayHarness, until } from "../test/gateway";
 import { DiffStore } from "./DiffStore";
 import { DiffView } from "./DiffView";
-import { Picked } from "./Picked";
 
 /**
  * The change set of a real repository, read over the real gateway: the rows are
@@ -47,7 +46,6 @@ beforeEach(async () => {
     pickerDebounceMs: 0,
   });
   await store.connect();
-  await until(() => store.state.branch !== undefined, "the branch to land");
   sent = [];
 });
 
@@ -89,7 +87,6 @@ function paint(): HTMLElement {
     () => (
       <DiffView
         diff={new DiffStore(store)}
-        picked={new Picked()}
         settings={new Settings()}
         inset={0}
         onClose={() => {}}
@@ -111,20 +108,41 @@ function labels(host: HTMLElement): readonly string[] {
   return rows(host).map((row) => row.getAttribute("aria-label") ?? "");
 }
 
-function ticks(host: HTMLElement): readonly HTMLButtonElement[] {
-  return [...host.querySelectorAll<HTMLButtonElement>("[role='checkbox']")];
-}
-
-function card(host: HTMLElement): HTMLTextAreaElement | null {
+/** The modal's own message box, which is only there while it is open. */
+function box(host: HTMLElement): HTMLTextAreaElement | null {
   return host.querySelector<HTMLTextAreaElement>(
     "textarea[aria-label='Commit message']"
   );
 }
 
+function openCommit(host: HTMLElement): void {
+  host
+    .querySelector<HTMLButtonElement>(
+      "[title='Write a commit from these changes']"
+    )
+    ?.click();
+  flush();
+}
+
+/** One file's row in the modal, by the path it names. */
+function pick(host: HTMLElement, path: string): HTMLButtonElement {
+  return host.querySelector<HTMLButtonElement>(
+    `dialog [role='checkbox'][aria-label='${path}']`
+  )!;
+}
+
+/** The modal's button, which reads the same as the toolbar's that opened it. */
+function submit(host: HTMLElement): void {
+  [...host.querySelectorAll<HTMLButtonElement>("dialog button")]
+    .find((button) => button.textContent?.trim().startsWith("Commit"))
+    ?.click();
+  flush();
+}
+
 function write(host: HTMLElement, message: string): void {
-  const box = card(host) as HTMLTextAreaElement;
-  box.value = message;
-  box.dispatchEvent(new Event("input", { bubbles: true }));
+  const field = box(host) as HTMLTextAreaElement;
+  field.value = message;
+  field.dispatchEvent(new Event("input", { bubbles: true }));
   flush();
 }
 
@@ -265,8 +283,8 @@ test("a file's title bar pins to the top of the list, opaque", async () => {
 /*
  * A row is a thing to click, so all of it is the button: the padding that
  * gives the row its height belongs to the button rather than the bar around
- * it, or the top and bottom few pixels of every row swallow a click. The pick
- * box stretches the same way, for the same reason.
+ * it, or the top and bottom few pixels of every row swallow a click. Nothing
+ * shares the bar with it: what goes in a commit is asked in the modal.
  */
 test("the row is the button, top to bottom", async () => {
   await seed();
@@ -277,9 +295,8 @@ test("the row is the button, top to bottom", async () => {
   const bar = row.parentElement as HTMLElement;
   expect(bar.className).not.toMatch(/\bpy-/);
   expect(row.className).toContain("py-1.5");
-  expect(
-    host.querySelector<HTMLElement>("[role='checkbox']")?.className
-  ).toContain("self-stretch");
+  expect(bar.querySelector("[role='checkbox']")).toBeNull();
+  expect(host.querySelector("header [role='checkbox']")).toBeNull();
 });
 
 /*
@@ -395,7 +412,7 @@ test("a clean tree says so", async () => {
   expect(rows(host)).toEqual([]);
 });
 
-/** The shell's own Diff button, with the change set as its destination. */
+/** The shell's own changes segment, with the change set as its destination. */
 function shell(): HTMLElement {
   const host = mountPoint();
   dispose = render(
@@ -416,15 +433,13 @@ function transcript(host: HTMLElement): HTMLElement | null {
 }
 
 function openDiff(host: HTMLElement): void {
-  host.querySelector<HTMLButtonElement>("[aria-haspopup='listbox']")?.click();
-  flush();
   host
-    .querySelector<HTMLButtonElement>("[title='Read what has changed']")
+    .querySelector<HTMLButtonElement>("[aria-label^='Review changes']")
     ?.click();
   flush();
 }
 
-test("the Diff button opens the change set while an agent is working", async () => {
+test("the changes segment opens the change set while an agent is working", async () => {
   await seed();
   const host = shell();
   store.ingest({
@@ -443,12 +458,11 @@ test("the Diff button opens the change set while an agent is working", async () 
   });
   flush();
 
-  host.querySelector<HTMLButtonElement>("[aria-haspopup='listbox']")?.click();
-  flush();
   const diff = host.querySelector<HTMLButtonElement>(
-    "[title='Read what has changed']"
+    "[aria-label^='Review changes']"
   );
   expect(diff?.disabled).toBe(false);
+  expect(diff?.textContent).toBe("2");
 
   diff?.click();
   await settle(() => rows(host).length === 2, "the change set's rows");
@@ -683,25 +697,21 @@ test("a gap too wide to swallow opens a step against each hunk", async () => {
   expect(asked("read_lines")).toHaveLength(2);
 });
 
-test("nothing picked is nothing to commit", async () => {
+/** The pane is for reading; what a commit is made of is asked in the modal. */
+test("the toolbar offers the whole change set, and the modal arrives holding it", async () => {
   await seed();
   const host = await open();
   await settle(() => rows(host).length === 2, "both rows");
 
-  expect(card(host)).toBeNull();
+  expect(box(host)).toBeNull();
+  expect(host.querySelector("header")?.textContent).toContain("Commit");
 
-  ticks(host)[0]?.click();
-  await settle(() => card(host) !== null, "the commit card");
+  openCommit(host);
 
-  expect(host.textContent).toContain("Commit 1 file");
-  ticks(host)[1]?.click();
-  await settle(
-    () => host.textContent?.includes("Commit 2 files") === true,
-    "both picks"
-  );
-  const box = card(host)?.parentElement as HTMLElement;
-  expect(box.textContent).toContain("+2");
-  expect(box.textContent).toContain("−2");
+  expect(box(host)).not.toBeNull();
+  expect(document.activeElement).toBe(box(host));
+  expect(pick(host, "alpha.ts").getAttribute("aria-checked")).toBe("true");
+  expect(pick(host, "src/beta.ts").getAttribute("aria-checked")).toBe("true");
 });
 
 test("a commit writes exactly the picked files and leaves the rest dirty", async () => {
@@ -709,10 +719,11 @@ test("a commit writes exactly the picked files and leaves the rest dirty", async
   const host = await open();
   await settle(() => rows(host).length === 2, "both rows");
 
-  ticks(host)[0]?.click();
-  await settle(() => card(host) !== null, "the commit card");
+  openCommit(host);
+  pick(host, "src/beta.ts").click();
+  flush();
   write(host, "the reviewed change");
-  clickText(host, "Commit");
+  submit(host);
 
   await settle(() => rows(host).length === 1, "the list the commit emptied");
   expect(await gitOut(["log", "-1", "--pretty=%s"])).toBe(
@@ -720,17 +731,18 @@ test("a commit writes exactly the picked files and leaves the rest dirty", async
   );
   expect(await gitOut(["diff", "--name-only"])).toBe("src/beta.ts");
   expect(labels(host)).toEqual(["src/beta.ts"]);
-  expect(host.textContent).toContain(
+  expect(host.querySelector("header")?.textContent).toContain(
     `committed ${await gitOut(["rev-parse", "--short", "HEAD"])}`
   );
-  expect(card(host)).toBeNull();
+  // The modal is done: what it wrote is read back in the pane it emptied.
+  expect(host.querySelector("dialog")?.open).toBe(false);
 });
 
 /*
  * A move is two names in one row, and a commit of only the new one leaves the
  * old path behind in the tree; both go on the pathspec.
  */
-test("a picked rename goes on the commit by both of its names", async () => {
+test("a rename goes on the commit by both of its names", async () => {
   await seed();
   await git(repo, ["add", "-A"]);
   await git(repo, ["commit", "-m", "edits"]);
@@ -738,10 +750,9 @@ test("a picked rename goes on the commit by both of its names", async () => {
   const host = await open();
   await settle(() => rows(host).length === 1, "the renamed row");
 
-  ticks(host)[0]?.click();
-  await settle(() => card(host) !== null, "the commit card");
+  openCommit(host);
   write(host, "renamed");
-  clickText(host, "Commit");
+  submit(host);
 
   await settle(() => asked("commit").length === 1, "the commit");
   expect(asked("commit")).toEqual([
@@ -769,17 +780,20 @@ test("a refused commit keeps the picks and the message that was refused", async 
   const host = paint();
   await settle(() => rows(host).length === 2, "both rows");
 
-  ticks(host)[0]?.click();
-  await settle(() => card(host) !== null, "the commit card");
+  openCommit(host);
+  pick(host, "src/beta.ts").click();
+  flush();
   write(host, "half a tree");
-  clickText(host, "Commit");
+  submit(host);
 
   await settle(
     () => host.textContent?.includes("the agent is working") === true,
     "the refusal"
   );
-  expect(card(host)?.value).toBe("half a tree");
-  expect(ticks(host)[0]?.getAttribute("aria-checked")).toBe("true");
+  expect(host.querySelector("dialog")?.open).toBe(true);
+  expect(box(host)?.value).toBe("half a tree");
+  expect(pick(host, "alpha.ts").getAttribute("aria-checked")).toBe("true");
+  expect(pick(host, "src/beta.ts").getAttribute("aria-checked")).toBe("false");
   expect(await gitOut(["log", "-1", "--pretty=%s"])).toBe("seed");
 });
 
@@ -802,10 +816,9 @@ test("a commit of our own re-reads the list rather than calling it stale", async
   const host = paint();
   await settle(() => rows(host).length === 2, "both rows");
 
-  ticks(host)[0]?.click();
-  await settle(() => card(host) !== null, "the commit card");
+  openCommit(host);
   write(host, "the reviewed change");
-  clickText(host, "Commit");
+  submit(host);
 
   await settle(
     () => asked("list_changes").length === 2,
@@ -828,9 +841,10 @@ test("a half-written message survives leaving the review and coming back", async
   openDiff(host);
   await settle(() => rows(host).length === 2, "the change set's rows");
 
-  ticks(host)[0]?.click();
-  await settle(() => card(host) !== null, "the commit card");
+  openCommit(host);
   write(host, "half written");
+  host.querySelector<HTMLButtonElement>("dialog [aria-label='Close']")?.click();
+  flush();
 
   host
     .querySelector<HTMLButtonElement>("[aria-label='Back to the conversation']")
@@ -839,6 +853,7 @@ test("a half-written message survives leaving the review and coming back", async
   expect(changesPane(host)).toBeNull();
 
   openDiff(host);
-  await settle(() => card(host) !== null, "the card again");
-  expect(card(host)?.value).toBe("half written");
+  await settle(() => rows(host).length === 2, "the rows again");
+  openCommit(host);
+  expect(box(host)?.value).toBe("half written");
 });
