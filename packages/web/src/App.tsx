@@ -11,7 +11,7 @@ import {
 import { Composer } from "./input/Composer";
 import { DiffStore } from "./diff/DiffStore";
 import { DiffView } from "./diff/DiffView";
-import { Seen } from "./diff/Seen";
+import { Picked } from "./diff/Picked";
 import { GatewayOrigin } from "./session/Gateway";
 import { SessionStore } from "./session/SessionStore";
 import { Toast } from "./session/Toast";
@@ -52,7 +52,7 @@ export function Shell(props: {
   const [configuring, setConfiguring] = createSignal(false);
   const [reviewing, setReviewing] = createSignal(false);
   const diff = new DiffStore(props.store);
-  const seen = new Seen();
+  const picked = new Picked();
   const back = createBackGuard(() => {
     setReviewing(false);
   });
@@ -214,7 +214,7 @@ export function Shell(props: {
               <Show when={reviewing()} fallback={<Conversation />}>
                 <DiffView
                   diff={diff}
-                  seen={seen}
+                  picked={picked}
                   settings={props.settings}
                   inset={inset()}
                   onClose={converse}

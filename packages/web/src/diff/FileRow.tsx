@@ -51,9 +51,9 @@ function bytes(count: number): string {
 export function FileRow(props: {
   readonly file: ChangeSummary;
   readonly state: FileState | undefined;
-  readonly seen: boolean;
+  readonly picked: boolean;
   readonly onExpand: () => void;
-  readonly onToggleSeen: () => void;
+  readonly onTogglePicked: () => void;
   /** Reads the file's own lines behind one gap and shows them. */
   readonly onOpen: (gap: DiffGap) => void;
   /** Old beside new rather than one column of both, as the pane's width allows. */
@@ -62,9 +62,9 @@ export function FileRow(props: {
   const [open, setOpen] = createSignal(false);
 
   createEffect(
-    () => props.seen,
-    (seen) => {
-      if (seen) {
+    () => props.picked,
+    (picked) => {
+      if (picked) {
         setOpen(false);
       }
     }
@@ -118,7 +118,7 @@ export function FileRow(props: {
           slides over this one as it leaves, and two transparent bars would be
           legible through each other. `z-1` because being positioned is not
           enough: an icon is a masked element, which is a stacking context of
-          its own painted in the same pass as this bar, so every chevron below
+          its own painted in the same pass as this bar, so every icon below
           would show through it. The layer stays inside the list, which
           isolates it from the composer floating at the foot.
 
@@ -137,15 +137,15 @@ export function FileRow(props: {
         <button
           type="button"
           role="checkbox"
-          aria-checked={props.seen ? "true" : "false"}
-          aria-label={`Seen ${props.file.path}`}
-          title="Reviewed"
+          aria-checked={props.picked ? "true" : "false"}
+          aria-label={`Pick ${props.file.path}`}
+          title="Include in the commit"
           class="flex w-5 shrink-0 items-center justify-center self-stretch rounded text-neutral-500 hover:text-neutral-100"
-          onClick={props.onToggleSeen}
+          onClick={props.onTogglePicked}
         >
           <span
             class={
-              props.seen
+              props.picked
                 ? "i-griddy-icons:checkbox-filled size-4 text-indigo-400"
                 : "i-griddy-icons:checkbox size-4"
             }
@@ -156,13 +156,9 @@ export function FileRow(props: {
           type="button"
           aria-expanded={open() ? "true" : "false"}
           aria-label={props.file.path}
-          class={`flex min-w-0 flex-1 items-center gap-2 py-1.5 pr-3 text-left ${props.seen ? "opacity-50" : ""}`}
+          class="flex min-w-0 flex-1 items-center gap-2 py-1.5 pr-3 text-left"
           onClick={toggle}
         >
-          <span
-            class={`i-griddy-icons:chevron-right-small-filled size-4 shrink-0 text-neutral-400 transition-transform ${open() ? "rotate-90" : ""}`}
-            aria-hidden="true"
-          />
           <span
             class={`w-3 shrink-0 font-bold ${LETTER_CLASSES[props.file.status]}`}
           >

@@ -17,7 +17,7 @@ import { mountPoint } from "../test/dom";
 import { GatewayHarness, until } from "../test/gateway";
 import { DiffStore } from "./DiffStore";
 import { DiffView } from "./DiffView";
-import { Seen } from "./Seen";
+import { Picked } from "./Picked";
 
 /**
  * The change set of a real repository, read over the real gateway: the rows are
@@ -85,7 +85,7 @@ function paint(): HTMLElement {
     () => (
       <DiffView
         diff={new DiffStore(store)}
-        seen={new Seen()}
+        picked={new Picked()}
         settings={new Settings()}
         inset={0}
         onClose={() => {}}
@@ -211,7 +211,7 @@ test("added and removed are divided by a slash, and only when both are there", a
  * there: the bar of the next file slides over this one on its way past, and
  * two see-through bars would be legible through each other. Being positioned
  * is not enough to cover what it scrolls over: an icon is painted through a
- * mask, which is a stacking context of its own, so the chevrons of the hunks
+ * mask, which is a stacking context of its own, so the icons of the hunks
  * below would show through an unlayered bar. It takes a layer, and the list
  * around it is isolated so that layer never reaches the composer floating at
  * the foot.
@@ -239,7 +239,7 @@ test("a file's title bar pins to the top of the list, opaque", async () => {
 /*
  * A row is a thing to click, so all of it is the button: the padding that
  * gives the row its height belongs to the button rather than the bar around
- * it, or the top and bottom few pixels of every row swallow a click. The seen
+ * it, or the top and bottom few pixels of every row swallow a click. The pick
  * box stretches the same way, for the same reason.
  */
 test("the row is the button, top to bottom", async () => {

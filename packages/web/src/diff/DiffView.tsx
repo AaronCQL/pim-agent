@@ -6,7 +6,7 @@ import { Menu, type MenuOption } from "../ui/Menu";
 import { observeWidth } from "../ui/scroll";
 import { DiffStore, type BaseKind } from "./DiffStore";
 import { FileRow } from "./FileRow";
-import { Seen } from "./Seen";
+import { Picked } from "./Picked";
 import { SplitMode } from "./SplitMode";
 
 const BASES = [
@@ -32,7 +32,7 @@ const PAGE = 500;
 /** Every file the chosen base says has changed, each opening onto its hunks. */
 export function DiffView(props: {
   readonly diff: DiffStore;
-  readonly seen: Seen;
+  readonly picked: Picked;
   readonly settings: Settings;
   /** What the composer floating over the foot covers, so the last row clears it. */
   readonly inset: number;
@@ -73,12 +73,15 @@ export function DiffView(props: {
     }),
     ({ cwd, files, read }) => {
       if (read) {
-        props.seen.load(cwd, files);
+        props.picked.load(cwd, files);
       }
     }
   );
 
   const shown = createMemo(() => props.diff.files().slice(0, visible()));
+
+  const all = createMemo(() => props.diff.files().length);
+  const every = createMemo(() => all() > 0 && props.picked.count() === all());
 
   return (
     <section aria-label="Changes" class="flex h-full min-h-0 flex-col">
@@ -116,20 +119,55 @@ export function DiffView(props: {
               props.settings.setDiffSplit(SplitMode.parse(value));
             }}
           />
-          {/* The whole tree's stat, read the same way a file's own is. */}
-          <span class="ml-auto flex shrink-0 items-center text-sm text-neutral-400 tabular-nums">
-            <Show when={props.diff.state.added > 0}>
-              <span class="text-emerald-400">+{props.diff.state.added}</span>
+          <div class="ml-auto flex shrink-0 items-center gap-2">
+            <Show when={all() > 0}>
+              <span class="text-sm text-neutral-400 tabular-nums">
+                {props.picked.count()}/{all()}
+              </span>
+              <button
+                type="button"
+                aria-label={every() ? "Clear every pick" : "Pick every file"}
+                title={
+                  every()
+                    ? "Leave nothing in the commit"
+                    : "Include every file in the commit"
+                }
+                class={ICON}
+                onClick={() => {
+                  if (every()) {
+                    props.picked.clear();
+                  } else {
+                    props.picked.pickAll(props.diff.files());
+                  }
+                }}
+              >
+                <span
+                  class={
+                    every()
+                      ? "i-griddy-icons:checkbox-filled size-5 text-indigo-400"
+                      : "i-griddy-icons:checkbox size-5"
+                  }
+                  aria-hidden="true"
+                />
+              </button>
             </Show>
-            <Show
-              when={props.diff.state.added > 0 && props.diff.state.removed > 0}
-            >
-              <span class="text-neutral-600">/</span>
-            </Show>
-            <Show when={props.diff.state.removed > 0}>
-              <span class="text-rose-400">−{props.diff.state.removed}</span>
-            </Show>
-          </span>
+            {/* The whole tree's stat, read the same way a file's own is. */}
+            <span class="flex items-center text-sm text-neutral-400 tabular-nums">
+              <Show when={props.diff.state.added > 0}>
+                <span class="text-emerald-400">+{props.diff.state.added}</span>
+              </Show>
+              <Show
+                when={
+                  props.diff.state.added > 0 && props.diff.state.removed > 0
+                }
+              >
+                <span class="text-neutral-600">/</span>
+              </Show>
+              <Show when={props.diff.state.removed > 0}>
+                <span class="text-rose-400">−{props.diff.state.removed}</span>
+              </Show>
+            </span>
+          </div>
         </div>
         <Show when={props.diff.state.stale}>
           <div class="flex min-w-0 items-center gap-2 px-3 pb-2 text-sm text-amber-400">
@@ -181,7 +219,7 @@ export function DiffView(props: {
             <FileRow
               file={file}
               state={props.diff.fileState(file.path)}
-              seen={props.seen.isSeen(file)}
+              picked={props.picked.isPicked(file)}
               split={split()}
               onExpand={() => {
                 void props.diff.expand(file.path);
@@ -189,8 +227,8 @@ export function DiffView(props: {
               onOpen={(gap) => {
                 void props.diff.open(file.path, gap);
               }}
-              onToggleSeen={() => {
-                props.seen.toggle(file);
+              onTogglePicked={() => {
+                props.picked.toggle(file);
               }}
             />
           )}

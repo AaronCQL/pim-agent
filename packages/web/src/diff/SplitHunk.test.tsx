@@ -89,11 +89,11 @@ function row(from: string, to: string, split = true): HTMLElement {
       <FileRow
         file={summary()}
         state={state}
-        seen={false}
+        picked={false}
         split={split}
         onExpand={() => {}}
         onOpen={() => {}}
-        onToggleSeen={() => {}}
+        onTogglePicked={() => {}}
       />
     ),
     host
