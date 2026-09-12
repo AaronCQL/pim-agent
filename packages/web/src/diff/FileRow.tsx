@@ -116,9 +116,11 @@ export function FileRow(props: {
           file is still on screen, so a long diff is never read with nothing
           saying which file it is. Pinned means opaque — the next row's bar
           slides over this one as it leaves, and two transparent bars would be
-          legible through each other. No `z-`: being positioned is already
-          enough to cover the hunks it scrolls over, and a layer of its own
-          would lift the bar over the composer floating at the foot.
+          legible through each other. `z-1` because being positioned is not
+          enough: an icon is a masked element, which is a stacking context of
+          its own painted in the same pass as this bar, so every chevron below
+          would show through it. The layer stays inside the list, which
+          isolates it from the composer floating at the foot.
 
           An open file's bar is lit, and stays exactly that lit under a
           pointer: it is already the row being read, so there is nothing left
@@ -130,7 +132,7 @@ export function FileRow(props: {
           whole height of the row answers a click rather than the line of text
           in the middle of it. */}
       <div
-        class={`sticky top-0 flex w-full items-center gap-2 pl-3 text-sm ${open() ? "bg-neutral-850" : "bg-neutral-925 hover:bg-neutral-900"}`}
+        class={`sticky top-0 z-1 flex w-full items-center gap-2 pl-3 text-sm ${open() ? "bg-neutral-850" : "bg-neutral-925 hover:bg-neutral-900"}`}
       >
         <button
           type="button"

@@ -209,9 +209,12 @@ test("added and removed are divided by a slash, and only when both are there", a
  * nothing about which file it belongs to. The title bar pins to the top of the
  * list for as long as any of its file is on screen, and is opaque while it is
  * there: the bar of the next file slides over this one on its way past, and
- * two see-through bars would be legible through each other. It claims no
- * layer of its own, or it would ride over the composer floating at the foot
- * rather than passing behind it.
+ * two see-through bars would be legible through each other. Being positioned
+ * is not enough to cover what it scrolls over: an icon is painted through a
+ * mask, which is a stacking context of its own, so the chevrons of the hunks
+ * below would show through an unlayered bar. It takes a layer, and the list
+ * around it is isolated so that layer never reaches the composer floating at
+ * the foot.
  */
 test("a file's title bar pins to the top of the list, opaque", async () => {
   await seed();
@@ -222,7 +225,10 @@ test("a file's title bar pins to the top of the list, opaque", async () => {
   expect(bar().className).toContain("sticky");
   expect(bar().className).toContain("top-0");
   expect(bar().className).toContain("bg-neutral-925");
-  expect(bar().className).not.toMatch(/\bz-\d/);
+  expect(bar().className).toMatch(/\bz-\d/);
+  const list = bar().parentElement?.parentElement as HTMLElement;
+  expect(list.className).toContain("isolate");
+  expect(list.className).toContain("overflow-y-auto");
 
   rows(host)[0]?.click();
   await settle(() => host.textContent?.includes("THREE") === true, "the hunks");

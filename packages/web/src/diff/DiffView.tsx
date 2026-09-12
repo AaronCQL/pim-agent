@@ -152,9 +152,12 @@ export function DiffView(props: {
         </Show>
       </header>
 
+      {/* Isolated: the file bars inside stack against each other and the hunks
+          they scroll over, and never against the composer floating over the
+          foot of the same pane. */}
       <div
         ref={measure}
-        class="min-h-0 flex-1 overflow-y-auto"
+        class="isolate min-h-0 flex-1 overflow-y-auto"
         style={{ "padding-bottom": `${props.inset}px` }}
       >
         <Show when={props.diff.state.error}>
