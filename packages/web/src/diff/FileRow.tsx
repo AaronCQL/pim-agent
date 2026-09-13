@@ -1,25 +1,11 @@
-import {
-  createMemo,
-  createSignal,
-  For,
-  Show,
-  untrack,
-  useContext,
-  type Element,
-} from "solid-js";
+import { createMemo, createSignal, Show, useContext } from "solid-js";
 
-import type { ToolDiffHunk, ToolDiffLine } from "#core/shared/DiffLines";
+import type { ToolDiffHunk } from "#core/shared/DiffLines";
 import { DiffExpand, type DiffGap } from "#core/view/DiffExpand";
 import type { ChangeSummary } from "#protocol/Diff";
-import { QUIET } from "../ui/classes";
 import { Spinner } from "../ui/Spinner";
-import { diffSide } from "../view/Blocks";
-import { CommentCard } from "./CommentCard";
-import {
-  ReviewComments,
-  type CommentAnchor,
-  type CommentSide,
-} from "./Comments";
+import { createAnchoring } from "./anchoring";
+import { ReviewComments } from "./Comments";
 import type { FileState } from "./DiffStore";
 import { FileLabel } from "./FileLabel";
 import { Stat } from "./Stat";
@@ -30,8 +16,6 @@ const LEAD = "text-neutral-400";
 
 const UNITS = ["B", "kB", "MB", "GB"] as const;
 
-const NO_IDS: readonly string[] = [];
-
 function bytes(count: number): string {
   let size = count;
   let unit = 0;
@@ -40,10 +24,6 @@ function bytes(count: number): string {
     unit += 1;
   }
   return `${unit === 0 ? size : size.toFixed(1)} ${UNITS[unit]}`;
-}
-
-function numberOf(line: ToolDiffLine, side: CommentSide): number | undefined {
-  return side === "old" ? line.oldLine : line.newLine;
 }
 
 /** One changed file: what happened to it, and its hunks once a reader asks. */
@@ -58,11 +38,6 @@ export function FileRow(props: {
 }) {
   const [open, setOpen] = createSignal(false);
   const comments = useContext(ReviewComments)();
-  /** The comment a second tap on a gutter widens, rather than starting another. */
-  const [writing, setWriting] = createSignal<{
-    readonly id: string;
-    readonly side?: CommentSide;
-  }>();
 
   const ready = createMemo(() =>
     props.state?.kind === "ready" ? props.state.diff : undefined
@@ -77,14 +52,27 @@ export function FileRow(props: {
       : [];
   });
 
+  const anchoring =
+    comments === undefined
+      ? undefined
+      : createAnchoring({ comments, file: () => props.file, hunks });
+
   const truncated = createMemo(() => ready()?.truncated === true);
 
   const opening = createMemo(
     () => props.state?.kind === "ready" && props.state.opening
   );
 
-  const binary = createMemo(() => {
+  /**
+   * What stands in for hunks a file has none of. Every comment is made by
+   * pointing at something, so where there is no line to point at this is the
+   * target instead.
+   */
+  const placeholder = createMemo(() => {
     const diff = ready();
+    if (!props.file.binary && diff?.binary !== true) {
+      return "no textual changes";
+    }
     const sizes = [diff?.oldBytes, diff?.newBytes]
       .filter((side) => side !== undefined)
       .map(bytes)
@@ -101,72 +89,6 @@ export function FileRow(props: {
   };
 
   const badge = createMemo(() => comments?.count(props.file.path) ?? 0);
-
-  // The cards are listed by id: a comment is a new object on every keystroke,
-  // and a list of those would rebuild the box it was typed into.
-  const card = (id: string): Element => (
-    <Show when={comments?.one(id)}>
-      {(held) => (
-        <CommentCard
-          comment={held()}
-          outdated={held().fingerprint !== props.file.fingerprint}
-          focus={id === untrack(writing)?.id}
-          onWrite={(text) => {
-            comments?.write(id, text);
-          }}
-          onRemove={() => {
-            comments?.remove(id);
-            setWriting((pending) => (pending?.id === id ? undefined : pending));
-          }}
-        />
-      )}
-    </Show>
-  );
-
-  // A handler reads the file rather than tracking it, and Solid asks to be told so.
-  const anchorOf = (): CommentAnchor =>
-    untrack(() => ({
-      path: props.file.path,
-      fingerprint: props.file.fingerprint,
-    }));
-
-  /** Opens a comment and keeps it, so the next tap widens it rather than starting another. */
-  const start = (anchor: CommentAnchor): void => {
-    const id = comments?.open(anchor);
-    if (id !== undefined) {
-      setWriting({ id, side: anchor.side });
-    }
-  };
-
-  // A unified row belongs to the one side it has; a split column says which it is.
-  const pick = (line: ToolDiffLine, side = diffSide(line)): void => {
-    const number = numberOf(line, side);
-    if (number === undefined) {
-      return;
-    }
-    const pending = untrack(writing);
-    if (pending !== undefined && pending.side === side) {
-      comments?.extend(pending.id, number);
-      setWriting(undefined);
-      return;
-    }
-    start({ ...anchorOf(), side, line: number, quote: line.text });
-  };
-
-  const anchored = (line: ToolDiffLine, side = diffSide(line)): Element => {
-    const number = numberOf(line, side);
-    return (
-      <For
-        each={
-          number === undefined
-            ? NO_IDS
-            : comments?.ids(props.file.path, side, number)
-        }
-      >
-        {(id) => card(id)}
-      </For>
-    );
-  };
 
   return (
     <div class="border-b border-neutral-850 last:border-b-0">
@@ -222,34 +144,27 @@ export function FileRow(props: {
       </div>
 
       <Show when={open()}>
-        <div class="px-3 pb-2 text-sm">
-          <Show when={comments !== undefined}>
-            <button
-              type="button"
-              class={`${QUIET} my-1 flex items-center gap-1.5`}
-              onClick={() => {
-                start(anchorOf());
-              }}
-            >
-              <span
-                class="i-griddy-icons:chat-bubble-dots size-4 shrink-0"
-                aria-hidden="true"
-              />
-              add comment
-            </button>
-            <For each={comments?.ids(props.file.path) ?? NO_IDS}>
-              {(id) => card(id)}
-            </For>
-          </Show>
+        {/* The hunks run the full width of the pane, flush with the title bar
+            over them: a diff is a column of its own numbering and its own
+            code, and an inset would only narrow the code without lining it up
+            with anything. The prose around them keeps the bar's inset, so a
+            sentence still starts under the file's name. */}
+        <div class="pb-2 text-sm">
+          {/* A comment on the file itself has no gutter to hang beside, and
+              its cross and `Stale` chip are placed where one would be — so the
+              card is given that much room, or they would sit off the pane. */}
+          <div class="px-3" style={{ "--gutter": "7ch" }}>
+            {anchoring?.fileCards()}
+          </div>
           <Show when={props.state?.kind === "loading"}>
-            <span class={`flex items-center gap-2 ${LEAD}`}>
+            <span class={`flex items-center gap-2 px-3 ${LEAD}`}>
               <Spinner />
               reading the diff
             </span>
           </Show>
           <Show when={props.state?.kind === "error" ? props.state : undefined}>
             {(failed) => (
-              <p class="whitespace-pre-wrap text-rose-400">
+              <p class="px-3 whitespace-pre-wrap text-rose-400">
                 {failed().message}
               </p>
             )}
@@ -265,8 +180,7 @@ export function FileRow(props: {
                     total={ready()?.total}
                     busy={opening()}
                     onOpen={props.onOpen}
-                    onPickLine={comments === undefined ? undefined : pick}
-                    after={comments === undefined ? undefined : anchored}
+                    anchors={anchoring}
                   />
                 }
               >
@@ -276,8 +190,7 @@ export function FileRow(props: {
                   total={ready()?.total}
                   busy={opening()}
                   onOpen={props.onOpen}
-                  onPickLine={comments === undefined ? undefined : pick}
-                  after={comments === undefined ? undefined : anchored}
+                  anchors={anchoring}
                 />
               </Show>
             </Show>
@@ -287,22 +200,35 @@ export function FileRow(props: {
               }
             >
               {(message) => (
-                <p class="whitespace-pre-wrap text-rose-400">{message()}</p>
+                <p class="px-3 whitespace-pre-wrap text-rose-400">
+                  {message()}
+                </p>
               )}
             </Show>
             <Show when={truncated()}>
-              <p class="text-amber-400">
+              <p class="px-3 text-amber-400">
                 diff is very large — the rest is not shown
               </p>
             </Show>
             <Show when={hunks().length === 0 && !truncated()}>
-              <p class={LEAD}>
-                {props.file.binary || ready()?.binary === true
-                  ? binary()
-                  : "no textual changes"}
-              </p>
+              <Show
+                when={anchoring !== undefined}
+                fallback={<p class={`px-3 ${LEAD}`}>{placeholder()}</p>}
+              >
+                <button
+                  type="button"
+                  aria-label={`Comment on ${props.file.path}`}
+                  class={`${LEAD} mx-2 rounded px-1 text-left hover:bg-indigo-500/10`}
+                  onClick={() => {
+                    anchoring?.pickFile();
+                  }}
+                >
+                  {placeholder()}
+                </button>
+              </Show>
             </Show>
           </Show>
+          {anchoring?.sheet()}
         </div>
       </Show>
     </div>

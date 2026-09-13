@@ -813,7 +813,8 @@ test("the review chip counts, opens and discards, and hides at zero", () => {
   expect(chip()).toBeNull();
 });
 
-test("one message carries the words and the review, and only a send clears it", async () => {
+/** The comments are what the message is about, so the message is read last. */
+test("one message carries the review above the words, and only a send clears it", async () => {
   const store = offline();
   answers(store, () => ({}));
   const said: string[] = [];
@@ -842,17 +843,17 @@ test("one message carries the words and the review, and only a send clears it", 
   type(input, "have a look");
   send();
   await until(() => sent.length === 1, "the review to be reported sent");
-  expect(said).toEqual(["have a look\n\nREVIEW BLOCK"]);
+  expect(said).toEqual(["REVIEW BLOCK\n\n---\n\nhave a look"]);
 
   goes = false;
   type(input, "again");
   send();
   await until(() => said.length === 2, "the message the store refuses");
-  expect(said[1]).toBe("again\n\nREVIEW BLOCK");
+  expect(said[1]).toBe("REVIEW BLOCK\n\n---\n\nagain");
 
   goes = true;
   send();
   await until(() => sent.length === 2, "the review sent on its own");
   expect(said[2]).toBe("REVIEW BLOCK");
-  expect(sent).toEqual(["have a look\n\nREVIEW BLOCK", "REVIEW BLOCK"]);
+  expect(sent).toEqual(["REVIEW BLOCK\n\n---\n\nhave a look", "REVIEW BLOCK"]);
 });

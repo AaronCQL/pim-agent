@@ -21,6 +21,7 @@ import { GatewayOrigin } from "../session/Gateway";
 import { CopyButton } from "../ui/CopyButton";
 import { ImageTile } from "../ui/ImageTile";
 import { Attachments } from "./Attachments";
+import { diffSide, type DiffAnchors } from "./anchors";
 import { Highlight, type Token } from "./highlight";
 import {
   DIFF_GAP_CLASS,
@@ -29,6 +30,7 @@ import {
   DIFF_ROW_CLASSES,
   FRAME_CLASSES,
   NOTICE_CLASSES,
+  diffAnchorClass,
   groupByFrame,
   syntaxClass,
   toneClass,
@@ -184,9 +186,7 @@ export function UnifiedHunk(props: {
   readonly hunk: DiffHunk;
   readonly lang: string | undefined;
   readonly width: number;
-  /** Given only where a gutter is a target: a reader anchoring a comment to the line. */
-  readonly onPickLine?: (line: ToolDiffLine) => void;
-  readonly after?: (line: ToolDiffLine) => Element;
+  readonly anchors?: DiffAnchors;
 }) {
   // One tokenisation per side of the hunk, memoised: it re-runs when a grammar lands.
   const tokens = createMemo(() =>
@@ -202,51 +202,74 @@ export function UnifiedHunk(props: {
           line={line}
           tokens={tokens()[index()] ?? [{ text: line.text }]}
           width={props.width}
-          onPickLine={props.onPickLine}
-          after={props.after}
+          anchors={props.anchors}
         />
       )}
     </For>
   );
 }
 
-/** A unified row belongs to the side it changed: what was taken away, or what stands there now. */
-export function diffSide(line: ToolDiffLine): "old" | "new" {
-  return line.kind === "removed" ? "old" : "new";
-}
-
 function DiffRow(props: {
   readonly line: ToolDiffLine;
   readonly tokens: readonly Token[];
   readonly width: number;
-  readonly onPickLine?: (line: ToolDiffLine) => void;
-  readonly after?: (line: ToolDiffLine) => Element;
+  readonly anchors?: DiffAnchors;
 }) {
   const kind = () => props.line.kind;
+  const side = () => diffSide(props.line);
+  const number = () => DiffLayout.lineNumber(props.line);
+  const state = () => props.anchors?.stateOf(side(), number()) ?? "idle";
   const gutter = () =>
-    ` ${String(DiffLayout.lineNumber(props.line) ?? "").padStart(props.width)} ${SIGNS[kind()]} `;
+    ` ${String(number() ?? "").padStart(props.width)} ${SIGNS[kind()]} `;
 
   return (
     <>
       <div class={`whitespace-pre ${DIFF_ROW_CLASSES[kind()]}`}>
         <Show
-          when={props.onPickLine !== undefined}
+          when={props.anchors}
           fallback={
             <span class={`select-none ${DIFF_GUTTER_CLASSES[kind()]}`}>
               {gutter()}
             </span>
           }
         >
-          <button
-            type="button"
-            aria-label={`Comment on ${diffSide(props.line)} line ${DiffLayout.lineNumber(props.line) ?? ""}`}
-            class={`select-none hover:bg-neutral-500/15 ${DIFF_GUTTER_CLASSES[kind()]}`}
-            onClick={() => {
-              props.onPickLine?.(props.line);
-            }}
-          >
-            {gutter()}
-          </button>
+          {(anchors) => (
+            <button
+              type="button"
+              aria-label={`Comment on ${side()} line ${number() ?? ""}`}
+              // A finger drawn down the gutter is a range rather than a scroll,
+              // and only the compositor can be told so beforehand: the gutter
+              // keeps sideways panning and gives up the vertical. The code
+              // beside it scrolls as it always did. Written out in full rather
+              // than with the shorthand utility, which leans on two further
+              // variables registered with no initial value and so voids itself.
+              class={`select-none [touch-action:pan-x] ${diffAnchorClass(kind(), state(), true)}`}
+              onClick={(event) => {
+                // A keyboard reports no clicks; the pointer has its own path.
+                if (event.detail === 0) {
+                  anchors().onPick(props.line, side(), event.shiftKey);
+                }
+              }}
+              onPointerDown={(event) => {
+                if (event.button === 0) {
+                  // A press that draws a range must not also drag a text
+                  // selection through the code it is drawn beside.
+                  event.preventDefault();
+                  // Touch captures the pointer to the element it went down on,
+                  // which would keep every gutter it then crosses from hearing it.
+                  event.currentTarget.releasePointerCapture(event.pointerId);
+                  anchors().onPress(props.line, side(), event.shiftKey);
+                }
+              }}
+              onPointerEnter={(event) => {
+                if (event.buttons === 1) {
+                  anchors().onSweep(props.line, side());
+                }
+              }}
+            >
+              {gutter()}
+            </button>
+          )}
         </Show>
         <For each={emphasize(props.tokens, props.line.emphasis)}>
           {(piece) => (
@@ -260,7 +283,7 @@ function DiffRow(props: {
           )}
         </For>
       </div>
-      {props.after?.(props.line)}
+      {props.anchors?.cardsAt(side(), number())}
     </>
   );
 }

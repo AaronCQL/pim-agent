@@ -1,41 +1,66 @@
 import type { ChangeSummary } from "#protocol/Diff";
-import type { Comment } from "./Comments";
+import type { Comment, CommentSide } from "./Comments";
 import type { BaseKind } from "./DiffStore";
 
 /** How much of the quoted line is carried; the rest is behind the line number. */
 const QUOTE = 120;
 
-function plural(count: number, noun: string): string {
-  return `${count} ${noun}${count === 1 ? "" : "s"}`;
-}
+/** Entries, and the message they ride with, are parted the same way. */
+const DIVIDER = "\n\n---\n\n";
+
+/**
+ * The revision a side of each base is read from. Absent is the file on disk,
+ * which is what a bare reference already names.
+ */
+const REVISIONS: Record<BaseKind, Partial<Record<CommentSide, string>>> = {
+  worktree: { old: "HEAD" },
+  unstaged: { old: "index" },
+  staged: { old: "HEAD", new: "index" },
+};
 
 function elide(text: string): string {
   const line = text.trimEnd();
   return line.length > QUOTE ? `${line.slice(0, QUOTE - 1)}…` : line;
 }
 
-function where(comment: Comment): string {
-  if (comment.start === undefined || comment.end === undefined) {
-    return `${comment.path} (file)`;
+function span(comment: Comment): string {
+  if (comment.start === undefined) {
+    return "";
   }
-  const lines =
-    comment.start === comment.end
-      ? `${comment.start}`
-      : `${comment.start}-${comment.end}`;
-  return `${comment.path}:${lines} (${comment.side ?? "new"})`;
+  const end = comment.end ?? comment.start;
+  return end === comment.start
+    ? `:${comment.start}`
+    : `:${comment.start}-${end}`;
 }
 
-function entry(comment: Comment, outdated: boolean): string {
-  const lines = [`${where(comment)}${outdated ? " (outdated)" : ""}`];
-  if (comment.quote !== undefined && comment.quote.trim() !== "") {
-    lines.push(`> ${elide(comment.quote)}`);
-  }
-  const rest = (comment.end ?? 0) - (comment.start ?? 0);
-  if (rest > 0) {
-    lines.push(`+${plural(rest, "more line")}`);
-  }
-  lines.push(comment.text.trim());
-  return lines.join("\n");
+/**
+ * A quote only survives where no revision holds what was read: the working
+ * copy has moved on, and the lines it names are the ones that moved.
+ */
+function stale(comment: Comment): string {
+  const quote = comment.quote?.trim();
+  return quote === undefined || quote === ""
+    ? "outdated"
+    : `outdated, line read \`${elide(quote)}\``;
+}
+
+function notes(
+  comment: Comment,
+  base: BaseKind,
+  outdated: boolean
+): readonly string[] {
+  const revision =
+    comment.side === undefined ? undefined : REVISIONS[base][comment.side];
+  return [
+    ...(revision === undefined ? [] : [revision]),
+    ...(outdated && comment.side === "new" ? [stale(comment)] : []),
+  ];
+}
+
+function entry(comment: Comment, base: BaseKind, outdated: boolean): string {
+  const said = notes(comment, base, outdated);
+  const where = said.length === 0 ? "" : ` (${said.join(", ")})`;
+  return `> ${comment.path}${span(comment)}${where}\n\n${comment.text.trim()}`;
 }
 
 function byLine(left: Comment, right: Comment): number {
@@ -67,22 +92,23 @@ function compose(
     (left, right) =>
       (order.get(left) ?? files.length) - (order.get(right) ?? files.length)
   );
-  const blocks = paths.flatMap((path) => {
-    // A file the list does not carry cannot be said to have moved: the list
-    // may never have been read at all, and every comment would wear it.
-    const held = fingerprints.get(path);
-    return written
-      .filter((comment) => comment.path === path)
-      .sort(byLine)
-      .map((comment) =>
-        entry(comment, held !== undefined && held !== comment.fingerprint)
-      );
-  });
-  const header = `Review of the ${base} changes (${plural(
-    written.length,
-    "comment"
-  )}, ${plural(paths.length, "file")}):`;
-  return [header, ...blocks].join("\n\n");
+  return paths
+    .flatMap((path) => {
+      // A file the list does not carry cannot be said to have moved: the list
+      // may never have been read at all, and every comment would wear it.
+      const held = fingerprints.get(path);
+      return written
+        .filter((comment) => comment.path === path)
+        .sort(byLine)
+        .map((comment) =>
+          entry(
+            comment,
+            base,
+            held !== undefined && held !== comment.fingerprint
+          )
+        );
+    })
+    .join(DIVIDER);
 }
 
-export const Review = { compose };
+export const Review = { compose, DIVIDER };

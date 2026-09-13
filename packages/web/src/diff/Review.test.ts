@@ -21,7 +21,11 @@ function file(path: string, fingerprint = "f1"): ChangeSummary {
   return { path, status: "modified", added: 1, removed: 0, fingerprint };
 }
 
-test("a line comment carries its side, its quote and what was written", () => {
+/**
+ * The file on disk is what a bare reference already names, so nothing is said
+ * twice: no revision, no quote of lines the reader can go and read.
+ */
+test("a line comment on the working copy is the reference and what was written", () => {
   const block = Review.compose(
     "worktree",
     [
@@ -38,50 +42,121 @@ test("a line comment carries its side, its quote and what was written", () => {
   );
 
   expect(block).toBe(
-    [
-      "Review of the worktree changes (1 comment, 1 file):",
-      "",
-      "src/a.ts:12 (new)",
-      "> const w = memo(…)",
-      "Move this to the trailing edge.",
-    ].join("\n")
+    ["> src/a.ts:12", "", "Move this to the trailing edge."].join("\n")
   );
 });
 
-test("a range says how much of it the quote leaves out", () => {
+test("a range carries both ends and no count of what is between them", () => {
   const block = Review.compose(
-    "unstaged",
+    "worktree",
     [
       comment({
         path: "src/a.ts",
-        side: "old",
+        side: "new",
         start: 141,
         end: 147,
-        quote: "class RowBar {",
         text: "Split this.",
       }),
     ],
     [file("src/a.ts")]
   );
 
-  expect(block).toContain(
-    "Review of the unstaged changes (1 comment, 1 file):"
-  );
-  expect(block).toContain("src/a.ts:141-147 (old)");
-  expect(block).toContain("> class RowBar {");
-  expect(block).toContain("+6 more lines");
+  expect(block).toBe(["> src/a.ts:141-147", "", "Split this."].join("\n"));
 });
 
-test("a comment on the file itself names no line and no side", () => {
+/** The numbers belong to a revision, so the entry names the one git knows. */
+test("an old-side comment names the revision its numbers belong to", () => {
+  const worktree = Review.compose(
+    "worktree",
+    [comment({ path: "src/a.ts", side: "old", start: 141, end: 147 })],
+    [file("src/a.ts")]
+  );
+  const unstaged = Review.compose(
+    "unstaged",
+    [comment({ path: "src/a.ts", side: "old", start: 141, end: 147 })],
+    [file("src/a.ts")]
+  );
+
+  expect(worktree.split("\n")[0]).toBe("> src/a.ts:141-147 (HEAD)");
+  expect(unstaged.split("\n")[0]).toBe("> src/a.ts:141-147 (index)");
+});
+
+/** `--cached` puts both sides in a revision: the new one is the index, not the disk. */
+test("a staged diff names the index on the side that is not on disk", () => {
+  const block = Review.compose(
+    "staged",
+    [
+      comment({ path: "src/a.ts", side: "new", start: 4, end: 4 }),
+      comment({ path: "src/a.ts", side: "old", start: 9, end: 9 }),
+    ],
+    [file("src/a.ts")]
+  );
+
+  expect(block.split("\n").filter((line) => line.startsWith("> "))).toEqual([
+    "> src/a.ts:4 (index)",
+    "> src/a.ts:9 (HEAD)",
+  ]);
+});
+
+test("a comment on the file itself names no line and no revision", () => {
   const block = Review.compose(
     "staged",
     [comment({ path: "src/a.ts", text: "The whole thing is two things." })],
     [file("src/a.ts")]
   );
 
-  expect(block).toContain("src/a.ts (file)");
-  expect(block).not.toContain(":undefined");
-  expect(block).not.toContain(">");
+  expect(block).toBe(
+    ["> src/a.ts", "", "The whole thing is two things."].join("\n")
+  );
+});
+
+/**
+ * No revision holds the working copy the reader read, so the quote is the only
+ * anchor left — and the one place it is still worth its width.
+ */
+test("a new-side comment whose file has moved carries the line it was written against", () => {
+  const block = Review.compose(
+    "worktree",
+    [
+      comment({
+        path: "src/a.ts",
+        fingerprint: "before",
+        side: "new",
+        start: 1,
+        end: 1,
+        quote: "const pending = createMemo(() => ({",
+        text: "still worth saying",
+      }),
+    ],
+    [file("src/a.ts", "after")]
+  );
+
+  expect(block).toBe(
+    [
+      "> src/a.ts:1 (outdated, line read `const pending = createMemo(() => ({`)",
+      "",
+      "still worth saying",
+    ].join("\n")
+  );
+});
+
+/** HEAD and the index do not move when the working copy does. */
+test("an old-side comment on a moved file keeps its plain reference", () => {
+  const block = Review.compose(
+    "worktree",
+    [
+      comment({
+        path: "src/a.ts",
+        fingerprint: "before",
+        side: "old",
+        start: 2,
+        end: 2,
+      }),
+    ],
+    [file("src/a.ts", "after")]
+  );
+
+  expect(block.split("\n")[0]).toBe("> src/a.ts:2 (HEAD)");
 });
 
 test("a long quote is elided and the comment still reads whole", () => {
@@ -91,6 +166,7 @@ test("a long quote is elided and the comment still reads whole", () => {
     [
       comment({
         path: "src/a.ts",
+        fingerprint: "before",
         side: "new",
         start: 3,
         end: 3,
@@ -98,46 +174,14 @@ test("a long quote is elided and the comment still reads whole", () => {
         text: "Shorter, please.",
       }),
     ],
-    [file("src/a.ts")]
+    [file("src/a.ts", "after")]
   );
 
-  const quoted = block
-    .split("\n")
-    .find((line) => line.startsWith("> "))!
-    .slice(2);
+  const quoted = block.split("`")[1]!;
   expect(quoted).toHaveLength(120);
   expect(quoted.endsWith("…")).toBe(true);
   expect(long.startsWith(quoted.slice(0, -1))).toBe(true);
   expect(block).toContain("Shorter, please.");
-});
-
-test("a file whose fingerprint has moved is marked outdated, never dropped", () => {
-  const block = Review.compose(
-    "worktree",
-    [
-      comment({
-        path: "src/a.ts",
-        fingerprint: "old",
-        side: "new",
-        start: 1,
-        end: 1,
-        text: "still worth saying",
-      }),
-      comment({
-        path: "src/b.ts",
-        side: "old",
-        start: 2,
-        end: 2,
-        text: "and this one has not moved",
-      }),
-    ],
-    [file("src/a.ts", "new"), file("src/b.ts")]
-  );
-
-  expect(block).toContain("src/a.ts:1 (new) (outdated)");
-  expect(block).toContain("still worth saying");
-  expect(block).toContain("src/b.ts:2 (old)");
-  expect(block).not.toContain("src/b.ts:2 (old) (outdated)");
 });
 
 test("a file the list does not carry is not claimed to have moved", () => {
@@ -147,11 +191,12 @@ test("a file the list does not carry is not claimed to have moved", () => {
     []
   );
 
-  expect(block).toContain("src/gone.ts (file)");
-  expect(block).not.toContain("outdated");
+  expect(block).toBe(
+    ["> src/gone.ts", "", "sent from the conversation"].join("\n")
+  );
 });
 
-test("comments are grouped in the list's order, then by line", () => {
+test("comments are grouped in the list's order, then by line, and parted by a rule", () => {
   const block = Review.compose(
     "worktree",
     [
@@ -182,21 +227,16 @@ test("comments are grouped in the list's order, then by line", () => {
     [file("src/b.ts"), file("src/a.ts")]
   );
 
-  expect(block.split("\n")[0]).toBe(
-    "Review of the worktree changes (5 comments, 3 files):"
-  );
   expect(
-    block
-      .split("\n")
-      .filter((line) => line.startsWith("src/"))
-      .map((line) => line)
+    block.split(Review.DIVIDER).map((held) => held.split("\n")[0])
   ).toEqual([
-    "src/b.ts:4 (new)",
-    "src/b.ts:40-41 (new)",
-    "src/a.ts:9 (new)",
-    "src/a.ts (file)",
-    "src/loose.ts (file)",
+    "> src/b.ts:4",
+    "> src/b.ts:40-41",
+    "> src/a.ts:9",
+    "> src/a.ts",
+    "> src/loose.ts",
   ]);
+  expect(block).not.toContain("comments");
 });
 
 test("nothing written is no block at all", () => {

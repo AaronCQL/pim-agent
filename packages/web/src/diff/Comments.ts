@@ -27,12 +27,13 @@ export type Comment = {
   readonly createdAt: number;
 };
 
-/** What a new comment is made against: one line of one side, or the file itself. */
+/** What a new comment is made against: a run of lines on one side, or the file itself. */
 export type CommentAnchor = {
   readonly path: string;
   readonly fingerprint: string;
   readonly side?: CommentSide;
-  readonly line?: number;
+  readonly start?: number;
+  readonly end?: number;
   readonly quote?: string;
 };
 
@@ -52,15 +53,18 @@ export class Comments {
   /** Per anchored spot: a long diff would otherwise put a reader on one list per row. */
   private readonly anchors: Store<Record<string, readonly string[]>>;
   private readonly setAnchors: StoreSetter<Record<string, readonly string[]>>;
+  /** Every line a comment covers, so a gutter is painted without scanning them all. */
+  private readonly covered: Store<Record<string, boolean>>;
+  private readonly setCovered: StoreSetter<Record<string, boolean>>;
   private readonly everything: Accessor<readonly Comment[]>;
   private readonly setEverything: Setter<readonly Comment[]>;
-  private readonly held: Record<string, readonly Comment[]>;
+  private readonly kept: Record<string, readonly Comment[]>;
   private where: string;
   private sequence: number;
   private writing: boolean;
 
   public constructor() {
-    this.held = read();
+    this.kept = read();
     this.where = "";
     this.sequence = 0;
     this.writing = false;
@@ -72,6 +76,7 @@ export class Comments {
     const [anchors, setAnchors] = createStore<
       Record<string, readonly string[]>
     >({});
+    const [covered, setCovered] = createStore<Record<string, boolean>>({});
     const [everything, setEverything] = createSignal<readonly Comment[]>(NONE);
     this.byId = byId;
     this.setById = setById;
@@ -81,6 +86,8 @@ export class Comments {
     this.setCounts = setCounts;
     this.anchors = anchors;
     this.setAnchors = setAnchors;
+    this.covered = covered;
+    this.setCovered = setCovered;
     this.everything = everything;
     this.setEverything = setEverything;
   }
@@ -91,7 +98,7 @@ export class Comments {
       return;
     }
     this.where = cwd;
-    this.publish(this.held[cwd] ?? NONE);
+    this.publish(this.kept[cwd] ?? NONE);
   }
 
   public list(path: string): readonly Comment[] {
@@ -120,6 +127,11 @@ export class Comments {
     return this.lookup(this.ids(path, side, line));
   }
 
+  /** Whether a saved comment covers a line, which is what its gutter is painted for. */
+  public holds(path: string, side: CommentSide, line: number): boolean {
+    return this.covered[anchorKey(path, side, line)] === true;
+  }
+
   /** One comment as it reads now; a card holds an id and asks for the rest. */
   public one(id: string): Comment | undefined {
     return this.byId[id];
@@ -130,22 +142,30 @@ export class Comments {
     return this.everything();
   }
 
-  /** Starts an empty comment and answers with its id, which is what edits it. */
-  public open(anchor: CommentAnchor): string {
+  /**
+   * Makes a comment of what a reader picked out and the first thing they typed
+   * into it, and answers with the id that edits it. Nothing is stored before
+   * that first character: an editor walked away from never existed.
+   */
+  public create(anchor: CommentAnchor, text: string): string {
     const now = Date.now();
     this.sequence += 1;
-    const line =
-      anchor.side === undefined || anchor.line === undefined
+    const span =
+      anchor.side === undefined || anchor.start === undefined
         ? {}
-        : { side: anchor.side, start: anchor.line, end: anchor.line };
+        : {
+            side: anchor.side,
+            start: anchor.start,
+            end: anchor.end ?? anchor.start,
+          };
     const comment: Comment = {
       id: `${now.toString(36)}-${this.sequence.toString(36)}`,
       path: anchor.path,
       fingerprint: anchor.fingerprint,
       quote: anchor.quote,
-      text: "",
+      text,
       createdAt: now,
-      ...line,
+      ...span,
     };
     this.mutate((list) => [...list, comment]);
     return comment.id;
@@ -195,15 +215,15 @@ export class Comments {
   private mutate(
     change: (list: readonly Comment[]) => readonly Comment[]
   ): void {
-    const current = this.held[this.where] ?? NONE;
+    const current = this.kept[this.where] ?? NONE;
     const next = change(current);
     if (unchanged(current, next)) {
       return;
     }
     if (next.length === 0) {
-      delete this.held[this.where];
+      delete this.kept[this.where];
     } else {
-      this.held[this.where] = next;
+      this.kept[this.where] = next;
     }
     this.publish(next);
     this.persist();
@@ -232,6 +252,9 @@ export class Comments {
     this.setAnchors((draft) => {
       sync(draft, group(list, spotKey), unchanged);
     });
+    this.setCovered((draft) => {
+      sync(draft, coverage(list), identical);
+    });
   }
 
   // One write a tick: a keystroke is a write, and a typist makes many of them.
@@ -243,7 +266,7 @@ export class Comments {
     queueMicrotask(() => {
       this.writing = false;
       try {
-        localStorage.setItem(KEY, JSON.stringify(this.held));
+        localStorage.setItem(KEY, JSON.stringify(this.kept));
       } catch {
         // Private mode or a full quota; the comments still hold for this tab.
       }
@@ -260,8 +283,27 @@ function anchorKey(path: string, side?: CommentSide, line?: number): string {
   return `${path}\n${side ?? ""}:${line ?? ""}`;
 }
 
+/**
+ * A comment hangs under the last line it holds, not the first: a card pinned
+ * to the start of a range would be read in the middle of the lines it speaks
+ * about, which is where a reader is still looking for code.
+ */
 function spotKey(comment: Comment): string {
-  return anchorKey(comment.path, comment.side, comment.start);
+  return anchorKey(comment.path, comment.side, comment.end);
+}
+
+function coverage(list: readonly Comment[]): ReadonlyMap<string, boolean> {
+  const lines = new Map<string, boolean>();
+  for (const comment of list) {
+    const { side, start } = comment;
+    if (side === undefined || start === undefined) {
+      continue;
+    }
+    for (let line = start; line <= (comment.end ?? start); line += 1) {
+      lines.set(anchorKey(comment.path, side, line), true);
+    }
+  }
+  return lines;
 }
 
 function group(

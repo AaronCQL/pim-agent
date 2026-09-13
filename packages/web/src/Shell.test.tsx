@@ -1016,7 +1016,7 @@ describe("the composer, against a real gateway", () => {
             event.type === "message" &&
             event.role === "user" &&
             event.text.includes("have a look") &&
-            event.text.includes("greeter.ts:1 (new)") &&
+            event.text.includes("greeter.ts:1") &&
             event.text.includes("move this to the trailing edge")
         ),
       "the one message carrying both halves"

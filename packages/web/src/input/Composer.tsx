@@ -9,6 +9,7 @@ import {
 import type { PickerItem } from "#core/picker/PickerItem";
 import { activeToken, applyCompletion, tokenKey } from "#core/picker/token";
 import type { ModelCatalogue, SessionStore } from "../session/SessionStore";
+import { Review } from "../diff/Review";
 import { PILL } from "../ui/classes";
 import { Combobox, createComboboxNavigation } from "../ui/Combobox";
 import { createMediaQuery, KEYBOARD } from "../ui/media";
@@ -43,7 +44,7 @@ export function Composer(props: {
   /** What a reader has written over a diff, waiting to ride the next message. */
   readonly review?: {
     readonly count: number;
-    /** The composed block, appended after whatever the user typed. */
+    /** The composed block, carried above whatever the user typed. */
     readonly text: () => string;
     /** Called only after `prompt` reports the message was sent. */
     readonly sent: () => void;
@@ -214,7 +215,7 @@ export function Composer(props: {
     input.value = "";
     props.onSend();
     const went = await props.store.prompt(
-      [draft, carried].filter(Boolean).join("\n\n")
+      [carried, draft].filter(Boolean).join(Review.DIVIDER)
     );
     if (went && review !== undefined) {
       review.sent();
