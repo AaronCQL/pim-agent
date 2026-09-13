@@ -5,7 +5,7 @@ import { DiffExpand, type DiffGap } from "#core/view/DiffExpand";
 import type { ChangeSummary } from "#protocol/Diff";
 import { Spinner } from "../ui/Spinner";
 import { createAnchoring } from "./anchoring";
-import { ReviewComments } from "./Comments";
+import { comments as countLabel, ReviewComments } from "./Comments";
 import type { FileState } from "./DiffStore";
 import { FileLabel } from "./FileLabel";
 import { Stat } from "./Stat";
@@ -125,14 +125,16 @@ export function FileRow(props: {
             aria-hidden="true"
           />
           <FileLabel file={props.file} />
+          {/* That the file is spoken for, and nothing more: the count belongs
+              to the cards themselves, which are one scroll away. The mark
+              takes the same indigo every comment on the page wears. */}
           <Show when={badge() > 0}>
-            <span class="flex shrink-0 items-center gap-1 text-neutral-400 tabular-nums">
-              <span
-                class="i-griddy-icons:chat-bubble-dots size-4"
-                aria-hidden="true"
-              />
-              {badge()}
-            </span>
+            <span
+              class="i-griddy-icons:chat-bubble-dots size-4 shrink-0 text-indigo-300"
+              role="img"
+              aria-label={countLabel(badge())}
+              title={countLabel(badge())}
+            />
           </Show>
           <Show
             when={!props.file.binary}

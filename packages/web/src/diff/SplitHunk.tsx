@@ -132,7 +132,7 @@ export function SplitHunk(props: {
 
   // One tokenisation per side of the hunk, keyed by the line it belongs to.
   const tokens = createMemo<Tokens>(() => {
-    const mapped = DiffLayout.mapSides(props.hunk, (block) =>
+    const mapped = DiffLayout.mapSides(props.hunk.lines, (block) =>
       Highlight.tokenize(block, props.lang)
     );
     return new Map(

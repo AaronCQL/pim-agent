@@ -74,10 +74,15 @@ export const DIFF_GUTTER_CLASSES = {
   removed: "text-rose-400",
 } as const satisfies Record<ToolDiffLineKind, string>;
 
-/** Both of a gutter's channels in one indigo: offered on hover, standing once a line is held. */
+/**
+ * Both of a gutter's channels in one indigo: offered on hover, standing once a
+ * line is held. The hold's wash is opaque — see `.pim-diff-held` in
+ * `styles.css` — so a unified row's own tint passes behind the number rather
+ * than through it.
+ */
 export const DIFF_ANCHOR_CLASSES = {
   idle: "hover:bg-indigo-500/12 hover:text-indigo-300",
-  held: "bg-indigo-500/15 text-indigo-200",
+  held: "pim-diff-held text-indigo-200",
 } as const satisfies Record<AnchorState, string>;
 
 /**

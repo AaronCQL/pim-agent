@@ -95,7 +95,7 @@ function highlightHunkLines(
   hunk: ToolDiffHunk,
   highlighter: DiffHighlighter
 ): readonly string[] {
-  const highlighted = DiffLayout.mapSides(hunk, highlighter);
+  const highlighted = DiffLayout.mapSides(hunk.lines, highlighter);
   return hunk.lines.map((line, index) => highlighted[index] ?? line.text);
 }
 

@@ -9,6 +9,7 @@ import {
 import type { PickerItem } from "#core/picker/PickerItem";
 import { activeToken, applyCompletion, tokenKey } from "#core/picker/token";
 import type { ModelCatalogue, SessionStore } from "../session/SessionStore";
+import { comments } from "../diff/Comments";
 import { Review } from "../diff/Review";
 import { PILL } from "../ui/classes";
 import { Combobox, createComboboxNavigation } from "../ui/Combobox";
@@ -29,10 +30,6 @@ function sends(event: KeyboardEvent, keyboard: boolean): boolean {
 // Refuse focus on `mousedown`: blurring the textarea retracts the soft keyboard and reflows the card before the tap becomes a click.
 function keepFocus(event: MouseEvent): void {
   event.preventDefault();
-}
-
-function comments(count: number): string {
-  return `${count} comment${count === 1 ? "" : "s"}`;
 }
 
 /** The draft, the pickers over it, and the two ways bytes get in. */
@@ -282,12 +279,15 @@ export function Composer(props: {
           <div class="flex flex-wrap items-center gap-2">
             <Show when={pending()}>
               {(review) => (
-                <span class="flex items-center gap-1 rounded-full bg-neutral-900 py-1 pr-1 pl-2.5 text-sm text-neutral-350 ring-1 ring-neutral-750">
+                // The pill wears the cards' indigo rather than the composer's
+                // neutral: it is the review itself, carried up here, and a
+                // reader should recognise it as the same thing they wrote.
+                <span class="flex items-center gap-1 rounded-full bg-indigo-500/10 py-1 pr-1 pl-2.5 text-sm text-indigo-200 ring-1 ring-indigo-400/40">
                   <button
                     type="button"
                     aria-label="Read the review"
                     title="Read the review"
-                    class="flex items-center gap-1.5 hover:text-neutral-50"
+                    class="flex items-center gap-1.5 hover:text-indigo-100"
                     onMouseDown={keepFocus}
                     onClick={() => {
                       review().open();
@@ -303,7 +303,7 @@ export function Composer(props: {
                     type="button"
                     aria-label="Discard the review"
                     title="Discard the review"
-                    class="flex items-center justify-center rounded-full p-1 hover:text-neutral-50"
+                    class="flex items-center justify-center rounded-full p-1 hover:text-indigo-100"
                     onMouseDown={keepFocus}
                     onClick={() => {
                       review().discard();

@@ -2,7 +2,6 @@ import {
   createEffect,
   createMemo,
   createSignal,
-  onCleanup,
   onSettled,
   Show,
   untrack,
@@ -28,6 +27,7 @@ import { observeHeight } from "./ui/scroll";
 import { Drawer } from "./ui/Drawer";
 import { createBackGuard } from "./ui/history";
 import { createMediaQuery, DESKTOP } from "./ui/media";
+import { createViewportHeight } from "./ui/viewport";
 
 export function App() {
   const settings = new Settings();
@@ -110,6 +110,7 @@ export function Shell(props: {
     }
   };
 
+  /** Back to the transcript, at its end: where both a session switch and a sent message land. */
   const navigate = (): void => {
     converse();
     jump();
@@ -123,7 +124,6 @@ export function Shell(props: {
       ),
     sent: () => {
       comments.clear();
-      converse();
     },
     discard: () => {
       comments.clear();
@@ -142,16 +142,7 @@ export function Shell(props: {
       !reviewing() && !props.store.state.loading && !hasTranscript()
   );
 
-  // `dvh` does not follow the software keyboard on iOS; only the visual viewport shrinks.
-  const viewport = globalThis.visualViewport;
-  const [viewportHeight, setViewportHeight] = createSignal(viewport?.height);
-  const resizeViewport = (): void => {
-    setViewportHeight(viewport?.height);
-  };
-  viewport?.addEventListener("resize", resizeViewport);
-  onCleanup(() => {
-    viewport?.removeEventListener("resize", resizeViewport);
-  });
+  const viewportHeight = createViewportHeight();
 
   const Conversation = () => (
     <div
@@ -186,12 +177,7 @@ export function Shell(props: {
       <HideThinking value={() => props.settings.state.hideThinking}>
         <main
           class="flex overflow-hidden bg-neutral-925 text-neutral-100"
-          style={{
-            height:
-              viewportHeight() === undefined
-                ? "100dvh"
-                : `${viewportHeight()}px`,
-          }}
+          style={{ height: viewportHeight() }}
         >
           <Show when={desktop() && sidebar()}>
             <div class="w-xs shrink-0 border-r border-neutral-700">
@@ -282,7 +268,7 @@ export function Shell(props: {
                   >
                     <Composer
                       store={props.store}
-                      onSend={jump}
+                      onSend={navigate}
                       recalled={recalled()}
                       review={pending()}
                     />

@@ -248,6 +248,69 @@ test("a selection walked away from leaves nothing behind", () => {
   expect(comments.all()).toEqual([]);
 });
 
+/** Backspaced to nothing and left: the card stays, the comment does not. */
+test("a comment emptied and blurred is deleted, and its lines stay picked", () => {
+  const comments = loaded();
+  const host = rows(comments, [summary(PATH)]);
+
+  click(host, "Comment on new line 2");
+  say("never mind");
+  expect(comments.count(PATH)).toBe(1);
+
+  say("");
+  box(host).dispatchEvent(new FocusEvent("blur"));
+  flush();
+
+  expect(comments.count(PATH)).toBe(0);
+  expect(host.querySelectorAll("textarea").length).toBe(1);
+  expect(painted(host, "new")[2]).toBe("held");
+
+  say("said after all");
+
+  expect(comments.count(PATH)).toBe(1);
+  expect(comments.list(PATH)[0]?.text).toBe("said after all");
+  expect(comments.list(PATH)[0]?.start).toBe(2);
+});
+
+test("blanks are not a comment, whether typed first or left last", () => {
+  const comments = loaded();
+  const host = rows(comments, [summary(PATH)]);
+
+  click(host, "Comment on new line 2");
+  say("   ");
+
+  expect(comments.count(PATH)).toBe(0);
+
+  say(" thought ");
+  say("  \n ");
+  box(host).dispatchEvent(new FocusEvent("blur"));
+  flush();
+
+  expect(comments.count(PATH)).toBe(0);
+});
+
+/** A saved card reopened, cleared, and clicked away from goes with what it said. */
+test("a saved comment emptied and blurred is deleted along with its card", () => {
+  const comments = loaded();
+  const host = rows(comments, [summary(PATH)]);
+
+  click(host, "Comment on new line 2");
+  say("half a thought");
+  box(host).dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Escape", bubbles: true })
+  );
+  flush();
+
+  box(host).click();
+  type(box(host), "");
+  box(host).dispatchEvent(new FocusEvent("blur"));
+  flush();
+
+  expect(comments.count(PATH)).toBe(0);
+  expect(host.querySelectorAll("textarea").length).toBe(0);
+  expect(painted(host, "new")[2]).toBe("idle");
+});
+
 test("escape closes the editor and keeps what was typed", () => {
   const comments = loaded();
   const host = rows(comments, [summary(PATH)]);
@@ -494,13 +557,16 @@ test("a tap in another file starts its own comment rather than widening", () => 
   expect(comments.list(OTHER)[0]?.start).toBe(2);
 });
 
-test("the bar counts the comments its file is carrying", () => {
+/** The bar says a file is spoken for; how much is said is left to the cards. */
+test("the bar marks the file its comments hang in", () => {
   const comments = loaded();
   const host = rows(comments, [summary(PATH), summary(OTHER)]);
-  const bar = (path: string): string =>
-    host.querySelector(`[aria-label='${path}']`)?.textContent ?? "";
+  const mark = (path: string): HTMLElement | null =>
+    host
+      .querySelector(`[aria-label='${path}']`)
+      ?.querySelector<HTMLElement>("[role='img']") ?? null;
 
-  expect(bar(PATH)).not.toContain("2");
+  expect(mark(PATH)).toBeNull();
 
   click(host, "Comment on new line 1");
   shiftClick(host, "Comment on new line 3");
@@ -509,8 +575,10 @@ test("the bar counts the comments its file is carrying", () => {
   say("the second one");
 
   expect(comments.count(PATH)).toBe(2);
-  expect(bar(PATH)).toContain("2");
-  expect(bar(OTHER)).not.toContain("2");
+  // Only a reader who cannot see the mark is told how many there are.
+  expect(mark(PATH)?.getAttribute("aria-label")).toBe("2 comments");
+  expect(mark(PATH)?.textContent).toBe("");
+  expect(mark(OTHER)).toBeNull();
 });
 
 /** Each column is its own file: a remark about the old line is not about the new one. */
@@ -675,4 +743,18 @@ test("the cross deletes the comment its card carries", () => {
   expect(comments.count(PATH)).toBe(0);
   expect(host.querySelectorAll("textarea").length).toBe(0);
   expect(painted(host, "new")[2]).toBe("idle");
+});
+
+/** The cross sits in the held gutter, not in a black hole under the last line. */
+test("the gutter beside a unified card carries the hold down to it", () => {
+  const comments = loaded();
+  const host = rows(comments, [summary(PATH)]);
+
+  click(host, "Comment on new line 2");
+  say("carried on down");
+  const strip = cardOf(box(host)).previousElementSibling;
+
+  expect(strip?.className).toContain(DIFF_ANCHOR_CLASSES.held);
+  expect(strip?.className).toContain("w-[var(--gutter,0px)]");
+  expect(strip?.textContent).toBe("");
 });

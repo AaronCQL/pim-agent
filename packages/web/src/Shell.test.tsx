@@ -12,6 +12,7 @@ import { SessionStore } from "./session/SessionStore";
 import { Settings } from "./settings/Settings";
 import { mountPoint } from "./test/dom";
 import { GatewayHarness, until } from "./test/gateway";
+import { fakeViewport } from "./test/viewport";
 
 function attached(sessionId = "s1"): ServerEvent {
   return {
@@ -32,28 +33,7 @@ beforeEach(() => {
 });
 
 let realMatchMedia: typeof globalThis.matchMedia | undefined;
-const realVisualViewport = Object.getOwnPropertyDescriptor(
-  globalThis,
-  "visualViewport"
-);
-
-function resizableViewport(initialHeight: number): {
-  readonly resize: (height: number) => void;
-} {
-  let height = initialHeight;
-  const viewport = new EventTarget();
-  Object.defineProperty(viewport, "height", { get: () => height });
-  Object.defineProperty(globalThis, "visualViewport", {
-    configurable: true,
-    value: viewport,
-  });
-  return {
-    resize: (next) => {
-      height = next;
-      viewport.dispatchEvent(new Event("resize"));
-    },
-  };
-}
+let fakedViewport: ReturnType<typeof fakeViewport> | undefined;
 
 /**
  * A device whose only keyboard is the one drawn over the page: no hover and
@@ -75,11 +55,8 @@ afterEach(() => {
     globalThis.matchMedia = realMatchMedia;
     realMatchMedia = undefined;
   }
-  if (realVisualViewport) {
-    Object.defineProperty(globalThis, "visualViewport", realVisualViewport);
-  } else {
-    Reflect.deleteProperty(globalThis, "visualViewport");
-  }
+  fakedViewport?.restore();
+  fakedViewport = undefined;
 });
 
 function paint(store: SessionStore): HTMLElement {
@@ -132,7 +109,8 @@ function message(seq: number, text: string): ServerEvent {
 
 describe("the shell, painted from events alone", () => {
   test("fits inside the visual viewport when the software keyboard opens", () => {
-    const viewport = resizableViewport(800);
+    const viewport = fakeViewport(800);
+    fakedViewport = viewport;
     const host = paint(offline());
     const shell = host.querySelector("main")!;
     expect(shell.style.height).toBe("800px");
@@ -1025,6 +1003,37 @@ describe("the composer, against a real gateway", () => {
 
     expect(chip(host)).toBeNull();
     expect(host.querySelector('section[aria-label="Changes"]')).toBeNull();
+  });
+
+  test("a plain message sent from the diff view brings the transcript back", async () => {
+    // A comment only to get in: it is thrown away, so the message carries nothing.
+    seedComments(harness.tmp, "never mind");
+    const host = paint(store);
+    chip(host)!.click();
+    flush();
+    host
+      .querySelector<HTMLButtonElement>('[aria-label="Discard the review"]')!
+      .click();
+    flush();
+    expect(host.querySelector('section[aria-label="Changes"]')).not.toBeNull();
+
+    const input = host.querySelector("textarea")!;
+    type(input, "say hello");
+    host.querySelector<HTMLButtonElement>('[aria-label="Send"]')!.click();
+    flush();
+
+    // The reader is reading the reply, not the diff they sent it from.
+    expect(host.querySelector('section[aria-label="Changes"]')).toBeNull();
+    await until(
+      () =>
+        store.state.durable.some(
+          (event) =>
+            event.type === "message" &&
+            event.role === "user" &&
+            event.text === "say hello"
+        ),
+      "the message"
+    );
   });
 
   /** Everything this client has said and not yet had heard, as one string. */

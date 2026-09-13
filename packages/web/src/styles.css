@@ -274,3 +274,18 @@ button {
     transparent 2px calc(var(--line) / 2.828)
   );
 }
+
+/* A gutter a comment holds. The wash is opaque, because the gutter belongs to
+   the comment rather than to the line it names: in a unified diff the row's
+   own green or red is painted by the row itself and runs behind the number,
+   and a translucent indigo over it would mix into a third colour that is
+   neither the hold nor the kind. Stated as two layers rather than one blended
+   value so what it is stays readable: indigo-500 at 15% — the wash every hold
+   on this page wears — over neutral-925, the pane a diff is painted on. */
+.pim-diff-held {
+  background-color: #101010;
+  background-image: linear-gradient(
+    rgb(99 102 241 / 15%),
+    rgb(99 102 241 / 15%)
+  );
+}

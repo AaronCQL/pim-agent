@@ -1,7 +1,10 @@
-import { createEffect, createSignal, onSettled, Show, untrack } from "solid-js";
+import { createMemo, createSignal, onSettled, Show, untrack } from "solid-js";
 
+import type { ToolDiffLine } from "#core/shared/DiffLines";
+import { Languages } from "#core/shared/Languages";
 import { ACTION, QUIET } from "../ui/classes";
 import { Modal } from "../ui/Modal";
+import { UnifiedLines } from "../view/Blocks";
 
 /** One comment: the same card saved or being written into, so it never changes shape. */
 export function CommentEditor(props: {
@@ -17,6 +20,11 @@ export function CommentEditor(props: {
   /** A tap where there is no caret, which is the sheet's way in. */
   readonly onOpen?: () => void;
   readonly onClose?: () => void;
+  /**
+   * The caret left a card holding nothing but blanks. Blank is not a remark,
+   * so what it held goes; unlike `onRemove`, the card itself may stay open.
+   */
+  readonly onDiscard?: () => void;
   readonly onRemove: () => void;
 }) {
   let box: HTMLTextAreaElement | undefined;
@@ -55,6 +63,11 @@ export function CommentEditor(props: {
         onClick={() => {
           if (!props.editable) {
             props.onOpen?.();
+          }
+        }}
+        onBlur={(event) => {
+          if (event.currentTarget.value.trim() === "") {
+            props.onDiscard?.();
           }
         }}
         onKeyDown={(event: KeyboardEvent) => {
@@ -109,25 +122,14 @@ function Margin(props: {
 export function CommentSheet(props: {
   readonly open: boolean;
   readonly path: string;
-  /** The lines being spoken about, so the writer can see them past the keyboard. */
-  readonly quote: readonly string[];
+  /** The rows being spoken about, so the writer can see them past the keyboard. */
+  readonly quote: readonly ToolDiffLine[];
+  /** How wide this file numbers its lines, so the quote's gutter is the diff's. */
+  readonly width: number;
   readonly text: string;
   readonly onCancel: () => void;
   readonly onSave: (text: string) => void;
 }) {
-  const [draft, setDraft] = createSignal("");
-  let box: HTMLTextAreaElement | undefined;
-
-  createEffect(
-    () => props.open,
-    (open) => {
-      if (open) {
-        setDraft(untrack(() => props.text));
-        box?.focus();
-      }
-    }
-  );
-
   return (
     <Modal
       open={props.open}
@@ -135,46 +137,90 @@ export function CommentSheet(props: {
       label="Comment"
       size="narrow"
       header={
-        <div class="truncate font-bold leading-[--line]">{props.path}</div>
+        <div class="truncate font-bold leading-[--line]">
+          {props.path.slice(props.path.lastIndexOf("/") + 1)}
+        </div>
       }
     >
+      {/* Built by the opening and torn down by the closing: the draft starts
+          from what was saved, and the box is new enough to be given the caret. */}
       <Show when={props.open}>
-        <Show when={props.quote.length > 0}>
-          <pre class="max-h-24 shrink-0 overflow-auto border-b border-neutral-700 px-3 py-1.5 text-sm text-neutral-400">
-            {props.quote.join("\n")}
-          </pre>
-        </Show>
-        <div class="flex min-h-0 flex-col gap-2 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-          <textarea
-            ref={(element: HTMLTextAreaElement) => {
-              box = element;
-            }}
-            rows={3}
-            aria-label={`Comment on ${props.path}`}
-            placeholder="What should change here?"
-            value={draft()}
-            class="max-h-60 w-full resize-none rounded-lg bg-neutral-850 px-2 py-1.5 text-sm outline-none ring-1 ring-indigo-950 [field-sizing:content] placeholder:text-neutral-500 focus:ring-indigo-800"
-            onInput={(event) => {
-              setDraft(event.currentTarget.value);
-            }}
-          />
-          <div class="flex shrink-0 items-center justify-end gap-2">
-            <button type="button" class={QUIET} onClick={props.onCancel}>
-              Cancel
-            </button>
-            <button
-              type="button"
-              class={ACTION}
-              disabled={draft().trim() === ""}
-              onClick={() => {
-                props.onSave(draft());
-              }}
-            >
-              Comment
-            </button>
+        <SheetBody
+          path={props.path}
+          quote={props.quote}
+          width={props.width}
+          text={props.text}
+          onCancel={props.onCancel}
+          onSave={props.onSave}
+        />
+      </Show>
+    </Modal>
+  );
+}
+
+function SheetBody(props: {
+  readonly path: string;
+  readonly quote: readonly ToolDiffLine[];
+  readonly width: number;
+  readonly text: string;
+  readonly onCancel: () => void;
+  readonly onSave: (text: string) => void;
+}) {
+  const [draft, setDraft] = createSignal(untrack(() => props.text));
+  const lang = createMemo(() => Languages.fromPath(props.path));
+  let box: HTMLTextAreaElement | undefined;
+
+  // The sheet exists to be written in, so it opens with the caret in it and
+  // the soft keyboard up. `autofocus` is what the dialog's own focusing steps
+  // read; the call is for the opening that has already passed them by.
+  onSettled(() => {
+    box?.focus();
+  });
+
+  return (
+    <>
+      <Show when={props.quote.length > 0}>
+        <div class="min-h-0 overflow-auto overscroll-contain border-b border-neutral-700 py-[calc(var(--line)/2)]">
+          <div class="w-max min-w-full leading-[--line] text-neutral-300 [tab-size:3]">
+            <UnifiedLines
+              lines={props.quote}
+              lang={lang()}
+              width={props.width}
+            />
           </div>
         </div>
       </Show>
-    </Modal>
+      <div class="mt-auto flex shrink-0 flex-col gap-2 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <textarea
+          ref={(element: HTMLTextAreaElement) => {
+            box = element;
+          }}
+          autofocus
+          rows={3}
+          aria-label={`Comment on ${props.path}`}
+          placeholder="What should change here?"
+          value={draft()}
+          class="max-h-60 w-full resize-none rounded-lg bg-indigo-500/10 px-3 py-[calc(var(--line)/2)] leading-[--line] text-indigo-200 outline-none inset-ring inset-ring-indigo-400/40 focus:inset-ring-indigo-400/70 placeholder:text-indigo-200/50 [field-sizing:content]"
+          onInput={(event) => {
+            setDraft(event.currentTarget.value);
+          }}
+        />
+        <div class="flex shrink-0 items-center justify-end gap-2">
+          <button type="button" class={QUIET} onClick={props.onCancel}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            class={ACTION}
+            disabled={draft().trim() === ""}
+            onClick={() => {
+              props.onSave(draft());
+            }}
+          >
+            Comment
+          </button>
+        </div>
+      </div>
+    </>
   );
 }

@@ -5,7 +5,7 @@ import { Languages } from "#core/shared/Languages";
 import { DiffExpand, type DiffGap } from "#core/view/DiffExpand";
 import { DiffLayout } from "#core/view/DiffLayout";
 import type { DiffAnchors } from "../view/anchors";
-import { UnifiedHunk } from "../view/Blocks";
+import { UnifiedLines } from "../view/Blocks";
 import { GapRow } from "./GapRow";
 
 /** One column of both sides, the layout a narrow screen gets, with its gaps open to a reader. */
@@ -47,8 +47,8 @@ export function UnifiedDiff(props: {
                 onOpen={props.onOpen}
               />
             ) : (
-              <UnifiedHunk
-                hunk={part.hunk}
+              <UnifiedLines
+                lines={part.hunk.lines}
                 lang={lang()}
                 width={width()}
                 anchors={props.anchors}

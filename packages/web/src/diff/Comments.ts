@@ -279,6 +279,11 @@ export const ReviewComments = createContext<() => Comments | undefined>(
   () => undefined
 );
 
+/** How many comments, in words, wherever a count is spoken rather than shown. */
+export function comments(count: number): string {
+  return `${count} comment${count === 1 ? "" : "s"}`;
+}
+
 function anchorKey(path: string, side?: CommentSide, line?: number): string {
   return `${path}\n${side ?? ""}:${line ?? ""}`;
 }

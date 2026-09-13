@@ -53,6 +53,7 @@ type Card = {
   readonly host: HTMLElement;
   readonly written: string[];
   readonly closed: () => number;
+  readonly discarded: () => number;
   readonly removed: () => number;
 };
 
@@ -67,6 +68,7 @@ function paint(
   const host = mountPoint();
   const written: string[] = [];
   let closed = 0;
+  let discarded = 0;
   let removed = 0;
   dispose = render(
     () => (
@@ -80,6 +82,9 @@ function paint(
         onClose={() => {
           closed += 1;
         }}
+        onDiscard={() => {
+          discarded += 1;
+        }}
         onRemove={() => {
           removed += 1;
         }}
@@ -92,6 +97,7 @@ function paint(
     host,
     written,
     closed: () => closed,
+    discarded: () => discarded,
     removed: () => removed,
   };
 }
@@ -103,6 +109,11 @@ function box(host: HTMLElement): HTMLTextAreaElement {
 function press(field: HTMLTextAreaElement, text: string): void {
   field.value = text;
   field.dispatchEvent(new Event("input", { bubbles: true }));
+  flush();
+}
+
+function blur(field: HTMLTextAreaElement): void {
+  field.dispatchEvent(new FocusEvent("blur"));
   flush();
 }
 
@@ -143,13 +154,31 @@ test("escape closes the editor and leaves what was typed in it", () => {
   expect(card.written).toEqual(["worth keeping"]);
 });
 
-test("a card blurred with nothing in it keeps itself, having nothing to delete", () => {
-  const card = paint();
-  box(card.host).dispatchEvent(new FocusEvent("blur"));
-  flush();
+/** Typed into, cleared, and walked away from: what is left says nothing. */
+test("a card blurred with nothing left in it discards what it held", () => {
+  const card = paint({ text: "half a thought" });
+  press(box(card.host), "");
+  blur(box(card.host));
 
+  expect(card.discarded()).toBe(1);
   expect(card.removed()).toBe(0);
   expect(card.closed()).toBe(0);
+});
+
+test("a card holding only blanks is as empty as one holding nothing", () => {
+  const card = paint();
+  press(box(card.host), "  \n\t ");
+  blur(box(card.host));
+
+  expect(card.discarded()).toBe(1);
+});
+
+test("a card blurred with words in it is left alone", () => {
+  const card = paint({ text: "worth keeping" });
+  blur(box(card.host));
+
+  expect(card.discarded()).toBe(0);
+  expect(card.removed()).toBe(0);
 });
 
 test("the cross is the only way the card goes away", () => {
@@ -270,6 +299,63 @@ test("a picked line on a phone is written about in the sheet, not under the row"
   expect(sheet(host).open).toBe(true);
   expect(sheet(host).textContent).toContain("TWO");
   expect(host.querySelectorAll("textarea").length).toBe(1);
+});
+
+/**
+ * The sheet quotes the file the way the file reads — numbered, signed and
+ * washed — and titles itself with the name alone: the path is what the reader
+ * just tapped their way through.
+ */
+test("the sheet quotes the picked line as the diff paints it", () => {
+  touch();
+  const comments = loaded();
+  const host = row(comments);
+
+  pick(host, "Comment on new line 2");
+  const quote = sheet(host).querySelector("div")!;
+
+  expect(quote.textContent).toContain(" 2 + TWO");
+  expect(sheet(host).innerHTML).toContain("bg-emerald-500/8");
+  expect(sheet(host).querySelector("header")?.textContent).toContain(
+    "alpha.ts"
+  );
+  expect(sheet(host).querySelector("header")?.textContent).not.toContain(
+    "src/"
+  );
+});
+
+/**
+ * The composer sits on the keyboard rather than halfway up a black screen, and
+ * the quote it is answering ends where its last line does — a rule under empty
+ * space reads as a pane with nothing in it.
+ */
+test("the composer keeps the foot and the quote ends with its lines", () => {
+  touch();
+  const comments = loaded();
+  const host = row(comments);
+
+  pick(host, "Comment on new line 2");
+  const quote = sheet(host).querySelector("header + div")!;
+  const composer = sheetBox(host).parentElement!;
+
+  expect(quote.className).not.toContain("flex-1");
+  // It gives way to the composer instead of pushing it off, and scrolls itself.
+  expect(quote.className).toContain("min-h-0");
+  expect(quote.className).toContain("overflow-auto");
+  expect(composer.className).toContain("mt-auto");
+  expect(composer.className).toContain("shrink-0");
+});
+
+/** A sheet is opened to be written in, so the caret and the keyboard come with it. */
+test("the sheet opens with the caret already in it", () => {
+  touch();
+  const comments = loaded();
+  const host = row(comments);
+
+  pick(host, "Comment on new line 2");
+
+  expect(document.activeElement).toBe(sheetBox(host));
+  expect(sheetBox(host).autofocus).toBe(true);
 });
 
 test("the sheet keeps what it is handed only when it is pressed", () => {

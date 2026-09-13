@@ -14,7 +14,7 @@ import { ImageMime } from "#core/shared/ImageMime";
 import { Languages } from "#core/shared/Languages";
 import { DiffLayout } from "#core/view/DiffLayout";
 import { Painting } from "#core/view/Painting";
-import type { BlockOf, DiffHunk, Span, ViewBlock } from "#core/view/ViewBlock";
+import type { BlockOf, Span, ViewBlock } from "#core/view/ViewBlock";
 import { ImageRoute } from "#protocol/ImageRoute";
 import { Markdown } from "../markdown/Markdown";
 import { GatewayOrigin } from "../session/Gateway";
@@ -25,6 +25,7 @@ import { diffSide, type DiffAnchors } from "./anchors";
 import { Highlight, type Token } from "./highlight";
 import {
   DIFF_GAP_CLASS,
+  DIFF_ANCHOR_CLASSES,
   DIFF_EMPHASIS_CLASSES,
   DIFF_GUTTER_CLASSES,
   DIFF_ROW_CLASSES,
@@ -174,7 +175,7 @@ function DiffBlock(props: { readonly block: BlockOf<"diff"> }) {
                 {`${" ".repeat(width() + 1)}   ⋯`}
               </div>
             </Show>
-            <UnifiedHunk hunk={hunk} lang={lang()} width={width()} />
+            <UnifiedLines lines={hunk.lines} lang={lang()} width={width()} />
           </>
         )}
       </For>
@@ -182,21 +183,22 @@ function DiffBlock(props: { readonly block: BlockOf<"diff"> }) {
   );
 }
 
-export function UnifiedHunk(props: {
-  readonly hunk: DiffHunk;
+/** The rows of a unified diff: a gutter, a sign, and the line they belong to. */
+export function UnifiedLines(props: {
+  readonly lines: readonly ToolDiffLine[];
   readonly lang: string | undefined;
   readonly width: number;
   readonly anchors?: DiffAnchors;
 }) {
-  // One tokenisation per side of the hunk, memoised: it re-runs when a grammar lands.
+  // One tokenisation per side of the run, memoised: it re-runs when a grammar lands.
   const tokens = createMemo(() =>
-    DiffLayout.mapSides(props.hunk, (block) =>
+    DiffLayout.mapSides(props.lines, (block) =>
       Highlight.tokenize(block, props.lang)
     )
   );
 
   return (
-    <For each={props.hunk.lines}>
+    <For each={props.lines}>
       {(line, index) => (
         <DiffRow
           line={line}
@@ -283,7 +285,20 @@ function DiffRow(props: {
           )}
         </For>
       </div>
-      {props.anchors?.cardsAt(side(), number())}
+      {/* A hold does not stop at the last line it names: the gutter beside
+          the cards carries the same wash on down, so the lines, the cross in
+          the margin and the words under them read as one block rather than
+          three. Split says this with a cell of its own; here it is a strip as
+          wide as the gutter, which is what a card indents itself by. */}
+      <Show when={props.anchors?.holdsCards(side(), number()) === true}>
+        <div class="relative">
+          <div
+            class={`absolute inset-y-0 left-0 w-[var(--gutter,0px)] ${DIFF_ANCHOR_CLASSES.held}`}
+            aria-hidden="true"
+          />
+          {props.anchors?.cardsAt(side(), number())}
+        </div>
+      </Show>
     </>
   );
 }

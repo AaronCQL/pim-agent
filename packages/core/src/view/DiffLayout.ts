@@ -1,4 +1,4 @@
-import type { ToolDiffHunk } from "../shared/DiffLines";
+import type { ToolDiffHunk, ToolDiffLine } from "../shared/DiffLines";
 
 const TAB = "   ";
 
@@ -8,7 +8,7 @@ function detab(text: string): string {
 
 // Highlight each side as one block, never line by line, or multi-line strings and comments mis-tokenise.
 function mapSides<T>(
-  hunk: ToolDiffHunk,
+  lines: readonly ToolDiffLine[],
   highlight: (block: string) => readonly T[]
 ): readonly (T | undefined)[] {
   const oldIndices: (number | undefined)[] = [];
@@ -16,7 +16,7 @@ function mapSides<T>(
   const oldBlock: string[] = [];
   const newBlock: string[] = [];
 
-  for (const line of hunk.lines) {
+  for (const line of lines) {
     // A context line must hold a slot in both blocks to keep tokeniser state aligned.
     if (line.kind !== "added") {
       oldIndices.push(oldBlock.length);
@@ -33,11 +33,11 @@ function mapSides<T>(
     }
   }
 
-  const oldLines = oldBlock.length === 0 ? [] : highlight(oldBlock.join("\n"));
-  const newLines = newBlock.length === 0 ? [] : highlight(newBlock.join("\n"));
+  const oldText = oldBlock.length === 0 ? [] : highlight(oldBlock.join("\n"));
+  const newText = newBlock.length === 0 ? [] : highlight(newBlock.join("\n"));
 
-  return hunk.lines.map((line, index) => {
-    const side = line.kind === "removed" ? oldLines : newLines;
+  return lines.map((line, index) => {
+    const side = line.kind === "removed" ? oldText : newText;
     const at = line.kind === "removed" ? oldIndices[index] : newIndices[index];
     return at === undefined ? undefined : side[at];
   });

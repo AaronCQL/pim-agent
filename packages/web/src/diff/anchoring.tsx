@@ -9,6 +9,7 @@ import {
 } from "solid-js";
 
 import type { ToolDiffHunk, ToolDiffLine } from "#core/shared/DiffLines";
+import { DiffLayout } from "#core/view/DiffLayout";
 import type { ChangeSummary } from "#protocol/Diff";
 import { createMediaQuery, KEYBOARD } from "../ui/media";
 import type { AnchorState, DiffAnchors } from "../view/anchors";
@@ -38,19 +39,20 @@ type Picked = {
   readonly id?: string;
 };
 
+/** The run of lines a comment is against, either way the selection was drawn. */
+type Span = { readonly start: number; readonly end: number };
+
 /** A comment against the file rather than any line of it. */
 const FILE = "file";
 
-const NO_LINES: readonly string[] = [];
+const NO_LINES: readonly ToolDiffLine[] = [];
 
 function spotOf(side?: CommentSide, line?: number): string {
   return side === undefined || line === undefined ? FILE : `${side}:${line}`;
 }
 
 /** A selection runs from the line it started on to the one it reached, either way round. */
-function spanOf(
-  picked: Picked
-): { readonly start: number; readonly end: number } | undefined {
+function spanOf(picked: Picked): Span | undefined {
   if (picked.from === undefined) {
     return undefined;
   }
@@ -147,9 +149,24 @@ export function createAnchoring(options: {
       comments.write(held.id, text);
       return;
     }
-    if (text !== "") {
+    if (text.trim() !== "") {
       setPicked({ ...held, id: comments.create(anchorOf(held), text) });
     }
+  };
+
+  /**
+   * The caret left the live editor with nothing in it. A comment made of
+   * blanks says nothing, so it is dropped — while the lines it was written
+   * against stay picked, and the box stays open over them: the reader who
+   * cleared it is still standing there, and may yet say something else.
+   */
+  const forget = (): void => {
+    const held = untrack(picked);
+    if (held?.id === undefined) {
+      return;
+    }
+    comments.remove(held.id);
+    setPicked({ ...held, id: undefined });
   };
 
   const widen = (held: Picked, line: number): void => {
@@ -216,27 +233,31 @@ export function createAnchoring(options: {
     (comments.ids(path(), side, line).length > 0 ||
       spot() === spotOf(side, line));
 
-  const saved = (id: string): Element => (
-    <Show when={comments.one(id)}>
-      {(held) => (
-        <CommentEditor
-          path={path()}
-          text={held().text}
-          stale={held().fingerprint !== options.file().fingerprint}
-          editable={keyboard()}
-          onWrite={(text) => {
-            comments.write(id, text);
-          }}
-          onOpen={() => {
-            setTapped(id);
-          }}
-          onRemove={() => {
-            comments.remove(id);
-          }}
-        />
-      )}
-    </Show>
-  );
+  const saved = (id: string): Element => {
+    const drop = (): void => {
+      comments.remove(id);
+    };
+    return (
+      <Show when={comments.one(id)}>
+        {(held) => (
+          <CommentEditor
+            path={path()}
+            text={held().text}
+            stale={held().fingerprint !== options.file().fingerprint}
+            editable={keyboard()}
+            onWrite={(text) => {
+              comments.write(id, text);
+            }}
+            onOpen={() => {
+              setTapped(id);
+            }}
+            onDiscard={drop}
+            onRemove={drop}
+          />
+        )}
+      </Show>
+    );
+  };
 
   const pickedText = (): string => {
     const id = pickedId();
@@ -254,6 +275,7 @@ export function createAnchoring(options: {
       onClose={() => {
         setPicked(undefined);
       }}
+      onDiscard={forget}
       onRemove={() => {
         const id = untrack(pickedId);
         if (id !== undefined) {
@@ -280,22 +302,34 @@ export function createAnchoring(options: {
       ? undefined
       : stack(spotOf(side, line), () => comments.ids(path(), side, line));
 
-  const quoted = (held: Picked): readonly string[] => {
-    const side = held.side;
-    const span = spanOf(held);
-    if (side === undefined || span === undefined) {
-      return held.quote === undefined ? NO_LINES : [held.quote];
+  /**
+   * The diff's own rows for a span, so the sheet quotes a file the way the file
+   * reads. A comment whose lines have since moved has only the text it was
+   * written against, which is quoted as plain context.
+   */
+  const quoted = (
+    side: CommentSide | undefined,
+    span: Span | undefined,
+    quote: string | undefined
+  ): readonly ToolDiffLine[] => {
+    const lines =
+      side === undefined || span === undefined
+        ? NO_LINES
+        : options
+            .hunks()
+            .flatMap((hunk) => hunk.lines)
+            .filter((line) => {
+              const number = numberOf(line, side);
+              return (
+                number !== undefined &&
+                number >= span.start &&
+                number <= span.end
+              );
+            });
+    if (lines.length > 0) {
+      return lines;
     }
-    return options
-      .hunks()
-      .flatMap((hunk) => hunk.lines)
-      .filter((line) => {
-        const number = numberOf(line, side);
-        return (
-          number !== undefined && number >= span.start && number <= span.end
-        );
-      })
-      .map((line) => line.text);
+    return quote === undefined ? NO_LINES : [{ kind: "context", text: quote }];
   };
 
   const close = (): void => {
@@ -308,13 +342,20 @@ export function createAnchoring(options: {
     return id === undefined ? "" : (comments.one(id)?.text ?? "");
   };
 
-  const sheetQuote = (): readonly string[] => {
+  const sheetQuote = (): readonly ToolDiffLine[] => {
     const target = sheeted();
     if (target?.id !== undefined) {
-      const quote = comments.one(target.id)?.quote;
-      return quote === undefined ? NO_LINES : [quote];
+      const held = comments.one(target.id);
+      const span =
+        held?.start === undefined
+          ? undefined
+          : { start: held.start, end: held.end ?? held.start };
+      return quoted(held?.side, span, held?.quote);
     }
-    return target?.held === undefined ? NO_LINES : quoted(target.held);
+    const held = target?.held;
+    return held === undefined
+      ? NO_LINES
+      : quoted(held.side, spanOf(held), held.quote);
   };
 
   const commit = (text: string): void => {
@@ -344,6 +385,7 @@ export function createAnchoring(options: {
         path={path()}
         text={sheetText()}
         quote={sheetQuote()}
+        width={DiffLayout.gutterWidth(options.hunks())}
         onCancel={close}
         onSave={commit}
       />
