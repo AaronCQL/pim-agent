@@ -170,6 +170,8 @@ export class WsGateway {
       websocket: {
         backpressureLimit: 8 << 20,
         closeOnBackpressureLimit: false,
+        // Dedicated, so the window survives between frames: the repeated event envelope is most of a delta.
+        perMessageDeflate: { compress: "dedicated", decompress: "dedicated" },
         open: (ws) => {
           this.connections.set(ws, new ClientConnection(ws));
           this.syncWatches();

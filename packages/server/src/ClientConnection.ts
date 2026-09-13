@@ -99,7 +99,7 @@ export class ClientConnection {
     if (this.closed) {
       return;
     }
-    this.ws.send(frame(event));
+    this.ws.send(frame(event), true);
   }
 
   public onDrain(): void {
@@ -239,7 +239,7 @@ export class ClientConnection {
     if (this.closed || this.paused) {
       return false;
     }
-    const status = this.ws.send(payload);
+    const status = this.ws.send(payload, true);
     if (status === 0) {
       this.paused = true;
       return false;

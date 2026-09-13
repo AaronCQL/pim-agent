@@ -4,11 +4,13 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 
 import { SessionRegistry } from "#core/session/SessionRegistry";
-import { DEFAULT_CLIENT_DIR } from "./StaticClient";
+import { DEFAULT_CLIENT_DIR, StaticClient } from "./StaticClient";
 import { WsGateway } from "./WsGateway";
 
 const INDEX = "<!doctype html><title>pim</title><div id=app></div>";
 const SCRIPT = "console.log('pim');";
+/** Over the compression floor, and repetitive the way a real bundle is. */
+const BUNDLE = `${"export const paint = (block) => block.render();\n".repeat(400)}`;
 
 let tmp: string;
 let clientDir: string;
@@ -39,6 +41,7 @@ beforeEach(async () => {
   await mkdir(join(agentDir, "extensions"), { recursive: true });
   await Bun.write(join(clientDir, "index.html"), INDEX);
   await Bun.write(join(clientDir, "assets", "index-abc123.js"), SCRIPT);
+  await Bun.write(join(clientDir, "assets", "bundle-abc123.js"), BUNDLE);
   await Bun.write(join(tmp, "secret.txt"), "not yours");
   previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -109,6 +112,53 @@ test("a missing asset is a 404, not the SPA shell", async () => {
 
   expect(response.status).toBe(404);
   expect(await response.text()).not.toBe(INDEX);
+});
+
+test.each(["br", "gzip"])(
+  "compresses a bundle for a client that speaks %s",
+  async (encoding) => {
+    const response = await fetch(`${httpUrl()}/assets/bundle-abc123.js`, {
+      headers: { "accept-encoding": encoding },
+    });
+
+    expect(response.headers.get("content-encoding")).toBe(encoding);
+    expect(response.headers.get("vary")).toBe("accept-encoding");
+    expect(response.headers.get("cache-control")).toContain("immutable");
+    expect(await response.text()).toBe(BUNDLE);
+  }
+);
+
+test("hands the file whole to a client that asked for no encoding", async () => {
+  const response = await fetch(`${httpUrl()}/assets/bundle-abc123.js`, {
+    headers: { "accept-encoding": "identity" },
+  });
+
+  expect(response.headers.get("content-encoding")).toBeNull();
+  expect(response.headers.get("vary")).toBe("accept-encoding");
+  expect(await response.text()).toBe(BUNDLE);
+});
+
+test("a file too small to be worth deflating is sent as it is", async () => {
+  const response = await fetch(`${httpUrl()}/assets/index-abc123.js`, {
+    headers: { "accept-encoding": "br, gzip" },
+  });
+
+  expect(response.headers.get("content-encoding")).toBeNull();
+  expect(await response.text()).toBe(SCRIPT);
+});
+
+// Straight at the client: `fetch` decodes what it reads, so only this sees the wire size.
+test("a repeat read is served the same bytes from the cache", async () => {
+  const client = new StaticClient(clientDir);
+  const request = new Request("http://client/assets/bundle-abc123.js", {
+    headers: { "accept-encoding": "br" },
+  });
+
+  const first = await (await client.handle(request)).bytes();
+  const second = await (await client.handle(request)).bytes();
+
+  expect(first.length).toBeLessThan(BUNDLE.length / 8);
+  expect(second).toEqual(first);
 });
 
 test("a traversal cannot escape the client directory", async () => {
