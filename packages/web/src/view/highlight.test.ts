@@ -2,37 +2,21 @@ import "../test/dom";
 
 import { describe, expect, test } from "bun:test";
 
+import { tokenized } from "../test/highlight";
 import { Highlight, type Token } from "./highlight";
-
-/**
- * Grammars load on demand, so the first ask for a language is always plain
- * text and the answer arrives a microtask or two later. Every test here waits
- * that out once; the wait is the behaviour, not a workaround for it.
- */
-async function tokenize(
-  code: string,
-  lang: string
-): Promise<readonly (readonly Token[])[]> {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    const lines = Highlight.tokenize(code, lang);
-    if (lines.some((line) => line.some((token) => token.role !== undefined))) {
-      return lines;
-    }
-    await Bun.sleep(10);
-  }
-  throw new Error(`grammar for ${lang} never arrived`);
-}
 
 const text = (lines: readonly (readonly Token[])[]): readonly string[] =>
   lines.map((line) => line.map((token) => token.text).join(""));
 
 describe("Highlight.tokenize", () => {
+  // Go, and nothing else here: a language another test has already asked for
+  // is one this test cannot be the first to ask about.
   test("a language nobody has asked for yet comes back plain, then coloured", async () => {
-    expect(Highlight.tokenize("const a = 1;", "typescript")).toEqual([
-      [{ text: "const a = 1;" }],
+    expect(Highlight.tokenize("const a = 1", "go")).toEqual([
+      [{ text: "const a = 1" }],
     ]);
 
-    const [line] = await tokenize("const a = 1;", "typescript");
+    const [line] = await tokenized("const a = 1", "go");
 
     expect(line?.find((token) => token.text === "const")?.role).toBe("keyword");
     expect(line?.find((token) => token.text === "1")?.role).toBe("number");
@@ -49,7 +33,7 @@ describe("Highlight.tokenize", () => {
 
   test("tokens are cut at newlines, and no character is lost", async () => {
     const source = 'const greeting = "hi";\n\nfunction f() {}';
-    const lines = await tokenize(source, "typescript");
+    const lines = await tokenized(source, "typescript");
 
     expect(text(lines)).toEqual(source.split("\n"));
   });
@@ -60,7 +44,7 @@ describe("Highlight.tokenize", () => {
    * it, and a per-line highlighter would paint it as code.
    */
   test("a construct spanning lines keeps its colour on every one of them", async () => {
-    const lines = await tokenize(
+    const lines = await tokenized(
       "/**\n * doc\n */\nconst a = 1;",
       "typescript"
     );
@@ -74,7 +58,7 @@ describe("Highlight.tokenize", () => {
   });
 
   test("markup in the source cannot escape into the tokens", async () => {
-    const lines = await tokenize('const a = "<img src=x>";', "typescript");
+    const lines = await tokenized('const a = "<img src=x>";', "typescript");
 
     expect(text(lines).join("")).toContain('"<img src=x>"');
   });
@@ -85,7 +69,7 @@ describe("Highlight.tokenize", () => {
    * from its hunk header.
    */
   test("a diff colours its added and removed lines", async () => {
-    const lines = await tokenize(
+    const lines = await tokenized(
       "@@ -1,2 +1,2 @@\n-const a = 1;\n+const a = 2;\n unchanged",
       "diff"
     );
@@ -108,7 +92,7 @@ describe("the size cap", () => {
     lines.flat().map((token) => token.role);
 
   test("a block past a hundred kilobytes comes back plain", async () => {
-    await tokenize("const a = 1;", "typescript");
+    await tokenized("const a = 1;", "typescript");
     const wide = `const a = "${"x".repeat(2000)}";\n`.repeat(100);
 
     const lines = Highlight.tokenize(wide, "typescript");
@@ -119,7 +103,7 @@ describe("the size cap", () => {
   });
 
   test("a block past two thousand lines comes back plain", async () => {
-    await tokenize("const a = 1;", "typescript");
+    await tokenized("const a = 1;", "typescript");
     const tall = "const a = 1;\n".repeat(2001);
 
     const lines = Highlight.tokenize(tall, "typescript");
@@ -129,7 +113,7 @@ describe("the size cap", () => {
   });
 
   test("a block under both caps is still coloured", async () => {
-    await tokenize("const a = 1;", "typescript");
+    await tokenized("const a = 1;", "typescript");
 
     const lines = Highlight.tokenize(
       "const a = 1;\n".repeat(1999),

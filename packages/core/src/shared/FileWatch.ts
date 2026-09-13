@@ -8,6 +8,12 @@ import { basename, dirname, join } from "node:path";
 
 const POLL_MS = 1_000;
 
+/**
+ * A burst coalesces into one event, and the read it triggers can land inside
+ * the burst — so look once more after it, or the last write waits on the poll.
+ */
+const SETTLE_MS = 25;
+
 function signatureOf(path: string): string {
   const stats = statSync(path, { throwIfNoEntry: false });
   return stats === undefined
@@ -41,6 +47,13 @@ function follow(
   pollMs: number
 ): () => void {
   let watcher: FSWatcher | undefined;
+  let settle: ReturnType<typeof setTimeout> | undefined;
+  const fire = (): void => {
+    onEvent();
+    clearTimeout(settle);
+    settle = setTimeout(onEvent, SETTLE_MS);
+    settle.unref?.();
+  };
   const arm = (): void => {
     if (watcher !== undefined) {
       return;
@@ -48,7 +61,7 @@ function follow(
     try {
       watcher = watchFs(watched, { persistent: false }, (_event, changed) => {
         if (entry === undefined || changed === null || changed === entry) {
-          onEvent();
+          fire();
         }
       });
       watcher.on("error", () => {
@@ -66,6 +79,7 @@ function follow(
   timer.unref?.();
   return (): void => {
     clearInterval(timer);
+    clearTimeout(settle);
     try {
       watcher?.close();
     } catch {}

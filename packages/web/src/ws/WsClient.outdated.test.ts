@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 
 import { CLOSE_PROTOCOL_MISMATCH } from "#protocol/Protocol";
+import { until } from "#core/shared/fixtures/wait";
 import { WsClient, type ConnectionStatus } from "./WsClient";
 
 /**
@@ -38,17 +39,6 @@ function startRefusingServer(): ReturnType<typeof Bun.serve> {
 
 let server: ReturnType<typeof Bun.serve> | undefined;
 let connections = 0;
-
-/** The refusal arrives as a response first, so the close trails the attach. */
-async function until(ready: () => boolean, what: string): Promise<void> {
-  const deadline = Date.now() + 4_000;
-  while (!ready()) {
-    if (Date.now() > deadline) {
-      throw new Error(`timed out waiting for ${what}`);
-    }
-    await Bun.sleep(1);
-  }
-}
 
 beforeEach(() => {
   connections = 0;

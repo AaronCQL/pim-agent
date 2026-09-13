@@ -15,7 +15,8 @@ import { Shell } from "../App";
 import { SessionStore } from "../session/SessionStore";
 import { Settings } from "../settings/Settings";
 import { mountPoint } from "../test/dom";
-import { GatewayHarness, until } from "../test/gateway";
+import { GatewayHarness } from "../test/gateway";
+import { until } from "#core/shared/fixtures/wait";
 import { DiffStore } from "./DiffStore";
 import { DiffView } from "./DiffView";
 

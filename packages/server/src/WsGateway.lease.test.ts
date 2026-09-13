@@ -192,6 +192,7 @@ beforeEach(async () => {
   tmp = await mkdtemp(join(tmpdir(), "pim-lease-test-"));
   agentDir = join(tmp, "agent");
   await mkdir(join(agentDir, "extensions"), { recursive: true });
+  await mkdir(join(agentDir, "sessions"), { recursive: true });
   previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = agentDir;
   await Bun.write(
@@ -216,6 +217,9 @@ beforeEach(async () => {
     registry,
     port: 0,
     readCursorsPath: join(tmp, "read.json"),
+    // Out of reach: what a foreign write reaches this server by has to be the
+    // file watch, and a line arriving a second late is a line that was missed.
+    pollMs: 60_000,
   });
   gateway.start();
 });

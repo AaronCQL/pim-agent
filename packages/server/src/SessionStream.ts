@@ -199,6 +199,11 @@ export class SessionStream {
     };
   }
 
+  /** Whether `callId` names a tool this session is still running, log written or not. */
+  public isRunning(callId: string): boolean {
+    return this.findTool(callId)?.done === false;
+  }
+
   /** Everything a client at `fromSeq` has not seen: the durable tail, the in-flight turn coalesced, then state. */
   public async replay(fromSeq: number): Promise<readonly StreamEvent[]> {
     await Promise.all([this.flushDurable(), this.readLease()]);

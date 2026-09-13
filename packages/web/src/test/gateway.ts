@@ -9,6 +9,7 @@ import type { ToolDiff } from "#core/shared/DiffLines";
 import { SubagentLogs } from "#core/shared/SubagentLogs";
 import { Tools, type PimToolDefinition } from "#core/shared/Tools";
 import { WsGateway } from "#server/WsGateway";
+import type { WsClient } from "../ws/WsClient";
 
 export const REPLY = "hello from the gateway";
 export const REASONING = "a ping is what was asked for";
@@ -16,8 +17,6 @@ export const TOOL_PROSE = "Pinging now.";
 
 // Load-bearing: shrinking it makes the mid-turn reconnect test project an empty session.
 const TOKEN_DELAY_MS = 15;
-
-const POLL_MS = 1;
 
 const pingSchema = Type.Object({ text: Type.String() });
 
@@ -441,19 +440,17 @@ export class GatewayHarness {
 }
 
 /**
- * Polls until `test` holds. The default stays under bun's own 5s per-test
- * timeout, so a hung wait is named by `label` rather than killed by the runner.
+ * Cuts a client's socket and leaves the server standing, which is what a client
+ * reconnects from — unlike `dropGateway`, which takes every in-flight turn with
+ * it, so a client re-attaching mid-turn waits on tokens that are not coming.
+ *
+ * The socket has no accessor, so this reaches past the type rather than opening
+ * one for a test; it throws instead of quietly cutting nothing.
  */
-export async function until(
-  test: () => boolean,
-  label: string,
-  timeoutMs = 4_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!test()) {
-    if (Date.now() > deadline) {
-      throw new Error(`timed out waiting for ${label}`);
-    }
-    await Bun.sleep(POLL_MS);
+export function cutSocket(client: WsClient): void {
+  const { socket } = client as unknown as { socket?: WebSocket };
+  if (socket === undefined) {
+    throw new Error("the client has no socket to cut");
   }
+  socket.close();
 }

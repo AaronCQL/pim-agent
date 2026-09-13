@@ -1,56 +1,47 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PimSettings } from "./PimSettings";
 
-let previousExaApiKey: string | undefined;
-let previousJinaApiKey: string | undefined;
-let previousFirecrawlApiKey: string | undefined;
-let previousPimHomeDir: string | undefined;
-let testPimHomeDir: string | undefined;
+/**
+ * Every test gets its own home, and so its own settings file: a test that
+ * writes a key is otherwise the reason the test reading defaults passes or
+ * fails, which is decided by the order they happen to run in.
+ */
+const VARS = [
+  "EXA_API_KEY",
+  "JINA_API_KEY",
+  "FIRECRAWL_API_KEY",
+  "PIM_HOME_DIR",
+] as const;
 
-beforeAll(async () => {
-  previousExaApiKey = process.env.EXA_API_KEY;
-  previousJinaApiKey = process.env.JINA_API_KEY;
-  previousFirecrawlApiKey = process.env.FIRECRAWL_API_KEY;
-  previousPimHomeDir = process.env.PIM_HOME_DIR;
-  testPimHomeDir = await mkdtemp(join(tmpdir(), "pim-settings-home-"));
-  delete process.env.EXA_API_KEY;
-  delete process.env.JINA_API_KEY;
-  delete process.env.FIRECRAWL_API_KEY;
-  process.env.PIM_HOME_DIR = testPimHomeDir;
+let home = "";
+let previous = new Map<string, string | undefined>();
+
+beforeEach(async () => {
+  previous = new Map(VARS.map((name) => [name, process.env[name]]));
+  for (const name of VARS) {
+    delete process.env[name];
+  }
+  home = await mkdtemp(join(tmpdir(), "pim-settings-home-"));
+  process.env.PIM_HOME_DIR = home;
 });
 
-afterAll(async () => {
-  if (previousExaApiKey === undefined) {
-    delete process.env.EXA_API_KEY;
-  } else {
-    process.env.EXA_API_KEY = previousExaApiKey;
+afterEach(async () => {
+  for (const [name, value] of previous) {
+    if (value === undefined) {
+      delete process.env[name];
+    } else {
+      process.env[name] = value;
+    }
   }
-  if (previousJinaApiKey === undefined) {
-    delete process.env.JINA_API_KEY;
-  } else {
-    process.env.JINA_API_KEY = previousJinaApiKey;
-  }
-  if (previousFirecrawlApiKey === undefined) {
-    delete process.env.FIRECRAWL_API_KEY;
-  } else {
-    process.env.FIRECRAWL_API_KEY = previousFirecrawlApiKey;
-  }
-  if (previousPimHomeDir === undefined) {
-    delete process.env.PIM_HOME_DIR;
-  } else {
-    process.env.PIM_HOME_DIR = previousPimHomeDir;
-  }
-  if (testPimHomeDir) {
-    await rm(testPimHomeDir, { recursive: true, force: true });
-  }
+  await rm(home, { recursive: true, force: true });
 });
 
 describe("PimSettings", () => {
   test("loads defaults from ~/.pim/settings.json", async () => {
-    expect(PimSettings.path()).toBe(join(testPimHomeDir!, "settings.json"));
+    expect(PimSettings.path()).toBe(join(home, "settings.json"));
     await expect(PimSettings.get("extensions")).resolves.toEqual({
       toggles: {},
     });
@@ -68,7 +59,7 @@ describe("PimSettings", () => {
     await PimSettings.set("firecrawl", { apiKey: "firecrawl-test" });
 
     const path = PimSettings.path();
-    expect(path).toBe(join(testPimHomeDir!, "settings.json"));
+    expect(path).toBe(join(home, "settings.json"));
     expect(await Bun.file(path).json()).toEqual({
       extensions: { toggles: {} },
       exa: { apiKey: "exa-test" },
@@ -77,7 +68,7 @@ describe("PimSettings", () => {
       read: { dedupImages: true },
     });
 
-    expect((await stat(testPimHomeDir!)).mode & 0o777).toBe(0o700);
+    expect((await stat(home)).mode & 0o777).toBe(0o700);
     expect((await stat(path)).mode & 0o777).toBe(0o600);
   });
 

@@ -7,7 +7,8 @@ import { flush } from "solid-js";
 import { git, makeRepo } from "#core/shared/fixtures/repo";
 import { SessionStore } from "../session/SessionStore";
 import { mountPoint } from "../test/dom";
-import { GatewayHarness, until } from "../test/gateway";
+import { GatewayHarness } from "../test/gateway";
+import { until } from "#core/shared/fixtures/wait";
 import { Topbar } from "./Topbar";
 
 /**

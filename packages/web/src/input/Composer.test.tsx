@@ -9,7 +9,7 @@ import { PROTOCOL_VERSION } from "#protocol/Protocol";
 import type { ServerEvent } from "#protocol/ServerEvent";
 import { SessionStore } from "../session/SessionStore";
 import { mountPoint } from "../test/dom";
-import { until } from "../test/gateway";
+import { until } from "#core/shared/fixtures/wait";
 import { Composer } from "./Composer";
 
 type Command = { readonly type: string } & Record<string, unknown>;

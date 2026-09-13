@@ -30,6 +30,11 @@ let probes: ProbeClient[] = [];
 let parentSessionId = "";
 /** The two points the tool parks at, while a test is holding it there. */
 let parked: Parked | undefined;
+/**
+ * Shut by a test that wants the call open before its child log exists, which
+ * is the window between the row a client paints and the tool's first write.
+ */
+let unwritten: Gate | undefined;
 
 const spawnSchema = Type.Object({ task: Type.String() });
 
@@ -49,6 +54,7 @@ function spawnTool(): PimToolDefinition<
     parameters: spawnSchema,
     effect: { kind: "readOnly" },
     execute: async (callId, params, _signal, onUpdate) => {
+      await unwritten?.shut;
       await writeChild(callId, "user", params.task);
       onUpdate?.({
         content: [{ type: "text", text: "working" }],
@@ -237,6 +243,16 @@ function holdChild(): Held {
   return { answer: held.answering.open, settle: held.settling.open };
 }
 
+/** Holds the tool short of writing the child's log at all. */
+function holdFirstWrite(): () => void {
+  const held = gate();
+  unwritten = held;
+  return () => {
+    unwritten = undefined;
+    held.open();
+  };
+}
+
 beforeEach(async () => {
   startModelServer();
   tmp = await mkdtemp(join(tmpdir(), "pim-subagent-test-"));
@@ -281,6 +297,8 @@ afterEach(async () => {
   parked?.answering.open();
   parked?.settling.open();
   parked = undefined;
+  unwritten?.open();
+  unwritten = undefined;
   for (const probe of probes) {
     probe.close();
   }
@@ -357,6 +375,43 @@ test("resumes a watch from `fromSeq` rather than replaying it", async () => {
 
   expect(seqsOf(watched(probe)[0] ?? [])).toEqual([3]);
   expect(textsOf(watched(probe)[0] ?? [])).toEqual([CHILD_ANSWER]);
+});
+
+/**
+ * The row a reader clicks is painted from the `tool_call`, and the child's
+ * log is written by the tool that call started — so on any machine slow
+ * enough there is a window where the affordance is on screen and the file is
+ * not on disk. A watch taken in that window is the ordinary case, not a
+ * forged id: it waits, and the child's first line reaches it when it lands.
+ */
+test("a watch opened before the child's first line still reads it", async () => {
+  const probe = await connect();
+  const held = holdChild();
+  const release = holdFirstWrite();
+  const mark = probe.events.length;
+  await probe.prompt("delegate this");
+  await probe.waitFor(
+    (event) => event.type === "tool_call" && event.callId === CALL_ID,
+    { from: mark }
+  );
+  expect(
+    await Bun.file(SubagentLogs.pathFor(parentSessionId, CALL_ID)!).exists()
+  ).toBe(false);
+
+  expect((await probe.watchSubagent(CALL_ID)).success).toBe(true);
+  expect(watched(probe)).toHaveLength(0);
+
+  release();
+  await probe.waitFor(
+    (event) =>
+      event.type === "subagent_events" && textsOf(event.events).includes(TASK),
+    { from: mark }
+  );
+
+  held.answer();
+  held.settle();
+  await idle(probe, mark);
+  expect(watched(probe).flatMap(textsOf)).toEqual([TASK, CHILD_ANSWER]);
 });
 
 test("stops sending a child's events once it is unwatched", async () => {

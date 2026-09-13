@@ -12,6 +12,7 @@ import { EventLog } from "./EventLog";
 import { SessionHost, type SessionHostDeps } from "./SessionHost";
 import { SessionLease } from "./SessionLease";
 import { SessionRegistry } from "./SessionRegistry";
+import { until } from "../shared/fixtures/wait";
 
 const MODEL_ID = "test/echo";
 
@@ -44,20 +45,6 @@ function holdTurn(): () => void {
     releaseGate?.();
     releaseGate = undefined;
   };
-}
-
-/**
- * Polls a condition rather than sleeping long enough that it is probably true.
- * The deadline is well inside bun's per-test one so a stuck wait says which.
- */
-async function until(ready: () => boolean, what: string): Promise<void> {
-  const deadline = Date.now() + 2_000;
-  while (!ready()) {
-    if (Date.now() > deadline) {
-      throw new Error(`timed out waiting for ${what}`);
-    }
-    await Bun.sleep(1);
-  }
 }
 
 function mainPath(): string {

@@ -7,7 +7,7 @@ import { flush } from "solid-js";
 import { CLOSE_PROTOCOL_MISMATCH, PROTOCOL_VERSION } from "#protocol/Protocol";
 import { SessionStore } from "../session/SessionStore";
 import { mountPoint } from "../test/dom";
-import { until } from "../test/gateway";
+import { until } from "#core/shared/fixtures/wait";
 import { Topbar } from "./Topbar";
 
 function stocked(cwd: string, branch: string, dirtyCount = 3): SessionStore {

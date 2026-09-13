@@ -14,8 +14,8 @@ import {
   SUBAGENT_ANSWER,
   SUBAGENT_CALL_ID,
   SUBAGENT_PROMPT,
-  until,
 } from "../test/gateway";
+import { until } from "#core/shared/fixtures/wait";
 
 /**
  * The modal, against the real gateway: a subagent that leaves a child log,

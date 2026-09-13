@@ -11,6 +11,7 @@ import type {
 } from "#protocol/ServerEvent";
 import { ClientConnection, type AttachableStream } from "./ClientConnection";
 import { SessionProjection } from "./SessionProjection";
+import { until } from "#core/shared/fixtures/wait";
 
 /** A socket that reports whatever backpressure a test wants it to. */
 class FakeSocket {
@@ -256,17 +257,6 @@ test("sends nothing once closed", async () => {
 });
 
 let tmp: string | undefined;
-
-/** Polls, because a drain of the child's log is a read this side did not await. */
-async function until(ready: () => boolean, what: string): Promise<void> {
-  const deadline = Date.now() + 5_000;
-  while (!ready()) {
-    if (Date.now() > deadline) {
-      throw new Error(`timed out waiting for ${what}`);
-    }
-    await Bun.sleep(1);
-  }
-}
 
 afterEach(async () => {
   if (tmp) {

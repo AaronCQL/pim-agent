@@ -6,12 +6,13 @@ import type { DurableEvent } from "#protocol/ServerEvent";
 import { SessionStore } from "../session/SessionStore";
 import { toRows } from "../transcript/rows";
 import {
+  cutSocket,
   GatewayHarness,
   REASONING,
   REPLY,
   TOOL_PROSE,
-  until,
 } from "../test/gateway";
+import { until } from "#core/shared/fixtures/wait";
 
 let harness: GatewayHarness;
 let stores: SessionStore[] = [];
@@ -343,23 +344,25 @@ test("re-attaching does not replay the in-flight text twice", async () => {
   const release = harness.holdTurn();
   const store = await connect();
   await store.prompt("say hello");
-  // The prompt takes two steps and only the second one is held open, so the
-  // drop has to land in it: a prefix of `REPLY` is what says we are there,
-  // where "some text arrived" would also match the tool step's prose.
-  await until(() => {
-    const text = liveText(store).trim();
-    return text.length > 0 && REPLY.startsWith(text);
-  }, "the held step to start streaming");
-  const partial = liveText(store);
+  // The whole reply, not a prefix of one: the turn is held open past its last
+  // token, so every token is on its way and waiting for all of them is what
+  // makes the text this client holds at the drop the same on any machine.
+  await until(
+    () => liveText(store).trim() === REPLY,
+    "the held step to stream its reply"
+  );
+  const streamed = liveText(store);
 
-  await harness.dropGateway();
+  // The socket, not the server: the turn stays live behind it, so the resume
+  // is answered out of the server's in-flight turn rather than by the next
+  // token — which, the reply having finished streaming, is not coming.
+  cutSocket(store.client);
   await until(() => store.state.connection === "reconnecting", "the drop");
-  harness.startGateway();
   await until(() => store.state.connection === "open", "the reconnect");
   await until(() => liveText(store) !== "", "the coalesced snapshot");
 
-  expect(liveText(store).startsWith(partial)).toBe(true);
-  expect(REPLY).toStartWith(liveText(store).trim());
+  // Once, and whole: the same text it held before the drop.
+  expect(liveText(store)).toBe(streamed);
   release();
   await idle(store);
 });

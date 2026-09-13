@@ -1,3 +1,4 @@
+import { Git } from "../Git";
 import { Proc } from "../Proc";
 
 /**
@@ -11,17 +12,24 @@ const IDENTITY: Readonly<Record<string, string>> = {
   GIT_COMMITTER_EMAIL: "pim@example.com",
 };
 
-/** Runs one git command in `cwd`, saying nothing whether it worked or not. */
+/**
+ * Runs one git command in `cwd`, throwing if it failed: a fixture that fails
+ * quietly is a test that fails somewhere else, on whatever first touches git.
+ */
 export async function git(
   cwd: string,
   args: readonly string[],
   env: Readonly<Record<string, string>> = {}
 ): Promise<void> {
-  await Proc.run(["git", ...args], {
+  const result = await Proc.run(["git", ...args], {
     cwd,
     stdout: "pipe",
     env: { ...IDENTITY, ...env },
   });
+  if (result.code !== 0) {
+    const said = Git.failure(result, "git failed");
+    throw new Error(`git ${args.join(" ")} in ${cwd} failed: ${said}`);
+  }
 }
 
 /**

@@ -1024,8 +1024,13 @@ test("a working agent freezes the repository its session sits in", async () => {
   }
   await idle(probe, mark);
 
-  expect(
-    (await probe.send({ type: "checkout", sessionId, branch: "feat/work" }))
-      .success
-  ).toBe(true);
+  const moved = await probe.send({
+    type: "checkout",
+    sessionId,
+    branch: "feat/work",
+  });
+  // The error ahead of the flag: git's own failures are the only other way
+  // this comes back false, and `false !== true` does not say which happened.
+  expect(moved.error).toBeUndefined();
+  expect(moved.success).toBe(true);
 });

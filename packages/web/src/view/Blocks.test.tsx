@@ -5,10 +5,11 @@ import { describe, expect, test } from "bun:test";
 import { createSignal, flush } from "solid-js";
 
 import type { ToolView, ViewBlock } from "#core/view/ViewBlock";
+import { until } from "#core/shared/fixtures/wait";
 import { GatewayOrigin } from "../session/Gateway";
 import { mountPoint } from "../test/dom";
+import { tokenized } from "../test/highlight";
 import { Blocks, Body } from "./Blocks";
-import { Highlight } from "./highlight";
 import { ToolCard, ToolCards } from "./ToolCard";
 import {
   DIFF_EMPHASIS_CLASSES,
@@ -319,13 +320,10 @@ describe("ViewBlock HTML painter", () => {
       host
     );
 
-    for (let attempt = 0; attempt < 50; attempt += 1) {
+    await until(() => {
       flush();
-      if (host.innerHTML.includes("text-fuchsia-300")) {
-        break;
-      }
-      await Bun.sleep(10);
-    }
+      return host.innerHTML.includes(SYNTAX_CLASSES.keyword);
+    }, "the ts grammar");
 
     const keyword = [...host.querySelectorAll("span")].find(
       (node) => node.textContent === "const"
@@ -334,7 +332,7 @@ describe("ViewBlock HTML painter", () => {
       node.className.includes(DIFF_EMPHASIS_CLASSES.added)
     );
 
-    expect(keyword?.className).toContain("text-fuchsia-300");
+    expect(keyword?.className).toContain(SYNTAX_CLASSES.keyword);
     expect(changed.map((node) => node.textContent)).toEqual(["2"]);
     expect(host.textContent).toContain("const name = 2;");
   });
@@ -367,21 +365,8 @@ describe("ViewBlock HTML painter", () => {
  * cap is only visible once the grammar that would have coloured it has landed.
  */
 describe("the highlight cap", () => {
-  async function grammarLanded(): Promise<void> {
-    for (let attempt = 0; attempt < 50; attempt += 1) {
-      const lines = Highlight.tokenize("const a = 1;", "typescript");
-      if (
-        lines.some((line) => line.some((token) => token.role !== undefined))
-      ) {
-        return;
-      }
-      await Bun.sleep(10);
-    }
-    throw new Error("the typescript grammar never arrived");
-  }
-
   test("a two hundred kilobyte block renders unhighlighted", async () => {
-    await grammarLanded();
+    await tokenized("const a = 1;", "typescript");
     const line = `const wide = "${"x".repeat(2000)}";`;
     const text = `${line}\n`.repeat(100);
 

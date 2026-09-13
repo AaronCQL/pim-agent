@@ -1,11 +1,19 @@
 import "../test/dom";
 
 import { render } from "@solidjs/web";
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { createSignal, flush } from "solid-js";
 
 import { mountPoint } from "../test/dom";
+import { until } from "#core/shared/fixtures/wait";
+import { SYNTAX_CLASSES } from "../view/tokens";
 import { Markdown } from "./Markdown";
+
+// A selection outlives the test that made it, and a click inside one copies
+// nothing: left standing, it decides what every later test here does.
+afterEach(() => {
+  window.getSelection()?.removeAllRanges();
+});
 
 function mount(initial: string, complete = true) {
   const [text, setText] = createSignal(initial);
@@ -110,15 +118,12 @@ describe("Markdown", () => {
   test("a finished fence is syntax highlighted once its grammar lands", async () => {
     const view = mount("```ts\nconst a = 1;\n```\n\nprose\n");
 
-    for (let attempt = 0; attempt < 50; attempt += 1) {
+    await until(() => {
       flush();
-      if (view.html().includes("text-fuchsia-300")) {
-        break;
-      }
-      await Bun.sleep(10);
-    }
+      return view.html().includes(SYNTAX_CLASSES.keyword);
+    }, "the ts grammar");
 
-    expect(view.html()).toContain("text-fuchsia-300");
+    expect(view.html()).toContain(SYNTAX_CLASSES.keyword);
     expect(view.text()).toContain("const a = 1;");
     // The fence markers are drawn from the language class, which stays put.
     expect(view.html()).toContain('class="ts"');

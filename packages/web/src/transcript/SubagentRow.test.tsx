@@ -14,8 +14,8 @@ import {
   SUBAGENT_FAIL_CALL_ID,
   SUBAGENT_FAILURE,
   SUBAGENT_PROMPT,
-  until,
 } from "../test/gateway";
+import { until } from "#core/shared/fixtures/wait";
 
 /**
  * The row's face, against the real gateway: what a reader who never opens the

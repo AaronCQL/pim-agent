@@ -11,20 +11,7 @@ import {
   type SubagentDetails,
   type SubagentSession,
 } from "./subagent";
-
-/**
- * Polls a condition rather than sleeping long enough that it is probably true.
- * The deadline is well inside bun's per-test one so a stuck wait says which.
- */
-async function until(ready: () => boolean, what: string): Promise<void> {
-  const deadline = Date.now() + 2_000;
-  while (!ready()) {
-    if (Date.now() > deadline) {
-      throw new Error(`timed out waiting for ${what}`);
-    }
-    await Bun.sleep(1);
-  }
-}
+import { until } from "../../shared/fixtures/wait";
 
 type UsageOverrides = Omit<Partial<Usage>, "cost"> & {
   readonly cost?: Partial<Usage["cost"]>;

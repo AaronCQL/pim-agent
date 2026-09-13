@@ -45,6 +45,8 @@ export type WsGatewayDeps = {
   readonly imagesRoot?: string;
   /** Where the read cursors live; defaults to `~/.pim/read.json`. */
   readonly readCursorsPath?: string;
+  /** How often a session file is polled where `fs.watch` says nothing; the default is a second. */
+  readonly pollMs?: number;
   /** The built web client; defaults to the bundle shipped beside this package. */
   readonly clientDir?: string;
   /** Runs the update a `reload` asks for, reporting each step as it starts. */
@@ -99,6 +101,7 @@ export class WsGateway {
   >();
   private readonly reloader: Reloader;
   private readonly git = new GitMonitor();
+  private readonly pollMs: number | undefined;
   private readonly busyRepos = new Set<string>();
   private versionsRead: Promise<readonly [string, string]> | undefined;
   private server: Server<undefined> | undefined;
@@ -107,6 +110,7 @@ export class WsGateway {
     this.registry = deps.registry;
     this.hostname = deps.hostname ?? DEFAULT_HOSTNAME;
     this.requestedPort = deps.port ?? DEFAULT_PORT;
+    this.pollMs = deps.pollMs;
     this.uploads = new AttachmentEndpoint(
       deps.attachmentsRoot === undefined ? {} : { root: deps.attachmentsRoot }
     );
@@ -436,7 +440,8 @@ export class WsGateway {
     if (path === null) {
       return { error: `malformed call id: ${command.callId}` };
     }
-    if (!(await Bun.file(path).exists())) {
+    // A running call may not have written its log yet; the watch waits for it.
+    if (!stream.isRunning(command.callId) && !(await Bun.file(path).exists())) {
       return { error: `no subagent log for call ${command.callId}` };
     }
     await connection.watchSubagent(
@@ -641,6 +646,7 @@ export class WsGateway {
     const stream = new SessionStream(id, host, path, {
       git: this.git,
       repoBusy: () => this.repoBusy(host.cwd),
+      pollMs: this.pollMs,
     });
     stream.start();
     this.catalogue.track(id, host.status);

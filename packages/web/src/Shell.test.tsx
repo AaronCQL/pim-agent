@@ -11,7 +11,8 @@ import { baseName } from "./format";
 import { SessionStore } from "./session/SessionStore";
 import { Settings } from "./settings/Settings";
 import { mountPoint } from "./test/dom";
-import { GatewayHarness, until } from "./test/gateway";
+import { GatewayHarness } from "./test/gateway";
+import { until } from "#core/shared/fixtures/wait";
 import { fakeViewport } from "./test/viewport";
 
 function attached(sessionId = "s1"): ServerEvent {

@@ -37,6 +37,11 @@ const CI = Bun.env.CI !== undefined && Bun.env.CI !== "false";
 // reported CPU on a hosted runner starves their real gateway and WASM tests.
 const TEST_PARALLEL = CI ? "--parallel=1" : "--parallel";
 
+// Bun's 5s default is a unit test's budget; these suites drive a real gateway,
+// a real agent and real git. Their own waits give up at 15-20s with a name for
+// what they were waiting on, which the runner killing the test first hides.
+const TEST_TIMEOUT = "--timeout=30000";
+
 type Task = {
   readonly name: string;
   readonly argv: readonly string[];
@@ -100,6 +105,7 @@ const TASKS: readonly Task[] = [
       "--path-ignore-patterns=**/packaging.test.ts",
       "--only-failures",
       TEST_PARALLEL,
+      TEST_TIMEOUT,
       "--no-isolate",
     ],
     tests: true,
@@ -119,6 +125,7 @@ const TASKS: readonly Task[] = [
       "--isolate",
       "--only-failures",
       TEST_PARALLEL,
+      TEST_TIMEOUT,
     ],
     tests: true,
   },
