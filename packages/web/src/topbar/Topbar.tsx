@@ -1,20 +1,33 @@
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 
+import { Format } from "#core/shared/Format";
 import { abbreviateHome, baseName } from "../format";
 import type { SessionStore } from "../session/SessionStore";
 import type { ConnectionStatus } from "../ws/WsClient";
-import { CHIP } from "../ui/classes";
+import { CHIP_BUTTON, CHIP_GROUP, CHIP_SEGMENT } from "../ui/classes";
 import { Fitted } from "../ui/Fitted";
 import { BranchMenu } from "./BranchMenu";
 import { DirectoryModal } from "./DirectoryModal";
 
 const GRACE_MS = 1500;
 
+function changesLabel(count: number, reviewing: boolean): string {
+  if (reviewing) {
+    return "Back to the conversation";
+  }
+  if (count === 0) {
+    return "Review changes, working tree clean";
+  }
+  return `Review changes, ${Format.count(count, "changed file")}`;
+}
+
 /** The row above the transcript: where the session is, and what its repository is doing. */
 export function Topbar(props: {
   readonly store: SessionStore;
   readonly compact: boolean;
+  readonly reviewing: boolean;
   readonly onToggleSidebar: () => void;
+  readonly onToggleDiff: () => void;
   readonly onOpenSettings?: () => void;
   readonly graceMs?: number;
 }) {
@@ -25,6 +38,8 @@ export function Topbar(props: {
   );
   const paths = (cwd: string): readonly string[] =>
     props.compact ? [baseName(cwd)] : [abbreviateHome(cwd), baseName(cwd)];
+  const changes = (): string =>
+    changesLabel(props.store.state.dirtyCount, props.reviewing);
 
   return (
     <div class="flex h-12 shrink-0 items-center gap-2 border-b border-neutral-700 px-3">
@@ -41,7 +56,7 @@ export function Topbar(props: {
         {(cwd) => (
           <button
             type="button"
-            class={`${CHIP} hover:bg-neutral-800 hover:text-neutral-50`}
+            class={CHIP_BUTTON}
             aria-label={`Working directory ${abbreviateHome(cwd())}, open another`}
             title={cwd()}
             onClick={() => {
@@ -71,11 +86,32 @@ export function Topbar(props: {
 
       <Show when={props.store.state.branch}>
         {(branch) => (
-          <BranchMenu
-            store={props.store}
-            branch={branch()}
-            compact={props.compact}
-          />
+          <div class={CHIP_GROUP}>
+            <BranchMenu
+              store={props.store}
+              branch={branch()}
+              compact={props.compact}
+            />
+            <button
+              type="button"
+              aria-pressed={props.reviewing ? "true" : "false"}
+              class={`${CHIP_SEGMENT} shrink-0 rounded-r-lg border-l border-neutral-750`}
+              aria-label={changes()}
+              title={changes()}
+              onClick={props.onToggleDiff}
+            >
+              <span
+                class={`i-griddy-icons:file-edit size-4 shrink-0 ${
+                  props.store.state.dirtyCount > 0 ? "text-amber-400" : ""
+                }`}
+              />
+              <Show when={props.store.state.dirtyCount > 0}>
+                <span class="shrink-0 text-amber-400">
+                  {props.store.state.dirtyCount}
+                </span>
+              </Show>
+            </button>
+          </div>
         )}
       </Show>
 

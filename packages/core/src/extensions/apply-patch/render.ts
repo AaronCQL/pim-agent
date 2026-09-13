@@ -3,11 +3,12 @@ import { Paths } from "../../shared/Paths";
 import { PatchSummary } from "../../shared/PatchSummary";
 import type { ToolViewInput } from "../../shared/Tools";
 import { DiffBlocks } from "../../view/DiffBlocks";
+import { MovePath } from "../../view/MovePath";
 import type { Span, ToolIcon, ToolView, ViewBlock } from "../../view/ViewBlock";
 import type { ApplyEntry } from "./executor";
 import { type applyPatchSchema, prepareApplyPatchArguments } from "./schema";
 
-const ARROW = "➝";
+const ARROW = MovePath.ARROW;
 
 export type ApplyPatchDetails = {
   readonly entries?: readonly ApplyEntry[];
@@ -152,65 +153,25 @@ function sectionBlock(entry: EntryView): ViewBlock {
 }
 
 function moveTitle(oldPath: string, newPath: string): readonly Span[] {
-  const oldParts = oldPath.split("/");
-  const newParts = newPath.split("/");
-  let commonPrefix = 0;
+  const folded = MovePath.fold(oldPath, newPath);
 
-  while (
-    commonPrefix < oldParts.length &&
-    commonPrefix < newParts.length &&
-    oldParts[commonPrefix] === newParts[commonPrefix]
-  ) {
-    commonPrefix += 1;
-  }
-
-  let commonSuffix = 0;
-  while (
-    commonSuffix < oldParts.length - commonPrefix &&
-    commonSuffix < newParts.length - commonPrefix &&
-    oldParts[oldParts.length - commonSuffix - 1] ===
-      newParts[newParts.length - commonSuffix - 1]
-  ) {
-    commonSuffix += 1;
-  }
-
-  const oldChanged = oldParts.slice(
-    commonPrefix,
-    oldParts.length - commonSuffix
-  );
-  const newChanged = newParts.slice(
-    commonPrefix,
-    newParts.length - commonSuffix
-  );
-
-  if (
-    oldChanged.length > 0 &&
-    newChanged.length > 0 &&
-    (commonPrefix > 0 ||
-      commonSuffix > 0 ||
-      (oldParts.length === 1 && newParts.length === 1))
-  ) {
-    const prefix =
-      commonPrefix > 0 ? `${oldParts.slice(0, commonPrefix).join("/")}/` : "";
-    const suffix =
-      commonSuffix > 0 ? `/${oldParts.slice(-commonSuffix).join("/")}` : "";
-
+  if (folded === undefined) {
     return [
-      { text: prefix },
-      { text: "{", tone: "dim" },
-      { text: oldChanged.join("/"), tone: "dim", strike: true },
-      { text: ` ${ARROW} `, tone: "dim" },
-      { text: newChanged.join("/"), tone: "title" },
-      { text: "}", tone: "dim" },
-      { text: suffix, tone: "title" },
+      { text: oldPath, tone: "dim", strike: true },
+      { text: " " },
+      { text: ARROW, tone: "dim" },
+      { text: " " },
+      { text: newPath, tone: "title" },
     ];
   }
 
   return [
-    { text: oldPath, tone: "dim", strike: true },
-    { text: " " },
-    { text: ARROW, tone: "dim" },
-    { text: " " },
-    { text: newPath, tone: "title" },
+    { text: folded.prefix },
+    { text: "{", tone: "dim" },
+    { text: folded.from, tone: "dim", strike: true },
+    { text: ` ${ARROW} `, tone: "dim" },
+    { text: folded.to, tone: "title" },
+    { text: "}", tone: "dim" },
+    { text: folded.suffix, tone: "title" },
   ];
 }

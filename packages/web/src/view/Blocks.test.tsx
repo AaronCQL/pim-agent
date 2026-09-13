@@ -8,12 +8,14 @@ import type { ToolView, ViewBlock } from "#core/view/ViewBlock";
 import { GatewayOrigin } from "../session/Gateway";
 import { mountPoint } from "../test/dom";
 import { Blocks, Body } from "./Blocks";
+import { Highlight } from "./highlight";
 import { ToolCard, ToolCards } from "./ToolCard";
 import {
   DIFF_EMPHASIS_CLASSES,
   DIFF_ROW_CLASSES,
   FRAMES,
   groupByFrame,
+  SYNTAX_CLASSES,
 } from "./tokens";
 
 const GATEWAY = "http://gateway";
@@ -357,6 +359,39 @@ describe("ViewBlock HTML painter", () => {
     const html = paint([SAMPLES.notice]);
     expect(html).toContain('role="alert"');
     expect(html).toContain("text-rose-400");
+  });
+});
+
+/**
+ * Grammars load on demand, so the first ask for one is always plain text; the
+ * cap is only visible once the grammar that would have coloured it has landed.
+ */
+describe("the highlight cap", () => {
+  async function grammarLanded(): Promise<void> {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const lines = Highlight.tokenize("const a = 1;", "typescript");
+      if (
+        lines.some((line) => line.some((token) => token.role !== undefined))
+      ) {
+        return;
+      }
+      await Bun.sleep(10);
+    }
+    throw new Error("the typescript grammar never arrived");
+  }
+
+  test("a two hundred kilobyte block renders unhighlighted", async () => {
+    await grammarLanded();
+    const line = `const wide = "${"x".repeat(2000)}";`;
+    const text = `${line}\n`.repeat(100);
+
+    const small = paint([{ kind: "code", lang: "ts", text: "const a = 1;" }]);
+    const large = paint([{ kind: "code", lang: "ts", text }]);
+
+    expect(text.length).toBeGreaterThan(200_000);
+    expect(small).toContain(SYNTAX_CLASSES.keyword);
+    expect(large).not.toContain(SYNTAX_CLASSES.keyword);
+    expect(large).toContain("const wide");
   });
 });
 

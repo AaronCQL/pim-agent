@@ -111,6 +111,11 @@ type Grammar = { readonly default: unknown };
 
 let hljs: typeof hljsCore | undefined;
 
+/** Past either of these a block is left plain: highlighting it blocks the tab for longer than anyone waits. */
+const TEXT_LIMIT = 100_000;
+
+const LINE_LIMIT = 2000;
+
 async function load(lang: string): Promise<void> {
   const grammar = GRAMMARS[lang];
 
@@ -151,7 +156,7 @@ function tokenize(
 ): readonly (readonly Token[])[] {
   loaded();
 
-  if (lang === undefined) {
+  if (lang === undefined || oversized(code)) {
     return plain(code);
   }
 
@@ -169,6 +174,10 @@ function tokenize(
   } catch {
     return plain(code);
   }
+}
+
+function oversized(code: string): boolean {
+  return code.length > TEXT_LIMIT || code.split("\n").length > LINE_LIMIT;
 }
 
 function plain(code: string): readonly (readonly Token[])[] {

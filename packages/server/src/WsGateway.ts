@@ -7,8 +7,9 @@ import { Attachments } from "#core/attachments/Attachments";
 import type { PickerItem } from "#core/picker/PickerItem";
 import { Directories } from "#core/shared/Directories";
 import type { DirectoryListing } from "#core/shared/Directories";
-import { Git, type GitBranch, type GitOutcome } from "#core/shared/Git";
-import { GitMonitor } from "#core/shared/GitMonitor";
+import { Git, type GitBranch } from "#core/shared/Git";
+import { GitMonitor, type GitRun } from "#core/shared/GitMonitor";
+import { RepoDiff } from "#core/shared/RepoDiff";
 import { ReadCursors } from "#core/session/ReadCursors";
 import type { SessionHost } from "#core/session/SessionHost";
 import type { SessionRegistry } from "#core/session/SessionRegistry";
@@ -16,6 +17,7 @@ import { PimVersion } from "#core/shared/PimVersion";
 import { SubagentLogs } from "#core/shared/SubagentLogs";
 import type { UpdateOutcome } from "#core/shared/Updater";
 import type { Command } from "#protocol/Command";
+import type { ChangeList, FileDiff, FileLines } from "#protocol/Diff";
 import { CLOSE_PROTOCOL_MISMATCH, PROTOCOL_VERSION } from "#protocol/Protocol";
 import type {
   ModelView,
@@ -59,6 +61,10 @@ type Outcome = {
   readonly thinkingLevels?: readonly string[];
   readonly directory?: DirectoryListing;
   readonly branches?: readonly GitBranch[];
+  readonly commit?: { readonly sha: string };
+  readonly changes?: ChangeList;
+  readonly fileDiff?: FileDiff;
+  readonly fileLines?: FileLines;
   readonly restored?: readonly string[];
   readonly after?: () => void;
 };
@@ -288,12 +294,43 @@ export class WsGateway {
             this.requireStream(connection).host.cwd
           ),
         };
+      // Reading the repository never moves it, so neither of these takes the `repoBusy` refusal.
+      case "list_changes":
+        return {
+          changes: await RepoDiff.listChanges(
+            this.requireStream(connection).host.cwd,
+            command.base,
+            this.git
+          ),
+        };
+      case "file_diff":
+        return {
+          fileDiff: await RepoDiff.fileDiff(
+            this.requireStream(connection).host.cwd,
+            command.base,
+            command.path,
+            this.git,
+            command.context
+          ),
+        };
+      case "read_lines":
+        return {
+          fileLines: await RepoDiff.readLines(
+            this.requireStream(connection).host.cwd,
+            command.base,
+            command.path,
+            command.spans,
+            this.git
+          ),
+        };
       case "checkout": {
         const stream = this.requireStream(connection);
         return await this.runGit(stream, true, (cwd) =>
           Git.checkout(cwd, command.branch)
         );
       }
+      case "commit":
+        return await this.commit(this.requireStream(connection), command);
       case "pull":
       case "push":
         return await this.runGit(
@@ -453,19 +490,42 @@ export class WsGateway {
    * An operation that moves the working tree cannot run under an agent that
    * may be halfway through an edit; `push` leaves the tree alone, so it can.
    */
-  private async runGit(
+  private async runGit<T = never>(
     stream: SessionStream,
     movesTree: boolean,
-    operation: (cwd: string) => Promise<GitOutcome>
-  ): Promise<Outcome> {
+    operation: (cwd: string) => Promise<GitRun<T>>
+  ): Promise<Outcome & { readonly value?: T }> {
     const cwd = stream.host.cwd;
     if (movesTree && this.repoBusy(cwd)) {
       return {
         error: `an agent is working in ${cwd}; wait for its turn to end`,
       };
     }
-    const result = await this.git.run(cwd, () => operation(cwd));
-    return result.ok ? {} : { error: result.error };
+    const result = await this.git.run<T>(cwd, () => operation(cwd));
+    if (!result.ok) {
+      return { error: result.error };
+    }
+    return result.value === undefined ? {} : { value: result.value };
+  }
+
+  private async commit(
+    stream: SessionStream,
+    command: Command & { readonly type: "commit" }
+  ): Promise<Outcome> {
+    const { value, ...outcome } = await this.runGit<string>(
+      stream,
+      true,
+      async (cwd) => {
+        const result = await Git.commit(cwd, {
+          message: command.message,
+          paths: command.paths,
+        });
+        return result.ok
+          ? { ok: true, value: result.sha }
+          : { ok: false, error: result.error };
+      }
+    );
+    return value === undefined ? outcome : { commit: { sha: value } };
   }
 
   private repoBusy(cwd: string): boolean {

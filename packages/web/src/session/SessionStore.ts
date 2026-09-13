@@ -7,6 +7,13 @@ import type { DirectoryListing } from "#core/shared/Directories";
 import type { GitBranch } from "#core/shared/Git";
 import type { AttachmentRef, CommandDraft } from "#protocol/Command";
 import type {
+  ChangeList,
+  DiffBase,
+  FileDiff,
+  FileLines,
+  LineSpan,
+} from "#protocol/Diff";
+import type {
   AttachmentView,
   DurableEvent,
   EphemeralEvent,
@@ -310,14 +317,16 @@ export class SessionStore {
 
   /**
    * Says the message. Into a running turn it joins whatever that turn is
-   * already holding rather than queueing behind it.
+   * already holding rather than queueing behind it. Answers whether it went:
+   * a refusal and a held lease both leave the words unsaid, and whatever the
+   * caller was going to clear on the strength of the send still stands.
    */
-  public async prompt(text: string): Promise<void> {
+  public async prompt(text: string): Promise<boolean> {
     const trimmed = text.trim();
     const sessionId = this.state.sessionId;
     const attachments = this.attachmentsOf(sessionId);
     if (trimmed === "" && attachments.length === 0) {
-      return;
+      return false;
     }
     const local = LOCAL_COMMANDS.find((command) => command.value === trimmed);
     if (local) {
@@ -326,11 +335,11 @@ export class SessionStore {
         delete draft.attachments[sessionId];
       });
       await local.run(this).catch(() => undefined);
-      return;
+      return true;
     }
     // The lease is the other surface's until its turn ends; the message keeps.
     if (this.isHeld()) {
-      return;
+      return false;
     }
     const carried: readonly AttachmentView[] = attachments.map(
       ({ name, url, isImage }) => ({ name, url, isImage })
@@ -385,7 +394,9 @@ export class SessionStore {
       this.setState((draft) => {
         draft.error = (err as Error).message;
       });
+      return false;
     }
+    return true;
   }
 
   /** Stop the turn, and answer with the queued message that was never said. */
@@ -509,6 +520,69 @@ export class SessionStore {
       throw new Error(response.error ?? "could not read the branches");
     }
     return response.branches;
+  }
+
+  /** Every changed file of one diff base, carrying no hunks. */
+  public async listChanges(base: DiffBase): Promise<ChangeList> {
+    const response = await this.client.send({
+      type: "list_changes",
+      sessionId: this.attached(),
+      base,
+    });
+    if (!response.success || !response.changes) {
+      throw new Error(response.error ?? "could not read the changes");
+    }
+    return response.changes;
+  }
+
+  /** One file's hunks, asked for only once a reader expands it. */
+  public async fileDiff(path: string, base: DiffBase): Promise<FileDiff> {
+    const response = await this.client.send({
+      type: "file_diff",
+      sessionId: this.attached(),
+      base,
+      path,
+    });
+    if (!response.success || !response.fileDiff) {
+      throw new Error(response.error ?? `could not diff ${path}`);
+    }
+    return response.fileDiff;
+  }
+
+  /** The file's own lines behind a gap, asked for only once a reader opens one. */
+  public async readLines(
+    path: string,
+    base: DiffBase,
+    spans: readonly LineSpan[]
+  ): Promise<FileLines> {
+    const response = await this.client.send({
+      type: "read_lines",
+      sessionId: this.attached(),
+      base,
+      path,
+      spans,
+    });
+    if (!response.success || !response.fileLines) {
+      throw new Error(response.error ?? `could not read ${path}`);
+    }
+    return response.fileLines;
+  }
+
+  /** Stages and commits exactly these paths; answers the short sha git wrote. */
+  public async commit(
+    message: string,
+    paths: readonly string[]
+  ): Promise<string> {
+    const response = await this.client.send({
+      type: "commit",
+      sessionId: this.attached(),
+      message,
+      paths,
+    });
+    if (!response.success || !response.commit) {
+      throw new Error(response.error ?? "git refused the commit");
+    }
+    return response.commit.sha;
   }
 
   /**

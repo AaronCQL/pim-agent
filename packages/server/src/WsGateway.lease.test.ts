@@ -63,11 +63,27 @@ async function connect(): Promise<ProbeClient> {
   return probe;
 }
 
-function idle(probe: ProbeClient, from: number): Promise<ServerEvent> {
-  return probe.waitFor(
-    (event) => event.type === "session_state" && event.status === "idle",
-    { from, timeoutMs: 20_000 }
-  );
+/**
+ * The end of this probe's turn, and not merely an event that says "idle": a
+ * `session_state` the git watcher pushes on its first read can land after
+ * `from` yet before the prompt has started work, still saying idle because
+ * the session still was. The host's live status settles it — see the twin of
+ * this helper in `WsGateway.test.ts`.
+ */
+async function idle(probe: ProbeClient, from: number): Promise<ServerEvent> {
+  let cursor = from;
+  for (;;) {
+    const event = await probe.waitFor(
+      (candidate) =>
+        candidate.type === "session_state" && candidate.status === "idle",
+      { from: cursor, timeoutMs: 20_000 }
+    );
+    const host = registry.peek(probe.sessionId ?? "");
+    if (host === undefined || host.status === "idle") {
+      return event;
+    }
+    cursor = probe.events.length;
+  }
 }
 
 /**

@@ -1,3 +1,4 @@
+import type { DiffBase, LineSpan } from "./Diff";
 import type { ProtocolVersion } from "./Protocol";
 
 /** A file already uploaded via `POST /upload`, by the id that endpoint answered with; never a client-local path. */
@@ -78,6 +79,31 @@ export type Command =
       readonly type: "list_branches";
       readonly sessionId: string;
     }
+  /** Every changed file of one diff base, without a hunk of any of them; read-only, so never refused. */
+  | {
+      readonly id: string;
+      readonly type: "list_changes";
+      readonly sessionId: string;
+      readonly base: DiffBase;
+    }
+  /** One file's hunks, computed only once a reader expands it; `context` defaults to 3. */
+  | {
+      readonly id: string;
+      readonly type: "file_diff";
+      readonly sessionId: string;
+      readonly base: DiffBase;
+      readonly path: string;
+      readonly context?: number;
+    }
+  /** The file's own lines behind a gap between hunks, asked for when a reader opens one. */
+  | {
+      readonly id: string;
+      readonly type: "read_lines";
+      readonly sessionId: string;
+      readonly base: DiffBase;
+      readonly path: string;
+      readonly spans: readonly LineSpan[];
+    }
   /** Refused while any session in the same directory is mid-turn: the agent may be halfway through an edit. */
   | {
       readonly id: string;
@@ -90,6 +116,15 @@ export type Command =
       readonly id: string;
       readonly type: "pull" | "push";
       readonly sessionId: string;
+    }
+  /** Path-limited: exactly `paths` are staged and committed, everything else changed stays dirty. Refused mid-turn, like `checkout`. */
+  | {
+      readonly id: string;
+      readonly type: "commit";
+      readonly sessionId: string;
+      readonly message: string;
+      /** A renamed file contributes both of its names, or its old one is left behind. */
+      readonly paths: readonly string[];
     }
   /** Read-only view of a subagent's transcript; `callId` is the parent's tool call and `sessionId` must be this connection's session. */
   | {

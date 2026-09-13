@@ -98,3 +98,44 @@ describe("Highlight.tokenize", () => {
     ]);
   });
 });
+
+/**
+ * highlight.js is synchronous and the tab has nothing else to run while it
+ * works, so past a point the only responsive answer is the text itself.
+ */
+describe("the size cap", () => {
+  const roles = (lines: readonly (readonly Token[])[]) =>
+    lines.flat().map((token) => token.role);
+
+  test("a block past a hundred kilobytes comes back plain", async () => {
+    await tokenize("const a = 1;", "typescript");
+    const wide = `const a = "${"x".repeat(2000)}";\n`.repeat(100);
+
+    const lines = Highlight.tokenize(wide, "typescript");
+
+    expect(wide.length).toBeGreaterThan(200_000);
+    expect(roles(lines).every((role) => role === undefined)).toBe(true);
+    expect(text(lines)[0]).toBe(wide.split("\n")[0]);
+  });
+
+  test("a block past two thousand lines comes back plain", async () => {
+    await tokenize("const a = 1;", "typescript");
+    const tall = "const a = 1;\n".repeat(2001);
+
+    const lines = Highlight.tokenize(tall, "typescript");
+
+    expect(tall.length).toBeLessThan(100_000);
+    expect(roles(lines).every((role) => role === undefined)).toBe(true);
+  });
+
+  test("a block under both caps is still coloured", async () => {
+    await tokenize("const a = 1;", "typescript");
+
+    const lines = Highlight.tokenize(
+      "const a = 1;\n".repeat(1999),
+      "typescript"
+    );
+
+    expect(roles(lines)).toContain("keyword");
+  });
+});

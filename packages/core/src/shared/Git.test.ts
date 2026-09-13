@@ -198,3 +198,19 @@ describe("push", () => {
     expect(refusal(await Git.push(await repo()))).toContain("no remote");
   });
 });
+
+describe("upstreamOf", () => {
+  test("finds nothing for a branch that was never pushed", async () => {
+    expect(await Git.upstreamOf(await repo())).toBeUndefined();
+  });
+
+  test("names the remote branch once one is tracked", async () => {
+    const root = await repo();
+    const origin = await tempRoot();
+    await git(origin, ["init", "--bare", "--initial-branch=main"]);
+    await git(root, ["remote", "add", "origin", origin]);
+    await git(root, ["push", "--set-upstream", "origin", "feat/work"]);
+
+    expect(await Git.upstreamOf(root)).toBe("origin/feat/work");
+  });
+});

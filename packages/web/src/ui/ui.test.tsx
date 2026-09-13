@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import { createRoot, createSignal, flush, Show } from "solid-js";
 
 import { mountPoint } from "../test/dom";
+import { fakeViewport } from "../test/viewport";
 import { Combobox, createComboboxNavigation } from "./Combobox";
 import { Collapsible } from "./Collapsible";
 import { Drawer } from "./Drawer";
@@ -598,6 +599,70 @@ describe("platform wrappers", () => {
       expect(modal!.open).toBe(false);
     } finally {
       browser.restore();
+    }
+  });
+
+  function phone(): { readonly restore: () => void } {
+    const real = globalThis.matchMedia.bind(globalThis);
+    globalThis.matchMedia = ((query: string) =>
+      query.includes("min-width")
+        ? { matches: false, addEventListener() {}, removeEventListener() {} }
+        : real(query)) as typeof globalThis.matchMedia;
+    return {
+      restore: () => {
+        globalThis.matchMedia = real as typeof globalThis.matchMedia;
+      },
+    };
+  }
+
+  function modal(): HTMLDialogElement {
+    const host = mountPoint();
+    render(
+      () => (
+        <Modal
+          open
+          label="Settings"
+          header={<span>Settings</span>}
+          onClose={() => {}}
+        >
+          <p>body</p>
+        </Modal>
+      ),
+      host
+    );
+    flush();
+    return host.querySelector("dialog")!;
+  }
+
+  // A phone's modal is the whole page, and the page ends where the software
+  // keyboard begins: the visual viewport, which no `vh` unit follows on iOS.
+  test("a modal on a phone is as tall as the visible viewport", () => {
+    const screen = phone();
+    const viewport = fakeViewport(800);
+    try {
+      const sheet = modal();
+      expect(sheet.style.height).toBe("800px");
+
+      viewport.resize(420);
+      flush();
+      expect(sheet.style.height).toBe("420px");
+      // A column, so a body that asks for the room gets what the header leaves.
+      expect(sheet.className).toContain("open:flex");
+      expect(sheet.firstElementChild!.className).toContain("flex-1");
+    } finally {
+      viewport.restore();
+      screen.restore();
+    }
+  });
+
+  // On a desktop the panel is as tall as it needs to be, up to its own ceiling.
+  test("a modal on a desktop takes its height from its content", () => {
+    window.innerWidth = 1024;
+    const viewport = fakeViewport(800);
+    try {
+      expect(modal().style.height).toBe("");
+    } finally {
+      viewport.restore();
     }
   });
 

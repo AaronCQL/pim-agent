@@ -12,6 +12,7 @@ import { SessionStore } from "./session/SessionStore";
 import { Settings } from "./settings/Settings";
 import { mountPoint } from "./test/dom";
 import { GatewayHarness, until } from "./test/gateway";
+import { fakeViewport } from "./test/viewport";
 
 function attached(sessionId = "s1"): ServerEvent {
   return {
@@ -32,28 +33,7 @@ beforeEach(() => {
 });
 
 let realMatchMedia: typeof globalThis.matchMedia | undefined;
-const realVisualViewport = Object.getOwnPropertyDescriptor(
-  globalThis,
-  "visualViewport"
-);
-
-function resizableViewport(initialHeight: number): {
-  readonly resize: (height: number) => void;
-} {
-  let height = initialHeight;
-  const viewport = new EventTarget();
-  Object.defineProperty(viewport, "height", { get: () => height });
-  Object.defineProperty(globalThis, "visualViewport", {
-    configurable: true,
-    value: viewport,
-  });
-  return {
-    resize: (next) => {
-      height = next;
-      viewport.dispatchEvent(new Event("resize"));
-    },
-  };
-}
+let fakedViewport: ReturnType<typeof fakeViewport> | undefined;
 
 /**
  * A device whose only keyboard is the one drawn over the page: no hover and
@@ -75,11 +55,8 @@ afterEach(() => {
     globalThis.matchMedia = realMatchMedia;
     realMatchMedia = undefined;
   }
-  if (realVisualViewport) {
-    Object.defineProperty(globalThis, "visualViewport", realVisualViewport);
-  } else {
-    Reflect.deleteProperty(globalThis, "visualViewport");
-  }
+  fakedViewport?.restore();
+  fakedViewport = undefined;
 });
 
 function paint(store: SessionStore): HTMLElement {
@@ -132,7 +109,8 @@ function message(seq: number, text: string): ServerEvent {
 
 describe("the shell, painted from events alone", () => {
   test("fits inside the visual viewport when the software keyboard opens", () => {
-    const viewport = resizableViewport(800);
+    const viewport = fakeViewport(800);
+    fakedViewport = viewport;
     const host = paint(offline());
     const shell = host.querySelector("main")!;
     expect(shell.style.height).toBe("800px");
@@ -274,8 +252,11 @@ describe("the shell, painted from events alone", () => {
     expect(host.textContent).toContain("~/src/repo");
     expect(host.innerHTML).toContain("i-griddy-icons:code-branch");
     expect(host.textContent).toContain("feat/new-stuff");
-    // Dirt is a count, not a flag, and divergence rides along beside it.
-    expect(host.textContent).toContain("*3");
+    // Dirt is a count on its own segment; divergence stays with the branch.
+    expect(host.innerHTML).toContain("i-griddy-icons:file-edit");
+    expect(
+      host.querySelector('[aria-label^="Review changes"]')?.textContent
+    ).toBe("3");
     expect(host.textContent).toContain("↑2");
     expect(host.textContent).toContain("↓1");
 
@@ -952,6 +933,107 @@ describe("the composer, against a real gateway", () => {
     scroller.scrollTop = -500;
     list().querySelector<HTMLButtonElement>("li button")!.click();
     expect(scroller.scrollTop).toBe(0);
+  });
+
+  /** What another sitting of this browser left against the working copy. */
+  function seedComments(cwd: string, ...texts: readonly string[]): void {
+    localStorage.setItem(
+      "pim.diff.comments",
+      JSON.stringify({
+        [cwd]: texts.map((text, at) => ({
+          id: `c${at}`,
+          path: "greeter.ts",
+          side: "new",
+          start: at + 1,
+          end: at + 1,
+          quote: "export const x = 1;",
+          fingerprint: "f1",
+          text,
+          createdAt: at,
+        })),
+      })
+    );
+  }
+
+  function chip(host: HTMLElement): HTMLButtonElement | null {
+    return host.querySelector<HTMLButtonElement>(
+      '[aria-label="Read the review"]'
+    );
+  }
+
+  test("a pending review rides the composer and is discarded from it", () => {
+    seedComments(harness.tmp, "move this", "and split that");
+    const host = paint(store);
+
+    expect(chip(host)?.textContent).toBe("2 comments");
+    expect(host.querySelector('section[aria-label="Changes"]')).toBeNull();
+
+    host
+      .querySelector<HTMLButtonElement>('[aria-label="Discard the review"]')!
+      .click();
+    flush();
+    expect(chip(host)).toBeNull();
+  });
+
+  test("the chip opens the review, and sending it leaves review mode empty-handed", async () => {
+    seedComments(harness.tmp, "move this to the trailing edge");
+    const host = paint(store);
+    expect(chip(host)?.textContent).toBe("1 comment");
+
+    chip(host)!.click();
+    flush();
+    expect(host.querySelector('section[aria-label="Changes"]')).not.toBeNull();
+
+    const input = host.querySelector("textarea")!;
+    type(input, "have a look");
+    host.querySelector<HTMLButtonElement>('[aria-label="Send"]')!.click();
+    await until(
+      () =>
+        store.state.durable.some(
+          (event) =>
+            event.type === "message" &&
+            event.role === "user" &&
+            event.text.includes("have a look") &&
+            event.text.includes("greeter.ts:1") &&
+            event.text.includes("move this to the trailing edge")
+        ),
+      "the one message carrying both halves"
+    );
+    flush();
+
+    expect(chip(host)).toBeNull();
+    expect(host.querySelector('section[aria-label="Changes"]')).toBeNull();
+  });
+
+  test("a plain message sent from the diff view brings the transcript back", async () => {
+    // A comment only to get in: it is thrown away, so the message carries nothing.
+    seedComments(harness.tmp, "never mind");
+    const host = paint(store);
+    chip(host)!.click();
+    flush();
+    host
+      .querySelector<HTMLButtonElement>('[aria-label="Discard the review"]')!
+      .click();
+    flush();
+    expect(host.querySelector('section[aria-label="Changes"]')).not.toBeNull();
+
+    const input = host.querySelector("textarea")!;
+    type(input, "say hello");
+    host.querySelector<HTMLButtonElement>('[aria-label="Send"]')!.click();
+    flush();
+
+    // The reader is reading the reply, not the diff they sent it from.
+    expect(host.querySelector('section[aria-label="Changes"]')).toBeNull();
+    await until(
+      () =>
+        store.state.durable.some(
+          (event) =>
+            event.type === "message" &&
+            event.role === "user" &&
+            event.text === "say hello"
+        ),
+      "the message"
+    );
   });
 
   /** Everything this client has said and not yet had heard, as one string. */

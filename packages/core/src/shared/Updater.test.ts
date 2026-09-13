@@ -22,6 +22,7 @@ function facts(over: Partial<UpdateFacts> = {}): UpdateFacts {
     at: dev,
     packageName: "pim-agent",
     cleanTree: true,
+    tracked: true,
     latest: undefined,
     ...over,
   };
@@ -74,6 +75,31 @@ describe("plan for a dev checkout", () => {
     const commands = argv(Updater.plan(facts({ cleanTree: false })).steps);
     expect(commands.flat()).not.toContain("stash");
     expect(commands.flat()).not.toContain("--force");
+  });
+
+  test("skips the pull on a branch with no upstream, and still builds and restarts", () => {
+    const { steps, skipped } = Updater.plan(facts({ tracked: false }));
+
+    expect(argv(steps)).toEqual([
+      ["bun", "install"],
+      ["bun", "run", "web:build", "--", "--outDir", "dist/staging"],
+    ]);
+    expect(skipped).toEqual([
+      {
+        label: "git pull",
+        reason: "this branch has no upstream to pull from",
+        blocking: false,
+      },
+    ]);
+  });
+
+  test("names the missing upstream once, not the dirty tree too", () => {
+    const { skipped } = Updater.plan(
+      facts({ tracked: false, cleanTree: false })
+    );
+
+    expect(skipped).toHaveLength(1);
+    expect(skipped[0]?.reason).toContain("no upstream");
   });
 });
 

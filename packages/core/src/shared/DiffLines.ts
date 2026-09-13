@@ -301,4 +301,4 @@ function partLines(value: string): readonly string[] {
 
 const emptySide: ToolDiffSide = { lines: [], hasTrailingNewline: false };
 
-export const DiffLines = { buildToolDiff, fromText, emptySide };
+export const DiffLines = { buildToolDiff, fromText, emptySide, attachEmphasis };

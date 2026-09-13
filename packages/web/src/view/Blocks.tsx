@@ -14,20 +14,25 @@ import { ImageMime } from "#core/shared/ImageMime";
 import { Languages } from "#core/shared/Languages";
 import { DiffLayout } from "#core/view/DiffLayout";
 import { Painting } from "#core/view/Painting";
-import type { BlockOf, DiffHunk, Span, ViewBlock } from "#core/view/ViewBlock";
+import type { BlockOf, Span, ViewBlock } from "#core/view/ViewBlock";
 import { ImageRoute } from "#protocol/ImageRoute";
 import { Markdown } from "../markdown/Markdown";
 import { GatewayOrigin } from "../session/Gateway";
 import { CopyButton } from "../ui/CopyButton";
 import { ImageTile } from "../ui/ImageTile";
 import { Attachments } from "./Attachments";
+import { diffSide, type DiffAnchors } from "./anchors";
+import { DiffGutter, gutterText } from "./DiffGutter";
 import { Highlight, type Token } from "./highlight";
 import {
+  DIFF_GAP_CLASS,
+  DIFF_ANCHOR_CLASSES,
   DIFF_EMPHASIS_CLASSES,
   DIFF_GUTTER_CLASSES,
   DIFF_ROW_CLASSES,
   FRAME_CLASSES,
   NOTICE_CLASSES,
+  diffAnchorClass,
   groupByFrame,
   syntaxClass,
   toneClass,
@@ -165,11 +170,13 @@ function DiffBlock(props: { readonly block: BlockOf<"diff"> }) {
         {(hunk, index) => (
           <>
             <Show when={index() > 0}>
-              <div class={`whitespace-pre ${DIFF_GUTTER_CLASSES.context}`}>
+              <div
+                class={`whitespace-pre ${DIFF_GAP_CLASS} ${DIFF_GUTTER_CLASSES.context}`}
+              >
                 {`${" ".repeat(width() + 1)}   ⋯`}
               </div>
             </Show>
-            <Hunk hunk={hunk} lang={lang()} width={width()} />
+            <UnifiedLines lines={hunk.lines} lang={lang()} width={width()} />
           </>
         )}
       </For>
@@ -177,25 +184,28 @@ function DiffBlock(props: { readonly block: BlockOf<"diff"> }) {
   );
 }
 
-function Hunk(props: {
-  readonly hunk: DiffHunk;
+/** The rows of a unified diff: a gutter, a sign, and the line they belong to. */
+export function UnifiedLines(props: {
+  readonly lines: readonly ToolDiffLine[];
   readonly lang: string | undefined;
   readonly width: number;
+  readonly anchors?: DiffAnchors;
 }) {
-  // One tokenisation per side of the hunk, memoised: it re-runs when a grammar lands.
+  // One tokenisation per side of the run, memoised: it re-runs when a grammar lands.
   const tokens = createMemo(() =>
-    DiffLayout.mapSides(props.hunk, (block) =>
+    DiffLayout.mapSides(props.lines, (block) =>
       Highlight.tokenize(block, props.lang)
     )
   );
 
   return (
-    <For each={props.hunk.lines}>
+    <For each={props.lines}>
       {(line, index) => (
         <DiffRow
           line={line}
           tokens={tokens()[index()] ?? [{ text: line.text }]}
           width={props.width}
+          anchors={props.anchors}
         />
       )}
     </For>
@@ -206,42 +216,68 @@ function DiffRow(props: {
   readonly line: ToolDiffLine;
   readonly tokens: readonly Token[];
   readonly width: number;
+  readonly anchors?: DiffAnchors;
 }) {
   const kind = () => props.line.kind;
-  const gutter = () =>
-    ` ${String(DiffLayout.lineNumber(props.line) ?? "").padStart(props.width)} ${SIGNS[kind()]} `;
+  const side = () => diffSide(props.line);
+  const number = () => DiffLayout.lineNumber(props.line);
+  const state = () => props.anchors?.stateOf(side(), number()) ?? "idle";
 
   return (
-    <div class={`whitespace-pre ${DIFF_ROW_CLASSES[kind()]}`}>
-      <span class={`select-none ${DIFF_GUTTER_CLASSES[kind()]}`}>
-        {gutter()}
-      </span>
-      <For each={emphasize(props.tokens, props.line.emphasis)}>
-        {(piece) => (
-          <span
-            class={`${syntaxClass(piece.role)} ${
-              piece.emphasis ? DIFF_EMPHASIS_CLASSES[kind()] : ""
-            }`}
-          >
-            {piece.text}
-          </span>
-        )}
-      </For>
-    </div>
+    <>
+      <div class={`whitespace-pre ${DIFF_ROW_CLASSES[kind()]}`}>
+        <Show
+          when={props.anchors}
+          fallback={
+            <span class={`select-none ${DIFF_GUTTER_CLASSES[kind()]}`}>
+              {gutterText(props.line, side(), props.width)}
+            </span>
+          }
+        >
+          {(anchors) => (
+            <DiffGutter
+              line={props.line}
+              side={side()}
+              width={props.width}
+              anchors={anchors()}
+              class={diffAnchorClass(kind(), state(), true)}
+            />
+          )}
+        </Show>
+        <For each={emphasize(props.tokens, props.line.emphasis)}>
+          {(piece) => (
+            <span
+              class={`${syntaxClass(piece.role)} ${
+                piece.emphasis ? DIFF_EMPHASIS_CLASSES[kind()] : ""
+              }`}
+            >
+              {piece.text}
+            </span>
+          )}
+        </For>
+      </div>
+      {/* A hold does not stop at the last line it names: the gutter beside
+          the cards carries the same wash on down, so the lines, the cross in
+          the margin and the words under them read as one block rather than
+          three. Split says this with a cell of its own; here it is a strip as
+          wide as the gutter, which is what a card indents itself by. */}
+      <Show when={props.anchors?.holdsCards(side(), number()) === true}>
+        <div class="relative">
+          <div
+            class={`absolute inset-y-0 left-0 w-[var(--gutter,0px)] ${DIFF_ANCHOR_CLASSES.held}`}
+            aria-hidden="true"
+          />
+          {props.anchors?.cardsAt(side(), number())}
+        </div>
+      </Show>
+    </>
   );
 }
 
-// `−` is the unicode minus, which lines up with `+`.
-const SIGNS = {
-  context: " ",
-  added: "+",
-  removed: "−",
-} as const satisfies Record<ToolDiffLine["kind"], string>;
-
-type Piece = Token & { readonly emphasis?: boolean };
+export type Piece = Token & { readonly emphasis?: boolean };
 
 // Syntax tokens re-cut at the emphasis range edges; both count the same characters.
-function emphasize(
+export function emphasize(
   tokens: readonly Token[],
   ranges: readonly IntraLineRange[] = []
 ): readonly Piece[] {
