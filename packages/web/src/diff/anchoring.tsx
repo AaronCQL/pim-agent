@@ -12,7 +12,11 @@ import type { ToolDiffHunk, ToolDiffLine } from "#core/shared/DiffLines";
 import { DiffLayout } from "#core/view/DiffLayout";
 import type { ChangeSummary } from "#protocol/Diff";
 import { createMediaQuery, KEYBOARD } from "../ui/media";
-import type { AnchorState, DiffAnchors } from "../view/anchors";
+import {
+  lineNumberOf,
+  type AnchorState,
+  type DiffAnchors,
+} from "../view/anchors";
 import { CommentEditor, CommentSheet } from "./CommentEditor";
 import type { CommentAnchor, Comments, CommentSide } from "./Comments";
 
@@ -61,10 +65,6 @@ function spanOf(picked: Picked): Span | undefined {
     start: Math.min(picked.from, reached),
     end: Math.max(picked.from, reached),
   };
-}
-
-function numberOf(line: ToolDiffLine, side: CommentSide): number | undefined {
-  return side === "old" ? line.oldLine : line.newLine;
 }
 
 export function createAnchoring(options: {
@@ -181,7 +181,7 @@ export function createAnchoring(options: {
     side: CommentSide,
     extend: boolean
   ): void => {
-    const number = numberOf(line, side);
+    const number = lineNumberOf(line, side);
     if (number === undefined) {
       return;
     }
@@ -204,7 +204,7 @@ export function createAnchoring(options: {
 
   const onSweep = (line: ToolDiffLine, side: CommentSide): void => {
     const held = untrack(picked);
-    const number = numberOf(line, side);
+    const number = lineNumberOf(line, side);
     if (
       held?.side === side &&
       held.from !== undefined &&
@@ -259,15 +259,14 @@ export function createAnchoring(options: {
     );
   };
 
-  const pickedText = (): string => {
-    const id = pickedId();
-    return id === undefined ? "" : (comments.one(id)?.text ?? "");
-  };
+  /** What a card or the sheet shows: the comment's words, or none where it has no comment yet. */
+  const textOf = (id: string | undefined): string =>
+    id === undefined ? "" : (comments.one(id)?.text ?? "");
 
   const live = (): Element => (
     <CommentEditor
       path={path()}
-      text={pickedText()}
+      text={textOf(pickedId())}
       stale={false}
       focus={true}
       editable={true}
@@ -319,7 +318,7 @@ export function createAnchoring(options: {
             .hunks()
             .flatMap((hunk) => hunk.lines)
             .filter((line) => {
-              const number = numberOf(line, side);
+              const number = lineNumberOf(line, side);
               return (
                 number !== undefined &&
                 number >= span.start &&
@@ -335,11 +334,6 @@ export function createAnchoring(options: {
   const close = (): void => {
     setTapped(undefined);
     setPicked(undefined);
-  };
-
-  const sheetText = (): string => {
-    const id = sheeted()?.id;
-    return id === undefined ? "" : (comments.one(id)?.text ?? "");
   };
 
   const sheetQuote = (): readonly ToolDiffLine[] => {
@@ -383,7 +377,7 @@ export function createAnchoring(options: {
       <CommentSheet
         open={sheeted() !== undefined}
         path={path()}
-        text={sheetText()}
+        text={textOf(sheeted()?.id)}
         quote={sheetQuote()}
         width={DiffLayout.gutterWidth(options.hunks())}
         onCancel={close}

@@ -1,5 +1,6 @@
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 
+import { Format } from "#core/shared/Format";
 import { abbreviateHome, baseName } from "../format";
 import type { SessionStore } from "../session/SessionStore";
 import type { ConnectionStatus } from "../ws/WsClient";
@@ -17,7 +18,7 @@ function changesLabel(count: number, reviewing: boolean): string {
   if (count === 0) {
     return "Review changes, working tree clean";
   }
-  return `Review changes, ${count} changed file${count === 1 ? "" : "s"}`;
+  return `Review changes, ${Format.count(count, "changed file")}`;
 }
 
 /** The row above the transcript: where the session is, and what its repository is doing. */
@@ -37,6 +38,8 @@ export function Topbar(props: {
   );
   const paths = (cwd: string): readonly string[] =>
     props.compact ? [baseName(cwd)] : [abbreviateHome(cwd), baseName(cwd)];
+  const changes = (): string =>
+    changesLabel(props.store.state.dirtyCount, props.reviewing);
 
   return (
     <div class="flex h-12 shrink-0 items-center gap-2 border-b border-neutral-700 px-3">
@@ -93,14 +96,8 @@ export function Topbar(props: {
               type="button"
               aria-pressed={props.reviewing ? "true" : "false"}
               class={`${CHIP_SEGMENT} shrink-0 rounded-r-lg border-l border-neutral-750`}
-              aria-label={changesLabel(
-                props.store.state.dirtyCount,
-                props.reviewing
-              )}
-              title={changesLabel(
-                props.store.state.dirtyCount,
-                props.reviewing
-              )}
+              aria-label={changes()}
+              title={changes()}
               onClick={props.onToggleDiff}
             >
               <span

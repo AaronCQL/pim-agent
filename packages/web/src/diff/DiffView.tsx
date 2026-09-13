@@ -72,6 +72,7 @@ export function DiffView(props: {
 
   const shown = createMemo(() => props.diff.files().slice(0, visible()));
 
+  /** How many files the change set holds, however many of them are painted. */
   const all = createMemo(() => props.diff.files().length);
 
   // The receipt is read back in the pane the commit emptied, so the modal is
@@ -189,7 +190,7 @@ export function DiffView(props: {
           when={
             props.diff.state.error === undefined &&
             props.diff.state.status === "ready" &&
-            props.diff.files().length === 0
+            all() === 0
           }
         >
           <p class="px-3 py-2 text-sm text-neutral-400">Nothing has changed.</p>
@@ -209,10 +210,10 @@ export function DiffView(props: {
             />
           )}
         </For>
-        <Show when={props.diff.files().length > shown().length}>
+        <Show when={all() > shown().length}>
           <div class="flex items-center gap-2 px-3 py-2 text-sm text-neutral-400">
             <span class="tabular-nums">
-              {shown().length} of {props.diff.files().length}
+              {shown().length} of {all()}
             </span>
             <button
               type="button"

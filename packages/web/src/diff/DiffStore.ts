@@ -165,18 +165,13 @@ export class DiffStore {
   }
 
   /** The repository changed under a list already read; nothing is re-read until a reader says so. */
-  public markStale(): void {
+  private markStale(): void {
     if (untrack(() => this.state.status) === "idle") {
       return;
     }
     this.setState((draft) => {
       draft.stale = true;
     });
-  }
-
-  /** The change the repository is about to report is ours: re-read on it rather than calling the list stale. */
-  public expectChange(): void {
-    this.expected = true;
   }
 
   /** Another working copy: every file, hunk and count read against the last one is void. */
@@ -232,7 +227,9 @@ export class DiffStore {
         draft.message = "";
         draft.committed = sha;
       });
-      this.expectChange();
+      // The change the repository is about to report is this commit landing:
+      // re-read on it rather than calling the list somebody else made stale.
+      this.expected = true;
       await this.refresh();
     } catch (error) {
       this.setState((draft) => {

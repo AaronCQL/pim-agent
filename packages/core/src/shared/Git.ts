@@ -285,6 +285,10 @@ async function listBranches(cwd: string): Promise<readonly GitBranch[]> {
   );
 }
 
+/**
+ * What a failed `git` said, in one line: its own words where it had any, the
+ * caller's fallback where it had none, and the timeout where it never answered.
+ */
 function failure(
   result: ProcResult,
   fallback: string,
@@ -462,6 +466,7 @@ export const Git = {
   parseStatus,
   parseRefs,
   parseVisits,
+  failure,
   fetchStatus,
   listBranches,
   upstreamOf,

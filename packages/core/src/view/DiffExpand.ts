@@ -101,11 +101,12 @@ function parts(
 ): readonly DiffPart[] {
   const found = gaps(hunks, total);
   const tail = found.find((gap) => !gap.below);
+  // Keyed by the line a gap ends on, which is the line before the hunk it
+  // leads into: one lookup per hunk rather than a scan of every gap.
+  const leading = new Map(found.map((gap) => [gap.end, gap]));
   return [
     ...hunks.flatMap((hunk) => {
-      const gap = found.find(
-        (candidate) => candidate.end === hunk.newStart - 1
-      );
+      const gap = leading.get(hunk.newStart - 1);
       return gap === undefined ? [{ hunk }] : [{ gap }, { hunk }];
     }),
     ...(tail === undefined ? [] : [{ gap: tail }]),
@@ -116,6 +117,8 @@ type Run = {
   readonly oldStart: number;
   readonly newStart: number;
   readonly lines: ToolDiffLine[];
+  /** Lines of the run that stand on the new side, counted as they are added. */
+  newCount: number;
 };
 
 function context(line: number, offset: number, text: string): ToolDiffLine {
@@ -131,7 +134,7 @@ function hunkOf(run: Run): ToolDiffHunk {
     oldStart: run.oldStart,
     newStart: run.newStart,
     oldLines: run.lines.filter((line) => line.kind !== "added").length,
-    newLines: newLinesOf(run.lines),
+    newLines: run.newCount,
     lines: run.lines,
   };
 }
@@ -154,13 +157,14 @@ function expand(
 
   const reached = (): number => {
     const last = runs.at(-1);
-    return last === undefined ? 0 : last.newStart + newLinesOf(last.lines) - 1;
+    return last === undefined ? 0 : last.newStart + last.newCount - 1;
   };
 
   const add = (run: Run): void => {
     const last = runs.at(-1);
     if (last !== undefined && reached() + 1 === run.newStart) {
       last.lines.push(...run.lines);
+      last.newCount += run.newCount;
       return;
     }
     runs.push(run);
@@ -174,12 +178,15 @@ function expand(
       if (text === undefined) {
         break;
       }
-      before.unshift(context(line, hunk.oldStart - hunk.newStart, text));
+      before.push(context(line, hunk.oldStart - hunk.newStart, text));
     }
+    before.reverse();
+    const lines = [...before, ...hunk.lines];
     add({
       oldStart: hunk.oldStart - before.length,
       newStart: hunk.newStart - before.length,
-      lines: [...before, ...hunk.lines],
+      lines,
+      newCount: before.length + newLinesOf(hunk.lines),
     });
 
     const after: ToolDiffLine[] = [];
@@ -196,6 +203,7 @@ function expand(
         oldStart: oldEnd(hunk) + 1,
         newStart: newEnd(hunk) + 1,
         lines: after,
+        newCount: after.length,
       });
     }
   }
@@ -203,4 +211,4 @@ function expand(
   return runs.map(hunkOf);
 }
 
-export const DiffExpand = { gaps, parts, spans, revealed, expand, STEP };
+export const DiffExpand = { gaps, parts, spans, revealed, expand };

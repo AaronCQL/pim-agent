@@ -116,18 +116,19 @@ export function Shell(props: {
     jump();
   };
 
+  /** A review is over the moment it is sent, and the moment it is thrown away. */
+  const clearReview = (): void => {
+    comments.clear();
+  };
+
   const pending = createMemo(() => ({
     count: comments.all().length,
     text: () =>
       untrack(() =>
         Review.compose(diff.state.base, comments.all(), diff.files())
       ),
-    sent: () => {
-      comments.clear();
-    },
-    discard: () => {
-      comments.clear();
-    },
+    sent: clearReview,
+    discard: clearReview,
     open: review,
   }));
 

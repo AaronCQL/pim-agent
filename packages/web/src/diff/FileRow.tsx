@@ -1,3 +1,4 @@
+import { Dynamic } from "@solidjs/web";
 import { createMemo, createSignal, Show, useContext } from "solid-js";
 
 import type { ToolDiffHunk } from "#core/shared/DiffLines";
@@ -39,13 +40,14 @@ export function FileRow(props: {
   const [open, setOpen] = createSignal(false);
   const comments = useContext(ReviewComments)();
 
+  /** The file's own state once its diff has landed, which is all that paints hunks. */
   const ready = createMemo(() =>
-    props.state?.kind === "ready" ? props.state.diff : undefined
+    props.state?.kind === "ready" ? props.state : undefined
   );
 
   const hunks = createMemo<readonly ToolDiffHunk[]>(() => {
-    const state = props.state;
-    return state?.kind === "ready" &&
+    const state = ready();
+    return state !== undefined &&
       !props.file.binary &&
       state.diff.hunks.length > 0
       ? DiffExpand.expand(state.diff.hunks, state.lines)
@@ -57,11 +59,7 @@ export function FileRow(props: {
       ? undefined
       : createAnchoring({ comments, file: () => props.file, hunks });
 
-  const truncated = createMemo(() => ready()?.truncated === true);
-
-  const opening = createMemo(
-    () => props.state?.kind === "ready" && props.state.opening
-  );
+  const truncated = createMemo(() => ready()?.diff.truncated === true);
 
   /**
    * What stands in for hunks a file has none of. Every comment is made by
@@ -69,7 +67,7 @@ export function FileRow(props: {
    * target instead.
    */
   const placeholder = createMemo(() => {
-    const diff = ready();
+    const diff = ready()?.diff;
     if (!props.file.binary && diff?.binary !== true) {
       return "no textual changes";
     }
@@ -171,36 +169,21 @@ export function FileRow(props: {
               </p>
             )}
           </Show>
-          <Show when={props.state?.kind === "ready"}>
+          <Show when={ready()}>
             <Show when={hunks().length > 0}>
-              <Show
-                when={props.split}
-                fallback={
-                  <UnifiedDiff
-                    path={props.file.path}
-                    hunks={hunks()}
-                    total={ready()?.total}
-                    busy={opening()}
-                    onOpen={props.onOpen}
-                    anchors={anchoring}
-                  />
-                }
-              >
-                <SplitDiff
-                  path={props.file.path}
-                  hunks={hunks()}
-                  total={ready()?.total}
-                  busy={opening()}
-                  onOpen={props.onOpen}
-                  anchors={anchoring}
-                />
-              </Show>
+              {/* Old beside new or one column of both: the same diff, painted
+                  by whichever of the two the pane has room for. */}
+              <Dynamic
+                component={props.split ? SplitDiff : UnifiedDiff}
+                path={props.file.path}
+                hunks={hunks()}
+                total={ready()?.diff.total}
+                busy={ready()?.opening === true}
+                onOpen={props.onOpen}
+                anchors={anchoring}
+              />
             </Show>
-            <Show
-              when={
-                props.state?.kind === "ready" ? props.state.failed : undefined
-              }
-            >
+            <Show when={ready()?.failed}>
               {(message) => (
                 <p class="px-3 whitespace-pre-wrap text-rose-400">
                   {message()}

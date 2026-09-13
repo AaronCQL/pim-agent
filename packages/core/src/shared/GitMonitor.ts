@@ -5,6 +5,12 @@ import { Git, type GitOutcome, type GitState } from "./Git";
 
 export type GitListener = (state: GitState) => void;
 
+/**
+ * What one operation under the lock says, and what it made where it made
+ * anything: a commit has a sha to hand back, a checkout has only its outcome.
+ */
+export type GitRun<T = never> = GitOutcome & { readonly value?: T };
+
 export type GitMonitorDeps = {
   /** How long a fetch stands before another is worth its round trip. */
   readonly fetchTtlMs?: number;
@@ -90,10 +96,10 @@ export class GitMonitor {
   }
 
   /** Runs one writing operation over `cwd`, refusing a second while it lasts and re-reading once it ends. */
-  public async run(
+  public async run<T = never>(
     cwd: string,
-    operation: () => Promise<GitOutcome>
-  ): Promise<GitOutcome> {
+    operation: () => Promise<GitRun<T>>
+  ): Promise<GitRun<T>> {
     const entry = this.entryOf(cwd);
     if (entry.locked) {
       return {

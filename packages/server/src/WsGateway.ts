@@ -7,8 +7,8 @@ import { Attachments } from "#core/attachments/Attachments";
 import type { PickerItem } from "#core/picker/PickerItem";
 import { Directories } from "#core/shared/Directories";
 import type { DirectoryListing } from "#core/shared/Directories";
-import { Git, type GitBranch, type GitOutcome } from "#core/shared/Git";
-import { GitMonitor } from "#core/shared/GitMonitor";
+import { Git, type GitBranch } from "#core/shared/Git";
+import { GitMonitor, type GitRun } from "#core/shared/GitMonitor";
 import { RepoDiff } from "#core/shared/RepoDiff";
 import { ReadCursors } from "#core/session/ReadCursors";
 import type { SessionHost } from "#core/session/SessionHost";
@@ -490,39 +490,42 @@ export class WsGateway {
    * An operation that moves the working tree cannot run under an agent that
    * may be halfway through an edit; `push` leaves the tree alone, so it can.
    */
-  private async runGit(
+  private async runGit<T = never>(
     stream: SessionStream,
     movesTree: boolean,
-    operation: (cwd: string) => Promise<GitOutcome>
-  ): Promise<Outcome> {
+    operation: (cwd: string) => Promise<GitRun<T>>
+  ): Promise<Outcome & { readonly value?: T }> {
     const cwd = stream.host.cwd;
     if (movesTree && this.repoBusy(cwd)) {
       return {
         error: `an agent is working in ${cwd}; wait for its turn to end`,
       };
     }
-    const result = await this.git.run(cwd, () => operation(cwd));
-    return result.ok ? {} : { error: result.error };
+    const result = await this.git.run<T>(cwd, () => operation(cwd));
+    if (!result.ok) {
+      return { error: result.error };
+    }
+    return result.value === undefined ? {} : { value: result.value };
   }
 
-  /** `GitMonitor.run` answers an outcome and cannot carry a sha, so the new commit comes back out through a closure. */
   private async commit(
     stream: SessionStream,
     command: Command & { readonly type: "commit" }
   ): Promise<Outcome> {
-    let sha: string | undefined;
-    const outcome = await this.runGit(stream, true, async (cwd) => {
-      const result = await Git.commit(cwd, {
-        message: command.message,
-        paths: command.paths,
-      });
-      if (!result.ok) {
-        return { ok: false, error: result.error };
+    const { value, ...outcome } = await this.runGit<string>(
+      stream,
+      true,
+      async (cwd) => {
+        const result = await Git.commit(cwd, {
+          message: command.message,
+          paths: command.paths,
+        });
+        return result.ok
+          ? { ok: true, value: result.sha }
+          : { ok: false, error: result.error };
       }
-      sha = result.sha;
-      return { ok: true };
-    });
-    return sha === undefined ? outcome : { commit: { sha } };
+    );
+    return value === undefined ? outcome : { commit: { sha: value } };
   }
 
   private repoBusy(cwd: string): boolean {

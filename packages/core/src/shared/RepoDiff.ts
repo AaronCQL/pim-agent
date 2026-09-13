@@ -2,7 +2,9 @@ import { join } from "node:path";
 
 import { DiffLines, type ToolDiffHunk, type ToolDiffLine } from "./DiffLines";
 import { DiffPatch } from "./DiffPatch";
+import { Git } from "./Git";
 import type { GitMonitor } from "./GitMonitor";
+import { Lines } from "./Lines";
 import { Proc, type ProcResult } from "./Proc";
 
 export type DiffBase =
@@ -89,10 +91,6 @@ const CONTEXT_BYTE_LIMIT = 1_000_000;
 /** Most lines one `readLines` hands back, however many spans asked. */
 const CONTEXT_LINE_LIMIT = 2000;
 
-const NUL_SCAN_BYTES = 8192;
-
-const ERROR_LIMIT = 400;
-
 const EMPTY_SHA = /^0+$/;
 
 const BINARY_PATCH = /^(?:Binary files |GIT binary patch)/m;
@@ -102,14 +100,6 @@ function git(cwd: string, args: readonly string[]): Promise<ProcResult> {
   return Proc.run(["git", "--no-optional-locks", ...args], { cwd });
 }
 
-function failure(result: ProcResult, fallback: string): string {
-  const said = (result.stderr.trim() || result.stdout.trim()).replace(
-    /^(?:error|fatal):\s*/,
-    ""
-  );
-  return said === "" ? fallback : said.slice(0, ERROR_LIMIT);
-}
-
 async function read(
   cwd: string,
   args: readonly string[],
@@ -117,7 +107,7 @@ async function read(
 ): Promise<string> {
   const result = await git(cwd, args);
   if (result.code !== 0) {
-    throw new Error(failure(result, fallback));
+    throw new Error(Git.failure(result, fallback));
   }
   return result.stdout;
 }
@@ -317,7 +307,7 @@ async function readUntracked(cwd: string, path: string): Promise<Untracked> {
   if (bytes === undefined) {
     return opaque;
   }
-  if (bytes.subarray(0, NUL_SCAN_BYTES).includes(0)) {
+  if (Lines.isBinaryBytes(bytes)) {
     return opaque;
   }
   const text = new TextDecoder().decode(bytes);
@@ -710,15 +700,14 @@ async function serialise<T>(
   cwd: string,
   work: () => Promise<T>
 ): Promise<T> {
-  let held: { readonly value: T } | undefined;
-  const outcome = await monitor.run(cwd, async () => {
-    held = { value: await work() };
-    return { ok: true };
-  });
-  if (held === undefined) {
+  const outcome = await monitor.run<T>(cwd, async () => ({
+    ok: true,
+    value: await work(),
+  }));
+  if (outcome.value === undefined) {
     throw new Error(outcome.ok ? `could not read ${cwd}` : outcome.error);
   }
-  return held.value;
+  return outcome.value;
 }
 
 export const RepoDiff = { listChanges, fileDiff, readLines };

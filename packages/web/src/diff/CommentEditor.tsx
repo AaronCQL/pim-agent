@@ -2,6 +2,7 @@ import { createMemo, createSignal, onSettled, Show, untrack } from "solid-js";
 
 import type { ToolDiffLine } from "#core/shared/DiffLines";
 import { Languages } from "#core/shared/Languages";
+import { baseName } from "../format";
 import { ACTION, QUIET } from "../ui/classes";
 import { Modal } from "../ui/Modal";
 import { UnifiedLines } from "../view/Blocks";
@@ -138,7 +139,7 @@ export function CommentSheet(props: {
       size="narrow"
       header={
         <div class="truncate font-bold leading-[--line]">
-          {props.path.slice(props.path.lastIndexOf("/") + 1)}
+          {baseName(props.path)}
         </div>
       }
     >

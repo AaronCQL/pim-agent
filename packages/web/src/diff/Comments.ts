@@ -8,6 +8,8 @@ import {
   type StoreSetter,
 } from "solid-js";
 
+import { Format } from "#core/shared/Format";
+
 const KEY = "pim.diff.comments";
 
 export type CommentSide = "old" | "new";
@@ -48,8 +50,6 @@ export class Comments {
   /** Per path, so a row tracks its own file's comments and no other row's. */
   private readonly lists: Store<Record<string, readonly string[]>>;
   private readonly setLists: StoreSetter<Record<string, readonly string[]>>;
-  private readonly counts: Store<Record<string, number>>;
-  private readonly setCounts: StoreSetter<Record<string, number>>;
   /** Per anchored spot: a long diff would otherwise put a reader on one list per row. */
   private readonly anchors: Store<Record<string, readonly string[]>>;
   private readonly setAnchors: StoreSetter<Record<string, readonly string[]>>;
@@ -72,7 +72,6 @@ export class Comments {
     const [lists, setLists] = createStore<Record<string, readonly string[]>>(
       {}
     );
-    const [counts, setCounts] = createStore<Record<string, number>>({});
     const [anchors, setAnchors] = createStore<
       Record<string, readonly string[]>
     >({});
@@ -82,8 +81,6 @@ export class Comments {
     this.setById = setById;
     this.lists = lists;
     this.setLists = setLists;
-    this.counts = counts;
-    this.setCounts = setCounts;
     this.anchors = anchors;
     this.setAnchors = setAnchors;
     this.covered = covered;
@@ -105,8 +102,9 @@ export class Comments {
     return this.lookup(this.lists[path] ?? NO_IDS);
   }
 
+  /** How many comments one file holds; its list only moves when its own ids do. */
   public count(path: string): number {
-    return this.counts[path] ?? 0;
+    return (this.lists[path] ?? NO_IDS).length;
   }
 
   /**
@@ -242,13 +240,6 @@ export class Comments {
     this.setLists((draft) => {
       sync(draft, byPath, unchanged);
     });
-    this.setCounts((draft) => {
-      sync(
-        draft,
-        new Map([...byPath].map(([path, held]) => [path, held.length])),
-        identical
-      );
-    });
     this.setAnchors((draft) => {
       sync(draft, group(list, spotKey), unchanged);
     });
@@ -281,7 +272,7 @@ export const ReviewComments = createContext<() => Comments | undefined>(
 
 /** How many comments, in words, wherever a count is spoken rather than shown. */
 export function comments(count: number): string {
-  return `${count} comment${count === 1 ? "" : "s"}`;
+  return Format.count(count, "comment");
 }
 
 function anchorKey(path: string, side?: CommentSide, line?: number): string {

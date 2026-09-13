@@ -11,6 +11,17 @@ export function diffSide(line: ToolDiffLine): DiffSide {
 }
 
 /**
+ * A line's number in one side's file: each half of a split counts its own, and
+ * a half with no line there — a filler — has no number to be asked about.
+ */
+export function lineNumberOf(
+  line: ToolDiffLine | undefined,
+  side: DiffSide
+): number | undefined {
+  return side === "old" ? line?.oldLine : line?.newLine;
+}
+
+/**
  * How a gutter reads: plain, or held — by a saved comment, or by the selection
  * being swept out right now. One state for both, because they are the same
  * fact to a reader: there is a comment on this line, and the only difference

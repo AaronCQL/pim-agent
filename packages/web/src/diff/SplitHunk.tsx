@@ -9,8 +9,14 @@ import { Languages } from "#core/shared/Languages";
 import { DiffExpand, type DiffGap } from "#core/view/DiffExpand";
 import { DiffLayout } from "#core/view/DiffLayout";
 import { DiffPairs, type DiffPair } from "#core/view/DiffPairs";
-import type { AnchorState, DiffAnchors, DiffSide } from "../view/anchors";
+import {
+  lineNumberOf,
+  type AnchorState,
+  type DiffAnchors,
+  type DiffSide,
+} from "../view/anchors";
 import { emphasize, type Piece } from "../view/Blocks";
+import { DiffGutter, gutterText } from "../view/DiffGutter";
 import { Highlight, type Token } from "../view/highlight";
 import {
   DIFF_FILLER_CLASS,
@@ -27,20 +33,7 @@ type Tokens = ReadonlyMap<ToolDiffLine, readonly Token[] | undefined>;
 /** The numbered lines nearest a filler on its own side: what a range over it runs between. */
 type Bridge = { readonly above?: number; readonly below?: number };
 
-const SIGNS = {
-  context: " ",
-  added: "+",
-  removed: "−",
-} as const satisfies Record<ToolDiffLineKind, string>;
-
 const DIVIDER = "border-l border-neutral-850";
-
-function numberOf(
-  line: ToolDiffLine | undefined,
-  side: DiffSide
-): number | undefined {
-  return side === "old" ? line?.oldLine : line?.newLine;
-}
 
 function lineOf(pair: DiffPair, side: DiffSide): ToolDiffLine | undefined {
   return side === "old" ? pair.left : pair.right;
@@ -55,20 +48,23 @@ function bridges(
   pairs: readonly DiffPair[],
   side: DiffSide
 ): readonly Bridge[] {
-  const numbers = pairs.map((pair) => numberOf(lineOf(pair, side), side));
-  const walk = (order: readonly number[]): readonly (number | undefined)[] => {
-    const found: (number | undefined)[] = [];
-    let last: number | undefined;
-    for (const index of order) {
-      found[index] = last;
-      last = numbers[index] ?? last;
-    }
-    return found;
-  };
-  const rows = numbers.map((_, index) => index);
-  const above = walk(rows);
-  const below = walk([...rows].reverse());
-  return rows.map((index) => ({ above: above[index], below: below[index] }));
+  const numbers = pairs.map((pair) => lineNumberOf(lineOf(pair, side), side));
+  const above: (number | undefined)[] = [];
+  const below: (number | undefined)[] = [];
+  let last: number | undefined;
+  for (const [index, number] of numbers.entries()) {
+    above[index] = last;
+    last = number ?? last;
+  }
+  last = undefined;
+  for (let index = numbers.length - 1; index >= 0; index -= 1) {
+    below[index] = last;
+    last = numbers[index] ?? last;
+  }
+  return numbers.map((_, index) => ({
+    above: above[index],
+    below: below[index],
+  }));
 }
 
 /**
@@ -180,8 +176,10 @@ function CommentRow(props: {
   readonly pair: DiffPair;
   readonly anchors: DiffAnchors;
 }) {
-  const oldLine = (): number | undefined => numberOf(props.pair.left, "old");
-  const newLine = (): number | undefined => numberOf(props.pair.right, "new");
+  const oldLine = (): number | undefined =>
+    lineNumberOf(props.pair.left, "old");
+  const newLine = (): number | undefined =>
+    lineNumberOf(props.pair.right, "new");
   const wash = (side: DiffSide, line: number | undefined): string =>
     props.anchors.stateOf(side, line) === "held"
       ? DIFF_ANCHOR_CLASSES.held
@@ -212,7 +210,7 @@ function SplitCell(props: {
 }) {
   const kind = (): ToolDiffLineKind => props.line?.kind ?? "context";
   // Each half counts in its own file: the old side numbers the old, the new the new.
-  const number = (): number | undefined => numberOf(props.line, props.side);
+  const number = (): number | undefined => lineNumberOf(props.line, props.side);
   const held = (line: number | undefined): boolean =>
     props.anchors?.stateOf(props.side, line) === "held";
   // A filler is numberless, so nothing holds it on its own account; a range
@@ -229,10 +227,19 @@ function SplitCell(props: {
   // gutter of a filler is left on the page, numberless and untinted.
   const row = (): string =>
     props.line === undefined ? DIFF_FILLER_CLASS : DIFF_ROW_CLASSES[kind()];
-  const gutter = (): string =>
-    ` ${String(number() ?? "").padStart(props.width)} ${SIGNS[kind()]} `;
   const frame = (target: boolean): string =>
     `${diffGutterClass(kind(), state(), target)} ${props.side === "new" ? DIVIDER : ""}`;
+  // A filler has no line to point at, and a diff painted with no anchors has
+  // nothing to point with: either way the cell is text rather than a target.
+  const target = ():
+    | { readonly line: ToolDiffLine; readonly anchors: DiffAnchors }
+    | undefined => {
+    const line = props.line;
+    const anchors = props.anchors;
+    return line === undefined || anchors === undefined
+      ? undefined
+      : { line, anchors };
+  };
   const pieces = (): readonly Piece[] => {
     const line = props.line;
     if (line === undefined) {
@@ -247,46 +254,26 @@ function SplitCell(props: {
   return (
     <>
       <Show
-        when={props.anchors !== undefined && props.line !== undefined}
+        when={target()}
         fallback={
           <span class={`select-none whitespace-pre ${frame(false)}`}>
-            {gutter()}
+            {gutterText(props.line, props.side, props.width)}
           </span>
         }
       >
-        <button
-          type="button"
-          aria-label={`Comment on ${props.side} line ${number() ?? ""}`}
-          // See the note in the unified painter: a finger drawn down the gutter
-          // is a range rather than a scroll.
+        {(held) => (
           // A button centres its own label, which on a line long enough to wrap
           // floats the number down the middle of the rows it belongs to. Laid
           // out as a flex box instead, the number sits on the first of them
           // while the cell still stretches, so the tint runs the whole height.
-          class={`flex items-start select-none [touch-action:pan-x] whitespace-pre text-left ${frame(true)}`}
-          onClick={(event) => {
-            // A keyboard reports no clicks; the pointer has its own path.
-            if (props.line !== undefined && event.detail === 0) {
-              props.anchors?.onPick(props.line, props.side, event.shiftKey);
-            }
-          }}
-          onPointerDown={(event) => {
-            if (props.line !== undefined && event.button === 0) {
-              // No text selection dragged through the code beside the range.
-              event.preventDefault();
-              // Touch captures the pointer to the element it went down on.
-              event.currentTarget.releasePointerCapture(event.pointerId);
-              props.anchors?.onPress(props.line, props.side, event.shiftKey);
-            }
-          }}
-          onPointerEnter={(event) => {
-            if (props.line !== undefined && event.buttons === 1) {
-              props.anchors?.onSweep(props.line, props.side);
-            }
-          }}
-        >
-          {gutter()}
-        </button>
+          <DiffGutter
+            line={held().line}
+            side={props.side}
+            width={props.width}
+            anchors={held().anchors}
+            class={`flex items-start whitespace-pre text-left ${frame(true)}`}
+          />
+        )}
       </Show>
       <span
         data-side={props.side}

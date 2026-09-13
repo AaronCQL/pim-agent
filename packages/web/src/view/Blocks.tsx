@@ -22,6 +22,7 @@ import { CopyButton } from "../ui/CopyButton";
 import { ImageTile } from "../ui/ImageTile";
 import { Attachments } from "./Attachments";
 import { diffSide, type DiffAnchors } from "./anchors";
+import { DiffGutter, gutterText } from "./DiffGutter";
 import { Highlight, type Token } from "./highlight";
 import {
   DIFF_GAP_CLASS,
@@ -221,8 +222,6 @@ function DiffRow(props: {
   const side = () => diffSide(props.line);
   const number = () => DiffLayout.lineNumber(props.line);
   const state = () => props.anchors?.stateOf(side(), number()) ?? "idle";
-  const gutter = () =>
-    ` ${String(number() ?? "").padStart(props.width)} ${SIGNS[kind()]} `;
 
   return (
     <>
@@ -231,46 +230,18 @@ function DiffRow(props: {
           when={props.anchors}
           fallback={
             <span class={`select-none ${DIFF_GUTTER_CLASSES[kind()]}`}>
-              {gutter()}
+              {gutterText(props.line, side(), props.width)}
             </span>
           }
         >
           {(anchors) => (
-            <button
-              type="button"
-              aria-label={`Comment on ${side()} line ${number() ?? ""}`}
-              // A finger drawn down the gutter is a range rather than a scroll,
-              // and only the compositor can be told so beforehand: the gutter
-              // keeps sideways panning and gives up the vertical. The code
-              // beside it scrolls as it always did. Written out in full rather
-              // than with the shorthand utility, which leans on two further
-              // variables registered with no initial value and so voids itself.
-              class={`select-none [touch-action:pan-x] ${diffAnchorClass(kind(), state(), true)}`}
-              onClick={(event) => {
-                // A keyboard reports no clicks; the pointer has its own path.
-                if (event.detail === 0) {
-                  anchors().onPick(props.line, side(), event.shiftKey);
-                }
-              }}
-              onPointerDown={(event) => {
-                if (event.button === 0) {
-                  // A press that draws a range must not also drag a text
-                  // selection through the code it is drawn beside.
-                  event.preventDefault();
-                  // Touch captures the pointer to the element it went down on,
-                  // which would keep every gutter it then crosses from hearing it.
-                  event.currentTarget.releasePointerCapture(event.pointerId);
-                  anchors().onPress(props.line, side(), event.shiftKey);
-                }
-              }}
-              onPointerEnter={(event) => {
-                if (event.buttons === 1) {
-                  anchors().onSweep(props.line, side());
-                }
-              }}
-            >
-              {gutter()}
-            </button>
+            <DiffGutter
+              line={props.line}
+              side={side()}
+              width={props.width}
+              anchors={anchors()}
+              class={diffAnchorClass(kind(), state(), true)}
+            />
           )}
         </Show>
         <For each={emphasize(props.tokens, props.line.emphasis)}>
@@ -302,13 +273,6 @@ function DiffRow(props: {
     </>
   );
 }
-
-// `−` is the unicode minus, which lines up with `+`.
-const SIGNS = {
-  context: " ",
-  added: "+",
-  removed: "−",
-} as const satisfies Record<ToolDiffLine["kind"], string>;
 
 export type Piece = Token & { readonly emphasis?: boolean };
 
