@@ -48,8 +48,6 @@ const UNSETTLED = Number.MAX_SAFE_INTEGER;
 /** What one project contributes to a listing before a reader asks for it whole. */
 const PER_PROJECT = 10;
 
-const GROUPING_KEY = "pim.sidebar.grouping";
-
 function settleOf(row: Row): number {
   return row.listed?.settledAt ?? UNSETTLED;
 }
@@ -73,7 +71,6 @@ export function Sidebar(props: {
   );
   const [projects, setProjects] = createSignal<readonly ProjectView[]>([]);
   const [view, setView] = createSignal<View>("live");
-  const [grouping, setGrouping] = createSignal(readGrouping());
   const [opened, setOpened] = createSignal<Record<string, boolean>>({});
   const [whole, setWhole] = createSignal<readonly string[]>([]);
   const [editing, setEditing] = createSignal<string>();
@@ -230,12 +227,6 @@ export function Sidebar(props: {
     setEditing(undefined);
   };
 
-  const regroup = (): void => {
-    const next = !untrack(grouping);
-    writeGrouping(next);
-    setGrouping(next);
-  };
-
   /** A verb the row spells out: nowhere to navigate to, and a refusal is said rather than swallowed. */
   const attempt = (run: () => Promise<void>): void => {
     setFailure("");
@@ -317,19 +308,6 @@ export function Sidebar(props: {
         <div class="flex shrink-0 items-center">
           <button
             type="button"
-            aria-label="Group by directory"
-            aria-pressed={grouping() ? "true" : "false"}
-            title={grouping() ? "Grouped by directory" : "Most recent first"}
-            class={ICON}
-            onClick={regroup}
-          >
-            <span
-              class={`size-5 ${grouping() ? "i-griddy-icons:folder" : "i-griddy-icons:time-back"}`}
-              aria-hidden="true"
-            />
-          </button>
-          <button
-            type="button"
             aria-label="New session"
             title="New session"
             class={ICON}
@@ -374,70 +352,51 @@ export function Sidebar(props: {
             </p>
           }
         >
-          <Show
-            when={grouping()}
-            fallback={
-              <Listing
-                store={props.store}
-                rows={rows()}
-                directory
-                now={now()}
-                editing={editing()}
-                title={title}
-                items={items}
-                onOpen={attach}
-                onRename={rename}
-                onCancelRename={cancelRename}
-              />
-            }
-          >
-            {/* Keyed: a listing answers with fresh groups, and an unkeyed `<For>` remounts every row under them. */}
-            <For each={groups()} keyed={(group: Group) => group.cwd}>
-              {(group) => (
-                <Collapsible
-                  gutter={false}
-                  open={shown(group().cwd)}
-                  onToggle={(open) => {
-                    setOpened((was) => ({ ...was, [group().cwd]: open }));
-                  }}
-                  summaryClass="flex items-center gap-1 rounded-lg pr-1 text-sm text-neutral-350 hover:bg-neutral-900 hover:text-neutral-100"
-                  summary={
-                    <GroupHeader
-                      cwd={group().cwd}
-                      count={group().count}
-                      open={shown(group().cwd)}
-                      pinned={group().pinned}
-                      items={projectItems(group().cwd)}
-                    />
-                  }
-                >
-                  <Listing
-                    store={props.store}
-                    rows={group().rows}
-                    directory={false}
-                    now={now()}
-                    editing={editing()}
-                    title={title}
-                    items={items}
-                    onOpen={attach}
-                    onRename={rename}
-                    onCancelRename={cancelRename}
+          {/* Keyed: a listing answers with fresh groups, and an unkeyed `<For>` remounts every row under them. */}
+          <For each={groups()} keyed={(group: Group) => group.cwd}>
+            {(group) => (
+              <Collapsible
+                gutter={false}
+                open={shown(group().cwd)}
+                onToggle={(open) => {
+                  setOpened((was) => ({ ...was, [group().cwd]: open }));
+                }}
+                summaryClass="flex items-center gap-1 rounded-lg pr-1 text-sm text-neutral-350 hover:bg-neutral-900 hover:text-neutral-100"
+                summary={
+                  <GroupHeader
+                    cwd={group().cwd}
+                    count={group().count}
+                    open={shown(group().cwd)}
+                    pinned={group().pinned}
+                    items={projectItems(group().cwd)}
                   />
-                  <Show when={hidden(group()) > 0}>
-                    <button
-                      type="button"
-                      class="w-full rounded-lg px-3 py-1 text-left text-sm text-neutral-500 hover:bg-neutral-900 hover:text-neutral-300"
-                      onClick={() => {
-                        setWhole((was) => [...was, group().cwd]);
-                      }}
-                    >
-                      {`Show ${hidden(group())} more`}
-                    </button>
-                  </Show>
-                </Collapsible>
-              )}
-            </For>
-          </Show>
+                }
+              >
+                <Listing
+                  store={props.store}
+                  rows={group().rows}
+                  now={now()}
+                  editing={editing()}
+                  title={title}
+                  items={items}
+                  onOpen={attach}
+                  onRename={rename}
+                  onCancelRename={cancelRename}
+                />
+                <Show when={hidden(group()) > 0}>
+                  <button
+                    type="button"
+                    class="w-full rounded-lg px-3 py-1 text-left text-sm text-neutral-500 hover:bg-neutral-900 hover:text-neutral-300"
+                    onClick={() => {
+                      setWhole((was) => [...was, group().cwd]);
+                    }}
+                  >
+                    {`Show ${hidden(group())} more`}
+                  </button>
+                </Show>
+              </Collapsible>
+            )}
+          </For>
         </Show>
       </nav>
 
@@ -534,8 +493,6 @@ function refuseFold(element: HTMLElement): void {
 function Listing(props: {
   readonly store: SessionStore;
   readonly rows: readonly Row[];
-  /** Every row says which directory it is in; grouped, the header has said it. */
-  readonly directory: boolean;
   readonly now: number;
   readonly editing: string | undefined;
   readonly title: (row: Row) => string;
@@ -553,7 +510,6 @@ function Listing(props: {
             store={props.store}
             row={row()}
             title={props.title(row())}
-            directory={props.directory}
             editing={props.editing === row().sessionId}
             items={props.items(row())}
             now={props.now}
@@ -576,7 +532,6 @@ function SessionRow(props: {
   readonly store: SessionStore;
   readonly row: Row;
   readonly title: string;
-  readonly directory: boolean;
   readonly editing: boolean;
   readonly items: readonly RowMenuItem[];
   readonly now: number;
@@ -626,11 +581,6 @@ function SessionRow(props: {
               </Show>
             </div>
             <div class="flex items-center justify-between gap-6 text-neutral-400">
-              <Show when={props.directory}>
-                <div class="truncate" title={abbreviateHome(props.row.cwd)}>
-                  {baseName(props.row.cwd)}
-                </div>
-              </Show>
               <div class="ml-auto flex shrink-0 items-center gap-1.5">
                 <Show when={props.store.draftText(props.row.sessionId) !== ""}>
                   <span
@@ -724,21 +674,4 @@ function RenameBox(props: {
       onBlur={commit}
     />
   );
-}
-
-/** Which fold this browser was last left in; a preference of the device, not of the session. */
-function readGrouping(): boolean {
-  try {
-    return localStorage.getItem(GROUPING_KEY) !== "recent";
-  } catch {
-    return true;
-  }
-}
-
-function writeGrouping(group: boolean): void {
-  try {
-    localStorage.setItem(GROUPING_KEY, group ? "directory" : "recent");
-  } catch {
-    // Private mode or a full quota; the fold still holds for this tab.
-  }
 }

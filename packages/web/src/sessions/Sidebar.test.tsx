@@ -446,26 +446,6 @@ test("opening and closing a group moves nothing but the group", async () => {
   expect(switched).toEqual([]);
 });
 
-test("the fold can be dropped for plain recency, and the choice is kept", async () => {
-  const { host } = paint();
-  await listed(host);
-  expect(directories(host)).toHaveLength(2);
-
-  click(host.querySelector('[aria-label="Group by directory"]')!);
-
-  // The same rows, unfolded — and the directory is back on each of them,
-  // since no header is saying it any more.
-  expect(directories(host)).toHaveLength(0);
-  expect(bodies(host)).toHaveLength(2);
-  expect(bodies(host)[0]?.textContent).toContain("pim");
-  expect(localStorage.getItem("pim.sidebar.grouping")).toBe("recent");
-
-  // A per-device preference, so it survives the tab being loaded again.
-  const { host: reopened } = paint();
-  await listed(reopened);
-  expect(directories(reopened)).toHaveLength(0);
-});
-
 /**
  * The one thing a pin is for: the project you keep coming back to stays at the
  * top of the sidebar on the day you have not touched it. Recency still orders
@@ -738,7 +718,7 @@ test("the header carries the app's own buttons and nothing about the socket", ()
     button.getAttribute("aria-label")
   );
 
-  expect(labels).toEqual(["Group by directory", "New session", "Settings"]);
+  expect(labels).toEqual(["New session", "Settings"]);
   expect(host.textContent).not.toContain("127.0.0.1:1");
 
   header.querySelector<HTMLButtonElement>('[aria-label="Settings"]')!.click();
