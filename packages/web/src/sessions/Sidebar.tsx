@@ -494,7 +494,7 @@ function GroupHeader(props: {
   readonly onNew: () => void;
 }) {
   let menu: RowMenuControl | undefined;
-  const press = createPressMenu(() => menu?.open());
+  const press = createPressMenu((at) => menu?.open(at));
 
   const where = (): string => abbreviateHome(props.cwd);
 
@@ -620,7 +620,7 @@ function SessionRow(props: {
   readonly onCancelRename: () => void;
 }) {
   let menu: RowMenuControl | undefined;
-  const press = createPressMenu(() => menu?.open());
+  const press = createPressMenu((at) => menu?.open(at));
 
   const selected = (): boolean =>
     props.row.sessionId === props.store.state.sessionId;

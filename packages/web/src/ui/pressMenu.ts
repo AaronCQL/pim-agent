@@ -1,6 +1,8 @@
 import type { JSX } from "@solidjs/web/jsx-runtime";
 import { onCleanup } from "solid-js";
 
+import type { Point } from "./Popover";
+
 const HOLD_MS = 450;
 
 /** How far a finger may wander and still be holding still rather than scrolling. */
@@ -25,10 +27,14 @@ export type PressMenu = {
   readonly swallowed: () => boolean;
 };
 
-/** The two ways a pointer asks a row for its verbs: a right-click, and a finger held still. */
-export function createPressMenu(open: () => void): PressMenu {
+/**
+ * The two ways a pointer asks a row for its verbs: a right-click, and a finger
+ * held still. Both say where they landed, so the menu can open under the
+ * pointer that asked for it rather than off at the row's own trigger.
+ */
+export function createPressMenu(open: (at: Point) => void): PressMenu {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let origin: { readonly x: number; readonly y: number } | undefined;
+  let origin: Point | undefined;
   let fired = false;
 
   const stop = (): void => {
@@ -50,18 +56,19 @@ export function createPressMenu(open: () => void): PressMenu {
     handlers: {
       onContextMenu: (event) => {
         event.preventDefault();
-        open();
+        open({ x: event.clientX, y: event.clientY });
       },
       onPointerDown: (event) => {
         fired = false;
         if (event.pointerType === "mouse") {
           return;
         }
-        origin = { x: event.clientX, y: event.clientY };
+        const at: Point = { x: event.clientX, y: event.clientY };
+        origin = at;
         timer = setTimeout(() => {
           timer = undefined;
           fired = true;
-          open();
+          open({ x: at.x, y: at.y + SLOP });
         }, HOLD_MS);
       },
       onPointerMove: (event) => {

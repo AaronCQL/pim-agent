@@ -278,6 +278,15 @@ function verbs(host: HTMLElement): readonly HTMLElement[] {
     : [...panel.querySelectorAll<HTMLElement>('[role="option"]')];
 }
 
+/** Where the open menu put itself. */
+function placement(host: HTMLElement): string {
+  const panel = [...host.querySelectorAll("[popover]")].find(
+    (element) => !element.className.includes("hidden")
+  );
+  expect(panel).toBeDefined();
+  return panel?.getAttribute("style") ?? "";
+}
+
 /** A verb commits before the caret moves, so it answers the press rather than the click. */
 function choose(host: HTMLElement, label: string): void {
   const row = verbs(host).find((option) => option.textContent === label);
@@ -1153,6 +1162,40 @@ test("the `⋯` and a right-click open the same three verbs", async () => {
     "Mark unread",
     "Archive",
   ]);
+});
+
+/**
+ * The verbs have to read as the answer to the gesture that asked for them: a
+ * panel that opens off at the row's own `⋯`, the width of the sidebar away
+ * from the finger, reads as some other row's menu going off by itself.
+ */
+test("a right-click and a hold both drop the menu from the pointer", async () => {
+  jest.useFakeTimers();
+  const { host } = paint();
+  await listed(host);
+
+  bodies(host)[0]!.dispatchEvent(
+    new MouseEvent("contextmenu", { bubbles: true, clientX: 200, clientY: 120 })
+  );
+  flush();
+  expect(placement(host)).toContain("left: 200px");
+  expect(placement(host)).toContain("top: 124px");
+
+  document.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+  flush();
+
+  hold([...host.querySelectorAll("li")][1]!, { x: 40, y: 300 });
+  jest.advanceTimersByTime(500);
+  flush();
+  expect(placement(host)).toContain("left: 40px");
+  // Clear of the finger by the slop the hold allows it, and the gap besides.
+  expect(placement(host)).toContain("top: 314px");
+
+  // The `⋯` itself has a place of its own, and goes back to using it.
+  document.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+  flush();
+  click(menu(host));
+  expect(placement(host)).not.toContain("top: 314px");
 });
 
 /**

@@ -381,6 +381,57 @@ describe("platform wrappers", () => {
     expect(panel.getAttribute("style")).toContain("left: 8px");
   });
 
+  // A menu a right-click or a hold summoned belongs to the pointer that asked
+  // for it: hung off its row's own trigger instead, it opens a sidebar's width
+  // away from the finger and reads as somebody else's menu.
+  test("a panel summoned by a pointer drops from it, not from its trigger", () => {
+    const host = mountPoint();
+    const trigger = document.createElement("div");
+    trigger.getBoundingClientRect = () =>
+      ({
+        left: 300,
+        top: 40,
+        right: 320,
+        bottom: 60,
+        width: 20,
+        height: 20,
+      }) as DOMRect;
+    host.append(trigger);
+    window.innerWidth = 1000;
+    window.innerHeight = 800;
+
+    render(
+      () => (
+        <Popover
+          open
+          anchor={() => trigger}
+          at={() => ({ x: 120, y: 500 })}
+          min={180}
+          place="below"
+        >
+          rows
+        </Popover>
+      ),
+      host
+    );
+    flush();
+
+    const panel = host.querySelector("[popover]")!;
+    expect(panel.getAttribute("style")).toContain("left: 120px");
+    expect(panel.getAttribute("style")).toContain("top: 504px");
+    expect(panel.getAttribute("style")).toContain("min-width: 180px");
+
+    // And where the rows will not fit under the pointer, they go over it
+    // rather than being squeezed into the strip left below.
+    Object.defineProperty(panel, "scrollHeight", { value: 300 });
+    window.dispatchEvent(new Event("resize"));
+    flush();
+
+    expect(panel.getAttribute("style")).toContain("top: auto");
+    expect(panel.getAttribute("style")).toContain("bottom: 304px");
+    expect(panel.getAttribute("style")).toContain("max-height: 488px");
+  });
+
   test("the disclosure caret is the only glyph, and it can carry state", () => {
     const host = mountPoint();
     render(
@@ -859,6 +910,21 @@ describe("chip menu", () => {
     return [...panel.querySelectorAll('[role="option"]')];
   }
 
+  /** A whole pointer press, down through the click it ends in; false where the click was refused. */
+  function press(target: Element): boolean {
+    target.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    flush();
+    const click = new MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+      // A press counts; a keyboard's activation and a scripted `.click()` do not.
+      detail: 1,
+    });
+    target.dispatchEvent(click);
+    flush();
+    return !click.defaultPrevented;
+  }
+
   test("the chip asks for its options each time it is opened", () => {
     const { host, opened } = paint();
 
@@ -904,6 +970,50 @@ describe("chip menu", () => {
     );
     flush();
     expect(options(host)).toHaveLength(0);
+  });
+
+  // An open menu covers the page it was opened over: the press that dismisses
+  // it is spent on the dismissal, and whatever button it happened to land on
+  // must not fire as well.
+  test("the press that closes it is not also a press on what it landed on", () => {
+    const host = mountPoint();
+    const taps: string[] = [];
+    render(
+      () => (
+        <>
+          <Menu
+            label="claude/opus-5"
+            icon="i-griddy-icons:robot"
+            options={[{ value: "claude/opus-5", label: "Opus 5" }]}
+            onSelect={() => {}}
+          />
+          <button
+            type="button"
+            onClick={() => {
+              taps.push("elsewhere");
+            }}
+          >
+            Elsewhere
+          </button>
+        </>
+      ),
+      host
+    );
+    flush();
+
+    const chip = host.querySelector("button")!;
+    const elsewhere = [...host.querySelectorAll("button")].at(-1)!;
+    chip.click();
+    flush();
+    expect(options(host)).toHaveLength(1);
+
+    expect(press(elsewhere)).toBe(false);
+    expect(options(host)).toHaveLength(0);
+    expect(taps).toEqual([]);
+
+    // The next press is nobody's dismissal, and lands.
+    expect(press(elsewhere)).toBe(true);
+    expect(taps).toEqual(["elsewhere"]);
   });
 
   // A touch scroll of the list starts with a `pointerdown` on a row, and a

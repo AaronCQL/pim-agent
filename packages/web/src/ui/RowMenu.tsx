@@ -1,4 +1,4 @@
-import { createMemo, Show, untrack } from "solid-js";
+import { createMemo, createSignal, Show, untrack } from "solid-js";
 
 import { ICON } from "./classes";
 import {
@@ -7,6 +7,7 @@ import {
   type ComboboxItem,
 } from "./Combobox";
 import { createDisclosure } from "./disclosure";
+import type { Point } from "./Popover";
 
 export type RowMenuItem = {
   readonly label: string;
@@ -15,7 +16,8 @@ export type RowMenuItem = {
 
 /** The menu, for whatever opens it other than its own trigger. */
 export type RowMenuControl = {
-  readonly open: () => void;
+  /** `at` is where the gesture landed; the panel drops from there. */
+  readonly open: (at: Point) => void;
   readonly close: () => void;
 };
 
@@ -33,6 +35,10 @@ export function RowMenu(props: {
   /** Hands the menu out, for a row that opens it by right-click. */
   readonly control?: (control: RowMenuControl) => void;
 }) {
+  // Where the gesture that opened it landed, if a gesture did; a press on the
+  // trigger clears it and the panel goes back to hanging off the glyph.
+  const [at, setAt] = createSignal<Point | undefined>(undefined);
+
   const rows = createMemo<readonly ComboboxItem[]>(() =>
     props.items.map((item) => ({ label: item.label }))
   );
@@ -57,7 +63,8 @@ export function RowMenu(props: {
   });
 
   props.control?.({
-    open: () => {
+    open: (where) => {
+      setAt(where);
       if (!untrack(panel.open)) {
         panel.toggle();
       }
@@ -75,7 +82,10 @@ export function RowMenu(props: {
         aria-label={props.label}
         title={props.label}
         class={`${ICON} sr-only focus:not-sr-only focus-visible:not-sr-only`}
-        onClick={panel.toggle}
+        onClick={() => {
+          setAt(undefined);
+          panel.toggle();
+        }}
         onKeyDown={(event: KeyboardEvent) => {
           navigation.onKeyDown(event);
         }}
@@ -91,6 +101,7 @@ export function RowMenu(props: {
         <Combobox
           open={panel.open()}
           anchor={panel.anchor}
+          at={at}
           place="below"
           min={PANEL_WIDTH}
           items={rows()}

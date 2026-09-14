@@ -7,7 +7,7 @@ import {
   type Element,
 } from "solid-js";
 
-import { Popover } from "./Popover";
+import { Popover, type Point } from "./Popover";
 
 export type ComboboxNavigation = {
   readonly activeIndex: Accessor<number>;
@@ -112,6 +112,8 @@ export function Combobox(props: {
   readonly onSelect: (index: number) => void;
   readonly onActivate: (index: number) => void;
   readonly anchor: () => HTMLElement;
+  /** The pointer that summoned it, for a menu opened by gesture rather than by its trigger. */
+  readonly at?: () => Point | undefined;
   readonly match?: boolean;
   readonly min?: number;
   readonly place?: "above" | "below";
@@ -137,6 +139,7 @@ export function Combobox(props: {
     <Popover
       open={props.open}
       anchor={props.anchor}
+      at={props.at}
       match={props.match ?? false}
       min={props.min ?? 0}
       place={props.place}

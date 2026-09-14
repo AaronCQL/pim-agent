@@ -15,6 +15,23 @@ export type Disclosure = {
   readonly field: (element: HTMLInputElement) => void;
 };
 
+function swallowPress(): void {
+  const drop = (): void => {
+    document.removeEventListener("click", swallow, true);
+    document.removeEventListener("pointerdown", drop, true);
+  };
+  function swallow(click: MouseEvent): void {
+    if (click.detail === 0) {
+      return;
+    }
+    click.preventDefault();
+    click.stopPropagation();
+    drop();
+  }
+  document.addEventListener("click", swallow, true);
+  document.addEventListener("pointerdown", drop, true);
+}
+
 /** A panel a chip opens: what closes it, what it clears, and where focus goes. */
 export function createDisclosure(
   options: {
@@ -55,6 +72,7 @@ export function createDisclosure(
         // Test the whole control, chip and panel: a chip-only test closes the list under a touch scroll of a row.
         if (root && !root.contains(event.target as Node)) {
           setOpen(false);
+          swallowPress();
         }
       };
       document.addEventListener("pointerdown", dismiss, true);
