@@ -19,6 +19,7 @@ import { DirectoryModal } from "../topbar/DirectoryModal";
 import { ACTION, FIELD, ICON } from "../ui/classes";
 import { Collapsible } from "../ui/Collapsible";
 import { RowMenu, type RowMenuControl, type RowMenuItem } from "../ui/RowMenu";
+import { createPressMenu, type PressMenu } from "../ui/pressMenu";
 import { Spinner } from "../ui/Spinner";
 
 type Row = {
@@ -456,18 +457,17 @@ function GroupHeader(props: {
   readonly onNew: () => void;
 }) {
   let menu: RowMenuControl | undefined;
+  const press = createPressMenu(() => menu?.open());
 
   const where = (): string => abbreviateHome(props.cwd);
 
   return (
     <span
-      class="flex min-w-0 flex-1 items-center gap-2"
-      onContextMenu={(event: MouseEvent) => {
-        if (menu) {
-          event.preventDefault();
-          menu.open();
-        }
+      ref={(element: HTMLElement) => {
+        refuseHeld(element, press);
       }}
+      class="flex min-w-0 flex-1 select-none items-center gap-2 [-webkit-touch-callout:none]"
+      {...press.handlers}
     >
       <h3 class="truncate font-bold text-neutral-100" title={where()}>
         {baseName(props.cwd)}
@@ -511,6 +511,15 @@ function GroupHeader(props: {
 function refuseFold(element: HTMLElement): void {
   element.addEventListener("click", (event: Event) => {
     event.preventDefault();
+  });
+}
+
+/** The click a long press leaves behind must not fold the group it opened the verbs on. */
+function refuseHeld(element: HTMLElement, press: PressMenu): void {
+  element.addEventListener("click", (event: Event) => {
+    if (press.swallowed()) {
+      event.preventDefault();
+    }
   });
 }
 
@@ -565,6 +574,7 @@ function SessionRow(props: {
   readonly onCancelRename: () => void;
 }) {
   let menu: RowMenuControl | undefined;
+  const press = createPressMenu(() => menu?.open());
 
   const selected = (): boolean =>
     props.row.sessionId === props.store.state.sessionId;
@@ -594,13 +604,8 @@ function SessionRow(props: {
 
   return (
     <li
-      class="group flex items-center gap-1"
-      onContextMenu={(event: MouseEvent) => {
-        if (menu) {
-          event.preventDefault();
-          menu.open();
-        }
-      }}
+      class="group flex select-none items-center gap-1 [-webkit-touch-callout:none]"
+      {...press.handlers}
     >
       <Show
         when={props.editing}
@@ -613,7 +618,11 @@ function SessionRow(props: {
               "bg-neutral-850 font-bold text-neutral-100": selected(),
               "text-neutral-350 hover:bg-neutral-900": !selected(),
             }}
-            onClick={props.onOpen}
+            onClick={() => {
+              if (!press.swallowed()) {
+                props.onOpen();
+              }
+            }}
           >
             <span class="min-w-0 flex-1 truncate">{props.title}</span>
             <Show when={drafted()}>

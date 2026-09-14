@@ -244,6 +244,21 @@ function press(target: Element, key: string): void {
   flush();
 }
 
+/** A finger put down on a row and kept there. */
+function hold(
+  target: Element,
+  at: { readonly x: number; readonly y: number }
+): void {
+  target.dispatchEvent(
+    new PointerEvent("pointerdown", {
+      bubbles: true,
+      pointerType: "touch",
+      clientX: at.x,
+      clientY: at.y,
+    })
+  );
+}
+
 function click(target: Element): void {
   // Cancelable, as a real one is: a `<summary>` folds on a click nobody
   // cancelled, and an uncancelable press cannot be refused at all.
@@ -1096,6 +1111,58 @@ test("the `⋯` and a right-click open the same three verbs", async () => {
     "Mark unread",
     "Archive",
   ]);
+});
+
+/**
+ * A finger has no right-click, and the `⋯` is painted out: the hold is the
+ * only way a touch screen reaches a row's verbs, so it is the one thing here
+ * that cannot be allowed to rot.
+ */
+test("a finger held on a row opens its verbs, and the tap that ends it is not one", async () => {
+  jest.useFakeTimers();
+  const { host, switched } = paint();
+  await listed(host);
+
+  const row = [...host.querySelectorAll("li")][0]!;
+  hold(row, { x: 20, y: 20 });
+  jest.advanceTimersByTime(500);
+  flush();
+  expect(verbs(host).map((option) => option.textContent)).toEqual([
+    "Rename",
+    "Mark unread",
+    "Archive",
+  ]);
+
+  // The finger comes off the row it was held on, which is not a press on it.
+  row.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+  click(bodies(host)[0]!);
+  expect(switched).toEqual([]);
+
+  // And the next tap, which nobody held, attaches as any tap does.
+  click(bodies(host)[0]!);
+  expect(switched).toEqual(["aaaaaaaa-1111"]);
+});
+
+test("a finger that travels is scrolling the list, not holding a row", async () => {
+  jest.useFakeTimers();
+  const { host } = paint();
+  await listed(host);
+
+  const row = [...host.querySelectorAll("li")][0]!;
+  hold(row, { x: 20, y: 20 });
+  jest.advanceTimersByTime(200);
+  row.dispatchEvent(
+    new PointerEvent("pointermove", {
+      bubbles: true,
+      pointerType: "touch",
+      clientX: 22,
+      clientY: 90,
+    })
+  );
+  jest.advanceTimersByTime(500);
+  flush();
+
+  expect(verbs(host)).toHaveLength(0);
 });
 
 test("marking a row unread holds the dot without navigating anywhere", async () => {
