@@ -100,6 +100,8 @@ export type SessionState = {
   dirtyCount: number;
   ahead: number;
   behind: number;
+  /** Changes whenever the working copy does; what the change list re-reads on. */
+  repoRevision: string;
   durable: DurableEvent[];
   live: LiveMessage[];
   optimistic: OptimisticMessage[];
@@ -236,6 +238,7 @@ export class SessionStore {
       dirtyCount: 0,
       ahead: 0,
       behind: 0,
+      repoRevision: "",
       durable: [],
       live: [],
       optimistic: [],
@@ -1209,6 +1212,7 @@ export class SessionStore {
           draft.dirtyCount = event.dirtyCount ?? 0;
           draft.ahead = event.ahead ?? 0;
           draft.behind = event.behind ?? 0;
+          draft.repoRevision = event.repoRevision ?? "";
           // The server says idle only after flushing the turn's entries; live is superseded.
           if (event.status === "idle") {
             draft.live = [];

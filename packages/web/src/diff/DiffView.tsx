@@ -3,6 +3,7 @@ import {
   createMemo,
   createSignal,
   For,
+  onCleanup,
   Show,
   untrack,
 } from "solid-js";
@@ -53,6 +54,11 @@ export function DiffView(props: {
   const split = createMemo(() =>
     SplitMode.split(props.settings.state.diffSplit, width())
   );
+
+  props.diff.watch(true);
+  onCleanup(() => {
+    props.diff.watch(false);
+  });
 
   createEffect(
     () => props.diff.state.status,
@@ -143,25 +149,6 @@ export function DiffView(props: {
             </Show>
           </div>
         </div>
-        <Show when={props.diff.state.stale}>
-          <div class="flex min-w-0 items-center gap-2 px-3 pb-2 text-sm text-amber-400">
-            <span>The repository has changed since this was read.</span>
-            <button
-              type="button"
-              class={`${QUIET} ml-auto flex items-center gap-1.5`}
-              title="Read the change list again"
-              onClick={() => {
-                void props.diff.refresh();
-              }}
-            >
-              <span
-                class="i-griddy-icons:refresh size-4 shrink-0"
-                aria-hidden="true"
-              />
-              refresh
-            </button>
-          </div>
-        </Show>
         <Show when={props.diff.state.committed}>
           {(sha) => (
             <div class="px-3 pb-2 text-sm text-emerald-400">
@@ -195,17 +182,18 @@ export function DiffView(props: {
         >
           <p class="px-3 py-2 text-sm text-neutral-400">Nothing has changed.</p>
         </Show>
-        <For each={shown()}>
+        <For each={shown()} keyed={(file) => file.path}>
           {(file) => (
             <FileRow
-              file={file}
-              state={props.diff.fileState(file.path)}
+              file={file()}
+              state={props.diff.fileState(file().path)}
+              open={props.diff.isOpen(file().path)}
               split={split()}
-              onExpand={() => {
-                void props.diff.expand(file.path);
+              onToggle={() => {
+                props.diff.toggle(file().path);
               }}
               onOpen={(gap) => {
-                void props.diff.open(file.path, gap);
+                void props.diff.open(file().path, gap);
               }}
             />
           )}

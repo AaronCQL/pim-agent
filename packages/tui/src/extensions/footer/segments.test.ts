@@ -57,6 +57,7 @@ describe("renderFooterLine", () => {
           dirtyCount: 1,
           ahead: 12,
           behind: 3,
+          revision: "",
         },
         12.34
       );
@@ -75,6 +76,7 @@ describe("renderFooterLine", () => {
       dirtyCount: 1,
       ahead: 2,
       behind: 0,
+      revision: "",
     };
 
     expect(stripAnsi(renderFooterLine(200, ctx, git, 1.23))).toContain(
@@ -112,7 +114,7 @@ describe("renderFooterLine", () => {
       renderFooterLine(
         120,
         createCtx([{ type: "thinking_level_change", thinkingLevel: "medium" }]),
-        { branch: null, dirtyCount: 0, ahead: 0, behind: 0 },
+        { branch: null, dirtyCount: 0, ahead: 0, behind: 0, revision: "" },
         0
       )
     );
@@ -126,7 +128,7 @@ describe("renderFooterLine", () => {
           { type: "thinking_level_change", thinkingLevel: "minimal" },
           { type: "thinking_level_change", thinkingLevel: "xhigh" },
         ]),
-        { branch: null, dirtyCount: 0, ahead: 0, behind: 0 },
+        { branch: null, dirtyCount: 0, ahead: 0, behind: 0, revision: "" },
         0
       )
     );
@@ -137,7 +139,7 @@ describe("renderFooterLine", () => {
       renderFooterLine(
         120,
         createCtx(),
-        { branch: null, dirtyCount: 0, ahead: 0, behind: 0 },
+        { branch: null, dirtyCount: 0, ahead: 0, behind: 0, revision: "" },
         0
       )
     );
@@ -149,7 +151,7 @@ describe("renderFooterLine", () => {
       renderFooterLine(
         120,
         createCtx(),
-        { branch: "main", dirtyCount: 3, ahead: 0, behind: 0 },
+        { branch: "main", dirtyCount: 3, ahead: 0, behind: 0, revision: "" },
         0
       )
     );
@@ -160,7 +162,7 @@ describe("renderFooterLine", () => {
       renderFooterLine(
         120,
         createCtx(),
-        { branch: "main", dirtyCount: 0, ahead: 0, behind: 0 },
+        { branch: "main", dirtyCount: 0, ahead: 0, behind: 0, revision: "" },
         0
       )
     );
@@ -178,7 +180,7 @@ describe("renderFooterLine", () => {
             model: { id: "gpt-5.5" },
           }
         ),
-        { branch: null, dirtyCount: 0, ahead: 0, behind: 0 },
+        { branch: null, dirtyCount: 0, ahead: 0, behind: 0, revision: "" },
         0
       )
     );

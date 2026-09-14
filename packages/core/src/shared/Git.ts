@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 
 import { Lines } from "./Lines";
@@ -9,6 +10,12 @@ export type GitState = {
   readonly dirtyCount: number;
   readonly ahead: number;
   readonly behind: number;
+  /**
+   * Changes whenever the repository's content does: the commit at head, every
+   * path git calls changed, and what each of those paths now holds. A count
+   * cannot see an edit to a file already dirty; this can.
+   */
+  readonly revision: string;
 };
 
 /** One local branch, as `listBranches` ranks and labels it. */
@@ -47,6 +54,7 @@ const EMPTY: GitState = {
   dirtyCount: 0,
   ahead: 0,
   behind: 0,
+  revision: "",
 };
 
 const FIELD = "%00";
@@ -108,13 +116,46 @@ function network(cwd: string, args: readonly string[]): Promise<ProcResult> {
   });
 }
 
-function parseStatus(text: string): GitState {
+/** Which field of a porcelain-v2 entry holds the path it is about. */
+const PATH_FIELD: Readonly<Record<string, number>> = { "1": 8, "2": 9, u: 10 };
+
+/** Beyond this many changed paths the count alone stands for the worktree. */
+const SAMPLE_LIMIT = 500;
+
+function pathOf(line: string): string {
+  const kind = line[0] ?? "";
+  if (kind === "?" || kind === "!") {
+    return line.slice(2);
+  }
+  const field = PATH_FIELD[kind];
+  if (field === undefined) {
+    return "";
+  }
+  // A rename carries the name it came from after a tab.
+  return line.split(" ").slice(field).join(" ").split("\t")[0] ?? "";
+}
+
+/** What a changed path holds now, cheaply enough to read on every poll. */
+function worktreeSample(cwd: string): (path: string) => string {
+  return (path) => {
+    const stats = statSync(join(cwd, path), { throwIfNoEntry: false });
+    return stats === undefined ? "gone" : `${stats.mtimeMs}:${stats.size}`;
+  };
+}
+
+function parseStatus(
+  text: string,
+  sample?: (path: string) => string
+): GitState {
   let branch: string | null = null;
   let ahead = 0;
   let behind = 0;
   let dirtyCount = 0;
+  const marks: string[] = [];
   for (const line of text.split("\n")) {
-    if (line.startsWith("# branch.head ")) {
+    if (line.startsWith("# branch.oid ")) {
+      marks.push(line);
+    } else if (line.startsWith("# branch.head ")) {
       const head = line.slice("# branch.head ".length);
       branch = head === "(detached)" ? "detached" : head;
     } else if (line.startsWith("# branch.ab ")) {
@@ -125,9 +166,20 @@ function parseStatus(text: string): GitState {
       }
     } else if (line.length > 0 && !line.startsWith("#")) {
       dirtyCount++;
+      marks.push(line);
+      const path = dirtyCount > SAMPLE_LIMIT ? "" : pathOf(line);
+      if (sample !== undefined && path !== "") {
+        marks.push(sample(path));
+      }
     }
   }
-  return { branch, dirtyCount, ahead, behind };
+  return {
+    branch,
+    dirtyCount,
+    ahead,
+    behind,
+    revision: marks.length === 0 ? "" : Bun.hash(marks.join("\n")).toString(36),
+  };
 }
 
 const AHEAD = /ahead (\d+)/;
@@ -454,7 +506,7 @@ async function fetchStatus(cwd: string): Promise<GitState> {
       "--porcelain=v2",
       "--branch",
     ]);
-    return code === 0 ? parseStatus(stdout) : EMPTY;
+    return code === 0 ? parseStatus(stdout, worktreeSample(cwd)) : EMPTY;
   } catch {
     return EMPTY;
   }

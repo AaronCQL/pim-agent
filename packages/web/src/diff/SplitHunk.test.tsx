@@ -2,7 +2,7 @@ import "../test/dom";
 
 import { render } from "@solidjs/web";
 import { afterEach, expect, test } from "bun:test";
-import { flush } from "solid-js";
+import { createSignal, flush } from "solid-js";
 
 import { DiffLines, type ToolDiffHunk } from "#core/shared/DiffLines";
 import type { ChangeSummary } from "#protocol/Diff";
@@ -84,13 +84,17 @@ function row(from: string, to: string, split = true): HTMLElement {
     lines: new Map(),
     opening: false,
   };
+  const [open, setOpen] = createSignal(false);
   dispose = render(
     () => (
       <FileRow
         file={summary()}
         state={state}
         split={split}
-        onExpand={() => {}}
+        open={open()}
+        onToggle={() => {
+          setOpen(!open());
+        }}
         onOpen={() => {}}
       />
     ),

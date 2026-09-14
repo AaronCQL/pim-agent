@@ -14,6 +14,8 @@ export type GitRun<T = never> = GitOutcome & { readonly value?: T };
 export type GitMonitorDeps = {
   /** How long a fetch stands before another is worth its round trip. */
   readonly fetchTtlMs?: number;
+  /** How often a watched repository is read for the edits `.git` never hears about. */
+  readonly pollMs?: number;
   readonly status?: (cwd: string) => Promise<GitState>;
   readonly fetch?: (cwd: string) => Promise<GitOutcome>;
 };
@@ -27,6 +29,9 @@ type Entry = {
   pending: boolean;
   fetchedAt: number;
   locked: boolean;
+  /** How long the last read took, and when it ended: what the poll paces itself by. */
+  readMs: number;
+  readAt: number;
 };
 
 /** A checkout writes half the repository; one read has to stand for the burst. */
@@ -34,12 +39,19 @@ const DEBOUNCE_MS = 200;
 
 const FETCH_TTL_MS = 30_000;
 
+/** A worktree edit touches nothing under `.git`, so the watch alone would never see it. */
+const POLL_MS = 2_000;
+
+/** A repository too big to read in a tick is read this many times its own cost apart. */
+const BACKOFF = 4;
+
 function same(a: GitState, b: GitState): boolean {
   return (
     a.branch === b.branch &&
     a.dirtyCount === b.dirtyCount &&
     a.ahead === b.ahead &&
-    a.behind === b.behind
+    a.behind === b.behind &&
+    a.revision === b.revision
   );
 }
 
@@ -137,6 +149,8 @@ export class GitMonitor {
       pending: false,
       fetchedAt: 0,
       locked: false,
+      readMs: 0,
+      readAt: 0,
     };
     this.entries.set(cwd, entry);
     return entry;
@@ -151,8 +165,18 @@ export class GitMonitor {
       }, DEBOUNCE_MS);
       timer.unref?.();
     });
+    // `false`: a read already running is fresh enough for a tick, and a slow
+    // status must never queue another behind itself.
+    const poll = setInterval(() => {
+      if (Date.now() - entry.readAt < entry.readMs * BACKOFF) {
+        return;
+      }
+      void this.read(entry, false);
+    }, this.deps.pollMs ?? POLL_MS);
+    poll.unref?.();
     return () => {
       clearTimeout(timer);
+      clearInterval(poll);
       stop();
     };
   }
@@ -164,6 +188,7 @@ export class GitMonitor {
       return entry.inFlight;
     }
     const run = (async (): Promise<GitState> => {
+      const started = Date.now();
       try {
         let next = entry.state;
         do {
@@ -176,6 +201,8 @@ export class GitMonitor {
         return entry.state;
       } finally {
         entry.inFlight = undefined;
+        entry.readAt = Date.now();
+        entry.readMs = entry.readAt - started;
       }
     })();
     entry.inFlight = run;

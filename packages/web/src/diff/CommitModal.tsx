@@ -67,7 +67,7 @@ export function CommitModal(props: {
     () => props.open,
     (open) => {
       if (open) {
-        setPicks(pathsIn(untrack(() => props.files)));
+        setPicks(untrack(() => pathsIn(props.files)));
         box?.focus();
       }
     }

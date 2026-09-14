@@ -211,6 +211,8 @@ export type EphemeralEvent =
       readonly dirtyCount?: number;
       readonly ahead?: number;
       readonly behind?: number;
+      /** Changes whenever the working copy does, content of a dirty file included. */
+      readonly repoRevision?: string;
     }
   /** A frame the server could not attribute to any command. */
   | { readonly type: "error"; readonly message: string };

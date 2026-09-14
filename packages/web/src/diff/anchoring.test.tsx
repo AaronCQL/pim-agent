@@ -2,7 +2,7 @@ import "../test/dom";
 
 import { render } from "@solidjs/web";
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { flush } from "solid-js";
+import { createSignal, flush } from "solid-js";
 
 import { DiffLines, type ToolDiffHunk } from "#core/shared/DiffLines";
 import type { ChangeSummary } from "#protocol/Diff";
@@ -85,15 +85,21 @@ function rows(
   dispose = render(
     () => (
       <ReviewComments value={() => comments}>
-        {files.map((file) => (
-          <FileRow
-            file={file}
-            state={ready(file, options)}
-            split={options.split === true}
-            onExpand={() => {}}
-            onOpen={() => {}}
-          />
-        ))}
+        {files.map((file) => {
+          const [open, setOpen] = createSignal(false);
+          return (
+            <FileRow
+              file={file}
+              state={ready(file, options)}
+              split={options.split === true}
+              open={open()}
+              onToggle={() => {
+                setOpen(!open());
+              }}
+              onOpen={() => {}}
+            />
+          );
+        })}
       </ReviewComments>
     ),
     host
