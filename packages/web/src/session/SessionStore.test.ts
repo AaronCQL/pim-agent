@@ -841,6 +841,52 @@ describe("archive, names and pins", () => {
     expect(target.state.names.s1).toBeNull();
   });
 
+  test("a name is on the row before the server answers, and outlives a listing that raced it", async () => {
+    const target = store();
+    let answer: (() => void) | undefined;
+    target.client.send = (async (command: Sent) => {
+      if (command.type === "list_sessions") {
+        return {
+          type: "response",
+          id: "1",
+          success: true,
+          sessions: [row("s1", { title: "Parser work", named: true })],
+        };
+      }
+      await new Promise<void>((resolve) => {
+        answer = resolve;
+      });
+      return { type: "response", id: "2", success: true };
+    }) as typeof target.client.send;
+
+    // A rename of a running session waits on the whole turn, so this is the
+    // only thing the reader sees for as long as the turn lasts.
+    const renaming = target.rename("s1", "Strings");
+    flush();
+    expect(target.sessionName("s1")).toBe("Strings");
+
+    const { sessions: listed } = await target.listSessions();
+    expect(listed[0]?.title).toBe("Strings");
+    expect(target.sessionName("s1")).toBe("Strings");
+
+    answer?.();
+    await renaming;
+  });
+
+  test("a refused rename puts back the name the row had", async () => {
+    const target = store();
+    catalogue(target, [row("s1", { title: "Parser work", named: true })]);
+    await target.listSessions();
+
+    wire(target, { success: false, error: "read-only sidecar" });
+    await expect(target.rename("s1", "Strings")).rejects.toThrow(
+      "read-only sidecar"
+    );
+    flush();
+
+    expect(target.sessionName("s1")).toBe("Parser work");
+  });
+
   test("the refusal reaches the caller, and the guess is taken back", async () => {
     const target = store();
     wire(target, { success: false, error: "read-only sidecar" });

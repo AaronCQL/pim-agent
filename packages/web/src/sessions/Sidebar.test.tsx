@@ -1447,6 +1447,57 @@ test("a name cleared to nothing goes back to the message the session opened with
   });
 });
 
+test("a rename is on the row before the server answers, and is taken back when it refuses", async () => {
+  const { host } = paint({ refuse: "the session is mid-turn" });
+  await listed(host);
+
+  click(menu(host));
+  choose(host, "Rename");
+  const box = host.querySelector<HTMLInputElement>('[aria-label^="Rename "]')!;
+  box.value = "Strings";
+  press(box, "Enter");
+
+  expect(bodies(host)[0]?.textContent).toContain("Strings");
+
+  await Bun.sleep(0);
+  flush();
+
+  expect(bodies(host)[0]?.textContent).toContain(
+    "Modernise the string building"
+  );
+  expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+    "the session is mid-turn"
+  );
+});
+
+test("a name being typed survives the listing a running session keeps provoking", async () => {
+  const { host, store, sent } = paint();
+  await listed(host);
+
+  click(menu(host));
+  choose(host, "Rename");
+  const box = (): HTMLInputElement =>
+    host.querySelector<HTMLInputElement>('[aria-label^="Rename "]')!;
+  box().value = "Strings";
+
+  store.ingest({ type: "sessions_changed" });
+  flush();
+  for (let hop = 0; hop < 20; hop += 1) {
+    await Promise.resolve();
+    flush();
+  }
+
+  expect(box().value).toBe("Strings");
+  expect(document.activeElement).toBe(box());
+
+  press(box(), "Enter");
+  expect(sent.at(-1)).toEqual({
+    type: "set_session_name",
+    sessionId: "aaaaaaaa-1111",
+    value: "Strings",
+  });
+});
+
 test("a name left as it was says nothing to the server", async () => {
   const { host, sent } = paint();
   await listed(host);

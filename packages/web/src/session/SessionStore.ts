@@ -756,8 +756,10 @@ export class SessionStore {
           session.archived === true
         );
         this.seed(draft, "pinned", session.cwd, session.pinned === true);
-        draft.names[session.sessionId] =
-          session.named === true ? (session.title ?? null) : null;
+        if (!this.guessed.has(`names:${session.sessionId}`)) {
+          draft.names[session.sessionId] =
+            session.named === true ? (session.title ?? null) : null;
+        }
         if (session.title !== undefined) {
           delete draft.openings[session.sessionId];
         }
@@ -915,12 +917,26 @@ export class SessionStore {
 
   /**
    * Names the session through pi's own name, so the terminal's picker shows
-   * it too; `null` clears it back to its opening message. Not guessed at: the
-   * server resolves what a row is called, and a cleared name falls back to a
-   * digest this client does not hold.
+   * it too; `null` clears it back to its opening message. Guessed at once, so
+   * a rename queued behind a running turn shows on the row it was typed on
+   * rather than nowhere; taken back when the server refuses. Only the name
+   * itself is guessed — a cleared one falls back to a digest of the opening
+   * message, which the server holds and this client does not.
    */
   public async rename(sessionId: string, name: string | null): Promise<void> {
-    await this.demand(
+    const before = untrack(() => this.state.names[sessionId]);
+    await this.guess(
+      `names:${sessionId}`,
+      (state) => {
+        state.names[sessionId] = name;
+      },
+      (state) => {
+        if (before === undefined) {
+          delete state.names[sessionId];
+        } else {
+          state.names[sessionId] = before;
+        }
+      },
       { type: "set_session_name", sessionId, value: name },
       "the server refused the name"
     );
@@ -972,19 +988,40 @@ export class SessionStore {
     refusal: string
   ): Promise<void> {
     const before = untrack(() => this.state[record][key]);
-    this.guessed.add(`${record}:${key}`);
-    this.setState((state) => {
-      state[record][key] = value;
-    });
+    await this.guess(
+      `${record}:${key}`,
+      (state) => {
+        state[record][key] = value;
+      },
+      (state) => {
+        state[record][key] = before ?? false;
+      },
+      draft,
+      refusal
+    );
+  }
+
+  /**
+   * Paints `apply` before the command goes out and `restore` if it is refused,
+   * holding `key` for as long as the answer is outstanding so a listing the
+   * server computed before the command reached it leaves the guess standing.
+   */
+  private async guess(
+    key: string,
+    apply: (state: SessionState) => void,
+    restore: (state: SessionState) => void,
+    draft: CommandDraft,
+    refusal: string
+  ): Promise<void> {
+    this.guessed.add(key);
+    this.setState(apply);
     try {
       await this.demand(draft, refusal);
     } catch (error) {
-      this.setState((state) => {
-        state[record][key] = before ?? false;
-      });
+      this.setState(restore);
       throw error;
     } finally {
-      this.guessed.delete(`${record}:${key}`);
+      this.guessed.delete(key);
     }
   }
 

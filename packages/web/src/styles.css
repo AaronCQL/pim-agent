@@ -28,41 +28,65 @@
 }
 
 /* Dark UI: tell the browser so form controls and any unstyled scrollbar come
-   up dark, then overlay a hairline thumb on a transparent track. The track is
-   transparent rather than tinted so a scrollable pane keeps a flush edge
-   instead of a gutter stripe. */
+   up dark. */
 :root {
   color-scheme: dark;
-  /* Shared, because an overlay that masks a scrolling pane has to stop at the
-     scrollbar rather than paint over it. */
-  --scrollbar: 6px;
+  /* The composer paints over the transcript's bottom edge and stops short of
+     the scrollbar rather than covering it. Zero where the platform's
+     scrollbar is an overlay one and needs no room of its own. */
+  --scrollbar: 0px;
 }
-/* The standard properties cannot express an exact width — `scrollbar-width`
-   only offers auto/thin/none, and Chrome's `thin` is ~11px — so the 6px comes
-   from the -webkit- pseudo-elements and the standard ones are scoped to
-   engines that lack them. Setting either standard property makes Chrome
-   ignore the pseudo-elements outright, so this is an either/or, not a
-   fallback stack. */
-@supports not selector(::-webkit-scrollbar) {
+
+/* A pointing device means classic scrollbars: in flow, always visible, and
+   ours to style — a hairline thumb on a transparent track, so a scrollable
+   pane keeps a flush edge instead of a gutter stripe. Touch platforms get
+   overlay scrollbars for free and are left alone: styling
+   ::-webkit-scrollbar would opt them out of it, because a custom scrollbar
+   is never an overlay one, and the width it took back would reflow the pane
+   the first time one appeared. */
+@media (pointer: fine) {
   :root {
-    scrollbar-width: thin;
-    scrollbar-color: rgb(64 64 64) transparent;
+    --scrollbar: 5px;
   }
-}
-::-webkit-scrollbar {
-  width: var(--scrollbar);
-  height: var(--scrollbar);
-}
-::-webkit-scrollbar-track,
-::-webkit-scrollbar-corner {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: rgb(64 64 64);
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgb(82 82 82);
+
+  /* Reserved whether or not the pane overflows, so nothing shifts when the
+     scrollbar arrives. Keyed on the utility every vertical scroller in the
+     app already carries; the horizontal scrollers (a code fence, a table)
+     are left out, since the gutter is an inline-edge one and would eat a
+     column inside every such block. */
+  .overflow-y-auto {
+    scrollbar-gutter: stable;
+  }
+
+  /* The standard properties cannot express an exact width — `scrollbar-width`
+     only offers auto/thin/none, and Chrome's `thin` is ~11px — so the 5px
+     comes from the -webkit- pseudo-elements and the standard ones are scoped
+     to engines that lack them. Setting either standard property makes Chrome
+     ignore the pseudo-elements outright, so this is an either/or, not a
+     fallback stack. Firefox lands its `thin` near 11px, which is wider than
+     --scrollbar claims; the cost is the composer stopping a few px short of
+     its scrollbar, and nothing in CSS can read the real width back. */
+  @supports not selector(::-webkit-scrollbar) {
+    :root {
+      scrollbar-width: thin;
+      scrollbar-color: rgb(64 64 64) transparent;
+    }
+  }
+  ::-webkit-scrollbar {
+    width: var(--scrollbar);
+    height: var(--scrollbar);
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgb(64 64 64);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgb(82 82 82);
+  }
 }
 
 html,

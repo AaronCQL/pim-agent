@@ -754,9 +754,11 @@ function RenameBox(props: {
     <input
       ref={(element: HTMLInputElement) => {
         box = element;
+        // Uncontrolled: Solid rewrites an input's `value` on every run of this
+        // element's props, and a running session re-lists under the caret.
+        element.value = untrack(() => props.value);
       }}
       type="text"
-      value={props.value}
       spellcheck={false}
       autocapitalize="off"
       autocomplete="off"
