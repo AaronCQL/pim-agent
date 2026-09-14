@@ -29,6 +29,7 @@ async function startGateway(dir: string): Promise<void> {
     port: 0,
     clientDir: dir,
     readCursorsPath: join(tmp, "read.json"),
+    sessionMetaPath: join(tmp, "sessions.json"),
   });
   gateway.start();
 }

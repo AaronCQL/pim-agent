@@ -188,6 +188,7 @@ beforeEach(async () => {
     port: 0,
     attachmentsRoot,
     readCursorsPath: join(tmp, "read.json"),
+    sessionMetaPath: join(tmp, "sessions.json"),
   });
   gateway.start();
 });

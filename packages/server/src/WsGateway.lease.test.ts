@@ -217,6 +217,7 @@ beforeEach(async () => {
     registry,
     port: 0,
     readCursorsPath: join(tmp, "read.json"),
+    sessionMetaPath: join(tmp, "sessions.json"),
     // Out of reach: what a foreign write reaches this server by has to be the
     // file watch, and a line arriving a second late is a line that was missed.
     pollMs: 60_000,

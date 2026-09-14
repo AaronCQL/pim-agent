@@ -12,6 +12,7 @@ import { GitMonitor, type GitRun } from "#core/shared/GitMonitor";
 import { RepoDiff } from "#core/shared/RepoDiff";
 import { ReadCursors } from "#core/session/ReadCursors";
 import type { SessionHost } from "#core/session/SessionHost";
+import { SessionMeta } from "#core/session/SessionMeta";
 import type { SessionRegistry } from "#core/session/SessionRegistry";
 import { PimVersion } from "#core/shared/PimVersion";
 import { SubagentLogs } from "#core/shared/SubagentLogs";
@@ -45,6 +46,8 @@ export type WsGatewayDeps = {
   readonly imagesRoot?: string;
   /** Where the read cursors live; defaults to `~/.pim/read.json`. */
   readonly readCursorsPath?: string;
+  /** Where the per-session and per-project overrides live; defaults to `~/.pim/sessions.json`. */
+  readonly sessionMetaPath?: string;
   /** How often a session file is polled where `fs.watch` says nothing; the default is a second. */
   readonly pollMs?: number;
   /** The built web client; defaults to the bundle shipped beside this package. */
@@ -92,6 +95,7 @@ export class WsGateway {
   private readonly uploads: AttachmentEndpoint;
   private readonly images: ImageEndpoint;
   private readonly catalogue: SessionCatalogue;
+  private readonly meta: SessionMeta;
   private readonly client: StaticClient;
   private readonly streams = new Map<string, SessionStream>();
   private readonly opening = new Map<string, Promise<SessionStream>>();
@@ -117,9 +121,11 @@ export class WsGateway {
     this.images = new ImageEndpoint(
       deps.imagesRoot === undefined ? {} : { root: deps.imagesRoot }
     );
+    this.meta = new SessionMeta(deps.sessionMetaPath);
     this.catalogue = new SessionCatalogue({
       registry: deps.registry,
       cursors: new ReadCursors(deps.readCursorsPath),
+      meta: this.meta,
       liveStatus: (sessionId) => this.streams.get(sessionId)?.host.status,
       liveSessionIds: () => this.streams.keys(),
       isBeingRead: (sessionId) => this.isBeingRead(sessionId),
@@ -290,6 +296,47 @@ export class WsGateway {
       }
       case "list_sessions":
         return { sessions: await this.catalogue.list(command) };
+      // The four below take a session this server may never have opened: a row
+      // is archived or renamed from the sidebar without being attached to, so
+      // none of them may reach for a stream. A sidecar write moves no session
+      // file and produces no `sessions_changed`, so the broadcast each ends
+      // with is the only word a listing already in a client's hands gets.
+      case "set_session_name": {
+        const name = await this.registry.setName(
+          command.sessionId,
+          command.value
+        );
+        this.broadcast({
+          type: "session_meta",
+          sessionId: command.sessionId,
+          name: name ?? null,
+        });
+        return {};
+      }
+      case "set_session_archived":
+        await this.meta.setArchived(command.sessionId, command.value);
+        this.broadcast({
+          type: "session_meta",
+          sessionId: command.sessionId,
+          archived: command.value,
+        });
+        return {};
+      case "set_session_unread":
+        await this.meta.setUnread(command.sessionId, command.value);
+        this.broadcast({
+          type: "session_meta",
+          sessionId: command.sessionId,
+          unread: command.value,
+        });
+        return {};
+      case "set_project_pinned":
+        await this.meta.setPinned(command.cwd, command.value);
+        this.broadcast({
+          type: "project_meta",
+          cwd: command.cwd,
+          pinned: command.value,
+        });
+        return {};
       case "list_models":
         return {
           models: this.registry.models(),

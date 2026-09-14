@@ -287,6 +287,7 @@ beforeEach(async () => {
     registry,
     port: 0,
     readCursorsPath: join(tmp, "read.json"),
+    sessionMetaPath: join(tmp, "sessions.json"),
   });
   gateway.start();
 });

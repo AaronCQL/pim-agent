@@ -1,6 +1,7 @@
 import { EventLog } from "#core/session/EventLog";
 import type { SessionDigest } from "#core/session/EventLog";
 import type { ReadCursors } from "#core/session/ReadCursors";
+import type { SessionMeta } from "#core/session/SessionMeta";
 import type { SessionRegistry } from "#core/session/SessionRegistry";
 import { FileWatch } from "#core/shared/FileWatch";
 import type { Command } from "#protocol/Command";
@@ -14,6 +15,8 @@ export type SessionCatalogueDeps = {
   readonly registry: SessionRegistry;
   /** Which sessions have been read, shared by every client. */
   readonly cursors: ReadCursors;
+  /** Archived, held-unread and pinned, shared by every client. */
+  readonly meta: SessionMeta;
   readonly liveStatus: (sessionId: string) => SessionStatus | undefined;
   readonly liveSessionIds: () => Iterable<string>;
   readonly isBeingRead: (sessionId: string) => boolean;
@@ -66,34 +69,55 @@ export class SessionCatalogue {
   public async list(
     command: Command & { readonly type: "list_sessions" }
   ): Promise<readonly SessionSummaryView[]> {
-    const summaries = await this.deps.registry.list(command.cwd);
+    const [summaries, overrides, projects] = await Promise.all([
+      this.deps.registry.list(command.cwd),
+      this.deps.meta.sessions(),
+      this.deps.meta.projects(),
+    ]);
     // Prune only on an unfiltered listing: a cwd-filtered one would forget every other directory.
     if (command.cwd === undefined) {
-      await this.deps.cursors.prune(
-        new Set([
-          ...summaries.map((summary) => summary.sessionId),
-          ...this.deps.liveSessionIds(),
-        ])
-      );
+      const alive = new Set([
+        ...summaries.map((summary) => summary.sessionId),
+        ...this.deps.liveSessionIds(),
+      ]);
+      await Promise.all([
+        this.deps.cursors.prune(alive),
+        this.deps.meta.prune(alive),
+      ]);
     }
+    const scope = command.archived === true;
     // Cut by modified time and digest only the page: ordering by settle time would read every session on disk.
     const page = await Promise.all(
       summaries
+        // Before the cut: an archived row that ate the page budget would push a live one off the end.
+        .filter(
+          (summary) =>
+            (overrides.get(summary.sessionId)?.archived === true) === scope
+        )
         .slice(0, command.limit ?? DEFAULT_SESSION_LIMIT)
         .map(async ({ sessionId, cwd, path, createdAt, modifiedAt }) => {
-          const { title, settledAt } = await this.digestOf(path, modifiedAt);
           const status = this.deps.liveStatus(sessionId);
-          const answeredAt = this.answerTime(sessionId, status, settledAt);
-          const unread = await this.deps.cursors.isUnread(
+          const { title, named, settledAt } = await this.digestOf(
             sessionId,
-            answeredAt
+            path,
+            modifiedAt,
+            status
           );
+          const answeredAt = this.answerTime(sessionId, status, settledAt);
+          const unread =
+            overrides.get(sessionId)?.unread === true ||
+            (await this.deps.cursors.isUnread(sessionId, answeredAt));
           return {
             sessionId,
             cwd,
             createdAt,
             settledAt: answeredAt ?? settledAt ?? createdAt,
             ...(title === undefined ? {} : { title }),
+            ...(named === true ? { named } : {}),
+            ...(scope ? { archived: true as const } : {}),
+            ...(projects.get(cwd)?.pinned === true
+              ? { pinned: true as const }
+              : {}),
             ...(status === undefined || status === "idle" ? {} : { status }),
             ...(unread ? { unread: true } : {}),
           };
@@ -118,14 +142,18 @@ export class SessionCatalogue {
     this.activity.set(sessionId, status);
   }
 
-  /** Moves a session's read cursor to now and says so to every client. */
+  /** Moves a session's read cursor to now, drops the mark a reader left on it by hand, and says so to every client. */
   public async markRead(sessionId: string): Promise<void> {
     await this.deps.cursors.mark(sessionId);
+    // The only place the sticky flag is cleared; a listing must never clear it.
+    if ((await this.deps.meta.of(sessionId)).unread === true) {
+      await this.deps.meta.setUnread(sessionId, false);
+    }
     this.deps.announce({ type: "session_read", sessionId });
   }
 
-  public flush(): Promise<void> {
-    return this.deps.cursors.flush();
+  public async flush(): Promise<void> {
+    await Promise.all([this.deps.cursors.flush(), this.deps.meta.flush()]);
   }
 
   public clear(): void {
@@ -188,15 +216,68 @@ export class SessionCatalogue {
   }
 
   private async digestOf(
+    sessionId: string,
+    path: string,
+    modifiedAt: number,
+    status: SessionStatus | undefined
+  ): Promise<SessionDigest> {
+    const name = this.liveName(sessionId);
+    const digest =
+      this.reusable(path, modifiedAt, status, name) ??
+      (await this.readDigest(path, modifiedAt));
+    return renamed(digest, name);
+  }
+
+  /**
+   * Mid-turn the file is appended to between listings, so its digest never hits
+   * the cache and the whole-file read lands on the busiest session there is.
+   * Nothing it answers can have moved: the opening message was written long
+   * ago, the settle time is deliberately not read from the file while a turn
+   * runs, and the name is the live session's own to say.
+   */
+  private reusable(
+    path: string,
+    modifiedAt: number,
+    status: SessionStatus | undefined,
+    name: string | null | undefined
+  ): CachedDigest | undefined {
+    const cached = this.digests.get(path);
+    if (cached === undefined) {
+      return undefined;
+    }
+    // Except a name the live session has since cleared: the opening message a
+    // nameless row falls back to is in the file and nowhere else.
+    if (name === null && cached.named === true) {
+      return undefined;
+    }
+    const working = status !== undefined && status !== "idle";
+    return cached.modifiedAt === modifiedAt || working ? cached : undefined;
+  }
+
+  private async readDigest(
     path: string,
     modifiedAt: number
   ): Promise<SessionDigest> {
-    const cached = this.digests.get(path);
-    if (cached?.modifiedAt === modifiedAt) {
-      return cached;
-    }
     const digest = await new EventLog(path).digest();
     this.digests.set(path, { ...digest, modifiedAt });
     return digest;
   }
+
+  /** What a live session calls itself, without reading its file; `null` is live and unnamed. */
+  private liveName(sessionId: string): string | null | undefined {
+    const agent = this.deps.registry.peek(sessionId)?.agentSession;
+    return agent === undefined
+      ? undefined
+      : (agent.sessionManager.getSessionName() ?? null);
+  }
+}
+
+/** A live session's own name wins over the file's: a rename lands on the row before the digest behind it expires. */
+function renamed(
+  digest: SessionDigest,
+  name: string | null | undefined
+): SessionDigest {
+  return typeof name === "string"
+    ? { ...digest, title: name, named: true }
+    : digest;
 }

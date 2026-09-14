@@ -80,8 +80,16 @@ function chunk(delta: Record<string, unknown>, finish?: string): string {
   })}\n\n`;
 }
 
-/** Set by a test to hold the prose turn open until it says otherwise. */
+/**
+ * Set by a test to hold the prose turn open until it says otherwise, and
+ * cleared by `afterEach` as well as by `release`. Both, because a test that
+ * fails between `holdTurn()` and its `release()` never reaches the release —
+ * and a gate left standing is awaited by the *next* test's model server,
+ * whose turn then never ends and whose every wait burns its full timeout. One
+ * failing assertion would otherwise cost the rest of the file 20s apiece.
+ */
 let gate: Promise<void> | undefined;
+let openGate: (() => void) | undefined;
 
 /**
  * Set by a test to make the provider refuse every call, the way a rate limit
@@ -95,10 +103,15 @@ function holdTurn(): () => void {
   gate = new Promise<void>((resolve) => {
     release = resolve;
   });
-  return () => {
-    gate = undefined;
-    release();
-  };
+  openGate = release;
+  return releaseTurn;
+}
+
+/** Idempotent, so `afterEach` and a test's own `finally` can both call it. */
+function releaseTurn(): void {
+  gate = undefined;
+  openGate?.();
+  openGate = undefined;
 }
 
 /**
@@ -178,6 +191,7 @@ async function startGateway(): Promise<void> {
     registry,
     port: 0,
     readCursorsPath: join(tmp, "read.json"),
+    sessionMetaPath: join(tmp, "sessions.json"),
   });
   gateway.start();
 }
@@ -238,6 +252,34 @@ async function idle(probe: ProbeClient, from: number): Promise<ServerEvent> {
   }
 }
 
+/**
+ * Prompts, and returns once the turn it starts is running.
+ *
+ * `ProbeClient.prompt` resolves on the server's ack, which pi sends before it
+ * has queued the turn: the session is still legitimately idle then, and so is
+ * the state the git watcher's first read pushes a moment later. An `idle` taken
+ * straight after therefore accepts the calm *before* the turn as its end, and
+ * hands the test a session with no `message_start`, no delta and no reply —
+ * the assertion after it fails for a reason that has nothing to do with what it
+ * was testing.
+ *
+ * `agent_start` pushes a working state, so that is the edge worth waiting on,
+ * and the event log is kept: a turn that has already begun and ended has that
+ * state in it and this returns at once. Only for a prompt that starts a turn —
+ * a message steered into a running one pushes no such state.
+ */
+async function prompt(
+  probe: ProbeClient,
+  text: string,
+  from: number
+): Promise<void> {
+  await probe.prompt(text);
+  await probe.waitFor(
+    (event) => event.type === "session_state" && event.status !== "idle",
+    { from, timeoutMs: 20_000 }
+  );
+}
+
 /** Polls, because a prompt is accepted long before pi has queued it. */
 async function until(ready: () => boolean, what: string): Promise<void> {
   const deadline = Date.now() + 20_000;
@@ -262,6 +304,13 @@ function unreadIn(
   sessionId: string
 ): boolean | undefined {
   return rows.find((row) => row.sessionId === sessionId)?.unread;
+}
+
+function rowIn(
+  rows: readonly SessionSummaryView[],
+  sessionId: string
+): SessionSummaryView | undefined {
+  return rows.find((row) => row.sessionId === sessionId);
 }
 
 /** A whole-second ISO timestamp `n` minutes before now. */
@@ -333,6 +382,7 @@ afterEach(async () => {
     probe.close();
   }
   probes = [];
+  releaseTurn();
   refusal = undefined;
   await gateway.stop();
   await registry.disposeAll();
@@ -351,7 +401,7 @@ test("starts a session, prompts, and streams the whole turn", async () => {
   expect(probe.sessionId).toBeString();
 
   const mark = probe.events.length;
-  await probe.prompt("say hello");
+  await prompt(probe, "say hello", mark);
   await idle(probe, mark);
 
   const events = durable(probe);
@@ -385,7 +435,7 @@ test("starts a session, prompts, and streams the whole turn", async () => {
 test("never forwards raw tool content to a client", async () => {
   const probe = await connect();
   const mark = probe.events.length;
-  await probe.prompt("say hello");
+  await prompt(probe, "say hello", mark);
   await idle(probe, mark);
 
   const dump = probe.events.map((e) => JSON.stringify(e)).join("\n");
@@ -405,7 +455,7 @@ test("says why a turn the provider refused stopped", async () => {
   refusal = "invalid_request_error: this key cannot use that model";
   const probe = await connect();
   const mark = probe.events.length;
-  await probe.prompt("say hello");
+  await prompt(probe, "say hello", mark);
   await idle(probe, mark);
 
   const dead = durable(probe).find(
@@ -457,7 +507,7 @@ test("loses nothing when a probe dies mid-turn and resumes by seq", async () => 
 test("streams a step at a time, reasoning included", async () => {
   const probe = await connect();
   const mark = probe.events.length;
-  await probe.prompt("say hello with a tool");
+  await prompt(probe, "say hello with a tool", mark);
   await idle(probe, mark);
 
   const live = probe.events.slice(mark);
@@ -512,14 +562,21 @@ test("hands a reconnecting client every step of the in-flight turn", async () =>
   first.kill();
 
   const second = await connect({ sessionId, fromSeq: first.seq });
-  // Only the step still streaming comes back live, and it carries at most one
-  // coalesced delta: the deltas themselves were never persisted, so this is
-  // the only shape they can come back in.
+  // Only the step still streaming comes back live, announced once, and the
+  // deltas — never persisted — arrive as the text so far. How many frames
+  // that text is cut into is not asserted: the catch-up sends what had
+  // accumulated by then, and a word streamed between that send and this line
+  // is a second frame. Counting them was counting the scheduler.
   const starts = second.events.filter((e) => e.type === "message_start");
   const deltas = second.events.filter((e) => e.type === "text_delta");
   expect(new Set(starts.map((e) => e.messageId)).size).toBe(starts.length);
-  expect(deltas.length).toBeLessThanOrEqual(starts.length);
-  expect(REPLY).toStartWith(deltas.at(-1)!.delta.trim());
+  expect(starts.length).toBe(1);
+  const streamed = deltas
+    .map((e) => e.delta)
+    .join("")
+    .trim();
+  expect(streamed.length).toBeGreaterThan(0);
+  expect(REPLY).toStartWith(streamed);
   // And the finished step is not sent twice: the client read it from the log
   // before it died, so what comes back is the turn's remainder, not a live
   // copy of a row it already has.
@@ -593,7 +650,7 @@ test("says which sessions are working, to clients attached elsewhere", async () 
   // Once around, so pi has written the session and the catalogue can answer
   // for it: a client that arrives mid-turn reads the row, not the stream.
   const first = worker.events.length;
-  await worker.prompt("say hello");
+  await prompt(worker, "say hello", first);
   await idle(worker, first);
 
   const watcher = await connect();
@@ -638,7 +695,7 @@ test("dates a session by its last completed turn, and holds that while one runs"
   const worker = await connect();
   const sessionId = worker.sessionId!;
   const first = worker.events.length;
-  await worker.prompt("say hello");
+  await prompt(worker, "say hello", first);
   await idle(worker, first);
 
   const watcher = await connect();
@@ -680,7 +737,7 @@ test("goes unread when a turn ends, and not on the lines it ends with", async ()
   const worker = await connect();
   const sessionId = worker.sessionId!;
   const first = worker.events.length;
-  await worker.prompt("say hello");
+  await prompt(worker, "say hello", first);
   await idle(worker, first);
 
   // Read, because a client has been sitting in it the whole turn — and the
@@ -735,7 +792,7 @@ test("leaves a turn unread when the tab attached to it is not looking", async ()
   const hidden = await connect({ attentive: false });
   const sessionId = hidden.sessionId!;
   const mark = hidden.events.length;
-  await hidden.prompt("say hello");
+  await prompt(hidden, "say hello", mark);
   await idle(hidden, mark);
 
   expect(unreadIn(await hidden.listSessions(), sessionId)).toBe(true);
@@ -753,7 +810,7 @@ test("keeps a hidden tab's session unread for the client working elsewhere", asy
   expect(watcher.sessionId).not.toBe(sessionId);
 
   const mark = hidden.events.length;
-  await hidden.prompt("say hello");
+  await prompt(hidden, "say hello", mark);
   await idle(hidden, mark);
 
   expect(unreadIn(await watcher.listSessions(), sessionId)).toBe(true);
@@ -764,7 +821,7 @@ test("reads nothing on a reconnect from a hidden tab, and reads it on the way ba
   const worker = await connect();
   const sessionId = worker.sessionId!;
   const first = worker.events.length;
-  await worker.prompt("say hello");
+  await prompt(worker, "say hello", first);
   await idle(worker, first);
 
   const watcher = await connect();
@@ -813,7 +870,7 @@ test("streams the whole turn to a tab that is not looking", async () => {
 
   const hidden = await connect({ attentive: false });
   const mark = hidden.events.length;
-  await hidden.prompt("say hello");
+  await prompt(hidden, "say hello", mark);
   await idle(hidden, mark);
 
   expect(hidden.events.some((event) => event.type === "text_delta")).toBe(true);
@@ -874,7 +931,7 @@ test("survives a restart with sessions resumable from disk", async () => {
   const probe = await connect();
   const sessionId = probe.sessionId!;
   const mark = probe.events.length;
-  await probe.prompt("say hello");
+  await prompt(probe, "say hello", mark);
   await idle(probe, mark);
   const before = durable(probe);
   probe.close();
@@ -891,7 +948,7 @@ test("lists pi's sessions, before any attach and after one", async () => {
   const probe = await connect();
   const sessionId = probe.sessionId!;
   const mark = probe.events.length;
-  await probe.prompt("say hello");
+  await prompt(probe, "say hello", mark);
   await idle(probe, mark);
 
   const listed = await probe.listSessions();
@@ -911,7 +968,7 @@ test("lists pi's sessions, before any attach and after one", async () => {
     "title",
   ]);
 
-  expect(await probe.listSessions("/nowhere")).toEqual([]);
+  expect(await probe.listSessions({ cwd: "/nowhere" })).toEqual([]);
 
   // Picking a session is what a client does instead of already having one, so
   // this is the one command that answers without an attach.
@@ -955,7 +1012,7 @@ test("session state carries context usage and the cwd's git branch", async () =>
 
   const probe = await connect();
   const mark = probe.events.length;
-  await probe.prompt("say hello");
+  await prompt(probe, "say hello", mark);
   await idle(probe, mark);
 
   // The branch is read behind the caller — `sessionState()` is synchronous
@@ -1134,4 +1191,40 @@ test("a working agent freezes the repository its session sits in", async () => {
   // this comes back false, and `false !== true` does not say which happened.
   expect(moved.error).toBeUndefined();
   expect(moved.success).toBe(true);
+});
+
+test("keeps a renamed row named through the turn that is writing to it", async () => {
+  const probe = await connect();
+  const sessionId = probe.sessionId!;
+  const mark = probe.events.length;
+  await prompt(probe, "say hello", mark);
+  await idle(probe, mark);
+
+  // Warms the digest the row is drawn from, while it still goes by its
+  // opening message.
+  expect(rowIn(await probe.listSessions(), sessionId)?.title).toBe("say hello");
+  expect((await probe.rename(sessionId, "Parser work")).success).toBe(true);
+
+  const release = holdTurn();
+  const second = probe.events.length;
+  try {
+    await probe.prompt("say hello again");
+    await probe.waitFor(
+      (event) =>
+        event.type === "session_activity" &&
+        event.sessionId === sessionId &&
+        event.status !== "idle",
+      { from: second }
+    );
+
+    // Mid-turn the file is appended to between listings, so it is not
+    // re-digested for any of them: the name the row shows is the live
+    // session's own, and the one it was warmed with is a turn out of date.
+    const row = rowIn(await probe.listSessions(), sessionId);
+    expect(row?.title).toBe("Parser work");
+    expect(row?.named).toBe(true);
+  } finally {
+    release();
+  }
+  await idle(probe, second);
 });

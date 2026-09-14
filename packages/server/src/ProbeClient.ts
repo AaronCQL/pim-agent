@@ -28,6 +28,15 @@ export type ProbeOptions = {
   readonly debounceMs?: number;
 };
 
+/** Which sessions a listing is asking for. */
+export type SessionScope = {
+  /** Restrict to one working directory; omit for every session on disk. */
+  readonly cwd?: string;
+  /** List the archived sessions instead of the live ones. */
+  readonly archived?: boolean;
+  readonly limit?: number;
+};
+
 /** What `POST /upload` answers with, all of it server-side. */
 export type UploadedFile = {
   readonly id: string;
@@ -175,16 +184,44 @@ export class ProbeClient {
 
   /** Pi's session catalogue; answers whether or not this probe is attached. */
   public async listSessions(
-    cwd?: string
+    scope: SessionScope = {}
   ): Promise<readonly SessionSummaryView[]> {
     const response = await this.send({
       type: "list_sessions",
-      ...(cwd === undefined ? {} : { cwd }),
+      ...(scope.cwd === undefined ? {} : { cwd: scope.cwd }),
+      ...(scope.archived === true ? { archived: true } : {}),
+      ...(scope.limit === undefined ? {} : { limit: scope.limit }),
     });
     if (!response.success) {
       throw new Error(response.error ?? "list_sessions failed");
     }
     return response.sessions ?? [];
+  }
+
+  /** Names a session through pi's own name; `null` clears it back to its opening message. */
+  public rename(
+    sessionId: string,
+    value: string | null
+  ): Promise<ResponseEvent> {
+    return this.send({ type: "set_session_name", sessionId, value });
+  }
+
+  /** Puts a session out of the live listing, or brings it back. */
+  public setArchived(
+    sessionId: string,
+    value: boolean
+  ): Promise<ResponseEvent> {
+    return this.send({ type: "set_session_archived", sessionId, value });
+  }
+
+  /** Holds a session unread until something reads it; survives a listing and a re-attach. */
+  public markUnread(sessionId: string, value: boolean): Promise<ResponseEvent> {
+    return this.send({ type: "set_session_unread", sessionId, value });
+  }
+
+  /** Pins a working directory, not a session. */
+  public setPinned(cwd: string, value: boolean): Promise<ResponseEvent> {
+    return this.send({ type: "set_project_pinned", cwd, value });
   }
 
   /** The model catalogue, plus this session's thinking levels; empty when unattached. */

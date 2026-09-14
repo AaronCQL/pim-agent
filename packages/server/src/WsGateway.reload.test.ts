@@ -114,6 +114,7 @@ async function startGateway(): Promise<void> {
     registry,
     port: 0,
     readCursorsPath: join(tmp, "read.json"),
+    sessionMetaPath: join(tmp, "sessions.json"),
     update: async (onStep) => {
       updates += 1;
       onStep(STEP);
@@ -192,6 +193,12 @@ afterEach(async () => {
     probe.close();
   }
   probes = [];
+  // A test that fails between a hold and its release never reaches the
+  // release, and the hold is module state: the next test's model server would
+  // await a promise nothing resolves, so its turn would never end and every
+  // wait in it would burn its full timeout.
+  heldUpdate = undefined;
+  heldTurn = undefined;
   await gateway.stop();
   await registry.disposeAll();
   await modelServer?.stop(true);

@@ -11,6 +11,7 @@ import {
 } from "bun:test";
 import { flush, untrack } from "solid-js";
 
+import type { CommandDraft } from "#protocol/Command";
 import { PROTOCOL_VERSION } from "#protocol/Protocol";
 import type { SessionSummaryView } from "#protocol/ServerEvent";
 import { SessionStore } from "../session/SessionStore";
@@ -33,41 +34,79 @@ const SESSIONS: readonly SessionSummaryView[] = [
   },
 ];
 
+/** Out of the live listing: only the archived scope answers with it. */
+const PUT_AWAY: SessionSummaryView = {
+  sessionId: "cccccccc-3333",
+  cwd: "/home/ada/dev/pim",
+  createdAt: 0,
+  settledAt: 0,
+  title: "Put away last week",
+  archived: true,
+};
+
+type Painted = {
+  readonly host: HTMLElement;
+  readonly switched: string[];
+  readonly sent: CommandDraft[];
+  readonly store: SessionStore;
+};
+
 /**
  * Offline: the listing is the only thing this reads, so it is the only thing
  * answered. Answered rather than stubbed away, because the marks it carries
- * are the server's and this is where the store takes them from.
+ * are the server's and this is where the store takes them from. Every other
+ * command is taken down, so a row's verbs can be read off the wire.
  */
 function paint(
-  onNavigate?: () => void,
-  unread: readonly string[] = [],
-  onOpenSettings?: () => void
-): {
-  readonly host: HTMLElement;
-  readonly switched: string[];
-  readonly store: SessionStore;
-} {
+  options: {
+    readonly onNavigate?: () => void;
+    readonly onOpenSettings?: () => void;
+    readonly unread?: readonly string[];
+    readonly archived?: readonly SessionSummaryView[];
+    /** What the server refuses every mutating command with. */
+    readonly refuse?: string;
+  } = {}
+): Painted {
   const store = new SessionStore({ url: "ws://127.0.0.1:1" });
   const switched: string[] = [];
-  store.client.send = async () => ({
-    type: "response",
-    id: "1",
-    success: true,
-    sessions: SESSIONS.map((session) => {
-      // A real listing says what each session is doing, so this one does
-      // too: the spinner is read off the status, and a row answered for as
-      // idle would stop one mid-turn on the next re-list.
-      // Untracked: the server this stands in for is answering a request,
-      // not deriving a value, and this runs from inside the effect that
-      // asked.
-      const status = untrack(() => store.state.activity[session.sessionId]);
+  const sent: CommandDraft[] = [];
+  store.client.send = async (draft) => {
+    sent.push(draft);
+    if (draft.type === "list_sessions") {
       return {
-        ...session,
-        ...(unread.includes(session.sessionId) ? { unread: true } : {}),
-        ...(status === undefined || status === "idle" ? {} : { status }),
+        type: "response",
+        id: "1",
+        success: true,
+        sessions:
+          draft.archived === true
+            ? (options.archived ?? [])
+            : SESSIONS.map((session) => {
+                // A real listing says what each session is doing, so this one
+                // does too: the spinner is read off the status, and a row
+                // answered for as idle would stop one mid-turn on the next
+                // re-list.
+                // Untracked: the server this stands in for is answering a
+                // request, not deriving a value, and this runs from inside the
+                // effect that asked.
+                const status = untrack(
+                  () => store.state.activity[session.sessionId]
+                );
+                return {
+                  ...session,
+                  ...((options.unread ?? []).includes(session.sessionId)
+                    ? { unread: true }
+                    : {}),
+                  ...(status === undefined || status === "idle"
+                    ? {}
+                    : { status }),
+                };
+              }),
       };
-    }),
-  });
+    }
+    return options.refuse === undefined
+      ? { type: "response", id: "1", success: true }
+      : { type: "response", id: "1", success: false, error: options.refuse };
+  };
   store.switchTo = async (sessionId) => {
     switched.push(sessionId);
   };
@@ -76,14 +115,16 @@ function paint(
     () => (
       <Sidebar
         store={store}
-        {...(onNavigate ? { onNavigate } : {})}
-        {...(onOpenSettings ? { onOpenSettings } : {})}
+        {...(options.onNavigate ? { onNavigate: options.onNavigate } : {})}
+        {...(options.onOpenSettings
+          ? { onOpenSettings: options.onOpenSettings }
+          : {})}
       />
     ),
     host
   );
   flush();
-  return { host, switched, store };
+  return { host, switched, sent, store };
 }
 
 /** Both live in the browser, so both are seeded where the browser keeps them. */
@@ -96,6 +137,48 @@ function unwritten(sessionId: string): void {
     "pim.unwritten",
     JSON.stringify({ sessionId, cwd: "/home/ada/dev/pim", sent: false })
   );
+}
+
+/**
+ * What a row is: the button that attaches to the session. The `⋯` beside it is
+ * a button too, and so is the footer, so a bare `button` is three things now.
+ */
+function bodies(host: HTMLElement): readonly HTMLButtonElement[] {
+  return [...host.querySelectorAll<HTMLButtonElement>("li > button")];
+}
+
+function menu(host: HTMLElement, index = 0): HTMLButtonElement {
+  return [
+    ...host.querySelectorAll<HTMLButtonElement>('[aria-label^="Options for"]'),
+  ][index]!;
+}
+
+function press(target: Element, key: string): void {
+  target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+  flush();
+}
+
+function click(target: Element): void {
+  target.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  flush();
+}
+
+/** Rows the reader can reach; a closed menu keeps no panel at all. */
+function verbs(host: HTMLElement): readonly HTMLElement[] {
+  const panel = [...host.querySelectorAll("[popover]")].find(
+    (element) => !element.className.includes("hidden")
+  );
+  return panel === undefined
+    ? []
+    : [...panel.querySelectorAll<HTMLElement>('[role="option"]')];
+}
+
+/** A verb commits before the caret moves, so it answers the press rather than the click. */
+function choose(host: HTMLElement, label: string): void {
+  const row = verbs(host).find((option) => option.textContent === label);
+  expect(row).toBeDefined();
+  row!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+  flush();
 }
 
 beforeEach(() => {
@@ -115,11 +198,10 @@ afterEach(() => {
  * rows on screen. Drained a hop at a time rather than slept on, because one
  * of these tests runs on a fake clock that only it can move — and until the
  * a row is up rather than for a fixed count, so a hop added to that chain
- * does not turn into a test that sees an empty list. A row is a `li button`:
- * the empty state is an `li` too.
+ * does not turn into a test that sees an empty list.
  */
 async function listed(host: HTMLElement): Promise<void> {
-  for (let hop = 0; hop < 20 && !host.querySelector("li button"); hop += 1) {
+  for (let hop = 0; hop < 20 && bodies(host).length === 0; hop += 1) {
     await Promise.resolve();
     flush();
   }
@@ -156,7 +238,7 @@ test("the dot marks a session that has answered since anything read it", async (
   flush();
   expect(host.querySelectorAll('[aria-label="Unread"]')).toHaveLength(0);
 
-  const { host: marked, store } = paint(undefined, ["aaaaaaaa-1111"]);
+  const { host: marked, store } = paint({ unread: ["aaaaaaaa-1111"] });
   await Bun.sleep(0);
   flush();
   expect(
@@ -212,13 +294,11 @@ test("a session another process started arrives without being asked for", async 
 
 test("picking a row attaches to it and tells the host to get out of the way", async () => {
   const navigated: number[] = [];
-  const { host, switched } = paint(() => navigated.push(1));
+  const { host, switched } = paint({ onNavigate: () => navigated.push(1) });
   await Bun.sleep(0);
   flush();
 
-  host
-    .querySelectorAll("li button")[1]!
-    .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  click(bodies(host)[1]!);
 
   expect(switched).toEqual(["bbbbbbbb-2222"]);
   expect(navigated).toEqual([1]);
@@ -234,7 +314,7 @@ test("a row's age follows the clock, not the next render", async () => {
   const { host } = paint();
   await listed(host);
   const age = (): string | undefined =>
-    host.querySelector("li button > div:last-child > div:last-child")
+    bodies(host)[0]?.querySelector("div:last-child > div:last-child")
       ?.textContent ?? undefined;
   expect(age()).toBe("30s");
 
@@ -254,7 +334,7 @@ test("a row's age follows the clock, not the next render", async () => {
  */
 test("the header carries the app's two buttons and nothing about the socket", () => {
   const opened: number[] = [];
-  const { host } = paint(undefined, [], () => opened.push(1));
+  const { host } = paint({ onOpenSettings: () => opened.push(1) });
   const header = host.querySelector("h1")!.closest("div")!.parentElement!;
   const labels = [...header.querySelectorAll("button")].map((button) =>
     button.getAttribute("aria-label")
@@ -287,6 +367,9 @@ test("a new chat is a row before it is a file, marked and ageless", async () => 
   expect(rows[0]?.innerHTML).toContain("text-amber-400");
   // No age: nothing has been written for a clock to measure.
   expect(rows[0]?.textContent).not.toMatch(/\d+[smhd]/);
+  // And nothing to rename, archive or hold unread: there is no file yet.
+  expect(rows[0]?.querySelector('[aria-label^="Options for"]')).toBeNull();
+  expect(rows[1]?.querySelector('[aria-label^="Options for"]')).not.toBeNull();
 });
 
 test("a new chat nobody has typed into is not a row at all", async () => {
@@ -355,6 +438,25 @@ test("a listed session with no title yet is named by its first message", async (
   const rows = [...host.querySelectorAll("li")];
   expect(rows[1]?.textContent).toContain("run the tests");
   expect(rows[1]?.textContent).not.toContain("bbbbbbbb");
+});
+
+test("a name somebody wrote outranks the message the session opened with", async () => {
+  const { host, store } = paint();
+  await Bun.sleep(0);
+  flush();
+
+  store.ingest({
+    type: "session_meta",
+    sessionId: "aaaaaaaa-1111",
+    name: "String building",
+  });
+  flush();
+
+  // Patched in place: the listing was not asked for again.
+  expect(bodies(host)[0]?.textContent).toContain("String building");
+  expect(bodies(host)[0]?.textContent).not.toContain(
+    "Modernise the string building"
+  );
 });
 
 test("a running turn spins where the age would be", async () => {
@@ -530,6 +632,239 @@ test("switching moves the highlight without rebuilding the list", async () => {
     expect(row).toBe(before[index]!);
   }
   expect(host.querySelector(".animate-spin")).toBe(spinner!);
-  expect(after[1]?.innerHTML).toContain("bg-neutral-850");
-  expect(after[0]?.innerHTML).not.toContain("bg-neutral-850");
+  // The fill is on the row's own button: the `⋯` beside it carries the same
+  // colour as a hover, so the row is asked rather than its markup searched.
+  expect(bodies(host)[1]?.className).toContain("bg-neutral-850");
+  expect(bodies(host)[0]?.className).not.toContain("bg-neutral-850");
+});
+
+test("every row wears its `⋯` without being hovered", async () => {
+  const { host } = paint();
+  await listed(host);
+
+  const triggers = host.querySelectorAll('[aria-label^="Options for"]');
+  expect(triggers).toHaveLength(2);
+  const trigger = menu(host);
+  expect(trigger.innerHTML).toContain("i-griddy-icons:more-horizontal");
+  // Dimmed, not hidden: a reveal on hover is nothing at all under a finger.
+  expect(trigger.className).toContain("opacity-60");
+  expect(trigger.className).not.toContain("opacity-0");
+  expect(verbs(host)).toHaveLength(0);
+});
+
+test("the `⋯` and a right-click open the same three verbs", async () => {
+  const { host } = paint();
+  await listed(host);
+
+  click(menu(host));
+  expect(verbs(host).map((option) => option.textContent)).toEqual([
+    "Rename",
+    "Mark unread",
+    "Archive",
+  ]);
+  expect(menu(host).getAttribute("aria-expanded")).toBe("true");
+
+  // Dismissed by a pointer landing anywhere else.
+  document.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+  flush();
+  expect(verbs(host)).toHaveLength(0);
+
+  bodies(host)[0]!.dispatchEvent(
+    new MouseEvent("contextmenu", { bubbles: true })
+  );
+  flush();
+  expect(verbs(host).map((option) => option.textContent)).toEqual([
+    "Rename",
+    "Mark unread",
+    "Archive",
+  ]);
+});
+
+test("marking a row unread holds the dot without navigating anywhere", async () => {
+  const navigated: number[] = [];
+  const { host, sent, switched } = paint({
+    onNavigate: () => navigated.push(1),
+  });
+  await listed(host);
+
+  click(menu(host));
+  choose(host, "Mark unread");
+
+  expect(sent.at(-1)).toEqual({
+    type: "set_session_unread",
+    sessionId: "aaaaaaaa-1111",
+    value: true,
+  });
+  expect(
+    host.querySelectorAll('li:first-child [aria-label="Unread"]')
+  ).toHaveLength(1);
+  // The drawer stays where it is: nothing here moved the reader.
+  expect(navigated).toEqual([]);
+  expect(switched).toEqual([]);
+  // And the verb reads back the other way.
+  click(menu(host));
+  expect(verbs(host).map((option) => option.textContent)).toContain(
+    "Mark read"
+  );
+});
+
+test("archiving takes the row off the live list", async () => {
+  const { host, sent } = paint();
+  await listed(host);
+  expect(bodies(host)).toHaveLength(2);
+
+  click(menu(host));
+  choose(host, "Archive");
+
+  expect(sent.at(-1)).toEqual({
+    type: "set_session_archived",
+    sessionId: "aaaaaaaa-1111",
+    value: true,
+  });
+  // The menu goes with the verb it was opened for.
+  expect(verbs(host)).toHaveLength(0);
+  expect(bodies(host)).toHaveLength(1);
+  expect(host.textContent).not.toContain("Modernise the string building");
+  expect(host.querySelector('[role="alert"]')).toBeNull();
+});
+
+test("a refused archive puts the row back and says why", async () => {
+  const { host } = paint({ refuse: "the session is open in the terminal" });
+  await listed(host);
+
+  click(menu(host));
+  choose(host, "Archive");
+  await Bun.sleep(0);
+  flush();
+
+  expect(bodies(host)).toHaveLength(2);
+  expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+    "the session is open in the terminal"
+  );
+});
+
+test("the footer opens the archived listing, and a row comes back from it", async () => {
+  const { host, sent } = paint({ archived: [PUT_AWAY] });
+  await listed(host);
+  expect(host.textContent).not.toContain("Put away last week");
+
+  click(host.querySelector("[aria-pressed]")!);
+  for (let hop = 0; hop < 20 && bodies(host).length !== 1; hop += 1) {
+    await Promise.resolve();
+    flush();
+  }
+
+  // A second listing, asked for by scope.
+  expect(sent.at(-1)).toEqual({ type: "list_sessions", archived: true });
+  expect(host.textContent).toContain("Put away last week");
+  expect(host.textContent).not.toContain("Modernise the string building");
+  expect(host.querySelector('[aria-pressed="true"]')).not.toBeNull();
+
+  click(menu(host));
+  expect(verbs(host).map((option) => option.textContent)).toEqual([
+    "Rename",
+    "Mark unread",
+    "Unarchive",
+  ]);
+  choose(host, "Unarchive");
+
+  expect(sent.at(-1)).toEqual({
+    type: "set_session_archived",
+    sessionId: "cccccccc-3333",
+    value: false,
+  });
+  expect(host.textContent).not.toContain("Put away last week");
+  expect(host.textContent).toContain("Nothing archived.");
+});
+
+test("the keyboard walks the menu and commits the row it stands on", async () => {
+  const { host, sent } = paint();
+  await listed(host);
+
+  const trigger = menu(host);
+  click(trigger);
+  press(trigger, "ArrowDown");
+  expect(verbs(host)[1]?.getAttribute("aria-selected")).toBe("true");
+  press(trigger, "End");
+  expect(verbs(host)[2]?.getAttribute("aria-selected")).toBe("true");
+  press(trigger, "Enter");
+
+  expect(sent.at(-1)).toEqual({
+    type: "set_session_archived",
+    sessionId: "aaaaaaaa-1111",
+    value: true,
+  });
+
+  click(menu(host));
+  expect(verbs(host)).toHaveLength(3);
+  press(menu(host), "Escape");
+  expect(verbs(host)).toHaveLength(0);
+});
+
+test("Rename writes over the row, commits on Enter and gives up on Escape", async () => {
+  const { host, sent } = paint();
+  await listed(host);
+
+  click(menu(host));
+  choose(host, "Rename");
+  const box = (): HTMLInputElement | null =>
+    host.querySelector<HTMLInputElement>(
+      '[aria-label="Rename Modernise the string building"]'
+    );
+  expect(box()?.value).toBe("Modernise the string building");
+  // It arrives with the caret in it, and with what is there already picked out.
+  expect(document.activeElement).toBe(box());
+  // The row it stands in for is gone while it is being named.
+  expect(bodies(host)).toHaveLength(1);
+
+  box()!.value = "Strings";
+  press(box()!, "Escape");
+  expect(box()).toBeNull();
+  expect(bodies(host)).toHaveLength(2);
+  expect(sent.some((command) => command.type === "set_session_name")).toBe(
+    false
+  );
+
+  click(menu(host));
+  choose(host, "Rename");
+  box()!.value = "Strings";
+  press(box()!, "Enter");
+
+  expect(sent.at(-1)).toEqual({
+    type: "set_session_name",
+    sessionId: "aaaaaaaa-1111",
+    value: "Strings",
+  });
+  expect(box()).toBeNull();
+});
+
+test("a name cleared to nothing goes back to the message the session opened with", async () => {
+  const { host, sent } = paint();
+  await listed(host);
+
+  click(menu(host));
+  choose(host, "Rename");
+  const box = host.querySelector<HTMLInputElement>('[aria-label^="Rename "]')!;
+  box.value = "   ";
+  press(box, "Enter");
+
+  expect(sent.at(-1)).toEqual({
+    type: "set_session_name",
+    sessionId: "aaaaaaaa-1111",
+    value: null,
+  });
+});
+
+test("a name left as it was says nothing to the server", async () => {
+  const { host, sent } = paint();
+  await listed(host);
+
+  click(menu(host));
+  choose(host, "Rename");
+  const box = host.querySelector<HTMLInputElement>('[aria-label^="Rename "]')!;
+  press(box, "Enter");
+
+  expect(sent.some((command) => command.type === "set_session_name")).toBe(
+    false
+  );
 });
