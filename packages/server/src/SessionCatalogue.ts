@@ -1,11 +1,20 @@
 import { EventLog } from "#core/session/EventLog";
 import type { SessionDigest } from "#core/session/EventLog";
 import type { ReadCursors } from "#core/session/ReadCursors";
-import type { SessionMeta } from "#core/session/SessionMeta";
-import type { SessionRegistry } from "#core/session/SessionRegistry";
+import type {
+  ProjectEntry,
+  SessionEntry,
+  SessionMeta,
+} from "#core/session/SessionMeta";
+import type {
+  SessionRegistry,
+  SessionSummary,
+} from "#core/session/SessionRegistry";
 import { FileWatch } from "#core/shared/FileWatch";
+import { Pool } from "#core/shared/Pool";
 import type { Command } from "#protocol/Command";
 import type {
+  ProjectView,
   ServerEvent,
   SessionStatus,
   SessionSummaryView,
@@ -23,12 +32,33 @@ export type SessionCatalogueDeps = {
   readonly announce: (event: ServerEvent) => void;
 };
 
+/** The rows the page kept, and every directory the same scope holds sessions in. */
+export type SessionListing = {
+  readonly sessions: readonly SessionSummaryView[];
+  readonly projects: readonly ProjectView[];
+};
+
 const DEFAULT_SESSION_LIMIT = 50;
+
+/** A digest is a whole-file read; a page of them at once is a page of files in memory at once. */
+const DIGEST_READS = 16;
 
 /** Long enough that a turn's entries are one announcement, short enough that a new session appears while the user is still looking. */
 const ANNOUNCE_MS = 500;
 
 type CachedDigest = SessionDigest & { readonly modifiedAt: number };
+
+type Overrides = ReadonlyMap<string, SessionEntry>;
+type Pins = ReadonlyMap<string, ProjectEntry>;
+
+type PageScope = {
+  readonly overrides: Overrides;
+  readonly pins: Pins;
+  /** True while listing the archived sessions rather than the live ones. */
+  readonly archived: boolean;
+  readonly limit: number;
+  readonly perProject: number;
+};
 
 export class SessionCatalogue {
   private readonly deps: SessionCatalogueDeps;
@@ -68,8 +98,8 @@ export class SessionCatalogue {
 
   public async list(
     command: Command & { readonly type: "list_sessions" }
-  ): Promise<readonly SessionSummaryView[]> {
-    const [summaries, overrides, projects] = await Promise.all([
+  ): Promise<SessionListing> {
+    const [summaries, overrides, pins] = await Promise.all([
       this.deps.registry.list(command.cwd),
       this.deps.meta.sessions(),
       this.deps.meta.projects(),
@@ -86,44 +116,24 @@ export class SessionCatalogue {
       ]);
     }
     const scope = command.archived === true;
-    // Cut by modified time and digest only the page: ordering by settle time would read every session on disk.
-    const page = await Promise.all(
-      summaries
-        // Before the cut: an archived row that ate the page budget would push a live one off the end.
-        .filter(
-          (summary) =>
-            (overrides.get(summary.sessionId)?.archived === true) === scope
-        )
-        .slice(0, command.limit ?? DEFAULT_SESSION_LIMIT)
-        .map(async ({ sessionId, cwd, path, createdAt, modifiedAt }) => {
-          const status = this.deps.liveStatus(sessionId);
-          const { title, named, settledAt } = await this.digestOf(
-            sessionId,
-            path,
-            modifiedAt,
-            status
-          );
-          const answeredAt = this.answerTime(sessionId, status, settledAt);
-          const unread =
-            overrides.get(sessionId)?.unread === true ||
-            (await this.deps.cursors.isUnread(sessionId, answeredAt));
-          return {
-            sessionId,
-            cwd,
-            createdAt,
-            settledAt: answeredAt ?? settledAt ?? createdAt,
-            ...(title === undefined ? {} : { title }),
-            ...(named === true ? { named } : {}),
-            ...(scope ? { archived: true as const } : {}),
-            ...(projects.get(cwd)?.pinned === true
-              ? { pinned: true as const }
-              : {}),
-            ...(status === undefined || status === "idle" ? {} : { status }),
-            ...(unread ? { unread: true } : {}),
-          };
-        })
+    // Before the cut: an archived row that ate the page budget would push a live one off the end.
+    const inScope = summaries.filter(
+      (summary) =>
+        (overrides.get(summary.sessionId)?.archived === true) === scope
     );
-    return page.sort((a, b) => b.settledAt - a.settledAt);
+    const limit = command.limit ?? DEFAULT_SESSION_LIMIT;
+    return {
+      sessions: await this.page(inScope, {
+        overrides,
+        pins,
+        archived: scope,
+        limit,
+        // Absent, a project may fill the page; it is the page that bounds it either way.
+        perProject: command.perProject ?? limit,
+      }),
+      // Counted before the cut, and over the whole scope: a collapsed group says how many it holds, and a row the cut dropped is one a client can still ask for.
+      projects: projectsOf(inScope, pins),
+    };
   }
 
   /** Announces a status edge to every client; the announcement must precede the read mark. */
@@ -160,6 +170,76 @@ export class SessionCatalogue {
     this.digests.clear();
     this.activity.clear();
     this.settled.clear();
+  }
+
+  /**
+   * Selects by modified time under a per-project budget and digests only what
+   * it selects: ordering by settle time would read every session on disk. A
+   * session with nothing to call itself is not a row, and the budget it spent
+   * goes back to its project, so a directory of abandoned files still shows
+   * the sessions underneath them.
+   */
+  private async page(
+    candidates: readonly SessionSummary[],
+    scope: PageScope
+  ): Promise<readonly SessionSummaryView[]> {
+    const rows: SessionSummaryView[] = [];
+    const taken = new Map<string, number>();
+    const consumed = new Set<SessionSummary>();
+    for (;;) {
+      const batch = choose(candidates, consumed, taken, {
+        room: scope.limit - rows.length,
+        perProject: scope.perProject,
+      });
+      if (batch.length === 0) {
+        break;
+      }
+      const built = await Pool.mapPooled(batch, DIGEST_READS, (summary) =>
+        this.row(summary, scope)
+      );
+      for (const [index, row] of built.entries()) {
+        if (row === undefined) {
+          const { cwd } = batch[index]!;
+          taken.set(cwd, (taken.get(cwd) ?? 1) - 1);
+          continue;
+        }
+        rows.push(row);
+      }
+    }
+    return rows.sort((a, b) => b.settledAt - a.settledAt);
+  }
+
+  /** Nothing for a session that never asked anything and was never named: the row it would draw is a truncated UUID. */
+  private async row(
+    { sessionId, cwd, path, createdAt, modifiedAt }: SessionSummary,
+    { overrides, pins, archived }: PageScope
+  ): Promise<SessionSummaryView | undefined> {
+    const status = this.deps.liveStatus(sessionId);
+    const { title, named, settledAt } = await this.digestOf(
+      sessionId,
+      path,
+      modifiedAt,
+      status
+    );
+    if (title === undefined) {
+      return undefined;
+    }
+    const answeredAt = this.answerTime(sessionId, status, settledAt);
+    const unread =
+      overrides.get(sessionId)?.unread === true ||
+      (await this.deps.cursors.isUnread(sessionId, answeredAt));
+    return {
+      sessionId,
+      cwd,
+      createdAt,
+      settledAt: answeredAt ?? settledAt ?? createdAt,
+      title,
+      ...(named === true ? { named } : {}),
+      ...(archived ? { archived: true as const } : {}),
+      ...(pins.get(cwd)?.pinned === true ? { pinned: true as const } : {}),
+      ...(status === undefined || status === "idle" ? {} : { status }),
+      ...(unread ? { unread: true } : {}),
+    };
   }
 
   // One watch per directory, never a recursive one: `fs.watch` recursion is unsupported on some platforms and silent on others.
@@ -280,4 +360,43 @@ function renamed(
   return typeof name === "string"
     ? { ...digest, title: name, named: true }
     : digest;
+}
+
+/** The next sessions to digest, newest first, skipping the projects that have spent their budget and the candidates an earlier round already took. */
+function choose(
+  candidates: readonly SessionSummary[],
+  consumed: Set<SessionSummary>,
+  taken: Map<string, number>,
+  budget: { readonly room: number; readonly perProject: number }
+): readonly SessionSummary[] {
+  const batch: SessionSummary[] = [];
+  for (const summary of candidates) {
+    if (batch.length >= budget.room) {
+      break;
+    }
+    const used = taken.get(summary.cwd) ?? 0;
+    if (consumed.has(summary) || used >= budget.perProject) {
+      continue;
+    }
+    taken.set(summary.cwd, used + 1);
+    consumed.add(summary);
+    batch.push(summary);
+  }
+  return batch;
+}
+
+/** Every working directory the scope holds sessions in, newest first; the count is the header scan's, so it owes nothing to the page. */
+function projectsOf(
+  summaries: readonly SessionSummary[],
+  pins: Pins
+): readonly ProjectView[] {
+  const counts = new Map<string, number>();
+  for (const { cwd } of summaries) {
+    counts.set(cwd, (counts.get(cwd) ?? 0) + 1);
+  }
+  return [...counts].map(([cwd, count]) => ({
+    cwd,
+    count,
+    ...(pins.get(cwd)?.pinned === true ? { pinned: true as const } : {}),
+  }));
 }

@@ -23,6 +23,8 @@ const USAGE = `pim probe — CLI client for pim-server, dumps every frame as JSO
   --list-sessions          print pi's session catalogue and exit
   --archived               with --list-sessions, print the archived sessions
                            instead of the live ones
+  --per-project <n>        with --list-sessions, keep at most n sessions per
+                           working directory
   --archive                put --session out of the live listing
   --unarchive              bring --session back into it
   --mark-unread            hold --session unread until something reads it
@@ -52,6 +54,7 @@ const { values } = parseArgs({
     "pick-commands": { type: "string" },
     "list-sessions": { type: "boolean", default: false },
     archived: { type: "boolean", default: false },
+    "per-project": { type: "string" },
     archive: { type: "boolean", default: false },
     unarchive: { type: "boolean", default: false },
     "mark-unread": { type: "boolean", default: false },
@@ -112,12 +115,21 @@ if (values["pick-files"] !== undefined) {
   }
 }
 if (values["list-sessions"]) {
-  for (const summary of await probe.listSessions({
+  const started = Bun.nanoseconds();
+  const { sessions, projects } = await probe.catalogue({
     ...(values.cwd === undefined ? {} : { cwd: values.cwd }),
     ...(values.archived ? { archived: true } : {}),
-  })) {
+    ...(values["per-project"] === undefined
+      ? {}
+      : { perProject: Number(values["per-project"]) }),
+  });
+  const ms = (Bun.nanoseconds() - started) / 1e6;
+  for (const summary of sessions) {
     process.stdout.write(`${JSON.stringify(summary)}\n`);
   }
+  process.stderr.write(
+    `list-sessions: ${sessions.length} rows from ${projects.length} projects in ${ms.toFixed(1)}ms\n`
+  );
 }
 if (values["list-models"]) {
   process.stdout.write(`${JSON.stringify(await probe.listModels())}\n`);

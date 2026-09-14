@@ -97,6 +97,27 @@ test("an empty sessions root lists nothing", async () => {
   expect(await registry.list()).toEqual([]);
 });
 
+test("lists every session past the gate the header scan fans out through", async () => {
+  const count = 64;
+  await Promise.all(
+    Array.from({ length: count }, (_, index) =>
+      seed("--tmp-many--", `2026-08-02T00-00-00-000Z_${index}.jsonl`, {
+        id: `session-${index}`,
+        cwd: "/tmp/many",
+      })
+    )
+  );
+
+  const listed = await registry.list();
+  expect(new Set(listed.map((summary) => summary.sessionId)).size).toBe(count);
+  expect(
+    listed.every(
+      (summary, index) =>
+        index === 0 || summary.modifiedAt <= listed[index - 1]!.modifiedAt
+    )
+  ).toBe(true);
+});
+
 test("opens an existing session by pi's uuid and caches it under that key", async () => {
   const path = await seed(
     "--home-htpc-Desktop-dev-mmorpg--",
@@ -128,6 +149,19 @@ test("creates a session under the uuid pi assigns it", async () => {
 
 test("rejects an unknown session id", async () => {
   expect(registry.open("nope")).rejects.toThrow("unknown session: nope");
+});
+
+test("opens a session whose file is not named after it", async () => {
+  // The id is the header's. Pi's own filenames carry it, and the id a file
+  // was written under is the one the header says either way.
+  const path = await seed("--tmp-odd--", "notes.jsonl", {
+    id: "renamed-file",
+    cwd: "/tmp/odd",
+  });
+
+  const host = await registry.open("renamed-file");
+  expect(host.settings.sessionPath).toBe(path);
+  expect(host.cwd).toBe("/tmp/odd");
 });
 
 test("requires init before building a host", async () => {

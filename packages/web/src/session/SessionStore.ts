@@ -18,6 +18,7 @@ import type {
   DurableEvent,
   EphemeralEvent,
   ModelView,
+  ProjectView,
   ServerEvent,
   SessionStatus,
   SessionSummaryView,
@@ -134,6 +135,15 @@ export type SessionStoreOptions = {
 export type SessionScope = {
   readonly cwd?: string;
   readonly archived?: boolean;
+  /** Keep at most this many sessions per working directory, so one busy project cannot fill the page. */
+  readonly perProject?: number;
+};
+
+/** One answer to `list_sessions`: the page of rows, and every directory that had one, counted whole. */
+export type SessionListing = {
+  readonly sessions: readonly SessionSummaryView[];
+  /** Counted before the per-project cut, so a group can say what a page of it leaves out. */
+  readonly projects: readonly ProjectView[];
 };
 
 /** The flags a row draws from this store alone, each one a command away. */
@@ -685,28 +695,38 @@ export class SessionStore {
     }
   }
 
-  /** Directories this machine has sessions in, recent first, current one left out. */
+  /**
+   * Directories this machine has sessions in, recent first, current one left
+   * out. Asked for one session per project: a flat page is all one directory
+   * on any real corpus, and every other project is invisible in it.
+   */
   public async recentDirectories(limit = 5): Promise<readonly string[]> {
-    const sessions = await this.listSessions();
+    const listing = await this.listSessions({ perProject: 1 });
     const recent: string[] = [];
-    for (const session of sessions) {
-      if (session.cwd !== this.state.cwd && !recent.includes(session.cwd)) {
-        recent.push(session.cwd);
-        if (recent.length === limit) {
-          break;
-        }
+    const here = this.state.cwd;
+    // The rows carry the recency; the projects carry whatever the page cut.
+    for (const cwd of [
+      ...listing.sessions.map((session) => session.cwd),
+      ...listing.projects.map((project) => project.cwd),
+    ]) {
+      if (cwd !== here && !recent.includes(cwd)) {
+        recent.push(cwd);
+      }
+      if (recent.length === limit) {
+        break;
       }
     }
     return recent;
   }
 
-  public async listSessions(
-    scope: SessionScope = {}
-  ): Promise<readonly SessionSummaryView[]> {
+  public async listSessions(scope: SessionScope = {}): Promise<SessionListing> {
     const response = await this.client
       .send({
         type: "list_sessions",
         ...(scope.cwd === undefined ? {} : { cwd: scope.cwd }),
+        ...(scope.perProject === undefined
+          ? {}
+          : { perProject: scope.perProject }),
         ...(scope.archived === true ? { archived: true } : {}),
       })
       .catch(() => undefined);
@@ -738,7 +758,7 @@ export class SessionStore {
     ) {
       this.drafts.setUnwritten(undefined);
     }
-    return rows;
+    return { sessions: rows, projects: response?.projects ?? [] };
   }
 
   private seed(

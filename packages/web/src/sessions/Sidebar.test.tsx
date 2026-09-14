@@ -13,7 +13,7 @@ import { flush, untrack } from "solid-js";
 
 import type { CommandDraft } from "#protocol/Command";
 import { PROTOCOL_VERSION } from "#protocol/Protocol";
-import type { SessionSummaryView } from "#protocol/ServerEvent";
+import type { ProjectView, SessionSummaryView } from "#protocol/ServerEvent";
 import { SessionStore } from "../session/SessionStore";
 import { mountPoint } from "../test/dom";
 import { Sidebar } from "./Sidebar";
@@ -51,6 +51,17 @@ type Painted = {
   readonly store: SessionStore;
 };
 
+/** What the server counts behind a page of rows: every session each directory holds. */
+function counted(
+  sessions: readonly SessionSummaryView[]
+): readonly ProjectView[] {
+  const tally = new Map<string, number>();
+  for (const session of sessions) {
+    tally.set(session.cwd, (tally.get(session.cwd) ?? 0) + 1);
+  }
+  return [...tally].map(([cwd, count]) => ({ cwd, count }));
+}
+
 /**
  * Offline: the listing is the only thing this reads, so it is the only thing
  * answered. Answered rather than stubbed away, because the marks it carries
@@ -62,6 +73,9 @@ function paint(
     readonly onNavigate?: () => void;
     readonly onOpenSettings?: () => void;
     readonly unread?: readonly string[];
+    readonly sessions?: readonly SessionSummaryView[];
+    /** Overrides the count behind the page, for a project the cut trimmed. */
+    readonly projects?: readonly ProjectView[];
     readonly archived?: readonly SessionSummaryView[];
     /** What the server refuses every mutating command with. */
     readonly refuse?: string;
@@ -70,37 +84,40 @@ function paint(
   const store = new SessionStore({ url: "ws://127.0.0.1:1" });
   const switched: string[] = [];
   const sent: CommandDraft[] = [];
+  const live = options.sessions ?? SESSIONS;
   store.client.send = async (draft) => {
     sent.push(draft);
     if (draft.type === "list_sessions") {
+      const scope = draft.archived === true ? (options.archived ?? []) : live;
+      const answered =
+        draft.cwd === undefined
+          ? scope
+          : scope.filter((session) => session.cwd === draft.cwd);
       return {
         type: "response",
         id: "1",
         success: true,
-        sessions:
-          draft.archived === true
-            ? (options.archived ?? [])
-            : SESSIONS.map((session) => {
-                // A real listing says what each session is doing, so this one
-                // does too: the spinner is read off the status, and a row
-                // answered for as idle would stop one mid-turn on the next
-                // re-list.
-                // Untracked: the server this stands in for is answering a
-                // request, not deriving a value, and this runs from inside the
-                // effect that asked.
-                const status = untrack(
-                  () => store.state.activity[session.sessionId]
-                );
-                return {
-                  ...session,
-                  ...((options.unread ?? []).includes(session.sessionId)
-                    ? { unread: true }
-                    : {}),
-                  ...(status === undefined || status === "idle"
-                    ? {}
-                    : { status }),
-                };
-              }),
+        projects: options.projects ?? counted(scope),
+        sessions: (draft.perProject === undefined
+          ? answered
+          : cut(answered, draft.perProject)
+        ).map((session) => {
+          // A real listing says what each session is doing, so this one
+          // does too: the spinner is read off the status, and a row
+          // answered for as idle would stop one mid-turn on the next
+          // re-list.
+          // Untracked: the server this stands in for is answering a
+          // request, not deriving a value, and this runs from inside the
+          // effect that asked.
+          const status = untrack(() => store.state.activity[session.sessionId]);
+          return {
+            ...session,
+            ...((options.unread ?? []).includes(session.sessionId)
+              ? { unread: true }
+              : {}),
+            ...(status === undefined || status === "idle" ? {} : { status }),
+          };
+        }),
       };
     }
     return options.refuse === undefined
@@ -127,6 +144,19 @@ function paint(
   return { host, switched, sent, store };
 }
 
+/** The server's per-project cut: the newest `perProject` of every directory. */
+function cut(
+  sessions: readonly SessionSummaryView[],
+  perProject: number
+): readonly SessionSummaryView[] {
+  const tally = new Map<string, number>();
+  return sessions.filter((session) => {
+    const held = (tally.get(session.cwd) ?? 0) + 1;
+    tally.set(session.cwd, held);
+    return held <= perProject;
+  });
+}
+
 /** Both live in the browser, so both are seeded where the browser keeps them. */
 function draft(sessionId: string, text: string): void {
   localStorage.setItem("pim.drafts", JSON.stringify({ [sessionId]: text }));
@@ -151,6 +181,31 @@ function menu(host: HTMLElement, index = 0): HTMLButtonElement {
   return [
     ...host.querySelectorAll<HTMLButtonElement>('[aria-label^="Options for"]'),
   ][index]!;
+}
+
+/** One group: the disclosure a directory's sessions hang under. */
+function directories(host: HTMLElement): readonly HTMLDetailsElement[] {
+  return [...host.querySelectorAll<HTMLDetailsElement>("nav details")];
+}
+
+function heading(host: HTMLElement, index = 0): HTMLElement {
+  return directories(host)[index]!.querySelector("summary")!;
+}
+
+/** Which directory a group is for, read off the header's own tooltip. */
+function where(host: HTMLElement): readonly string[] {
+  return directories(host).map(
+    (group) =>
+      group.querySelector("summary [title]")?.getAttribute("title") ?? ""
+  );
+}
+
+function named(host: HTMLElement, label: string): HTMLButtonElement {
+  const found = [...host.querySelectorAll("button")].find(
+    (button) => button.textContent === label
+  );
+  expect(found).toBeDefined();
+  return found as HTMLButtonElement;
 }
 
 function press(target: Element, key: string): void {
@@ -215,21 +270,170 @@ test("the header uses the compact pixel wordmark with an accessible name", () =>
   expect(logo?.classList.contains("h-5")).toBe(true);
 });
 
-test("one flat row per session: name, directory and how long ago", async () => {
+/**
+ * What the flat list used to be. The directory is said once now, by the
+ * header the sessions hang under, and a row keeps everything else it had.
+ */
+test("a group per directory, and one row per session under it", async () => {
   const { host } = paint();
   await Bun.sleep(0);
   flush();
+
+  expect(directories(host)).toHaveLength(2);
+  expect(heading(host).textContent).toContain("pim");
+  // The whole path, on the header rather than on every row it stands over.
+  expect(heading(host).querySelector('[title="~/dev/pim"]')).not.toBeNull();
+  expect(heading(host, 1).textContent).toContain("other");
 
   const rows = [...host.querySelectorAll("li")];
   expect(rows).toHaveLength(2);
   expect(rows[0]?.textContent).toContain("Modernise the string building");
   // A session with nothing written to it yet has only its id for a name.
   expect(rows[1]?.textContent).toContain("bbbbbbbb");
-  // The directory only; the full path is the row's tooltip.
-  expect(rows[0]?.textContent).toContain("pim");
-  expect(rows[0]?.textContent).not.toContain("~/dev/pim");
-  expect(rows[0]?.querySelector('[title="~/dev/pim"]')).not.toBeNull();
-  expect(rows[1]?.textContent).toContain("other");
+  // Name and age; the directory has left the row.
+  expect(rows[0]?.textContent).toMatch(/\d+[smhd]/);
+  expect(rows[0]?.textContent).not.toContain("dev/pim");
+});
+
+/**
+ * The property that makes a flat sidebar usable, kept through the fold:
+ * what you were last doing is at the top. Alphabetical grouping would put
+ * `/srv/api` over a project answered in ten seconds ago.
+ */
+test("groups stand in the order their newest session settled", async () => {
+  const { host } = paint({
+    sessions: [
+      { sessionId: "c1", cwd: "/srv/api", createdAt: 0, settledAt: 300 },
+      {
+        sessionId: "a1",
+        cwd: "/home/ada/dev/pim",
+        createdAt: 0,
+        settledAt: 200,
+      },
+      { sessionId: "b1", cwd: "/srv/other", createdAt: 0, settledAt: 100 },
+      {
+        sessionId: "a2",
+        cwd: "/home/ada/dev/pim",
+        createdAt: 0,
+        settledAt: 50,
+      },
+    ],
+  });
+  await listed(host);
+
+  expect(where(host)).toEqual(["/srv/api", "~/dev/pim", "/srv/other"]);
+
+  // And the project's own sessions, newest first, under its header.
+  const under = [...directories(host)[1]!.querySelectorAll("li")];
+  expect(under).toHaveLength(2);
+  expect(under[0]?.textContent).toContain("a1");
+  expect(under[1]?.textContent).toContain("a2");
+});
+
+test("the group holding the session being read is the open one", async () => {
+  const { host, store } = paint();
+  await listed(host);
+
+  // Nothing attached yet: the newest project stands open, so the sidebar is
+  // never a wall of closed headers.
+  expect(directories(host).map((group) => group.open)).toEqual([true, false]);
+
+  store.ingest({
+    type: "attached",
+    protocolVersion: PROTOCOL_VERSION,
+    sessionId: "bbbbbbbb-2222",
+    cwd: "/srv/other",
+    head: 0,
+    pimVersion: "1.2.3",
+    piVersion: "0.9.0",
+  });
+  flush();
+  await Bun.sleep(0);
+  flush();
+
+  expect(directories(host).map((group) => group.open)).toEqual([false, true]);
+});
+
+test("a collapsed group says how many sessions it is standing in for", async () => {
+  const { host } = paint({
+    projects: [
+      { cwd: "/home/ada/dev/pim", count: 4 },
+      { cwd: "/srv/other", count: 9 },
+    ],
+  });
+  await listed(host);
+
+  // The count is the directory's own, not the page's: a cut group still
+  // reports everything it holds.
+  expect(heading(host).textContent).not.toContain("4");
+  expect(heading(host, 1).textContent).toContain("9");
+});
+
+test("a group with more sessions than the page holds asks for the rest", async () => {
+  const navigated: number[] = [];
+  const { host, sent } = paint({
+    onNavigate: () => navigated.push(1),
+    sessions: Array.from({ length: 12 }, (unused, at) => ({
+      sessionId: `s${at}`,
+      cwd: "/home/ada/dev/pim",
+      createdAt: 0,
+      settledAt: 1000 - at,
+      title: `Session ${at}`,
+    })),
+  });
+  await listed(host);
+
+  // Ten per project, and the header knows what that left out.
+  expect(host.querySelectorAll("li")).toHaveLength(10);
+  click(named(host, "Show 2 more"));
+  await Bun.sleep(0);
+  flush();
+
+  // One directory re-read on a press, rather than a fatter page on every
+  // listing this sidebar ever asks for.
+  expect(sent.at(-1)).toEqual({
+    type: "list_sessions",
+    cwd: "/home/ada/dev/pim",
+  });
+  expect(host.querySelectorAll("li")).toHaveLength(12);
+  expect(host.textContent).not.toContain("Show 2 more");
+  // Reading more of a project is not going anywhere.
+  expect(navigated).toEqual([]);
+});
+
+test("opening and closing a group moves nothing but the group", async () => {
+  const navigated: number[] = [];
+  const { host, switched } = paint({ onNavigate: () => navigated.push(1) });
+  await listed(host);
+
+  click(heading(host, 1));
+  expect(directories(host).map((group) => group.open)).toEqual([true, true]);
+
+  // And a group closed by hand stays closed, active session or not.
+  click(heading(host));
+  expect(directories(host).map((group) => group.open)).toEqual([false, true]);
+  expect(navigated).toEqual([]);
+  expect(switched).toEqual([]);
+});
+
+test("the fold can be dropped for plain recency, and the choice is kept", async () => {
+  const { host } = paint();
+  await listed(host);
+  expect(directories(host)).toHaveLength(2);
+
+  click(host.querySelector('[aria-label="Group by directory"]')!);
+
+  // The same rows, unfolded — and the directory is back on each of them,
+  // since no header is saying it any more.
+  expect(directories(host)).toHaveLength(0);
+  expect(bodies(host)).toHaveLength(2);
+  expect(bodies(host)[0]?.textContent).toContain("pim");
+  expect(localStorage.getItem("pim.sidebar.grouping")).toBe("recent");
+
+  // A per-device preference, so it survives the tab being loaded again.
+  const { host: reopened } = paint();
+  await listed(reopened);
+  expect(directories(reopened)).toHaveLength(0);
 });
 
 test("the dot marks a session that has answered since anything read it", async () => {
@@ -332,7 +536,7 @@ test("a row's age follows the clock, not the next render", async () => {
  * dialog now — a bar that reported a healthy socket every second it was
  * healthy was chrome nobody read.
  */
-test("the header carries the app's two buttons and nothing about the socket", () => {
+test("the header carries the app's own buttons and nothing about the socket", () => {
   const opened: number[] = [];
   const { host } = paint({ onOpenSettings: () => opened.push(1) });
   const header = host.querySelector("h1")!.closest("div")!.parentElement!;
@@ -340,7 +544,7 @@ test("the header carries the app's two buttons and nothing about the socket", ()
     button.getAttribute("aria-label")
   );
 
-  expect(labels).toEqual(["New session", "Settings"]);
+  expect(labels).toEqual(["Group by directory", "New session", "Settings"]);
   expect(host.textContent).not.toContain("127.0.0.1:1");
 
   header.querySelector<HTMLButtonElement>('[aria-label="Settings"]')!.click();
@@ -357,6 +561,11 @@ test("a new chat is a row before it is a file, marked and ageless", async () => 
   const rows = [...host.querySelectorAll("li")];
   // Newest first, and nothing is newer than the chat being started.
   expect(rows).toHaveLength(3);
+  // Grouped by the directory it will be written in, over the sessions
+  // already there — a chat nobody has sent yet has settled at no time at all,
+  // and stands above every session that has.
+  expect(where(host)).toEqual(["~/dev/pim", "/srv/other"]);
+  expect(directories(host)[0]?.querySelectorAll("li")).toHaveLength(2);
   // Named by the message it is about to send, exactly as a written session is
   // named by the one it did.
   expect(rows[0]?.textContent).toContain("rework the sidebar");
@@ -521,11 +730,14 @@ test("the listing is re-read when a turn ends, so the age is since the reply", a
   store.listSessions = async () => {
     listings += 1;
     // Settled just now, which is what a finished turn leaves behind.
-    return SESSIONS.map((session) =>
-      session.sessionId === "aaaaaaaa-1111"
-        ? { ...session, settledAt: Date.now() }
-        : session
-    );
+    return {
+      sessions: SESSIONS.map((session) =>
+        session.sessionId === "aaaaaaaa-1111"
+          ? { ...session, settledAt: Date.now() }
+          : session
+      ),
+      projects: counted(SESSIONS),
+    };
   };
 
   store.ingest({
@@ -748,17 +960,23 @@ test("the footer opens the archived listing, and a row comes back from it", asyn
   await listed(host);
   expect(host.textContent).not.toContain("Put away last week");
 
-  click(host.querySelector("[aria-pressed]")!);
+  click(named(host, "Archived"));
   for (let hop = 0; hop < 20 && bodies(host).length !== 1; hop += 1) {
     await Promise.resolve();
     flush();
   }
 
   // A second listing, asked for by scope.
-  expect(sent.at(-1)).toEqual({ type: "list_sessions", archived: true });
+  expect(sent.at(-1)).toEqual({
+    type: "list_sessions",
+    archived: true,
+    perProject: 10,
+  });
   expect(host.textContent).toContain("Put away last week");
   expect(host.textContent).not.toContain("Modernise the string building");
-  expect(host.querySelector('[aria-pressed="true"]')).not.toBeNull();
+  expect(named(host, "Back to sessions").getAttribute("aria-pressed")).toBe(
+    "true"
+  );
 
   click(menu(host));
   expect(verbs(host).map((option) => option.textContent)).toEqual([

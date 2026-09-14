@@ -235,6 +235,14 @@ export type SessionSummaryView = {
   readonly status?: SessionStatus;
 };
 
+/** One working directory the catalogue holds sessions for, counted before any per-project cut. */
+export type ProjectView = {
+  readonly cwd: string;
+  /** Every session in it the listing's scope allows, including the ones the cut dropped. */
+  readonly count: number;
+  readonly pinned?: true;
+};
+
 /** One model the server can be switched to, for the composer's model menu. */
 export type ModelView = {
   readonly id: string;
@@ -253,6 +261,8 @@ export type ResponseEvent = {
   readonly items?: readonly PickerItem[];
   /** The catalogue, for `list_sessions`. */
   readonly sessions?: readonly SessionSummaryView[];
+  /** The directories those sessions came from, for `list_sessions`. */
+  readonly projects?: readonly ProjectView[];
   /** The model catalogue, for `list_models`. */
   readonly models?: readonly ModelView[];
   /** What the *current* model supports, on the same answer. */

@@ -823,7 +823,7 @@ describe("archive, names and pins", () => {
     const target = store();
     catalogue(target, [row("s1", { title: "Parser work", named: true })]);
 
-    const listed = await target.listSessions();
+    const { sessions: listed } = await target.listSessions();
     expect(listed[0]?.title).toBe("Parser work");
     expect(listed[0]?.named).toBe(true);
     expect(target.sessionName("s1")).toBe("Parser work");
@@ -868,7 +868,7 @@ describe("archive, names and pins", () => {
   test("a broadcast patches a listing already in hand", async () => {
     const target = store();
     catalogue(target, [row("s1"), row("s2", { cwd: "/other" })]);
-    const held = await target.listSessions();
+    const { sessions: held } = await target.listSessions();
     expect(held.map((one) => one.archived)).toEqual([undefined, undefined]);
 
     // What another window did. No session file moved, so no `sessions_changed`
@@ -913,7 +913,7 @@ describe("archive, names and pins", () => {
 
     const archiving = target.setArchived("s1", true);
     // Read off the disk before the command got there, so it still says live.
-    const listed = await target.listSessions();
+    const { sessions: listed } = await target.listSessions();
 
     expect(listed[0]?.archived).toBe(true);
     expect(target.isArchived("s1")).toBe(true);
@@ -928,12 +928,53 @@ describe("archive, names and pins", () => {
     await target.listSessions();
     await target.listSessions({ cwd: "/repo" });
     await target.listSessions({ archived: true });
+    await target.listSessions({ perProject: 10 });
 
     expect(sent).toEqual([
       { type: "list_sessions" },
       { type: "list_sessions", cwd: "/repo" },
       { type: "list_sessions", archived: true },
+      { type: "list_sessions", perProject: 10 },
     ]);
+  });
+
+  /**
+   * The real corpus this was measured against is 194 sessions over 14
+   * directories, `[178, 3, 2, 1, …]`: a flat page of it is one project, and
+   * every other directory a reader might want to go back to is off the end of
+   * it. One session per project is the whole answer and the smallest one.
+   */
+  test("the recent directories are one per project, not the head of a flat page", async () => {
+    const target = store();
+    const sent: Sent[] = [];
+    target.client.send = (async (command: Sent) => {
+      sent.push(command);
+      return {
+        type: "response",
+        id: "1",
+        success: true,
+        sessions: [
+          row("s1", { cwd: "/busy", settledAt: 9 }),
+          row("s2", { cwd: "/quiet", settledAt: 8 }),
+          row("s3", { cwd: "/repo", settledAt: 7 }),
+        ],
+        projects: [
+          { cwd: "/busy", count: 178 },
+          { cwd: "/quiet", count: 2 },
+          { cwd: "/repo", count: 1 },
+          // Past the page, and still a directory this machine works in.
+          { cwd: "/forgotten", count: 1 },
+        ],
+      };
+    }) as typeof target.client.send;
+    feed(target, attached("s3"));
+
+    expect(await target.recentDirectories()).toEqual([
+      "/busy",
+      "/quiet",
+      "/forgotten",
+    ]);
+    expect(sent).toEqual([{ type: "list_sessions", perProject: 1 }]);
   });
 });
 

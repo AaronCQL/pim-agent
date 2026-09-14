@@ -7,6 +7,7 @@ import { PROTOCOL_VERSION } from "#protocol/Protocol";
 import {
   isDurableEvent,
   type ModelView,
+  type ProjectView,
   type ResponseEvent,
   type ServerEvent,
   type SessionSummaryView,
@@ -35,6 +36,8 @@ export type SessionScope = {
   /** List the archived sessions instead of the live ones. */
   readonly archived?: boolean;
   readonly limit?: number;
+  /** Keep at most this many sessions per working directory. */
+  readonly perProject?: number;
 };
 
 /** What `POST /upload` answers with, all of it server-side. */
@@ -186,16 +189,30 @@ export class ProbeClient {
   public async listSessions(
     scope: SessionScope = {}
   ): Promise<readonly SessionSummaryView[]> {
+    return (await this.catalogue(scope)).sessions;
+  }
+
+  /** The listing whole: the rows the page kept and the projects they came from. */
+  public async catalogue(scope: SessionScope = {}): Promise<{
+    readonly sessions: readonly SessionSummaryView[];
+    readonly projects: readonly ProjectView[];
+  }> {
     const response = await this.send({
       type: "list_sessions",
       ...(scope.cwd === undefined ? {} : { cwd: scope.cwd }),
       ...(scope.archived === true ? { archived: true } : {}),
       ...(scope.limit === undefined ? {} : { limit: scope.limit }),
+      ...(scope.perProject === undefined
+        ? {}
+        : { perProject: scope.perProject }),
     });
     if (!response.success) {
       throw new Error(response.error ?? "list_sessions failed");
     }
-    return response.sessions ?? [];
+    return {
+      sessions: response.sessions ?? [],
+      projects: response.projects ?? [],
+    };
   }
 
   /** Names a session through pi's own name; `null` clears it back to its opening message. */

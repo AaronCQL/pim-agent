@@ -41,8 +41,10 @@ const TAIL_LINES = 10;
 
 const TITLE_LIMIT = 120;
 
-/** Cheap reject before parsing a line: pi writes the discriminant verbatim. */
-const NAMED = '"session_info"';
+/** Cheap reject before decoding a line: pi writes the discriminant verbatim. */
+const NAMED = Buffer.from('"session_info"');
+
+const NEWLINE = 0x0a;
 
 /** What the session catalogue shows for one file without opening a session. */
 export type SessionDigest = {
@@ -119,18 +121,23 @@ export class EventLog {
   /**
    * The name pi's own `/name` writes: the last `session_info` entry wins, and an
    * empty one clears it. Appended rather than replaced, so it is found by reading
-   * the whole file — the one unbounded read the catalogue makes.
+   * the whole file — the one unbounded read the catalogue makes, and the only
+   * reason the bytes below are not a bounded head and tail.
    */
   public async name(): Promise<string | undefined> {
-    return lastName(await completeLines(Bun.file(this.path)));
+    const body = await durableBytes(Bun.file(this.path));
+    return body === undefined ? undefined : lastName(body);
   }
 
   /** Title and settle time for the catalogue, without opening a session. */
   public async digest(): Promise<SessionDigest> {
-    const lines = await completeLines(Bun.file(this.path));
-    const name = lastName(lines);
-    const title = name ?? firstUserMessage(lines);
-    const settledAt = settleTime(lines);
+    const body = await durableBytes(Bun.file(this.path));
+    if (body === undefined) {
+      return {};
+    }
+    const name = lastName(body);
+    const title = name ?? firstUserMessage(headLinesOf(body, PROBE_LINES));
+    const settledAt = settleTime(body);
     return {
       ...(title === undefined ? {} : { title: clamp(title) }),
       ...(name === undefined ? {} : { named: true as const }),
@@ -171,16 +178,48 @@ async function* headLines(
   }
 }
 
-/** Every durable line: a trailing fragment is a write in progress and is not one. */
-async function completeLines(file: BunFile): Promise<readonly string[]> {
-  const text = await ifPresent(() => file.text(), "");
+/**
+ * The file's durable bytes, undecoded: a whole session is megabytes of tool
+ * output and the digest wants a handful of lines of it, so the search for the
+ * name runs over the bytes and only the lines it keeps become strings.
+ */
+type Durable = {
+  readonly bytes: Buffer;
+  /** Past the last newline; a trailing fragment is a write in progress and is not a line. */
+  readonly end: number;
+};
+
+async function durableBytes(file: BunFile): Promise<Durable | undefined> {
+  const read = await ifPresent(() => file.bytes(), EMPTY);
+  const bytes = Buffer.from(read.buffer, read.byteOffset, read.byteLength);
+  const end = bytes.lastIndexOf(NEWLINE) + 1;
+  return end === 0 ? undefined : { bytes, end };
+}
+
+function headLinesOf({ bytes, end }: Durable, count: number): string[] {
+  let at = 0;
+  for (let taken = 0; taken < count && at < end; taken++) {
+    at = bytes.indexOf(NEWLINE, at) + 1;
+  }
+  return split(bytes.toString("utf8", 0, at));
+}
+
+function tailLinesOf({ bytes, end }: Durable, count: number): string[] {
+  let at = end - 1;
+  for (let taken = 0; taken < count && at > 0; taken++) {
+    at = bytes.lastIndexOf(NEWLINE, at - 1);
+  }
+  return split(bytes.toString("utf8", at + 1, end));
+}
+
+function split(text: string): string[] {
   const lines = text.split("\n");
   lines.pop();
   return lines;
 }
 
-function settleTime(lines: readonly string[]): number | undefined {
-  return lastAgentTime(lines.slice(-TAIL_LINES).reverse());
+function settleTime(body: Durable): number | undefined {
+  return lastAgentTime(tailLinesOf(body, TAIL_LINES).reverse());
 }
 
 function lastAgentTime(lines: readonly string[]): number | undefined {
@@ -198,16 +237,21 @@ function lastAgentTime(lines: readonly string[]): number | undefined {
   return undefined;
 }
 
-function lastName(lines: readonly string[]): string | undefined {
-  for (let index = lines.length - 1; index >= 0; index--) {
-    const line = lines[index]!;
-    if (!line.includes(NAMED)) {
-      continue;
+/** The last `session_info` line, found by walking the marker's occurrences backwards; a line that merely quotes the marker parses as something else, and the walk carries on past it. */
+function lastName({ bytes, end }: Durable): string | undefined {
+  let at = end - 1;
+  while (at >= 0) {
+    const found = bytes.lastIndexOf(NAMED, at);
+    if (found === -1) {
+      return undefined;
     }
-    const entry = parseSessionEntries(line)[0];
+    const from = bytes.lastIndexOf(NEWLINE, found) + 1;
+    const to = bytes.indexOf(NEWLINE, found);
+    const entry = parseSessionEntries(bytes.toString("utf8", from, to))[0];
     if (entry?.type === "session_info") {
       return entry.name?.trim() || undefined;
     }
+    at = from - 1;
   }
   return undefined;
 }

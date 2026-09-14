@@ -22,6 +22,7 @@ import type { ChangeList, FileDiff, FileLines } from "#protocol/Diff";
 import { CLOSE_PROTOCOL_MISMATCH, PROTOCOL_VERSION } from "#protocol/Protocol";
 import type {
   ModelView,
+  ProjectView,
   ServerEvent,
   SessionSummaryView,
 } from "#protocol/ServerEvent";
@@ -62,6 +63,7 @@ type Outcome = {
   readonly error?: string;
   readonly items?: readonly PickerItem[];
   readonly sessions?: readonly SessionSummaryView[];
+  readonly projects?: readonly ProjectView[];
   readonly models?: readonly ModelView[];
   readonly thinkingLevels?: readonly string[];
   readonly directory?: DirectoryListing;
@@ -295,7 +297,7 @@ export class WsGateway {
         return {};
       }
       case "list_sessions":
-        return { sessions: await this.catalogue.list(command) };
+        return await this.catalogue.list(command);
       // The four below take a session this server may never have opened: a row
       // is archived or renamed from the sidebar without being attached to, so
       // none of them may reach for a stream. A sidecar write moves no session

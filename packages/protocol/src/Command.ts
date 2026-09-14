@@ -65,6 +65,8 @@ export type Command =
       /** Restrict to one working directory; omit for every session on disk. */
       readonly cwd?: string;
       readonly limit?: number;
+      /** Keep at most this many sessions per working directory, so one busy project cannot fill the page. */
+      readonly perProject?: number;
       /** List the archived sessions instead of the live ones. */
       readonly archived?: boolean;
     }

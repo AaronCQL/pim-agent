@@ -1,9 +1,14 @@
-import type { Element } from "solid-js";
+import { Show, untrack, type Element } from "solid-js";
+
+const CHEVRON = "i-griddy-icons:chevron-right-small-filled";
+
+/** What a caret does when the disclosure it stands on opens. */
+const TURN = "transition-transform group-open:rotate-90";
 
 export function Caret(props: { readonly class?: string }) {
   return (
     <Glyph
-      icon="i-griddy-icons:chevron-right-small-filled"
+      icon={CHEVRON}
       class={`scale-175 ${props.class ?? "bg-neutral-300"}`}
     />
   );
@@ -49,15 +54,47 @@ export function Collapsible(props: {
   readonly open?: boolean;
   readonly caret?: string;
   readonly spine?: string;
+  /** False takes the disclosure out of the transcript's gutter: the caret joins the summary's own row, and nothing is spined. */
+  readonly gutter?: boolean;
+  readonly summaryClass?: string;
+  /**
+   * Said when the reader moves the disclosure off `open`, which is the only
+   * change `open` does not already know about: a controlled caller follows it
+   * back. Never said for a state this component was given.
+   */
+  readonly onToggle?: (open: boolean) => void;
   readonly children: Element;
 }) {
+  const gutter = (): boolean => props.gutter !== false;
   return (
-    <details class="group relative min-w-0 pl-2ch" open={props.open === true}>
-      <summary class="min-w-0 flow-root cursor-pointer list-none">
-        <Caret
-          class={`transition-transform group-open:rotate-90 ${props.caret ?? "bg-neutral-300"}`}
-        />
-        <Spine class={props.spine} grip />
+    <details
+      class={`group relative min-w-0 ${gutter() ? "pl-2ch" : ""}`}
+      open={props.open === true}
+      onToggle={(event: Event) => {
+        const open = (event.currentTarget as HTMLDetailsElement).open;
+        // The browser says `toggle` for a prop written into the element too,
+        // from inside the render that wrote it — where nothing may write back.
+        // Untracked: what was asked for is a snapshot, not a dependency.
+        if (open !== untrack(() => props.open === true)) {
+          props.onToggle?.(open);
+        }
+      }}
+    >
+      <summary
+        class={`min-w-0 cursor-pointer list-none ${props.summaryClass ?? "flow-root"}`}
+      >
+        <Show
+          when={gutter()}
+          fallback={
+            <span
+              class={`${CHEVRON} ${TURN} size-4 shrink-0 scale-150 ${props.caret ?? "bg-neutral-400"}`}
+              aria-hidden="true"
+            />
+          }
+        >
+          <Caret class={`${TURN} ${props.caret ?? "bg-neutral-300"}`} />
+          <Spine class={props.spine} grip />
+        </Show>
         {props.summary}
       </summary>
       <div class="min-w-0">{props.children}</div>

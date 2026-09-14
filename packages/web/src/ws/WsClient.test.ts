@@ -411,7 +411,7 @@ test("switching sessions swaps the log and keeps the socket", async () => {
 
   // A session pi has not written a header for yet is not in the catalogue,
   // which is right: there is nothing there to resume.
-  const listed = await store.listSessions();
+  const { sessions: listed } = await store.listSessions();
   expect(listed.map((row) => row.sessionId)).toContain(first);
   expect(listed.every((row) => row.cwd === harness.tmp)).toBe(true);
   expect(second).not.toBe(first);
@@ -500,7 +500,7 @@ test("a new chat is the browser's alone until pi writes its first line", async (
   // and with an empty composer there is nothing to draw a row with either.
   expect(store.unwrittenSummary()).toBeUndefined();
   expect(
-    (await store.listSessions()).map((row) => row.sessionId)
+    (await store.listSessions()).sessions.map((row) => row.sessionId)
   ).not.toContain(first);
 
   store.setDraftText("say hello");
@@ -527,7 +527,7 @@ test("a new chat is the browser's alone until pi writes its first line", async (
   expect(store.localTitle(first)).toBe("say hello");
   await idle(store);
 
-  const listed = await store.listSessions();
+  const { sessions: listed } = await store.listSessions();
   flush();
   expect(listed.map((row) => row.sessionId)).toContain(first);
   // A second row for a session the listing has would be the same
@@ -559,7 +559,7 @@ test("a session sent to and left keeps its name against the real listing", async
   await until(() => store.state.sessionId !== first, "a second session");
   flush();
 
-  const listed = await store.listSessions();
+  const { sessions: listed } = await store.listSessions();
   flush();
   // Exactly what the sidebar paints, in the order it asks the questions.
   const row = listed.find((entry) => entry.sessionId === first);
@@ -580,7 +580,7 @@ test("`/clear` opens a session beside the one it was typed into", async () => {
   // still named, which is what a browser can offer that a terminal cannot.
   expect(store.state.durable).toEqual([]);
   expect(store.state.cwd).toBe(harness.tmp);
-  const listed = await store.listSessions();
+  const { sessions: listed } = await store.listSessions();
   expect(listed.find((row) => row.sessionId === first)?.title).toBe(
     "say hello"
   );

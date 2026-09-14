@@ -6,6 +6,7 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Directories } from "../shared/Directories";
+import { Pool } from "../shared/Pool";
 import { AgentRuntime, type ModelChoice } from "./AgentRuntime";
 import { EventLog } from "./EventLog";
 import { SessionCache } from "./SessionCache";
@@ -46,6 +47,9 @@ export type SessionCreateOptions = {
   readonly like?: SessionHost;
 };
 
+/** A session tree is thousands of files and each header is one open; fanning out over all of them at once is how a listing runs the process out of descriptors. */
+const HEADER_READS = 32;
+
 /** Live sessions keyed on pi's session UUID; the catalogue is pi's sessions directory, read on demand. */
 export class SessionRegistry {
   private readonly deps: SessionRegistryDeps;
@@ -68,18 +72,13 @@ export class SessionRegistry {
 
   /** Sessions on disk, newest first; reads only each file's header line. */
   public async list(cwd?: string): Promise<readonly SessionSummary[]> {
-    const root = this.sessionsRoot;
-    if (!(await stat(root).catch(() => undefined))?.isDirectory()) {
-      return [];
-    }
-    const paths: string[] = [];
-    for await (const relative of new Bun.Glob("*/*.jsonl").scan({
-      cwd: root,
-      onlyFiles: true,
-    })) {
-      paths.push(join(root, relative));
-    }
-    const summaries = (await Promise.all(paths.map(readSummary))).filter(
+    const summaries = (
+      await Pool.mapPooled(
+        await this.paths("*/*.jsonl"),
+        HEADER_READS,
+        readSummary
+      )
+    ).filter(
       (summary): summary is SessionSummary =>
         summary !== undefined && (cwd === undefined || summary.cwd === cwd)
     );
@@ -104,20 +103,18 @@ export class SessionRegistry {
     if (host?.agentSession) {
       return await host.setName(name);
     }
-    const path = (await this.list()).find(
-      (summary) => summary.sessionId === sessionId
-    )?.path;
-    if (path === undefined) {
+    const summary = await this.find(sessionId);
+    if (summary === undefined) {
       throw new Error(`unknown session: ${sessionId}`);
     }
     const next = SessionName.normalise(name);
     // Reopening is a plain read today, but a pi that migrates the file rewrites it.
     // The lease is only ever held for a whole turn, so a rename refuses rather than queues.
     return await SessionLease.hold(
-      path,
+      summary.path,
       "daemon",
       async () => {
-        const manager = SessionManager.open(path);
+        const manager = SessionManager.open(summary.path);
         manager.appendSessionInfo(next);
         return manager.getSessionName();
       },
@@ -135,7 +132,7 @@ export class SessionRegistry {
     if (cached) {
       return cached;
     }
-    const summary = (await this.list()).find((s) => s.sessionId === sessionId);
+    const summary = await this.find(sessionId);
     if (!summary) {
       throw new Error(`unknown session: ${sessionId}`);
     }
@@ -171,6 +168,39 @@ export class SessionRegistry {
 
   public async disposeAll(): Promise<void> {
     await this.hosts.disposeAll();
+  }
+
+  /**
+   * One session by id. Pi names a file for the id it carries, so the usual
+   * answer is one glob and one header; resolving it by listing would read the
+   * header of every session on disk to throw all but one away.
+   */
+  private async find(sessionId: string): Promise<SessionSummary | undefined> {
+    for (const path of await this.paths(`*/*${sessionId}.jsonl`)) {
+      const summary = await readSummary(path);
+      if (summary?.sessionId === sessionId) {
+        return summary;
+      }
+    }
+    // A file named something else entirely: the id is the header's, not the name's.
+    return (await this.list()).find(
+      (summary) => summary.sessionId === sessionId
+    );
+  }
+
+  private async paths(pattern: string): Promise<readonly string[]> {
+    const root = this.sessionsRoot;
+    if (!(await stat(root).catch(() => undefined))?.isDirectory()) {
+      return [];
+    }
+    const found: string[] = [];
+    for await (const relative of new Bun.Glob(pattern).scan({
+      cwd: root,
+      onlyFiles: true,
+    })) {
+      found.push(join(root, relative));
+    }
+    return found;
   }
 
   private buildHost(label: string, settings: HostSettings): SessionHost {
