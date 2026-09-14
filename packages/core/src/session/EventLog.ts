@@ -37,15 +37,19 @@ const PROBE_CHUNK_MAX = 256 * 1024;
 
 const EMPTY = new Uint8Array();
 
-const TAIL_BYTES = 64 * 1024;
 const TAIL_LINES = 10;
 
 const TITLE_LIMIT = 120;
 
+/** Cheap reject before parsing a line: pi writes the discriminant verbatim. */
+const NAMED = '"session_info"';
+
 /** What the session catalogue shows for one file without opening a session. */
 export type SessionDigest = {
-  /** The first user message, trimmed; absent when the session has none yet. */
+  /** The session's name if it has one, else its first user message; absent when it has neither. */
   readonly title?: string;
+  /** True when `title` is a name somebody wrote rather than the opening message. */
+  readonly named?: true;
   /** When the agent last wrote; it moves with an in-flight turn, so read it before starting one. */
   readonly settledAt?: number;
 };
@@ -112,15 +116,24 @@ export class EventLog {
     return this.cursor.seq;
   }
 
-  /** Title and settle time for the catalogue, read from the two ends of the file. */
+  /**
+   * The name pi's own `/name` writes: the last `session_info` entry wins, and an
+   * empty one clears it. Appended rather than replaced, so it is found by reading
+   * the whole file — the one unbounded read the catalogue makes.
+   */
+  public async name(): Promise<string | undefined> {
+    return lastName(await completeLines(Bun.file(this.path)));
+  }
+
+  /** Title and settle time for the catalogue, without opening a session. */
   public async digest(): Promise<SessionDigest> {
-    const file = Bun.file(this.path);
-    const [title, settledAt] = await Promise.all([
-      firstUserMessage(file),
-      settleTime(file),
-    ]);
+    const lines = await completeLines(Bun.file(this.path));
+    const name = lastName(lines);
+    const title = name ?? firstUserMessage(lines);
+    const settledAt = settleTime(lines);
     return {
-      ...(title === undefined ? {} : { title }),
+      ...(title === undefined ? {} : { title: clamp(title) }),
+      ...(name === undefined ? {} : { named: true as const }),
       ...(settledAt === undefined ? {} : { settledAt }),
     };
   }
@@ -158,24 +171,16 @@ async function* headLines(
   }
 }
 
-async function settleTime(file: BunFile): Promise<number | undefined> {
-  const near = Math.max(0, file.size - TAIL_BYTES);
-  const lines = await tailLines(file, near);
-  const found = lastAgentTime(lines);
-  if (found !== undefined || near === 0 || lines.length >= TAIL_LINES) {
-    return found;
-  }
-  return lastAgentTime(await tailLines(file, 0));
-}
-
-async function tailLines(file: BunFile, from: number): Promise<string[]> {
-  const text = await ifPresent(() => file.slice(from).text(), "");
+/** Every durable line: a trailing fragment is a write in progress and is not one. */
+async function completeLines(file: BunFile): Promise<readonly string[]> {
+  const text = await ifPresent(() => file.text(), "");
   const lines = text.split("\n");
   lines.pop();
-  if (from > 0) {
-    lines.shift();
-  }
-  return lines.slice(-TAIL_LINES).reverse();
+  return lines;
+}
+
+function settleTime(lines: readonly string[]): number | undefined {
+  return lastAgentTime(lines.slice(-TAIL_LINES).reverse());
 }
 
 function lastAgentTime(lines: readonly string[]): number | undefined {
@@ -193,8 +198,28 @@ function lastAgentTime(lines: readonly string[]): number | undefined {
   return undefined;
 }
 
-async function firstUserMessage(file: BunFile): Promise<string | undefined> {
-  for await (const line of headLines(file, PROBE_LINES)) {
+function lastName(lines: readonly string[]): string | undefined {
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const line = lines[index]!;
+    if (!line.includes(NAMED)) {
+      continue;
+    }
+    const entry = parseSessionEntries(line)[0];
+    if (entry?.type === "session_info") {
+      return entry.name?.trim() || undefined;
+    }
+  }
+  return undefined;
+}
+
+function clamp(text: string): string {
+  return text.length > TITLE_LIMIT
+    ? `${text.slice(0, TITLE_LIMIT).trimEnd()}…`
+    : text;
+}
+
+function firstUserMessage(lines: readonly string[]): string | undefined {
+  for (const line of lines.slice(0, PROBE_LINES)) {
     const entry = parseSessionEntries(line)[0];
     if (entry?.type !== "message" || entry.message.role !== "user") {
       continue;
@@ -204,9 +229,7 @@ async function firstUserMessage(file: BunFile): Promise<string | undefined> {
       said.text.trim() ||
       said.files.map((file) => Attachments.nameOf(file.path)).join(", ");
     if (text !== "") {
-      return text.length > TITLE_LIMIT
-        ? `${text.slice(0, TITLE_LIMIT).trimEnd()}…`
-        : text;
+      return text;
     }
   }
   return undefined;

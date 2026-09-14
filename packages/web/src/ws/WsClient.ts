@@ -37,6 +37,20 @@ type Pending = {
 
 const MAX_BACKOFF_MS = 10_000;
 
+/**
+ * Frames that name their own subject — a session, a directory, or nothing at
+ * all — and so belong to no attach. Gating one on the attach window drops a
+ * broadcast every time this client switches session.
+ */
+const UNGATED = new Set<ServerEvent["type"]>([
+  "session_activity",
+  "session_read",
+  "session_meta",
+  "project_meta",
+  "sessions_changed",
+  "update_state",
+]);
+
 function defaultBackoff(attempt: number): number {
   return Math.min(MAX_BACKOFF_MS, 250 * 2 ** (attempt - 1));
 }
@@ -279,13 +293,7 @@ export class WsClient {
       waiter?.resolve(event);
       return;
     }
-    // Session-scoped frames name their session, so they pass the attach gate
-    // and disturb no cursor.
-    if (
-      event.type === "session_activity" ||
-      event.type === "sessions_changed" ||
-      event.type === "update_state"
-    ) {
+    if (UNGATED.has(event.type)) {
       this.options.onEvent(event);
       return;
     }

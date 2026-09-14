@@ -379,6 +379,31 @@ test("an isolated run takes no lease", async () => {
   expect(seen).toEqual([false, false]);
 });
 
+test("renames through pi, holding the lease over the one line it appends", async () => {
+  const host = await buildHost({ lease: "daemon" });
+  await host.run((agent) => agent.prompt("say hello"));
+  const seen: string[] = [];
+  host.subscribe((event) => {
+    seen.push(event.type);
+  });
+  const before = await new EventLog(mainPath()).read();
+
+  expect(await host.setName("  Sidebar  rename\n")).toBe("Sidebar rename");
+
+  const after = await new EventLog(mainPath()).read();
+  expect(after.length).toBe(before.length + 1);
+  expect(after.at(-1)?.entry.type).toBe("session_info");
+  expect(await new EventLog(mainPath()).name()).toBe("Sidebar rename");
+  expect(host.agentSession?.sessionManager.getSessionName()).toBe(
+    "Sidebar rename"
+  );
+  expect(seen).toContain("session_info_changed");
+  expect(await leaseExists()).toBe(false);
+
+  expect(await host.setName(null)).toBeUndefined();
+  expect(await new EventLog(mainPath()).name()).toBeUndefined();
+});
+
 test("a turn that throws still gives the lease back", async () => {
   const errors = spyOn(console, "error").mockImplementation(() => {});
   const host = await buildHost({ lease: "daemon" });

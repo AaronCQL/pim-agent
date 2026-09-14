@@ -5,7 +5,7 @@ import { flush } from "solid-js";
 
 import type { ToolView } from "#core/view/ViewBlock";
 import { PROTOCOL_VERSION } from "#protocol/Protocol";
-import type { ServerEvent } from "#protocol/ServerEvent";
+import type { ServerEvent, SessionSummaryView } from "#protocol/ServerEvent";
 import { toRows, type ToolRow } from "../transcript/rows";
 import { SessionStore } from "./SessionStore";
 
@@ -741,6 +741,199 @@ describe("unread", () => {
 
   test("a session no listing has mentioned yet is read", () => {
     expect(store().isUnread("unheard-of")).toBe(false);
+  });
+});
+
+/**
+ * The state the sidebar's own verbs move: whose row is put away, which one is
+ * held unread by hand, what a session is called, and which directories are
+ * pinned. None of it is written into a session file, so no listing is
+ * invalidated by it and the broadcast is the only word a held row gets.
+ */
+describe("archive, names and pins", () => {
+  type Sent = Record<string, unknown> & { readonly type: string };
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  function row(
+    sessionId: string,
+    extra: Partial<SessionSummaryView> = {}
+  ): SessionSummaryView {
+    return { sessionId, cwd: "/repo", createdAt: 0, settledAt: 5, ...extra };
+  }
+
+  /** Answers every command the same way, and keeps what it was asked. */
+  function wire(
+    target: SessionStore,
+    answer: { readonly success: boolean; readonly error?: string } = {
+      success: true,
+    }
+  ): readonly Sent[] {
+    const sent: Sent[] = [];
+    target.client.send = (async (command: Sent) => {
+      sent.push(command);
+      return { type: "response", id: "1", ...answer };
+    }) as typeof target.client.send;
+    return sent;
+  }
+
+  function catalogue(
+    target: SessionStore,
+    sessions: readonly SessionSummaryView[]
+  ): void {
+    target.client.send = (async () => ({
+      type: "response",
+      id: "1",
+      success: true,
+      sessions,
+    })) as typeof target.client.send;
+  }
+
+  test("every verb names its own row, not the session on screen", async () => {
+    const target = store();
+    const sent = wire(target);
+    feed(target, attached("s1"));
+
+    await target.rename("s2", "Refactor the parser");
+    await target.setArchived("s3", true);
+    await target.markUnread("s4", true);
+    await target.setPinned("/repo", true);
+    flush();
+
+    // A row is archived from the sidebar without ever being opened, so not
+    // one of these may be read off the session this client is attached to.
+    expect(sent).toEqual([
+      {
+        type: "set_session_name",
+        sessionId: "s2",
+        value: "Refactor the parser",
+      },
+      { type: "set_session_archived", sessionId: "s3", value: true },
+      { type: "set_session_unread", sessionId: "s4", value: true },
+      { type: "set_project_pinned", cwd: "/repo", value: true },
+    ]);
+    expect(target.isArchived("s3")).toBe(true);
+    expect(target.isUnread("s4")).toBe(true);
+    expect(target.isPinned("/repo")).toBe(true);
+  });
+
+  test("a name is cleared with null, and comes back as one", async () => {
+    const target = store();
+    catalogue(target, [row("s1", { title: "Parser work", named: true })]);
+
+    const listed = await target.listSessions();
+    expect(listed[0]?.title).toBe("Parser work");
+    expect(listed[0]?.named).toBe(true);
+    expect(target.sessionName("s1")).toBe("Parser work");
+
+    const sent = wire(target);
+    await target.rename("s1", null);
+    expect(sent).toEqual([
+      { type: "set_session_name", sessionId: "s1", value: null },
+    ]);
+    feed(target, { type: "session_meta", sessionId: "s1", name: null });
+
+    // Cleared, and the row goes by its opening message again — which only
+    // the server can answer for, so nothing here guesses at it.
+    expect(target.sessionName("s1")).toBeUndefined();
+    expect(target.state.names.s1).toBeNull();
+  });
+
+  test("the refusal reaches the caller, and the guess is taken back", async () => {
+    const target = store();
+    wire(target, { success: false, error: "read-only sidecar" });
+
+    await expect(target.setArchived("s1", true)).rejects.toThrow(
+      "read-only sidecar"
+    );
+    await expect(target.markUnread("s1", true)).rejects.toThrow(
+      "read-only sidecar"
+    );
+    await expect(target.setPinned("/repo", true)).rejects.toThrow(
+      "read-only sidecar"
+    );
+    await expect(target.rename("s1", "Nope")).rejects.toThrow(
+      "read-only sidecar"
+    );
+    flush();
+
+    expect(target.isArchived("s1")).toBe(false);
+    expect(target.isUnread("s1")).toBe(false);
+    expect(target.isPinned("/repo")).toBe(false);
+    expect(target.sessionName("s1")).toBeUndefined();
+  });
+
+  test("a broadcast patches a listing already in hand", async () => {
+    const target = store();
+    catalogue(target, [row("s1"), row("s2", { cwd: "/other" })]);
+    const held = await target.listSessions();
+    expect(held.map((one) => one.archived)).toEqual([undefined, undefined]);
+
+    // What another window did. No session file moved, so no `sessions_changed`
+    // follows and nothing will re-list: these frames are the whole story.
+    feed(
+      target,
+      {
+        type: "session_meta",
+        sessionId: "s1",
+        archived: true,
+        unread: true,
+        name: "Parser work",
+      },
+      { type: "project_meta", cwd: "/other", pinned: true }
+    );
+
+    expect(target.isArchived("s1")).toBe(true);
+    expect(target.isUnread("s1")).toBe(true);
+    expect(target.sessionName("s1")).toBe("Parser work");
+    expect(target.isPinned("/other")).toBe(true);
+    expect(target.isPinned("/repo")).toBe(false);
+    expect(target.isArchived("s2")).toBe(false);
+  });
+
+  test("a listing that raced the command does not paint the row back", async () => {
+    const target = store();
+    let answer: (() => void) | undefined;
+    target.client.send = (async (command: Sent) => {
+      if (command.type === "list_sessions") {
+        return {
+          type: "response",
+          id: "1",
+          success: true,
+          sessions: [row("s1")],
+        };
+      }
+      await new Promise<void>((resolve) => {
+        answer = resolve;
+      });
+      return { type: "response", id: "2", success: true };
+    }) as typeof target.client.send;
+
+    const archiving = target.setArchived("s1", true);
+    // Read off the disk before the command got there, so it still says live.
+    const listed = await target.listSessions();
+
+    expect(listed[0]?.archived).toBe(true);
+    expect(target.isArchived("s1")).toBe(true);
+    answer?.();
+    await archiving;
+  });
+
+  test("the archived listing is asked for by scope", async () => {
+    const target = store();
+    const sent = wire(target);
+
+    await target.listSessions();
+    await target.listSessions({ cwd: "/repo" });
+    await target.listSessions({ archived: true });
+
+    expect(sent).toEqual([
+      { type: "list_sessions" },
+      { type: "list_sessions", cwd: "/repo" },
+      { type: "list_sessions", archived: true },
+    ]);
   });
 });
 

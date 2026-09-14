@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 
+import { EventLog } from "./EventLog";
+import { SessionLease } from "./SessionLease";
 import { SessionRegistry } from "./SessionRegistry";
 
 const FIXTURE = join(import.meta.dir, "fixtures", "pi-session-v3.jsonl");
@@ -133,4 +135,95 @@ test("requires init before building a host", async () => {
   expect(fresh.create()).rejects.toThrow(
     "AgentRuntime.init() must complete before use"
   );
+});
+
+async function seedFixture(): Promise<string> {
+  return await seed(
+    "--home-htpc-Desktop-dev-mmorpg--",
+    `2026-08-01T10-17-46-728Z_${FIXTURE_ID}.jsonl`
+  );
+}
+
+async function lineCount(path: string): Promise<number> {
+  return (await new EventLog(path).read()).length;
+}
+
+test("renames a closed session with one appended line pi can read back", async () => {
+  const path = await seedFixture();
+  const before = await lineCount(path);
+
+  expect(await registry.setName(FIXTURE_ID, "Sidebar rename")).toBe(
+    "Sidebar rename"
+  );
+
+  expect(await lineCount(path)).toBe(before + 1);
+  expect(await new EventLog(path).name()).toBe("Sidebar rename");
+  expect((await new EventLog(path).digest()).title).toBe("Sidebar rename");
+  expect(await Bun.file(SessionLease.pathFor(path)).exists()).toBe(false);
+});
+
+test("clearing a name falls the row back to the opening message", async () => {
+  const path = await seedFixture();
+  await registry.setName(FIXTURE_ID, "Sidebar rename");
+
+  expect(await registry.setName(FIXTURE_ID, null)).toBeUndefined();
+
+  expect(await new EventLog(path).name()).toBeUndefined();
+  expect((await new EventLog(path).digest()).named).toBeUndefined();
+});
+
+test("normalises a name pi would have stored verbatim", async () => {
+  const path = await seedFixture();
+
+  expect(
+    await registry.setName(FIXTURE_ID, " two\nlines\tand\u0007a bell  ")
+  ).toBe("two lines and a bell");
+  expect(await registry.setName(FIXTURE_ID, "n".repeat(500))).toBe(
+    "n".repeat(80)
+  );
+  expect(await registry.setName(FIXTURE_ID, "🙂".repeat(500))).toBe(
+    "🙂".repeat(80)
+  );
+  expect(await registry.setName(FIXTURE_ID, "   ")).toBeUndefined();
+  expect(await new EventLog(path).name()).toBeUndefined();
+});
+
+test("refuses to rename a session that is not on disk", async () => {
+  expect(registry.setName("nope", "whatever")).rejects.toThrow(
+    "unknown session: nope"
+  );
+});
+
+test("renames a live session through the agent that holds it", async () => {
+  const host = await registry.create({ cwd: tmp });
+  const sessionId = host.sessionId!;
+  const seen: string[] = [];
+  host.subscribe((event) => {
+    seen.push(event.type);
+  });
+
+  expect(await registry.setName(sessionId, "Live rename")).toBe("Live rename");
+
+  expect(host.agentSession?.sessionManager.getSessionName()).toBe(
+    "Live rename"
+  );
+  expect(seen).toContain("session_info_changed");
+});
+
+test("refuses to rename under another surface's turn", async () => {
+  const path = await seedFixture();
+  await Bun.write(
+    SessionLease.pathFor(path),
+    `${JSON.stringify({
+      pid: process.pid,
+      hostname: "another-host",
+      frontend: "tui",
+      startedAt: Date.now(),
+    })}\n`
+  );
+
+  expect(registry.setName(FIXTURE_ID, "Sidebar rename")).rejects.toThrow(
+    "Session is busy: tui"
+  );
+  expect(await new EventLog(path).name()).toBeUndefined();
 });

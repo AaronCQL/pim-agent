@@ -1,4 +1,7 @@
-import { type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import {
+  SessionManager,
+  type ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -11,6 +14,8 @@ import {
   type CustomToolContext,
   type HostSettings,
 } from "./SessionHost";
+import { SessionLease } from "./SessionLease";
+import { SessionName } from "./SessionName";
 
 /** A session as pi stores it: one JSONL file under a cwd-encoded directory. */
 export type SessionSummary = {
@@ -84,6 +89,40 @@ export class SessionRegistry {
   /** The live host for `sessionId`, if one is currently loaded. */
   public peek(sessionId: string): SessionHost | undefined {
     return this.hosts.peek(sessionId);
+  }
+
+  /**
+   * Rename a session through pi's own session name, so its `/resume` picker shows
+   * it too; `null` clears it. A live session is renamed by its agent, a closed one
+   * by appending to its file under the turn lease. Answers with the name pi kept.
+   */
+  public async setName(
+    sessionId: string,
+    name: string | null
+  ): Promise<string | undefined> {
+    const host = this.peek(sessionId);
+    if (host?.agentSession) {
+      return await host.setName(name);
+    }
+    const path = (await this.list()).find(
+      (summary) => summary.sessionId === sessionId
+    )?.path;
+    if (path === undefined) {
+      throw new Error(`unknown session: ${sessionId}`);
+    }
+    const next = SessionName.normalise(name);
+    // Reopening is a plain read today, but a pi that migrates the file rewrites it.
+    // The lease is only ever held for a whole turn, so a rename refuses rather than queues.
+    return await SessionLease.hold(
+      path,
+      "daemon",
+      async () => {
+        const manager = SessionManager.open(path);
+        manager.appendSessionInfo(next);
+        return manager.getSessionName();
+      },
+      { timeoutMs: 0 }
+    );
   }
 
   /** Every model this machine has credentials for, qualified as `SessionHost.setModel` takes them. */

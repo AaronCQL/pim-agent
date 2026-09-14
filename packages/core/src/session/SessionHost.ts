@@ -28,6 +28,7 @@ import {
   type LeaseFrontend,
   type LeaseRecord,
 } from "./SessionLease";
+import { SessionName } from "./SessionName";
 import { WriteMark } from "./WriteMark";
 
 /** What the agent is doing right now. */
@@ -396,6 +397,18 @@ export class SessionHost {
       }
       await this.patchSettings({ thinkingLevel: level });
       this.cached?.setThinkingLevel(level);
+    });
+  }
+
+  /**
+   * Rename this session through pi's own session name, so its `/resume` picker
+   * shows it too; `null` clears it. Answers with the name pi kept.
+   */
+  public setName(name: string | null): Promise<string | undefined> {
+    return this.withLease(async () => {
+      const agent = await this.ensureCached();
+      agent.setSessionName(SessionName.normalise(name));
+      return agent.sessionManager.getSessionName();
     });
   }
 

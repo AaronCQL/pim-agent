@@ -33,5 +33,19 @@ function foreignSince(mark: WriteMark, next: WriteMark): boolean {
   return next.head - base.head - (next.entries - base.entries) > 0;
 }
 
+/**
+ * Whether every line the file gained since `mark` is one no reader has to replay.
+ * A rename appends `session_info` and moves no history, so a surface that absorbs
+ * it stays on the session it is already holding. Only ask between turns: a window
+ * that also holds our own appends is not benign, and a running turn's is.
+ */
+async function benignSince(log: EventLog, mark: WriteMark): Promise<boolean> {
+  const added = await log.read(mark.head);
+  return (
+    added.length > 0 &&
+    added.every(({ entry }) => entry.type === "session_info")
+  );
+}
+
 /** Write accounting over one session file: whose lines are these? */
-export const WriteMark = { UNREAD, of, foreignSince };
+export const WriteMark = { UNREAD, of, foreignSince, benignSince };

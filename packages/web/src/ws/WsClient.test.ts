@@ -3,7 +3,7 @@ import type { ServerWebSocket } from "bun";
 import { join } from "node:path";
 import { flush } from "solid-js";
 
-import type { DurableEvent } from "#protocol/ServerEvent";
+import type { DurableEvent, ServerEvent } from "#protocol/ServerEvent";
 import { PROTOCOL_VERSION } from "#protocol/Protocol";
 import { SessionStore } from "../session/SessionStore";
 import { toRows } from "../transcript/rows";
@@ -642,6 +642,8 @@ class FrameRecorder {
   private readonly frames: Frame[] = [];
   private readonly sockets = new Set<ServerWebSocket<unknown>>();
   private readonly server: ReturnType<typeof Bun.serve>;
+  /** Frames slipped in ahead of the next `attached`, which is the window a client gates on. */
+  public readonly ahead: ServerEvent[] = [];
 
   public constructor() {
     this.server = Bun.serve({
@@ -689,6 +691,9 @@ class FrameRecorder {
     const frame = JSON.parse(raw) as Frame;
     this.frames.push(frame);
     if (frame.type === "attach") {
+      for (const event of this.ahead.splice(0)) {
+        socket.send(JSON.stringify(event));
+      }
       socket.send(
         JSON.stringify({
           type: "attached",
@@ -712,16 +717,45 @@ function record(): FrameRecorder {
   return recorder;
 }
 
-function client(server: FrameRecorder): WsClient {
+function client(
+  server: FrameRecorder,
+  onEvent: (event: ServerEvent) => void = () => {}
+): WsClient {
   const one = new WsClient({
     url: server.url,
     sessionId: "s1",
-    onEvent: () => {},
+    onEvent,
     backoffMs: () => 1,
   });
   clients.push(one);
   return one;
 }
+
+test("a broadcast that lands inside the attach window is not dropped", async () => {
+  const server = record();
+  const seen: ServerEvent[] = [];
+  const one = client(server, (event) => {
+    seen.push(event);
+  });
+  // Everything the server says to every connection, rather than to this
+  // session: none of it is the old session's, and none of it comes again.
+  server.ahead.push(
+    { type: "session_meta", sessionId: "s2", archived: true },
+    { type: "project_meta", cwd: "/repo", pinned: true },
+    { type: "session_read", sessionId: "s2" },
+    { type: "sessions_changed" }
+  );
+
+  await one.connect();
+
+  expect(seen.map((event) => event.type)).toEqual([
+    "session_meta",
+    "project_meta",
+    "session_read",
+    "sessions_changed",
+    "attached",
+  ]);
+});
 
 test("a hidden tab stays hidden across a reconnect", async () => {
   const server = record();

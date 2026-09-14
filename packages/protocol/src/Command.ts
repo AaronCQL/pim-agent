@@ -65,6 +65,29 @@ export type Command =
       /** Restrict to one working directory; omit for every session on disk. */
       readonly cwd?: string;
       readonly limit?: number;
+      /** List the archived sessions instead of the live ones. */
+      readonly archived?: boolean;
+    }
+  /** Names a session through pi's own `session_info`, so its terminal picker shows the name too; `null` clears it. */
+  | {
+      readonly id: string;
+      readonly type: "set_session_name";
+      readonly sessionId: string;
+      readonly value: string | null;
+    }
+  /** pim's own overrides on a session: out of the default listing, or held unread until it is answered. */
+  | {
+      readonly id: string;
+      readonly type: "set_session_archived" | "set_session_unread";
+      readonly sessionId: string;
+      readonly value: boolean;
+    }
+  /** Pins a working directory, not a session; a pinned project sorts above every other. */
+  | {
+      readonly id: string;
+      readonly type: "set_project_pinned";
+      readonly cwd: string;
+      readonly value: boolean;
     }
   /** The models this server can switch to, plus the current model's thinking levels; answers without a session. */
   | { readonly id: string; readonly type: "list_models" }

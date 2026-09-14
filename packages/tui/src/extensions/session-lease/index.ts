@@ -53,13 +53,18 @@ export default function (pi: ExtensionAPI): void {
     return await WriteMark.of(log, manager);
   };
 
-  /** Absorb our own appends; anything else is another surface writing this session. */
+  /** Absorb our own appends and a rename we can carry on without; anything else is another surface writing this session. */
   const reconcile = async (): Promise<void> => {
+    const current = log;
     const next = await measure();
-    if (next === undefined) {
+    // Staleness only clears by re-anchoring, and re-deciding it costs a whole read.
+    if (stale || current === undefined || next === undefined) {
       return;
     }
-    if (WriteMark.foreignSince(mark, next)) {
+    if (
+      WriteMark.foreignSince(mark, next) &&
+      !(await WriteMark.benignSince(current, mark))
+    ) {
       stale = true;
       return;
     }

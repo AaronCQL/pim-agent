@@ -108,6 +108,12 @@ export type SessionState = {
   loading: boolean;
   error: string | undefined;
   unread: Record<string, boolean>;
+  /** Out of the default listing until it is brought back; keyed by session. */
+  archived: Record<string, boolean>;
+  /** The name somebody wrote for a session, `null` once cleared; absent where this client has heard nothing. */
+  names: Record<string, string | null>;
+  /** Pinned projects, keyed by absolute working directory rather than by session. */
+  pinned: Record<string, boolean>;
   drafts: Record<string, string>;
   attachments: Record<string, readonly UploadedAttachment[]>;
   openings: Record<string, string>;
@@ -124,8 +130,34 @@ export type SessionStoreOptions = {
   readonly reloadPage?: () => void;
 };
 
+/** Which slice of the catalogue to read; the archived sessions are their own listing, never mixed into the live one. */
+export type SessionScope = {
+  readonly cwd?: string;
+  readonly archived?: boolean;
+};
+
+/** The flags a row draws from this store alone, each one a command away. */
+type FlagRecord = "archived" | "unread" | "pinned";
+
 const FILE_PICKER_LIMIT = 50;
 const COMMAND_PICKER_LIMIT = 20;
+
+/** One row as this client knows it: the server's, carrying everything a broadcast has moved since. */
+function folded(
+  row: SessionSummaryView,
+  state: SessionState
+): SessionSummaryView {
+  const heard = state.names[row.sessionId];
+  const name = heard === undefined && row.named === true ? row.title : heard;
+  return {
+    ...row,
+    title: name ?? row.title,
+    named: typeof name === "string" ? true : undefined,
+    archived: state.archived[row.sessionId] === true ? true : undefined,
+    pinned: state.pinned[row.cwd] === true ? true : undefined,
+    unread: state.unread[row.sessionId] ?? row.unread,
+  };
+}
 
 type LocalCommand = PickerItem & {
   readonly run: (store: SessionStore) => Promise<void>;
@@ -154,6 +186,13 @@ export class SessionStore {
   private catalogue: Promise<ModelCatalogue> | undefined;
   private readonly drafts: Drafts;
   private readonly detachAttention: () => void;
+  /**
+   * Keys a command of this client's still has a guess standing in for, as
+   * `record:key`. A listing the server computed before the command reached it
+   * would otherwise paint the row back the way it was, one frame before the
+   * broadcast puts it right again.
+   */
+  private readonly guessed = new Set<string>();
 
   public constructor(options: SessionStoreOptions) {
     this.update = new Reload(options.url, options.reloadPage);
@@ -193,6 +232,9 @@ export class SessionStore {
       loading: false,
       error: undefined,
       unread: {},
+      archived: {},
+      names: {},
+      pinned: {},
       drafts: { ...drafts },
       attachments: {},
       openings: {},
@@ -631,10 +673,15 @@ export class SessionStore {
     return untrack(() => this.state.sessionId);
   }
 
-  private async runGit(draft: CommandDraft): Promise<void> {
+  private runGit(draft: CommandDraft): Promise<void> {
+    return this.demand(draft, "git refused the operation");
+  }
+
+  /** Sends, and raises what the server refused with, so a caller can say so. */
+  private async demand(draft: CommandDraft, refusal: string): Promise<void> {
     const response = await this.client.send(draft);
     if (!response.success) {
-      throw new Error(response.error ?? "git refused the operation");
+      throw new Error(response.error ?? refusal);
     }
   }
 
@@ -654,19 +701,34 @@ export class SessionStore {
   }
 
   public async listSessions(
-    cwd?: string
+    scope: SessionScope = {}
   ): Promise<readonly SessionSummaryView[]> {
     const response = await this.client
-      .send({ type: "list_sessions", ...(cwd === undefined ? {} : { cwd }) })
+      .send({
+        type: "list_sessions",
+        ...(scope.cwd === undefined ? {} : { cwd: scope.cwd }),
+        ...(scope.archived === true ? { archived: true } : {}),
+      })
       .catch(() => undefined);
     const sessions = response?.sessions ?? [];
+    const rows: SessionSummaryView[] = [];
     this.setState((draft) => {
       for (const session of sessions) {
         draft.activity[session.sessionId] = session.status ?? "idle";
-        draft.unread[session.sessionId] = session.unread ?? false;
+        this.seed(draft, "unread", session.sessionId, session.unread ?? false);
+        this.seed(
+          draft,
+          "archived",
+          session.sessionId,
+          session.archived === true
+        );
+        this.seed(draft, "pinned", session.cwd, session.pinned === true);
+        draft.names[session.sessionId] =
+          session.named === true ? (session.title ?? null) : null;
         if (session.title !== undefined) {
           delete draft.openings[session.sessionId];
         }
+        rows.push(folded(session, draft));
       }
     });
     const unwritten = this.state.unwritten;
@@ -676,7 +738,18 @@ export class SessionStore {
     ) {
       this.drafts.setUnwritten(undefined);
     }
-    return sessions;
+    return rows;
+  }
+
+  private seed(
+    state: SessionState,
+    record: FlagRecord,
+    key: string,
+    value: boolean
+  ): void {
+    if (!this.guessed.has(`${record}:${key}`)) {
+      state[record][key] = value;
+    }
   }
 
   public unwrittenSummary(): UnwrittenSummary | undefined {
@@ -785,6 +858,96 @@ export class SessionStore {
   /** True when the session has answered since anything last read it. */
   public isUnread(sessionId: string): boolean {
     return this.state.unread[sessionId] ?? false;
+  }
+
+  /** True when the session has been put away, so the live listing leaves it out. */
+  public isArchived(sessionId: string): boolean {
+    return this.state.archived[sessionId] ?? false;
+  }
+
+  /** True when that working directory is a pinned project. */
+  public isPinned(cwd: string): boolean {
+    return this.state.pinned[cwd] ?? false;
+  }
+
+  /** The name somebody wrote for the session, absent when it goes by its opening message. */
+  public sessionName(sessionId: string): string | undefined {
+    return this.state.names[sessionId] ?? undefined;
+  }
+
+  /**
+   * Names the session through pi's own name, so the terminal's picker shows
+   * it too; `null` clears it back to its opening message. Not guessed at: the
+   * server resolves what a row is called, and a cleared name falls back to a
+   * digest this client does not hold.
+   */
+  public async rename(sessionId: string, name: string | null): Promise<void> {
+    await this.demand(
+      { type: "set_session_name", sessionId, value: name },
+      "the server refused the name"
+    );
+  }
+
+  /** Puts the session away, out of the live listing, or brings it back. */
+  public setArchived(sessionId: string, value: boolean): Promise<void> {
+    return this.flag(
+      { type: "set_session_archived", sessionId, value },
+      "archived",
+      sessionId,
+      value,
+      "the server refused the change"
+    );
+  }
+
+  /** Holds the session unread until it is answered; survives reading it. */
+  public markUnread(sessionId: string, value: boolean): Promise<void> {
+    return this.flag(
+      { type: "set_session_unread", sessionId, value },
+      "unread",
+      sessionId,
+      value,
+      "the server refused the mark"
+    );
+  }
+
+  /** Pins a working directory, not a session: every session in it sorts first. */
+  public setPinned(cwd: string, value: boolean): Promise<void> {
+    return this.flag(
+      { type: "set_project_pinned", cwd, value },
+      "pinned",
+      cwd,
+      value,
+      "the server refused the pin"
+    );
+  }
+
+  /**
+   * A flag the row draws from this store alone: guessed at once so the row
+   * answers the click, taken back when the server refuses, and confirmed by
+   * the broadcast that follows the command.
+   */
+  private async flag(
+    draft: CommandDraft,
+    record: FlagRecord,
+    key: string,
+    value: boolean,
+    refusal: string
+  ): Promise<void> {
+    const before = untrack(() => this.state[record][key]);
+    this.guessed.add(`${record}:${key}`);
+    this.setState((state) => {
+      state[record][key] = value;
+    });
+    try {
+      await this.demand(draft, refusal);
+    } catch (error) {
+      this.setState((state) => {
+        state[record][key] = before ?? false;
+      });
+      throw error;
+    } finally {
+      this.guessed.delete(`${record}:${key}`);
+    }
   }
 
   private async set(
@@ -963,6 +1126,26 @@ export class SessionStore {
       case "session_read":
         this.setState((draft) => {
           draft.unread[event.sessionId] = false;
+        });
+        return;
+      // A sidecar write moves no session file, so no listing is invalidated
+      // by it: these are the only word a held row gets.
+      case "session_meta":
+        this.setState((draft) => {
+          if (event.name !== undefined) {
+            draft.names[event.sessionId] = event.name;
+          }
+          if (event.archived !== undefined) {
+            draft.archived[event.sessionId] = event.archived;
+          }
+          if (event.unread !== undefined) {
+            draft.unread[event.sessionId] = event.unread;
+          }
+        });
+        return;
+      case "project_meta":
+        this.setState((draft) => {
+          draft.pinned[event.cwd] = event.pinned;
         });
         return;
       case "sessions_changed":
