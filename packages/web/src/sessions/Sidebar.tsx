@@ -15,9 +15,9 @@ import type { ProjectView, SessionSummaryView } from "#protocol/ServerEvent";
 import { version } from "../../../../package.json";
 import type { SessionScope, SessionStore } from "../session/SessionStore";
 import { abbreviateHome, baseName, relativeTime } from "../format";
-import { FIELD, ICON } from "../ui/classes";
+import { DirectoryModal } from "../topbar/DirectoryModal";
+import { ACTION, FIELD, ICON } from "../ui/classes";
 import { Collapsible } from "../ui/Collapsible";
-import { Fitted } from "../ui/Fitted";
 import { RowMenu, type RowMenuControl, type RowMenuItem } from "../ui/RowMenu";
 import { Spinner } from "../ui/Spinner";
 
@@ -74,6 +74,7 @@ export function Sidebar(props: {
   const [opened, setOpened] = createSignal<Record<string, boolean>>({});
   const [whole, setWhole] = createSignal<readonly string[]>([]);
   const [editing, setEditing] = createSignal<string>();
+  const [choosing, setChoosing] = createSignal(false);
   const [failure, setFailure] = createSignal("");
   const [now, setNow] = createSignal(Date.now());
   const clock = setInterval(() => {
@@ -308,17 +309,6 @@ export function Sidebar(props: {
         <div class="flex shrink-0 items-center">
           <button
             type="button"
-            aria-label="New session"
-            title="New session"
-            class={ICON}
-            onClick={() => {
-              go(() => props.store.newSession());
-            }}
-          >
-            <span class="i-griddy-icons:chat-bubble-plus size-5" />
-          </button>
-          <button
-            type="button"
             aria-label="Settings"
             title="Settings"
             class={ICON}
@@ -327,6 +317,15 @@ export function Sidebar(props: {
             <span class="i-griddy-icons:settings size-5" />
           </button>
         </div>
+      </div>
+
+      <div class="shrink-0 px-3 pt-3">
+        <input
+          type="search"
+          aria-label="Search sessions"
+          placeholder="Search sessions"
+          class={`${FIELD} w-full`}
+        />
       </div>
 
       <Show when={failure()}>
@@ -342,14 +341,29 @@ export function Sidebar(props: {
 
       <nav
         aria-label="Sessions"
-        class="min-h-0 flex-1 space-y-1 overflow-y-auto p-3"
+        class="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-2"
       >
         <Show
           when={rows().length > 0}
           fallback={
-            <p class="text-sm text-neutral-500">
-              {view() === "archived" ? "Nothing archived." : "No sessions yet."}
-            </p>
+            <div class="space-y-3 px-1 py-2">
+              <p class="text-sm text-neutral-500">
+                {view() === "archived"
+                  ? "Nothing archived."
+                  : "No sessions yet."}
+              </p>
+              <Show when={view() === "live"}>
+                <button
+                  type="button"
+                  class={ACTION}
+                  onClick={() => {
+                    setChoosing(true);
+                  }}
+                >
+                  New session
+                </button>
+              </Show>
+            </div>
           }
         >
           {/* Keyed: a listing answers with fresh groups, and an unkeyed `<For>` remounts every row under them. */}
@@ -361,14 +375,17 @@ export function Sidebar(props: {
                 onToggle={(open) => {
                   setOpened((was) => ({ ...was, [group().cwd]: open }));
                 }}
-                summaryClass="flex items-center gap-1 rounded-lg pr-1 text-sm text-neutral-350 hover:bg-neutral-900 hover:text-neutral-100"
+                summaryClass="mt-2 flex items-center gap-1.5 pr-1 text-sm text-neutral-350"
                 summary={
                   <GroupHeader
                     cwd={group().cwd}
                     count={group().count}
-                    open={shown(group().cwd)}
                     pinned={group().pinned}
                     items={projectItems(group().cwd)}
+                    onNew={() => {
+                      setOpened((was) => ({ ...was, [group().cwd]: true }));
+                      go(() => props.store.openDirectory(group().cwd));
+                    }}
                   />
                 }
               >
@@ -418,20 +435,25 @@ export function Sidebar(props: {
           {view() === "archived" ? "Back to sessions" : "Archived"}
         </button>
       </div>
+
+      <DirectoryModal
+        open={choosing()}
+        store={props.store}
+        onClose={() => {
+          setChoosing(false);
+        }}
+      />
     </div>
   );
 }
 
-/**
- * What the directory is called, how much of it a collapsed group is standing
- * in for, and what can be done to the project itself.
- */
+/** What the directory is called, how much it holds, and what can be done to the project itself. */
 function GroupHeader(props: {
   readonly cwd: string;
   readonly count: number;
-  readonly open: boolean;
   readonly pinned: boolean;
   readonly items: readonly RowMenuItem[];
+  readonly onNew: () => void;
 }) {
   let menu: RowMenuControl | undefined;
 
@@ -439,7 +461,7 @@ function GroupHeader(props: {
 
   return (
     <span
-      class="flex min-w-0 flex-1 items-center gap-1"
+      class="flex min-w-0 flex-1 items-center gap-2"
       onContextMenu={(event: MouseEvent) => {
         if (menu) {
           event.preventDefault();
@@ -447,25 +469,28 @@ function GroupHeader(props: {
         }
       }}
     >
-      <span class="flex min-w-0 flex-1 items-center gap-1.5" title={where()}>
-        <Show
-          when={props.pinned}
-          fallback={<span class="i-griddy-icons:folder size-3.5 shrink-0" />}
-        >
-          <span
-            class="i-griddy-icons:pin-filled size-3.5 shrink-0 text-indigo-400"
-            aria-label="Pinned project"
-          />
-        </Show>
-        <Fitted
-          class="flex-1 font-semibold"
-          texts={[where(), baseName(props.cwd)]}
-        />
-      </span>
-      <Show when={!props.open}>
-        <span class="shrink-0 text-xs text-neutral-500">{props.count}</span>
+      <h3 class="truncate font-bold text-neutral-100" title={where()}>
+        {baseName(props.cwd)}
+      </h3>
+      <Show when={props.count > 0}>
+        <span class="shrink-0 text-neutral-400">{`(${props.count})`}</span>
       </Show>
-      <span ref={refuseFold} class="flex shrink-0 items-center">
+      <Show when={props.pinned}>
+        <span
+          class="i-griddy-icons:pin-filled size-3.5 shrink-0 rotate-45 text-indigo-300"
+          aria-label="Pinned project"
+        />
+      </Show>
+      <span ref={refuseFold} class="ml-auto flex shrink-0 items-center">
+        <button
+          type="button"
+          aria-label={`New session in ${baseName(props.cwd)}`}
+          title={`New session in ${where()}`}
+          class="flex size-6 shrink-0 items-center justify-center rounded-lg text-neutral-500 hover:text-neutral-100"
+          onClick={props.onNew}
+        >
+          <span class="i-griddy-icons:plus size-4" aria-hidden="true" />
+        </button>
         <RowMenu
           label={`Project options for ${where()}`}
           items={props.items}
@@ -502,7 +527,7 @@ function Listing(props: {
   readonly onCancelRename: () => void;
 }) {
   return (
-    <ul class="space-y-2">
+    <ul class="ml-[0.9rem] space-y-1 border-l border-neutral-700 py-2 pl-1 pr-1">
       {/* Keyed: a listing answers with fresh objects, and an unkeyed `<For>` remounts every row. */}
       <For each={props.rows} keyed={(row: Row) => row.sessionId}>
         {(row) => (
@@ -549,6 +574,24 @@ function SessionRow(props: {
       ? undefined
       : relativeTime(props.row.listed.settledAt, props.now);
 
+  const drafted = (): boolean =>
+    props.store.draftText(props.row.sessionId) !== "";
+
+  const spoken = (): string => {
+    const said = [props.title];
+    if (drafted()) {
+      said.push("unsent draft");
+    }
+    if (props.store.isRunning(props.row.sessionId)) {
+      said.push("working");
+    } else if (props.store.isUnread(props.row.sessionId)) {
+      said.push("unread");
+    } else if (age() !== undefined) {
+      said.push(age() ?? "");
+    }
+    return said.join(", ");
+  };
+
   return (
     <li
       class="group flex items-center gap-1"
@@ -564,41 +607,40 @@ function SessionRow(props: {
         fallback={
           <button
             type="button"
+            aria-label={spoken()}
             class={{
-              "min-w-0 flex-1 space-y-1 rounded-lg px-3 py-2 text-left text-sm": true,
-              "bg-neutral-850": selected(),
-              "text-neutral-300 hover:bg-neutral-900": !selected(),
+              "flex min-w-0 flex-1 items-center gap-2 rounded-lg px-3 py-2 text-left text-sm": true,
+              "bg-neutral-850 font-bold text-neutral-100": selected(),
+              "text-neutral-350 hover:bg-neutral-900": !selected(),
             }}
             onClick={props.onOpen}
           >
-            <div class="flex items-center justify-between gap-2">
-              <div class="truncate font-semibold">{props.title}</div>
-              <Show when={props.store.isUnread(props.row.sessionId)}>
-                <div
+            <span class="min-w-0 flex-1 truncate">{props.title}</span>
+            <Show when={drafted()}>
+              <span
+                class="i-griddy-icons:edit size-3.5 shrink-0 text-amber-300"
+                aria-hidden="true"
+                title="Unsent draft"
+              />
+            </Show>
+            <Switch>
+              <Match when={props.store.isRunning(props.row.sessionId)}>
+                <Spinner />
+              </Match>
+              <Match when={props.store.isUnread(props.row.sessionId)}>
+                <span
                   class="size-1.5 shrink-0 rounded-full bg-indigo-400"
-                  aria-label="Unread"
+                  aria-hidden="true"
                 />
-              </Show>
-            </div>
-            <div class="flex items-center justify-between gap-6 text-neutral-400">
-              <div class="ml-auto flex shrink-0 items-center gap-1.5">
-                <Show when={props.store.draftText(props.row.sessionId) !== ""}>
-                  <span
-                    class="i-griddy-icons:edit size-3 text-amber-400"
-                    aria-label="Unsent draft"
-                    title="Unsent draft"
-                  />
-                </Show>
-                <Switch>
-                  <Match when={props.store.isRunning(props.row.sessionId)}>
-                    <Spinner />
-                  </Match>
-                  <Match when={age()}>
-                    {(shown) => <span>{shown()}</span>}
-                  </Match>
-                </Switch>
-              </div>
-            </div>
+              </Match>
+              <Match when={age()}>
+                {(shown) => (
+                  <span class="shrink-0 font-light text-neutral-400">
+                    {shown()}
+                  </span>
+                )}
+              </Match>
+            </Switch>
           </button>
         }
       >

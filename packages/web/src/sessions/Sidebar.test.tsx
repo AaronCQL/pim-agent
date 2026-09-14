@@ -200,6 +200,11 @@ function menu(host: HTMLElement, index = 0): HTMLButtonElement {
   ][index]!;
 }
 
+/** The unread mark, which is a shape rather than a word: the row's name says it. */
+function dots(host: HTMLElement): readonly Element[] {
+  return [...host.querySelectorAll('li [class*="bg-indigo-400"]')];
+}
+
 /** The `⋯` a group header carries, as against the one on a row under it. */
 function projectMenu(host: HTMLElement, index = 0): HTMLButtonElement {
   return [
@@ -384,7 +389,7 @@ test("the group holding the session being read is the open one", async () => {
   expect(directories(host).map((group) => group.open)).toEqual([false, true]);
 });
 
-test("a collapsed group says how many sessions it is standing in for", async () => {
+test("a group says how many sessions the directory holds, open or folded", async () => {
   const { host } = paint({
     projects: [
       { cwd: "/home/ada/dev/pim", count: 4 },
@@ -395,8 +400,8 @@ test("a collapsed group says how many sessions it is standing in for", async () 
 
   // The count is the directory's own, not the page's: a cut group still
   // reports everything it holds.
-  expect(heading(host).textContent).not.toContain("4");
-  expect(heading(host, 1).textContent).toContain("9");
+  expect(heading(host).textContent).toContain("(4)");
+  expect(heading(host, 1).textContent).toContain("(9)");
 });
 
 test("a group with more sessions than the page holds asks for the rest", async () => {
@@ -429,6 +434,35 @@ test("a group with more sessions than the page holds asks for the rest", async (
   expect(host.textContent).not.toContain("Show 2 more");
   // Reading more of a project is not going anywhere.
   expect(navigated).toEqual([]);
+});
+
+/**
+ * The one press that starts a chat where the reader is already looking: the
+ * directory is the target, so nothing has to be chosen after it.
+ */
+test("a header's `+` starts a session in that directory and unfolds it", async () => {
+  const navigated: number[] = [];
+  const { host, store } = paint({ onNavigate: () => navigated.push(1) });
+  await listed(host);
+  const opened: string[] = [];
+  store.openDirectory = async (cwd?: string) => {
+    opened.push(cwd ?? "");
+  };
+
+  const plus = [
+    ...host.querySelectorAll<HTMLButtonElement>(
+      '[aria-label^="New session in"]'
+    ),
+  ];
+  expect(plus).toHaveLength(2);
+  expect(directories(host).map((group) => group.open)).toEqual([true, false]);
+
+  click(plus[1]!);
+
+  expect(opened).toEqual(["/srv/other"]);
+  // The row it just made is under a header that was folded; both groups stand open.
+  expect(directories(host).map((group) => group.open)).toEqual([true, true]);
+  expect(navigated).toEqual([1]);
 });
 
 test("opening and closing a group moves nothing but the group", async () => {
@@ -486,7 +520,7 @@ test("a pinned project stands above one answered in more recently", async () => 
   expect(
     heading(host, 2).querySelector('[aria-label="Pinned project"]')
   ).toBeNull();
-  expect(heading(host, 2).innerHTML).toContain("i-griddy-icons:folder");
+  expect(heading(host, 2).innerHTML).not.toContain("i-griddy-icons:pin-filled");
 
   // What another window pinned: no session file moved, so this broadcast is
   // the whole word on it and the fold follows it without a listing.
@@ -584,9 +618,8 @@ test("the header's `⋯` and a right-click open the project's verbs, and fold no
 
   const trigger = projectMenu(host);
   expect(trigger.innerHTML).toContain("i-griddy-icons:more-horizontal");
-  // Dimmed rather than revealed on hover, exactly as the row's is.
-  expect(trigger.className).toContain("opacity-60");
-  expect(trigger.className).not.toContain("opacity-0");
+  // Painted out until a caret lands on it, exactly as the row's is.
+  expect(trigger.className).toContain("sr-only");
 
   click(trigger);
   expect(verbs(host).map((option) => option.textContent)).toEqual([
@@ -614,20 +647,19 @@ test("the dot marks a session that has answered since anything read it", async (
   const { host } = paint();
   await Bun.sleep(0);
   flush();
-  expect(host.querySelectorAll('[aria-label="Unread"]')).toHaveLength(0);
+  expect(dots(host)).toHaveLength(0);
 
   const { host: marked, store } = paint({ unread: ["aaaaaaaa-1111"] });
   await Bun.sleep(0);
   flush();
-  expect(
-    marked.querySelectorAll('li:first-child [aria-label="Unread"]')
-  ).toHaveLength(1);
+  expect(dots(marked)).toHaveLength(1);
+  expect(bodies(marked)[0]?.getAttribute("aria-label")).toContain("unread");
 
   // Read in another browser, on a cursor this one shares: the dot goes out
   // here without the list being asked for again.
   store.ingest({ type: "session_read", sessionId: "aaaaaaaa-1111" });
   flush();
-  expect(marked.querySelectorAll('[aria-label="Unread"]')).toHaveLength(0);
+  expect(dots(marked)).toHaveLength(0);
 });
 
 /**
@@ -692,8 +724,7 @@ test("a row's age follows the clock, not the next render", async () => {
   const { host } = paint();
   await listed(host);
   const age = (): string | undefined =>
-    bodies(host)[0]?.querySelector("div:last-child > div:last-child")
-      ?.textContent ?? undefined;
+    bodies(host)[0]?.querySelector("span:last-child")?.textContent ?? undefined;
   expect(age()).toBe("30s");
 
   setSystemTime(new Date(90_000));
@@ -718,7 +749,7 @@ test("the header carries the app's own buttons and nothing about the socket", ()
     button.getAttribute("aria-label")
   );
 
-  expect(labels).toEqual(["New session", "Settings"]);
+  expect(labels).toEqual(["Settings"]);
   expect(host.textContent).not.toContain("127.0.0.1:1");
 
   header.querySelector<HTMLButtonElement>('[aria-label="Settings"]')!.click();
@@ -747,7 +778,7 @@ test("a new chat is a row before it is a file, marked and ageless", async () => 
   // one, whose fill the old neutral pill was painted in.
   expect(rows[0]?.textContent).not.toContain("draft");
   expect(rows[0]?.innerHTML).toContain("i-griddy-icons:edit");
-  expect(rows[0]?.innerHTML).toContain("text-amber-400");
+  expect(rows[0]?.innerHTML).toContain("text-amber-300");
   // No age: nothing has been written for a clock to measure.
   expect(rows[0]?.textContent).not.toMatch(/\d+[smhd]/);
   // And nothing to rename, archive or hold unread: there is no file yet.
@@ -1024,7 +1055,7 @@ test("switching moves the highlight without rebuilding the list", async () => {
   expect(bodies(host)[0]?.className).not.toContain("bg-neutral-850");
 });
 
-test("every row wears its `⋯` without being hovered", async () => {
+test("every row keeps its `⋯` for a caret, painted out for everything else", async () => {
   const { host } = paint();
   await listed(host);
 
@@ -1032,9 +1063,10 @@ test("every row wears its `⋯` without being hovered", async () => {
   expect(triggers).toHaveLength(2);
   const trigger = menu(host);
   expect(trigger.innerHTML).toContain("i-griddy-icons:more-horizontal");
-  // Dimmed, not hidden: a reveal on hover is nothing at all under a finger.
-  expect(trigger.className).toContain("opacity-60");
-  expect(trigger.className).not.toContain("opacity-0");
+  // Off the page, not out of it: the pointer and the finger have gestures,
+  // and the keyboard and the screen reader have only this.
+  expect(trigger.className).toContain("sr-only");
+  expect(trigger.className).toContain("focus-visible:not-sr-only");
   expect(verbs(host)).toHaveLength(0);
 });
 
@@ -1081,9 +1113,7 @@ test("marking a row unread holds the dot without navigating anywhere", async () 
     sessionId: "aaaaaaaa-1111",
     value: true,
   });
-  expect(
-    host.querySelectorAll('li:first-child [aria-label="Unread"]')
-  ).toHaveLength(1);
+  expect(dots(host)).toHaveLength(1);
   // The drawer stays where it is: nothing here moved the reader.
   expect(navigated).toEqual([]);
   expect(switched).toEqual([]);
@@ -1167,6 +1197,24 @@ test("the footer opens the archived listing, and a row comes back from it", asyn
   });
   expect(host.textContent).not.toContain("Put away last week");
   expect(host.textContent).toContain("Nothing archived.");
+});
+
+/**
+ * With nothing listed there is no header to press, so the only way to start
+ * anything is the one the empty list offers: a directory to start it in.
+ */
+test("an empty list offers a directory to start the first session in", async () => {
+  const { host } = paint({ sessions: [] });
+  await Bun.sleep(0);
+  flush();
+
+  expect(host.querySelectorAll('[aria-label^="New session in"]')).toHaveLength(
+    0
+  );
+  expect(host.querySelector("dialog")?.open).not.toBe(true);
+
+  click(named(host, "New session"));
+  expect(host.querySelector("dialog")?.open).toBe(true);
 });
 
 test("the keyboard walks the menu and commits the row it stands on", async () => {

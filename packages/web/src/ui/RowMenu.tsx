@@ -23,8 +23,9 @@ export type RowMenuControl = {
 const PANEL_WIDTH = 180;
 
 /**
- * The `⋯` a row hangs its verbs on: dimmed rather than hidden, so it is there
- * to be found on a touch screen too.
+ * The `⋯` a row hangs its verbs on. A pointer opens it by right-click and a
+ * finger by long press, so the glyph is painted out until a caret lands on it:
+ * the keyboard and a screen reader keep a control the gestures cannot offer.
  */
 export function RowMenu(props: {
   readonly label: string;
@@ -73,7 +74,7 @@ export function RowMenu(props: {
         aria-expanded={panel.open() ? "true" : "false"}
         aria-label={props.label}
         title={props.label}
-        class={`${ICON} opacity-60 group-hover:opacity-100 hover:opacity-100 focus-visible:opacity-100`}
+        class={`${ICON} sr-only focus:not-sr-only focus-visible:not-sr-only`}
         onClick={panel.toggle}
         onKeyDown={(event: KeyboardEvent) => {
           navigation.onKeyDown(event);
