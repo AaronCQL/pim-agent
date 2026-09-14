@@ -1,8 +1,10 @@
 /* Commit Mono — self-hosted via @fontsource. Latin is the only subset the
    family ships, and these are the only faces the UI paints: 400 body, 600 for
-   a session title, 700 for a tool label or a heading, 300 italic for thinking
-   and 400 italic for markdown emphasis. The family's other eight faces are
-   ~1MB of woff we would ship in the tarball and never fetch. */
+   a session title, 700 for a tool label or a heading, 300 for a sidebar
+   timestamp, 300 italic for thinking and 400 italic for markdown emphasis.
+   The family's other six faces are ~650KB of woff we would ship in the
+   tarball and never fetch. */
+@import "@fontsource/commit-mono/latin-300.css";
 @import "@fontsource/commit-mono/latin-300-italic.css";
 @import "@fontsource/commit-mono/latin-400.css";
 @import "@fontsource/commit-mono/latin-400-italic.css";

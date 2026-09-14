@@ -2,6 +2,13 @@ import { Show, untrack, type Element } from "solid-js";
 
 const CHEVRON = "i-griddy-icons:chevron-right-small-filled";
 
+/**
+ * The caret of a disclosure that stands in its own row rather than the
+ * transcript's gutter: read at text size, so the full triangle rather than the
+ * gutter's small one blown up.
+ */
+const ROW_CHEVRON = "i-griddy-icons:chevron-right-filled";
+
 /** What a caret does when the disclosure it stands on opens. */
 const TURN = "transition-transform group-open:rotate-90";
 
@@ -87,7 +94,7 @@ export function Collapsible(props: {
           when={gutter()}
           fallback={
             <span
-              class={`${CHEVRON} ${TURN} size-4 shrink-0 scale-150 ${props.caret ?? "bg-neutral-400"}`}
+              class={`${ROW_CHEVRON} ${TURN} size-3 shrink-0 ${props.caret ?? "bg-neutral-400"}`}
               aria-hidden="true"
             />
           }

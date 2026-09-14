@@ -137,6 +137,8 @@ export type SessionScope = {
   readonly archived?: boolean;
   /** Keep at most this many sessions per working directory, so one busy project cannot fill the page. */
   readonly perProject?: number;
+  /** Cap the page whole; absent, the server picks one, and a per-project ask above it would bind on it instead. */
+  readonly limit?: number;
 };
 
 /** One answer to `list_sessions`: the page of rows, and every directory that had one, counted whole. */
@@ -734,6 +736,7 @@ export class SessionStore {
         ...(scope.perProject === undefined
           ? {}
           : { perProject: scope.perProject }),
+        ...(scope.limit === undefined ? {} : { limit: scope.limit }),
         ...(scope.archived === true ? { archived: true } : {}),
       })
       .catch(() => undefined);

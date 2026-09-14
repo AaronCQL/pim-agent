@@ -404,7 +404,21 @@ test("the group holding the session being read is the open one", async () => {
   expect(directories(host).map((group) => group.open)).toEqual([false, true]);
 });
 
-test("a group says how many sessions the directory holds, open or folded", async () => {
+/** One project's worth of rows, newest first, each one named so the server would draw it. */
+function many(
+  count: number,
+  cwd = "/home/ada/dev/pim"
+): readonly SessionSummaryView[] {
+  return Array.from({ length: count }, (unused, at) => ({
+    sessionId: `s${at}`,
+    cwd,
+    createdAt: 0,
+    settledAt: 1000 - at,
+    title: `Session ${at}`,
+  }));
+}
+
+test("a group header draws its name and nothing it holds", async () => {
   const { host } = paint({
     projects: [
       { cwd: "/home/ada/dev/pim", count: 4 },
@@ -413,42 +427,72 @@ test("a group says how many sessions the directory holds, open or folded", async
   });
   await listed(host);
 
-  // The count is the directory's own, not the page's: a cut group still
-  // reports everything it holds.
-  expect(heading(host).textContent).toContain("(4)");
-  expect(heading(host, 1).textContent).toContain("(9)");
+  // The count behind a page counts files, not rows, so it is a number this
+  // sidebar can ask about but never show.
+  expect(heading(host).textContent).toBe("pim");
+  expect(heading(host, 1).textContent).toBe("other");
 });
 
-test("a group with more sessions than the page holds asks for the rest", async () => {
+test("a group with more sessions than the page holds reads ten more per press", async () => {
   const navigated: number[] = [];
   const { host, sent } = paint({
     onNavigate: () => navigated.push(1),
-    sessions: Array.from({ length: 12 }, (unused, at) => ({
-      sessionId: `s${at}`,
-      cwd: "/home/ada/dev/pim",
-      createdAt: 0,
-      settledAt: 1000 - at,
-      title: `Session ${at}`,
-    })),
+    sessions: many(25),
   });
   await listed(host);
 
-  // Ten per project, and the header knows what that left out.
-  expect(host.querySelectorAll("li")).toHaveLength(10);
-  click(named(host, "Show 2 more"));
+  // Ten per project, and an eleventh row under them saying what that left out.
+  expect(host.querySelectorAll("li")).toHaveLength(11);
+  click(named(host, "Load more…"));
   await Bun.sleep(0);
   flush();
 
-  // One directory re-read on a press, rather than a fatter page on every
-  // listing this sidebar ever asks for.
+  // One directory re-read at its own depth on a press, rather than a fatter
+  // page on every listing this sidebar ever asks for.
   expect(sent.at(-1)).toEqual({
     type: "list_sessions",
     cwd: "/home/ada/dev/pim",
+    perProject: 20,
+    limit: 20,
   });
-  expect(host.querySelectorAll("li")).toHaveLength(12);
-  expect(host.textContent).not.toContain("Show 2 more");
+  // Twenty rows and the button still under them: there is a third page.
+  expect(host.querySelectorAll("li")).toHaveLength(21);
+
+  click(named(host, "Load more…"));
+  await Bun.sleep(0);
+  flush();
+
+  expect(sent.at(-1)).toEqual({
+    type: "list_sessions",
+    cwd: "/home/ada/dev/pim",
+    perProject: 30,
+    limit: 30,
+  });
+  expect(host.querySelectorAll("li")).toHaveLength(25);
+  expect(host.textContent).not.toContain("Load more…");
   // Reading more of a project is not going anywhere.
   expect(navigated).toEqual([]);
+});
+
+/**
+ * A session with nothing to call itself is counted on disk and never drawn,
+ * so the count alone would leave a button that loads nothing forever. The
+ * answer that comes up short is what retires it.
+ */
+test("a directory that answers short retires the button", async () => {
+  const { host } = paint({
+    sessions: many(12),
+    projects: [{ cwd: "/home/ada/dev/pim", count: 14 }],
+  });
+  await listed(host);
+
+  expect(host.querySelectorAll("li")).toHaveLength(11);
+  click(named(host, "Load more…"));
+  await Bun.sleep(0);
+  flush();
+
+  expect(host.querySelectorAll("li")).toHaveLength(12);
+  expect(host.textContent).not.toContain("Load more…");
 });
 
 /**
@@ -528,14 +572,12 @@ test("a pinned project stands above one answered in more recently", async () => 
     expect(
       heading(host, index).querySelector('[aria-label="Pinned project"]')
     ).not.toBeNull();
-    expect(heading(host, index).innerHTML).toContain(
-      "i-griddy-icons:pin-filled"
-    );
+    expect(heading(host, index).innerHTML).toContain("i-griddy-icons:pin");
   }
   expect(
     heading(host, 2).querySelector('[aria-label="Pinned project"]')
   ).toBeNull();
-  expect(heading(host, 2).innerHTML).not.toContain("i-griddy-icons:pin-filled");
+  expect(heading(host, 2).innerHTML).not.toContain("i-griddy-icons:pin");
 
   // What another window pinned: no session file moved, so this broadcast is
   // the whole word on it and the fold follows it without a listing.

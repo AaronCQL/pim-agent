@@ -2,6 +2,7 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  type Element,
   For,
   Match,
   onCleanup,
@@ -32,7 +33,7 @@ type Row = {
 type Group = {
   readonly cwd: string;
   readonly rows: readonly Row[];
-  /** Every session the directory holds, page or no page. */
+  /** Every file the directory holds, drawable or not; never shown, only ever asked whether it exceeds the rows. */
   readonly count: number;
   /** Newest settle time in it, which is where the group sorts. */
   readonly settledAt: number;
@@ -46,8 +47,14 @@ type View = "live" | "archived";
 /** A row with nothing written to it yet is newer than anything that has settled. */
 const UNSETTLED = Number.MAX_SAFE_INTEGER;
 
-/** What one project contributes to a listing before a reader asks for it whole. */
+/** What one project contributes to a listing, and what one press of `Load more…` adds to it. */
 const PER_PROJECT = 10;
+
+/** How many rows a project has been asked for, keyed by its working directory. */
+type Pages = Readonly<Record<string, number>>;
+
+/** The projects that answered short, which is the only word that a directory has no more rows to draw. */
+type Ended = Readonly<Record<string, true>>;
 
 function settleOf(row: Row): number {
   return row.listed?.settledAt ?? UNSETTLED;
@@ -73,7 +80,8 @@ export function Sidebar(props: {
   const [projects, setProjects] = createSignal<readonly ProjectView[]>([]);
   const [view, setView] = createSignal<View>("live");
   const [opened, setOpened] = createSignal<Record<string, boolean>>({});
-  const [whole, setWhole] = createSignal<readonly string[]>([]);
+  const [pages, setPages] = createSignal<Pages>({});
+  const [ended, setEnded] = createSignal<Ended>({});
   const [editing, setEditing] = createSignal<string>();
   const [choosing, setChoosing] = createSignal(false);
   const [failure, setFailure] = createSignal("");
@@ -87,31 +95,42 @@ export function Sidebar(props: {
 
   let generation = 0;
 
-  const load = (
-    store: SessionStore,
-    which: View,
-    asked: readonly string[]
-  ): void => {
+  const load = (store: SessionStore, which: View, asked: Pages): void => {
     // Bumped on every ask: the archived listing and the live one answer into
     // the same rows, and the slower of two must not land last.
     const mine = ++generation;
-    const scope = (cwd?: string): SessionScope => ({
-      ...(which === "archived" ? { archived: true } : {}),
-      ...(cwd === undefined ? { perProject: PER_PROJECT } : { cwd }),
-    });
+    const archived: SessionScope =
+      which === "archived" ? { archived: true } : {};
+    const widened = Object.entries(asked);
     void Promise.all([
-      store.listSessions(scope()),
-      // A project the reader asked to see whole; the cut stands for the rest.
-      Promise.all(asked.map((cwd) => store.listSessions(scope(cwd)))),
+      store.listSessions({ ...archived, perProject: PER_PROJECT }),
+      // A project the reader asked for more of, re-read at its own depth; the
+      // flat page's cut stands for every other.
+      Promise.all(
+        widened.map(([cwd, size]) =>
+          store.listSessions({
+            ...archived,
+            cwd,
+            perProject: size,
+            limit: size,
+          })
+        )
+      ),
     ]).then(([listing, expanded]) => {
       if (mine !== generation) {
         return;
       }
-      const rest = expanded.flatMap((answer) => answer.sessions);
+      const short: Record<string, true> = {};
+      for (const [at, [cwd, size]] of widened.entries()) {
+        if ((expanded[at]?.sessions.length ?? 0) < size) {
+          short[cwd] = true;
+        }
+      }
+      setEnded(short);
       setSessions(
         [
-          ...listing.sessions.filter((row) => !asked.includes(row.cwd)),
-          ...rest,
+          ...listing.sessions.filter((row) => asked[row.cwd] === undefined),
+          ...expanded.flatMap((answer) => answer.sessions),
         ].sort((one, other) => other.settledAt - one.settledAt)
       );
       setProjects(listing.projects);
@@ -122,7 +141,7 @@ export function Sidebar(props: {
     () => ({
       store: props.store,
       view: view(),
-      whole: whole(),
+      pages: pages(),
       sessionId: props.store.state.sessionId,
       connection: props.store.state.connection,
       catalogue: props.store.state.catalogue,
@@ -132,13 +151,13 @@ export function Sidebar(props: {
       const stale =
         before === undefined ||
         before.view !== state.view ||
-        before.whole !== state.whole ||
+        before.pages !== state.pages ||
         before.sessionId !== state.sessionId ||
         before.catalogue !== state.catalogue ||
         (state.connection === "open" && before.connection !== "open") ||
         before.running.some((sessionId) => !state.running.includes(sessionId));
       if (stale) {
-        load(state.store, state.view, state.whole);
+        load(state.store, state.view, state.pages);
       }
     }
   );
@@ -207,8 +226,11 @@ export function Sidebar(props: {
 
   const shown = (cwd: string): boolean => opened()[cwd] ?? cwd === opening();
 
-  const hidden = (group: Group): number =>
-    whole().includes(group.cwd) ? 0 : group.count - group.rows.length;
+  // A count of files is not a count of rows — a session with nothing to call
+  // itself is never drawn — so the count only ever suggests more, and a short
+  // answer is what settles it.
+  const more = (group: Group): boolean =>
+    ended()[group.cwd] === undefined && group.count > group.rows.length;
 
   const title = (row: Row): string =>
     props.store.sessionName(row.sessionId) ??
@@ -246,7 +268,7 @@ export function Sidebar(props: {
     attempt(async () => {
       await props.store.rename(row.sessionId, name === "" ? null : name);
       // A cleared name falls back to a digest of the first message, which only the server holds.
-      load(props.store, untrack(view), untrack(whole));
+      load(props.store, untrack(view), untrack(pages));
     });
   };
 
@@ -342,12 +364,12 @@ export function Sidebar(props: {
 
       <nav
         aria-label="Sessions"
-        class="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-2"
+        class="min-h-0 flex-1 space-y-1 overflow-y-auto py-2"
       >
         <Show
           when={rows().length > 0}
           fallback={
-            <div class="space-y-3 px-1 py-2">
+            <div class="space-y-3 px-3 py-2">
               <p class="text-sm text-neutral-500">
                 {view() === "archived"
                   ? "Nothing archived."
@@ -373,15 +395,20 @@ export function Sidebar(props: {
               <Collapsible
                 gutter={false}
                 open={shown(group().cwd)}
+                caret={
+                  shown(group().cwd)
+                    ? "bg-neutral-200"
+                    : "bg-neutral-500 group-hover/head:bg-neutral-200"
+                }
                 onToggle={(open) => {
                   setOpened((was) => ({ ...was, [group().cwd]: open }));
                 }}
-                summaryClass="mt-2 flex items-center gap-1.5 pr-1 text-sm text-neutral-350"
+                summaryClass="group/head ml-3 mr-3 mt-2 py-0.5 flex items-center gap-2.4 text-sm text-neutral-350"
                 summary={
                   <GroupHeader
                     cwd={group().cwd}
-                    count={group().count}
                     pinned={group().pinned}
+                    open={shown(group().cwd)}
                     items={projectItems(group().cwd)}
                     onNew={() => {
                       setOpened((was) => ({ ...was, [group().cwd]: true }));
@@ -400,18 +427,25 @@ export function Sidebar(props: {
                   onOpen={attach}
                   onRename={rename}
                   onCancelRename={cancelRename}
-                />
-                <Show when={hidden(group()) > 0}>
-                  <button
-                    type="button"
-                    class="w-full rounded-lg px-3 py-1 text-left text-sm text-neutral-500 hover:bg-neutral-900 hover:text-neutral-300"
-                    onClick={() => {
-                      setWhole((was) => [...was, group().cwd]);
-                    }}
-                  >
-                    {`Show ${hidden(group())} more`}
-                  </button>
-                </Show>
+                >
+                  <Show when={more(group())}>
+                    <li>
+                      <button
+                        type="button"
+                        class="w-full rounded-lg px-3 py-1 text-left text-sm text-neutral-500 hover:text-neutral-300"
+                        onClick={() => {
+                          const cwd = group().cwd;
+                          setPages((was) => ({
+                            ...was,
+                            [cwd]: (was[cwd] ?? PER_PROJECT) + PER_PROJECT,
+                          }));
+                        }}
+                      >
+                        {`Load more…`}
+                      </button>
+                    </li>
+                  </Show>
+                </Listing>
               </Collapsible>
             )}
           </For>
@@ -426,6 +460,8 @@ export function Sidebar(props: {
           onClick={() => {
             setFailure("");
             setEditing(undefined);
+            // The two listings are different scopes; a depth read into one says nothing about the other.
+            setPages({});
             setView((was) => (was === "archived" ? "live" : "archived"));
           }}
         >
@@ -448,11 +484,12 @@ export function Sidebar(props: {
   );
 }
 
-/** What the directory is called, how much it holds, and what can be done to the project itself. */
+/** What the directory is called, and what can be done to the project itself. */
 function GroupHeader(props: {
   readonly cwd: string;
-  readonly count: number;
   readonly pinned: boolean;
+  /** The group this heads is unfolded: its name is read first, so it is lit first. */
+  readonly open: boolean;
   readonly items: readonly RowMenuItem[];
   readonly onNew: () => void;
 }) {
@@ -469,24 +506,30 @@ function GroupHeader(props: {
       class="flex min-w-0 flex-1 select-none items-center gap-2 [-webkit-touch-callout:none]"
       {...press.handlers}
     >
-      <h3 class="truncate font-bold text-neutral-100" title={where()}>
-        {baseName(props.cwd)}
-      </h3>
-      <Show when={props.count > 0}>
-        <span class="shrink-0 text-neutral-400">{`(${props.count})`}</span>
-      </Show>
-      <Show when={props.pinned}>
-        <span
-          class="i-griddy-icons:pin-filled size-3.5 shrink-0 rotate-45 text-indigo-300"
-          aria-label="Pinned project"
-        />
-      </Show>
-      <span ref={refuseFold} class="ml-auto flex shrink-0 items-center">
+      <span class="flex min-w-0 flex-1 items-center gap-2">
+        <h3
+          class={{
+            "truncate font-bold": true,
+            "text-neutral-50": props.open,
+            "text-neutral-400 group-hover/head:text-neutral-200": !props.open,
+          }}
+          title={where()}
+        >
+          {baseName(props.cwd)}
+        </h3>
+        <Show when={props.pinned}>
+          <span
+            class="i-griddy-icons:pin size-3.5 shrink-0 rotate-45 text-neutral-400"
+            aria-label="Pinned project"
+          />
+        </Show>
+      </span>
+      <span ref={refuseFold} class="flex shrink-0 items-center">
         <button
           type="button"
           aria-label={`New session in ${baseName(props.cwd)}`}
           title={`New session in ${where()}`}
-          class="flex size-6 shrink-0 items-center justify-center rounded-lg text-neutral-500 hover:text-neutral-100"
+          class="flex shrink-0 items-center px-2 text-neutral-500 hover:text-neutral-100"
           onClick={props.onNew}
         >
           <span class="i-griddy-icons:plus size-4" aria-hidden="true" />
@@ -534,9 +577,11 @@ function Listing(props: {
   readonly onOpen: (row: Row) => void;
   readonly onRename: (row: Row, text: string) => void;
   readonly onCancelRename: () => void;
+  /** Whatever the group hangs under its rows, inside the spine and the same margins. */
+  readonly children?: Element;
 }) {
   return (
-    <ul class="ml-[0.9rem] space-y-1 border-l border-neutral-700 py-2 pl-1 pr-1">
+    <ul class="ml-4.4 space-y-1 border-l border-neutral-700 pl-1 pr-3 pt-2 group-hover:border-neutral-500">
       {/* Keyed: a listing answers with fresh objects, and an unkeyed `<For>` remounts every row. */}
       <For each={props.rows} keyed={(row: Row) => row.sessionId}>
         {(row) => (
@@ -557,6 +602,7 @@ function Listing(props: {
           />
         )}
       </For>
+      {props.children}
     </ul>
   );
 }
@@ -604,7 +650,10 @@ function SessionRow(props: {
 
   return (
     <li
-      class="group flex select-none items-center gap-1 [-webkit-touch-callout:none]"
+      // Ungapped: the `⋯` is painted out until a caret lands on it, and a gap
+      // ahead of a hidden trigger would hold the row's last glyph off the edge
+      // the search field and every other row end at.
+      class="group flex select-none items-center [-webkit-touch-callout:none]"
       {...press.handlers}
     >
       <Show
@@ -616,7 +665,7 @@ function SessionRow(props: {
             class={{
               "flex min-w-0 flex-1 items-center gap-2 rounded-lg px-3 py-2 text-left text-sm": true,
               "bg-neutral-850 font-bold text-neutral-100": selected(),
-              "text-neutral-350 hover:bg-neutral-900": !selected(),
+              "text-neutral-300 hover:bg-neutral-900": !selected(),
             }}
             onClick={() => {
               if (!press.swallowed()) {

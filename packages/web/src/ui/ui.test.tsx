@@ -490,9 +490,7 @@ describe("platform wrappers", () => {
     expect(host.querySelector("summary")?.className).toContain("flex");
     // The caret is in the summary's own row, and nothing is spined.
     const caret = host.querySelector("summary > span")!;
-    expect(caret.className).toContain(
-      "i-griddy-icons:chevron-right-small-filled"
-    );
+    expect(caret.className).toContain("i-griddy-icons:chevron-right-filled");
     expect(caret.className).toContain("group-open:rotate-90");
     expect(
       host.querySelector("summary > span + span")?.className
