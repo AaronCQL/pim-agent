@@ -17,7 +17,7 @@ import { version } from "../../../../package.json";
 import type { SessionScope, SessionStore } from "../session/SessionStore";
 import { abbreviateHome, baseName, relativeTime } from "../format";
 import { DirectoryModal } from "../topbar/DirectoryModal";
-import { ACTION, FIELD, ICON } from "../ui/classes";
+import { ACTION, FIELD, FIELD_SKIN, ICON } from "../ui/classes";
 import { Collapsible } from "../ui/Collapsible";
 import { RowMenu, type RowMenuControl, type RowMenuItem } from "../ui/RowMenu";
 import { createPressMenu, type PressMenu } from "../ui/pressMenu";
@@ -49,6 +49,9 @@ const UNSETTLED = Number.MAX_SAFE_INTEGER;
 
 /** What one project contributes to a listing, and what one press of `Load more…` adds to it. */
 const PER_PROJECT = 10;
+
+/** The box one session row occupies, read or being named, so the swap between the two shifts nothing. */
+const ROW_BOX = "min-w-0 flex-1 rounded-lg px-3 py-2 text-sm";
 
 /** How many rows a project has been asked for, keyed by its working directory. */
 type Pages = Readonly<Record<string, number>>;
@@ -663,7 +666,7 @@ function SessionRow(props: {
             type="button"
             aria-label={spoken()}
             class={{
-              "flex min-w-0 flex-1 items-center gap-2 rounded-lg px-3 py-2 text-left text-sm": true,
+              [`${ROW_BOX} flex items-center gap-2 text-left`]: true,
               "bg-neutral-850 font-bold text-neutral-100": selected(),
               "text-neutral-300 hover:bg-neutral-900": !selected(),
             }}
@@ -758,7 +761,7 @@ function RenameBox(props: {
       autocapitalize="off"
       autocomplete="off"
       aria-label={props.label}
-      class={FIELD}
+      class={`${ROW_BOX} ${FIELD_SKIN}`}
       onKeyDown={(event: KeyboardEvent) => {
         if (event.key === "Enter") {
           event.preventDefault();
