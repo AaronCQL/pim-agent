@@ -976,6 +976,33 @@ describe("archive, names and pins", () => {
     ]);
     expect(sent).toEqual([{ type: "list_sessions", perProject: 1 }]);
   });
+
+  /** A pin is what the reader said about a directory; the clock is only what happened to it. */
+  test("a pinned project comes before every directory answered in since", async () => {
+    const target = store();
+    target.client.send = (async () => ({
+      type: "response",
+      id: "1",
+      success: true,
+      sessions: [
+        row("s1", { cwd: "/busy", settledAt: 9 }),
+        row("s2", { cwd: "/quiet", settledAt: 8 }),
+      ],
+      projects: [
+        { cwd: "/busy", count: 178 },
+        { cwd: "/quiet", count: 2 },
+        // Past the page, so the pin reaches this client on the project alone.
+        { cwd: "/forgotten", count: 1, pinned: true },
+      ],
+    })) as typeof target.client.send;
+
+    expect(await target.recentDirectories()).toEqual([
+      "/forgotten",
+      "/busy",
+      "/quiet",
+    ]);
+    expect(target.isPinned("/forgotten")).toBe(true);
+  });
 });
 
 /**

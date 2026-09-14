@@ -77,6 +77,8 @@ function paint(
     /** Overrides the count behind the page, for a project the cut trimmed. */
     readonly projects?: readonly ProjectView[];
     readonly archived?: readonly SessionSummaryView[];
+    /** Directories the server already holds a pin for. */
+    readonly pinned?: readonly string[];
     /** What the server refuses every mutating command with. */
     readonly refuse?: string;
   } = {}
@@ -85,8 +87,18 @@ function paint(
   const switched: string[] = [];
   const sent: CommandDraft[] = [];
   const live = options.sessions ?? SESSIONS;
+  // Kept, not merely answered: a pin is the server's to remember, and the
+  // listing that follows one is where a client learns it stuck.
+  const pins = new Set(options.pinned ?? []);
   store.client.send = async (draft) => {
     sent.push(draft);
+    if (draft.type === "set_project_pinned" && options.refuse === undefined) {
+      if (draft.value) {
+        pins.add(draft.cwd);
+      } else {
+        pins.delete(draft.cwd);
+      }
+    }
     if (draft.type === "list_sessions") {
       const scope = draft.archived === true ? (options.archived ?? []) : live;
       const answered =
@@ -97,7 +109,11 @@ function paint(
         type: "response",
         id: "1",
         success: true,
-        projects: options.projects ?? counted(scope),
+        projects: (options.projects ?? counted(scope)).map((project) =>
+          pins.has(project.cwd)
+            ? { ...project, pinned: true as const }
+            : project
+        ),
         sessions: (draft.perProject === undefined
           ? answered
           : cut(answered, draft.perProject)
@@ -115,6 +131,7 @@ function paint(
             ...((options.unread ?? []).includes(session.sessionId)
               ? { unread: true }
               : {}),
+            ...(pins.has(session.cwd) ? { pinned: true as const } : {}),
             ...(status === undefined || status === "idle" ? {} : { status }),
           };
         }),
@@ -183,6 +200,15 @@ function menu(host: HTMLElement, index = 0): HTMLButtonElement {
   ][index]!;
 }
 
+/** The `⋯` a group header carries, as against the one on a row under it. */
+function projectMenu(host: HTMLElement, index = 0): HTMLButtonElement {
+  return [
+    ...host.querySelectorAll<HTMLButtonElement>(
+      '[aria-label^="Project options for"]'
+    ),
+  ][index]!;
+}
+
 /** One group: the disclosure a directory's sessions hang under. */
 function directories(host: HTMLElement): readonly HTMLDetailsElement[] {
   return [...host.querySelectorAll<HTMLDetailsElement>("nav details")];
@@ -214,7 +240,11 @@ function press(target: Element, key: string): void {
 }
 
 function click(target: Element): void {
-  target.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  // Cancelable, as a real one is: a `<summary>` folds on a click nobody
+  // cancelled, and an uncancelable press cannot be refused at all.
+  target.dispatchEvent(
+    new MouseEvent("click", { bubbles: true, cancelable: true })
+  );
   flush();
 }
 
@@ -434,6 +464,170 @@ test("the fold can be dropped for plain recency, and the choice is kept", async 
   const { host: reopened } = paint();
   await listed(reopened);
   expect(directories(reopened)).toHaveLength(0);
+});
+
+/**
+ * The one thing a pin is for: the project you keep coming back to stays at the
+ * top of the sidebar on the day you have not touched it. Recency still orders
+ * the pinned among themselves, and everything else below them.
+ */
+test("a pinned project stands above one answered in more recently", async () => {
+  const { host, store } = paint({
+    pinned: ["/srv/api", "/srv/other"],
+    sessions: [
+      {
+        sessionId: "a1",
+        cwd: "/home/ada/dev/pim",
+        createdAt: 0,
+        settledAt: 300,
+      },
+      { sessionId: "c1", cwd: "/srv/api", createdAt: 0, settledAt: 200 },
+      { sessionId: "b1", cwd: "/srv/other", createdAt: 0, settledAt: 100 },
+    ],
+  });
+  await listed(host);
+
+  expect(where(host)).toEqual(["/srv/api", "/srv/other", "~/dev/pim"]);
+  // A pin is worn open and folded alike: the top of the list is not the whole
+  // of the mark, or a collapsed header would say nothing about why it is there.
+  expect(directories(host).map((group) => group.open)).toEqual([
+    true,
+    false,
+    false,
+  ]);
+  for (const index of [0, 1]) {
+    expect(
+      heading(host, index).querySelector('[aria-label="Pinned project"]')
+    ).not.toBeNull();
+    expect(heading(host, index).innerHTML).toContain(
+      "i-griddy-icons:pin-filled"
+    );
+  }
+  expect(
+    heading(host, 2).querySelector('[aria-label="Pinned project"]')
+  ).toBeNull();
+  expect(heading(host, 2).innerHTML).toContain("i-griddy-icons:folder");
+
+  // What another window pinned: no session file moved, so this broadcast is
+  // the whole word on it and the fold follows it without a listing.
+  store.ingest({
+    type: "project_meta",
+    cwd: "/home/ada/dev/pim",
+    pinned: true,
+  });
+  flush();
+  expect(where(host)).toEqual(["~/dev/pim", "/srv/api", "/srv/other"]);
+});
+
+test("pinning a project lifts it at the press and keeps it through a re-list", async () => {
+  const navigated: number[] = [];
+  const growing: SessionSummaryView[] = [...SESSIONS];
+  const { host, sent, store, switched } = paint({
+    onNavigate: () => navigated.push(1),
+    sessions: growing,
+  });
+  await listed(host);
+  expect(where(host)).toEqual(["~/dev/pim", "/srv/other"]);
+
+  click(projectMenu(host, 1));
+  choose(host, "Pin project");
+
+  expect(sent.at(-1)).toEqual({
+    type: "set_project_pinned",
+    cwd: "/srv/other",
+    value: true,
+  });
+  // Guessed at, so the fold moves under the press rather than after a listing.
+  expect(where(host)).toEqual(["/srv/other", "~/dev/pim"]);
+  // Pinning is not navigating: the drawer this may be sitting in stays open.
+  expect(navigated).toEqual([]);
+  expect(switched).toEqual([]);
+
+  // The server kept it, so the listing it answers next says so too.
+  growing.push({
+    sessionId: "dddddddd-4444",
+    cwd: "/home/ada/dev/pim",
+    createdAt: 0,
+    settledAt: 1,
+    title: "Started in the terminal",
+  });
+  store.ingest({ type: "sessions_changed" });
+  flush();
+  for (let hop = 0; hop < 20 && host.querySelectorAll("li").length < 3; hop++) {
+    await Promise.resolve();
+    flush();
+  }
+
+  expect(where(host)).toEqual(["/srv/other", "~/dev/pim"]);
+  expect(
+    heading(host).querySelector('[aria-label="Pinned project"]')
+  ).not.toBeNull();
+  // And the verb reads back the other way.
+  click(projectMenu(host));
+  expect(verbs(host).map((option) => option.textContent)).toEqual([
+    "Unpin project",
+  ]);
+  choose(host, "Unpin project");
+  expect(sent.at(-1)).toEqual({
+    type: "set_project_pinned",
+    cwd: "/srv/other",
+    value: false,
+  });
+  expect(where(host)).toEqual(["~/dev/pim", "/srv/other"]);
+});
+
+test("a refused pin drops the project back where it was and says why", async () => {
+  const { host } = paint({ refuse: "the sidecar is read-only" });
+  await listed(host);
+
+  click(projectMenu(host, 1));
+  choose(host, "Pin project");
+  await Bun.sleep(0);
+  flush();
+
+  expect(where(host)).toEqual(["~/dev/pim", "/srv/other"]);
+  expect(
+    heading(host, 1).querySelector('[aria-label="Pinned project"]')
+  ).toBeNull();
+  expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+    "the sidecar is read-only"
+  );
+});
+
+test("the header's `⋯` and a right-click open the project's verbs, and fold nothing", async () => {
+  const { host } = paint();
+  await listed(host);
+
+  const folds = (): readonly boolean[] =>
+    directories(host).map((group) => group.open);
+  expect(folds()).toEqual([true, false]);
+
+  const trigger = projectMenu(host);
+  expect(trigger.innerHTML).toContain("i-griddy-icons:more-horizontal");
+  // Dimmed rather than revealed on hover, exactly as the row's is.
+  expect(trigger.className).toContain("opacity-60");
+  expect(trigger.className).not.toContain("opacity-0");
+
+  click(trigger);
+  expect(verbs(host).map((option) => option.textContent)).toEqual([
+    "Pin project",
+  ]);
+  // The header is a `<summary>`: a press on the menu must not fold the group.
+  expect(folds()).toEqual([true, false]);
+
+  document.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+  flush();
+  expect(verbs(host)).toHaveLength(0);
+  expect(folds()).toEqual([true, false]);
+
+  heading(host)
+    .querySelector('[title="~/dev/pim"]')!
+    .dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+  flush();
+  expect(verbs(host).map((option) => option.textContent)).toEqual([
+    "Pin project",
+  ]);
+  expect(folds()).toEqual([true, false]);
 });
 
 test("the dot marks a session that has answered since anything read it", async () => {

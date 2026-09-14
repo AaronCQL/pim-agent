@@ -417,6 +417,24 @@ test("forgets a session that is gone, and keeps the pins", async () => {
   expect(after.projects).toEqual({ [tmp]: { pinned: true } });
 });
 
+test("hands a pin back to a server that has been restarted under it", async () => {
+  await writeSession(ONE, minutesAgo(1));
+  const probe = await connect();
+  await probe.setPinned(tmp, true);
+  probe.close();
+
+  await gateway.stop();
+  await registry.disposeAll();
+  await startGateway();
+
+  // Read off the sidecar rather than held in the process that was told: a
+  // phone opening the sidebar tomorrow is the case this is for.
+  const restarted = await connect();
+  const { sessions, projects } = await restarted.catalogue();
+  expect(rowOf(sessions, ONE)?.pinned).toBe(true);
+  expect(projectOf(projects, tmp)?.pinned).toBe(true);
+});
+
 /** Sessions a minute apart, oldest first, so the last one written is the newest. */
 async function writeProject(
   cwd: string,

@@ -699,6 +699,8 @@ export class SessionStore {
    * Directories this machine has sessions in, recent first, current one left
    * out. Asked for one session per project: a flat page is all one directory
    * on any real corpus, and every other project is invisible in it.
+   * Pinned projects come first: a pin is what a reader said about a directory,
+   * and it outranks what the clock says about it.
    */
   public async recentDirectories(limit = 5): Promise<readonly string[]> {
     const listing = await this.listSessions({ perProject: 1 });
@@ -712,11 +714,16 @@ export class SessionStore {
       if (cwd !== here && !recent.includes(cwd)) {
         recent.push(cwd);
       }
-      if (recent.length === limit) {
-        break;
-      }
     }
-    return recent;
+    const pinned = new Set(
+      listing.projects
+        .filter((project) => project.pinned === true)
+        .map((project) => project.cwd)
+    );
+    return [
+      ...recent.filter((cwd) => pinned.has(cwd)),
+      ...recent.filter((cwd) => !pinned.has(cwd)),
+    ].slice(0, limit);
   }
 
   public async listSessions(scope: SessionScope = {}): Promise<SessionListing> {
@@ -749,6 +756,11 @@ export class SessionStore {
           delete draft.openings[session.sessionId];
         }
         rows.push(folded(session, draft));
+      }
+      // The page is capped, so a directory can be in the projects and in no
+      // row of it: its pin is only ever said here.
+      for (const project of response?.projects ?? []) {
+        this.seed(draft, "pinned", project.cwd, project.pinned === true);
       }
     });
     const unwritten = this.state.unwritten;

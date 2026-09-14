@@ -35,6 +35,8 @@ type Group = {
   readonly count: number;
   /** Newest settle time in it, which is where the group sorts. */
   readonly settledAt: number;
+  /** Pinned projects stand above every other, whatever the clock says. */
+  readonly pinned: boolean;
 };
 
 /** Which listing the sidebar is showing: the live sessions, or the ones put away. */
@@ -50,6 +52,14 @@ const GROUPING_KEY = "pim.sidebar.grouping";
 
 function settleOf(row: Row): number {
   return row.listed?.settledAt ?? UNSETTLED;
+}
+
+/** A pin outranks the clock; among equals, the project answered in last stands first. */
+function byPinThenSettle(one: Group, other: Group): number {
+  if (one.pinned !== other.pinned) {
+    return one.pinned ? -1 : 1;
+  }
+  return other.settledAt - one.settledAt;
 }
 
 /** The session list, read straight off the server's sessions directory; `onNavigate` fires when a row is picked. */
@@ -183,8 +193,9 @@ export function Sidebar(props: {
         rows: found,
         count: Math.max(counted.get(cwd) ?? 0, found.length),
         settledAt: Math.max(...found.map(settleOf)),
+        pinned: props.store.isPinned(cwd),
       }))
-      .sort((one, other) => other.settledAt - one.settledAt);
+      .sort(byPinThenSettle);
   });
 
   // Derived rather than remembered: which project you are working in is the
@@ -268,6 +279,18 @@ export function Sidebar(props: {
         label: archived ? "Unarchive" : "Archive",
         onSelect: () => {
           attempt(() => props.store.setArchived(sessionId, !archived));
+        },
+      },
+    ];
+  };
+
+  const projectItems = (cwd: string): readonly RowMenuItem[] => {
+    const pinned = props.store.isPinned(cwd);
+    return [
+      {
+        label: pinned ? "Unpin project" : "Pin project",
+        onSelect: () => {
+          attempt(() => props.store.setPinned(cwd, !pinned));
         },
       },
     ];
@@ -377,12 +400,14 @@ export function Sidebar(props: {
                   onToggle={(open) => {
                     setOpened((was) => ({ ...was, [group().cwd]: open }));
                   }}
-                  summaryClass="flex items-center gap-1 rounded-lg py-1 pr-2 text-sm text-neutral-350 hover:bg-neutral-900 hover:text-neutral-100"
+                  summaryClass="flex items-center gap-1 rounded-lg pr-1 text-sm text-neutral-350 hover:bg-neutral-900 hover:text-neutral-100"
                   summary={
                     <GroupHeader
                       cwd={group().cwd}
                       count={group().count}
                       open={shown(group().cwd)}
+                      pinned={group().pinned}
+                      items={projectItems(group().cwd)}
                     />
                   }
                 >
@@ -438,29 +463,71 @@ export function Sidebar(props: {
   );
 }
 
-/** What the directory is called, and how much of it a collapsed group is standing in for. */
+/**
+ * What the directory is called, how much of it a collapsed group is standing
+ * in for, and what can be done to the project itself.
+ */
 function GroupHeader(props: {
   readonly cwd: string;
   readonly count: number;
   readonly open: boolean;
+  readonly pinned: boolean;
+  readonly items: readonly RowMenuItem[];
 }) {
+  let menu: RowMenuControl | undefined;
+
+  const where = (): string => abbreviateHome(props.cwd);
+
   return (
-    <>
-      <span
-        class="flex min-w-0 flex-1 items-center gap-1.5"
-        title={abbreviateHome(props.cwd)}
-      >
-        <span class="i-griddy-icons:folder size-3.5 shrink-0" />
+    <span
+      class="flex min-w-0 flex-1 items-center gap-1"
+      onContextMenu={(event: MouseEvent) => {
+        if (menu) {
+          event.preventDefault();
+          menu.open();
+        }
+      }}
+    >
+      <span class="flex min-w-0 flex-1 items-center gap-1.5" title={where()}>
+        <Show
+          when={props.pinned}
+          fallback={<span class="i-griddy-icons:folder size-3.5 shrink-0" />}
+        >
+          <span
+            class="i-griddy-icons:pin-filled size-3.5 shrink-0 text-indigo-400"
+            aria-label="Pinned project"
+          />
+        </Show>
         <Fitted
           class="flex-1 font-semibold"
-          texts={[abbreviateHome(props.cwd), baseName(props.cwd)]}
+          texts={[where(), baseName(props.cwd)]}
         />
       </span>
       <Show when={!props.open}>
         <span class="shrink-0 text-xs text-neutral-500">{props.count}</span>
       </Show>
-    </>
+      <span ref={refuseFold} class="flex shrink-0 items-center">
+        <RowMenu
+          label={`Project options for ${where()}`}
+          items={props.items}
+          control={(control) => {
+            menu = control;
+          }}
+        />
+      </span>
+    </span>
   );
+}
+
+/**
+ * The header is a `<summary>`, which takes a press anywhere inside it for a
+ * press on itself and folds the group. A listener on the element rather than a
+ * delegated `onClick`: the disclosure reads the press before the document does.
+ */
+function refuseFold(element: HTMLElement): void {
+  element.addEventListener("click", (event: Event) => {
+    event.preventDefault();
+  });
 }
 
 /** The sessions themselves, under a group header or flat under none. */
