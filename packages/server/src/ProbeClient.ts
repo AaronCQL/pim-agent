@@ -18,6 +18,8 @@ export type ProbeOptions = {
   readonly sessionId?: string;
   readonly cwd?: string;
   readonly fromSeq?: number;
+  /** Sent on the attach frame; false is a client that is connected but not looking. */
+  readonly attentive?: boolean;
   /** Called for every frame, in arrival order. */
   readonly onEvent?: (event: ServerEvent) => void;
   /** Sent instead of the real one, to exercise version rejection. */
@@ -98,8 +100,16 @@ export class ProbeClient {
         PROTOCOL_VERSION) as typeof PROTOCOL_VERSION,
       ...(this.sessionId === undefined ? {} : { sessionId: this.sessionId }),
       ...(this.options.cwd === undefined ? {} : { cwd: this.options.cwd }),
+      ...(this.options.attentive === undefined
+        ? {}
+        : { attentive: this.options.attentive }),
       fromSeq: this.seq,
     });
+  }
+
+  /** Says whether this client's reader is present; regaining it reads the session. */
+  public attention(value: boolean): Promise<ResponseEvent> {
+    return this.send({ type: "attention", value });
   }
 
   public send(command: CommandDraft): Promise<ResponseEvent> {

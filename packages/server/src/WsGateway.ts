@@ -279,6 +279,15 @@ export class WsGateway {
     switch (command.type) {
       case "attach":
         return await this.attach(connection, command);
+      case "attention": {
+        const regained = command.value && !connection.attentive;
+        connection.setAttentive(command.value);
+        const sessionId = connection.sessionId;
+        if (regained && sessionId !== undefined) {
+          await this.catalogue.markRead(sessionId);
+        }
+        return {};
+      }
       case "list_sessions":
         return { sessions: await this.catalogue.list(command) };
       case "list_models":
@@ -456,6 +465,7 @@ export class WsGateway {
     connection: ClientConnection,
     command: Command & { readonly type: "attach" }
   ): Promise<Outcome> {
+    const attentive = command.attentive !== false;
     const like =
       command.like === undefined
         ? undefined
@@ -479,16 +489,19 @@ export class WsGateway {
       pimVersion,
       piVersion,
     });
-    await connection.attach(stream, command.fromSeq);
+    await connection.attach(stream, command.fromSeq, attentive);
     this.syncWatches();
-    await this.catalogue.markRead(stream.sessionId);
+    if (attentive) {
+      await this.catalogue.markRead(stream.sessionId);
+    }
     return {};
   }
 
-  /** A watch costs a poll, so only sessions someone is reading get one — and the catalogue only while someone is connected. */
+  /** A watch costs a poll, so only attached sessions get one — and the catalogue only while someone is connected. */
   private syncWatches(): void {
     for (const [sessionId, stream] of this.streams) {
-      stream.watchFiles(this.isBeingRead(sessionId));
+      // Attachment, not attention: a hidden tab that lost its watches would stop hearing about the session.
+      stream.watchFiles(this.isAttached(sessionId));
     }
     this.catalogue.watch(this.connections.size > 0);
   }
@@ -584,9 +597,19 @@ export class WsGateway {
     return this.versionsRead;
   }
 
-  private isBeingRead(sessionId: string): boolean {
+  private isAttached(sessionId: string): boolean {
     for (const connection of this.connections.values()) {
       if (connection.sessionId === sessionId) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // The TUI never attaches, so reading a session there clears no dot here and a turn it runs trips no mark.
+  private isBeingRead(sessionId: string): boolean {
+    for (const connection of this.connections.values()) {
+      if (connection.sessionId === sessionId && connection.attentive) {
         return true;
       }
     }

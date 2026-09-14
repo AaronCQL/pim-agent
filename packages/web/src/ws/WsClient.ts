@@ -55,6 +55,8 @@ export class WsClient {
   private attempt = 0;
   private retry: ReturnType<typeof setTimeout> | undefined;
   private disposed = false;
+  /** Declared on every attach: an inattentive client never consumes a turn as read. */
+  private attention = true;
   /** Gate: frames between an `attach` and its `attached` belong to the old session. */
   private settled = false;
   private outdated = false;
@@ -76,6 +78,11 @@ export class WsClient {
 
   public get sessionId(): string | undefined {
     return this.target.sessionId;
+  }
+
+  /** Whether this client last told the server its reader was looking. */
+  public get attentive(): boolean {
+    return this.attention;
   }
 
   /** Highest durable `seq` this client has painted; the resume cursor. */
@@ -128,6 +135,22 @@ export class WsClient {
     });
   }
 
+  /**
+   * Whether the reader is looking at this tab. Told to the server while the
+   * socket is up, and carried by the next attach frame when it is not — so a
+   * hidden tab that reconnects stays hidden.
+   */
+  public setAttention(value: boolean): void {
+    if (this.attention === value) {
+      return;
+    }
+    this.attention = value;
+    if (this.socket?.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    void this.send({ type: "attention", value }).catch(() => undefined);
+  }
+
   public close(): void {
     this.disposed = true;
     this.cancelRetry();
@@ -172,6 +195,7 @@ export class WsClient {
       ...(this.target.cwd === undefined ? {} : { cwd: this.target.cwd }),
       ...(this.target.like === undefined ? {} : { like: this.target.like }),
       fromSeq: this.cursor,
+      attentive: this.attention,
     });
   }
 

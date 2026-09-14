@@ -18,7 +18,11 @@ export type Command =
       /** Copy model, thinking level and cwd from this session; ignored when `sessionId` is set or the session is not held open. */
       readonly like?: string;
       readonly fromSeq: number;
+      /** Whether the client is looking at this session right now; absent means yes. */
+      readonly attentive?: boolean;
     }
+  /** Whether this connection's reader is present: an inattentive one never consumes a turn as read. */
+  | { readonly id: string; readonly type: "attention"; readonly value: boolean }
   /** Sent into a running turn it steers that turn, landing before the next model call. */
   | {
       readonly id: string;

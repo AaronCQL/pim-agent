@@ -183,7 +183,11 @@ async function startGateway(): Promise<void> {
 }
 
 async function connect(
-  options: { readonly sessionId?: string; readonly fromSeq?: number } = {}
+  options: {
+    readonly sessionId?: string;
+    readonly fromSeq?: number;
+    readonly attentive?: boolean;
+  } = {}
 ): Promise<ProbeClient> {
   const probe = new ProbeClient({
     url: gateway.url,
@@ -720,6 +724,103 @@ test("goes unread when a turn ends, and not on the lines it ends with", async ()
     { from: mark }
   );
   expect(unreadIn(await watcher.listSessions(), sessionId)).toBeUndefined();
+});
+
+/**
+ * A socket is not a reader. A backgrounded tab is attached to its session for
+ * as long as the machine stays awake, and the turn it misses is exactly the
+ * one it was left open to hear about.
+ */
+test("leaves a turn unread when the tab attached to it is not looking", async () => {
+  const hidden = await connect({ attentive: false });
+  const sessionId = hidden.sessionId!;
+  const mark = hidden.events.length;
+  await hidden.prompt("say hello");
+  await idle(hidden, mark);
+
+  expect(unreadIn(await hidden.listSessions(), sessionId)).toBe(true);
+});
+
+/**
+ * The cursor is one machine's, so consuming it in the wrong tab is not a
+ * mistake that stays there: the mark is broadcast, and the window the user is
+ * actually in drops the dot it drew.
+ */
+test("keeps a hidden tab's session unread for the client working elsewhere", async () => {
+  const hidden = await connect({ attentive: false });
+  const sessionId = hidden.sessionId!;
+  const watcher = await connect();
+  expect(watcher.sessionId).not.toBe(sessionId);
+
+  const mark = hidden.events.length;
+  await hidden.prompt("say hello");
+  await idle(hidden, mark);
+
+  expect(unreadIn(await watcher.listSessions(), sessionId)).toBe(true);
+  expect(unreadIn(await hidden.listSessions(), sessionId)).toBe(true);
+});
+
+test("reads nothing on a reconnect from a hidden tab, and reads it on the way back", async () => {
+  const worker = await connect();
+  const sessionId = worker.sessionId!;
+  const first = worker.events.length;
+  await worker.prompt("say hello");
+  await idle(worker, first);
+
+  const watcher = await connect();
+  const release = holdTurn();
+  const mark = watcher.events.length;
+  await worker.prompt("say hello again");
+  await watcher.waitFor(
+    (event) =>
+      event.type === "session_activity" &&
+      event.sessionId === sessionId &&
+      event.status !== "idle",
+    { from: mark }
+  );
+  worker.close();
+  release();
+  await watcher.waitFor(
+    (event) =>
+      event.type === "session_activity" &&
+      event.sessionId === sessionId &&
+      event.status === "idle",
+    { from: mark }
+  );
+  expect(unreadIn(await watcher.listSessions(), sessionId)).toBe(true);
+
+  // A dropped socket comes back on its own, whether or not anyone is there to
+  // see it: the mark a network blip would otherwise consume is still owed.
+  const hidden = await connect({ sessionId, fromSeq: 0, attentive: false });
+  expect(hidden.sessionId).toBe(sessionId);
+  expect(unreadIn(await watcher.listSessions(), sessionId)).toBe(true);
+
+  await hidden.attention(true);
+  await watcher.waitFor(
+    (event) => event.type === "session_read" && event.sessionId === sessionId,
+    { from: mark }
+  );
+  expect(unreadIn(await watcher.listSessions(), sessionId)).toBeUndefined();
+});
+
+/**
+ * Attention says who is owed the news, never who hears it. The watches follow
+ * the attachment, so a hidden tab is still told everything — including the
+ * branch, which only the git watch a dropped file watch takes with it can say.
+ */
+test("streams the whole turn to a tab that is not looking", async () => {
+  Bun.spawnSync(["git", "init", "-q", "-b", "trunk"], { cwd: tmp });
+
+  const hidden = await connect({ attentive: false });
+  const mark = hidden.events.length;
+  await hidden.prompt("say hello");
+  await idle(hidden, mark);
+
+  expect(hidden.events.some((event) => event.type === "text_delta")).toBe(true);
+  const state = await hidden.waitFor(
+    (event) => event.type === "session_state" && event.branch !== undefined
+  );
+  expect(state.type === "session_state" && state.branch).toBe("trunk");
 });
 
 test("starts with nothing unread, and keeps what is across a restart", async () => {

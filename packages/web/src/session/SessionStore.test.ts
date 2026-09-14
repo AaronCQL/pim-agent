@@ -1224,3 +1224,53 @@ describe("the turn lease", () => {
     expect(target.state.heldBy).toBeUndefined();
   });
 });
+
+describe("attention", () => {
+  /** The two reads the watcher makes; happy-dom's document is always both. */
+  function looking(visible: boolean, focused: boolean): void {
+    Object.defineProperty(document, "visibilityState", {
+      value: visible ? "visible" : "hidden",
+      configurable: true,
+    });
+    Object.defineProperty(document, "hasFocus", {
+      value: () => focused,
+      configurable: true,
+    });
+  }
+
+  afterEach(() => {
+    Reflect.deleteProperty(document, "visibilityState");
+    Reflect.deleteProperty(document, "hasFocus");
+  });
+
+  test("a tab that is already hidden says so before it attaches", () => {
+    looking(false, true);
+    const target = store();
+
+    expect(target.client.attentive).toBe(false);
+    target.dispose();
+  });
+
+  test("losing and regaining the reader is declared, until the store is gone", () => {
+    const target = store();
+    expect(target.client.attentive).toBe(true);
+
+    looking(true, false);
+    window.dispatchEvent(new Event("blur"));
+    expect(target.client.attentive).toBe(false);
+
+    looking(true, true);
+    window.dispatchEvent(new Event("focus"));
+    expect(target.client.attentive).toBe(true);
+
+    looking(false, true);
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(target.client.attentive).toBe(false);
+
+    target.dispose();
+    looking(true, true);
+    window.dispatchEvent(new Event("focus"));
+    // A disposed store is not a reader, however visible the tab it built is.
+    expect(target.client.attentive).toBe(false);
+  });
+});

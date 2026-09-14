@@ -23,6 +23,7 @@ import type {
   SessionSummaryView,
 } from "#protocol/ServerEvent";
 import { isDurableEvent } from "#protocol/ServerEvent";
+import { watchAttention } from "../ws/attention";
 import {
   WsClient,
   type AttachTarget,
@@ -152,6 +153,7 @@ export class SessionStore {
   private optimisticId = 0;
   private catalogue: Promise<ModelCatalogue> | undefined;
   private readonly drafts: Drafts;
+  private readonly detachAttention: () => void;
 
   public constructor(options: SessionStoreOptions) {
     this.update = new Reload(options.url, options.reloadPage);
@@ -222,6 +224,9 @@ export class SessionStore {
       (query, limit) => this.pickFiles(query, limit ?? FILE_PICKER_LIMIT),
       options.pickerDebounceMs
     );
+    this.detachAttention = watchAttention((value) => {
+      this.client.setAttention(value);
+    });
   }
 
   public async connect(): Promise<void> {
@@ -237,6 +242,7 @@ export class SessionStore {
   }
 
   public dispose(): void {
+    this.detachAttention();
     this.client.close();
     this.update.dispose();
   }
