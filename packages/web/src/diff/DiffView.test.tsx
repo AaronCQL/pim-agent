@@ -106,7 +106,9 @@ function paint(): HTMLElement {
 
 function rows(host: HTMLElement): readonly HTMLButtonElement[] {
   return [
-    ...host.querySelectorAll<HTMLButtonElement>("button[aria-expanded]"),
+    ...(changesPane(host) ?? host).querySelectorAll<HTMLButtonElement>(
+      "button[aria-expanded]"
+    ),
   ].filter((button) => button.getAttribute("aria-haspopup") === null);
 }
 

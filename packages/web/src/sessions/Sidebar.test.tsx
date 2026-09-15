@@ -214,20 +214,45 @@ function projectMenu(host: HTMLElement, index = 0): HTMLButtonElement {
   ][index]!;
 }
 
-/** One group: the disclosure a directory's sessions hang under. */
-function directories(host: HTMLElement): readonly HTMLDetailsElement[] {
-  return [...host.querySelectorAll<HTMLDetailsElement>("nav details")];
+/** One group's handle: the button that folds a directory's sessions away. */
+function headings(host: HTMLElement): readonly HTMLButtonElement[] {
+  return [...host.querySelectorAll<HTMLButtonElement>("nav h3 > button")];
 }
 
-function heading(host: HTMLElement, index = 0): HTMLElement {
-  return directories(host)[index]!.querySelector("summary")!;
+function heading(host: HTMLElement, index = 0): HTMLButtonElement {
+  return headings(host)[index]!;
+}
+
+/** Which groups stand open, in the order they are drawn. */
+function unfolded(host: HTMLElement): readonly boolean[] {
+  return headings(host).map(
+    (group) => group.getAttribute("aria-expanded") === "true"
+  );
+}
+
+/** Every row one group holds, whatever its fold has done with them. */
+function under(host: HTMLElement, index = 0): readonly HTMLElement[] {
+  return [
+    ...heading(host, index)
+      .closest("div.group")!
+      .querySelectorAll<HTMLElement>("li"),
+  ];
+}
+
+/** The rows one group shows: what a fold has put away is not one of them. */
+function drawn(host: HTMLElement, index = 0): readonly string[] {
+  const list = heading(host, index).closest("div.group")!.querySelector("ul")!;
+  return list.className.includes("hidden")
+    ? []
+    : under(host, index)
+        .filter((row) => !row.className.includes("hidden"))
+        .map((row) => row.textContent ?? "");
 }
 
 /** Which directory a group is for, read off the header's own tooltip. */
 function where(host: HTMLElement): readonly string[] {
-  return directories(host).map(
-    (group) =>
-      group.querySelector("summary [title]")?.getAttribute("title") ?? ""
+  return headings(host).map(
+    (group) => group.querySelector("[title]")?.getAttribute("title") ?? ""
   );
 }
 
@@ -338,7 +363,7 @@ test("a group per directory, and one row per session under it", async () => {
   await Bun.sleep(0);
   flush();
 
-  expect(directories(host)).toHaveLength(2);
+  expect(headings(host)).toHaveLength(2);
   expect(heading(host).textContent).toContain("pim");
   // The whole path, on the header rather than on every row it stands over.
   expect(heading(host).querySelector('[title="~/dev/pim"]')).not.toBeNull();
@@ -383,10 +408,10 @@ test("groups stand in the order their newest session settled", async () => {
   expect(where(host)).toEqual(["/srv/api", "~/dev/pim", "/srv/other"]);
 
   // And the project's own sessions, newest first, under its header.
-  const under = [...directories(host)[1]!.querySelectorAll("li")];
-  expect(under).toHaveLength(2);
-  expect(under[0]?.textContent).toContain("a1");
-  expect(under[1]?.textContent).toContain("a2");
+  const rows = under(host, 1);
+  expect(rows).toHaveLength(2);
+  expect(rows[0]?.textContent).toContain("a1");
+  expect(rows[1]?.textContent).toContain("a2");
 });
 
 test("the group holding the session being read is the open one", async () => {
@@ -395,7 +420,7 @@ test("the group holding the session being read is the open one", async () => {
 
   // Nothing attached yet: the newest project stands open, so the sidebar is
   // never a wall of closed headers.
-  expect(directories(host).map((group) => group.open)).toEqual([true, false]);
+  expect(unfolded(host)).toEqual([true, false]);
 
   store.ingest({
     type: "attached",
@@ -410,7 +435,7 @@ test("the group holding the session being read is the open one", async () => {
   await Bun.sleep(0);
   flush();
 
-  expect(directories(host).map((group) => group.open)).toEqual([false, true]);
+  expect(unfolded(host)).toEqual([false, true]);
 });
 
 /** One project's worth of rows, newest first, each one named so the server would draw it. */
@@ -523,13 +548,13 @@ test("a header's `+` starts a session in that directory and unfolds it", async (
     ),
   ];
   expect(plus).toHaveLength(2);
-  expect(directories(host).map((group) => group.open)).toEqual([true, false]);
+  expect(unfolded(host)).toEqual([true, false]);
 
   click(plus[1]!);
 
   expect(opened).toEqual(["/srv/other"]);
   // The row it just made is under a header that was folded; both groups stand open.
-  expect(directories(host).map((group) => group.open)).toEqual([true, true]);
+  expect(unfolded(host)).toEqual([true, true]);
   expect(navigated).toEqual([1]);
 });
 
@@ -539,13 +564,58 @@ test("opening and closing a group moves nothing but the group", async () => {
   await listed(host);
 
   click(heading(host, 1));
-  expect(directories(host).map((group) => group.open)).toEqual([true, true]);
+  expect(unfolded(host)).toEqual([true, true]);
 
   // And a group closed by hand stays closed, active session or not.
   click(heading(host));
-  expect(directories(host).map((group) => group.open)).toEqual([false, true]);
+  expect(unfolded(host)).toEqual([false, true]);
   expect(navigated).toEqual([]);
   expect(switched).toEqual([]);
+});
+
+/**
+ * A folded project is not silent about where you are: the session being read
+ * stays on screen under its own header, and its neighbours are what the fold
+ * puts away. The row is the same element open or closed, so unfolding the
+ * project grows the list around it rather than redrawing it.
+ */
+test("a folded group keeps the session being read, and nothing else", async () => {
+  const { host, store } = paint({ sessions: many(3) });
+  await listed(host);
+
+  store.ingest({
+    type: "attached",
+    protocolVersion: PROTOCOL_VERSION,
+    sessionId: "s1",
+    cwd: "/home/ada/dev/pim",
+    head: 0,
+    pimVersion: "1.2.3",
+    piVersion: "0.9.0",
+  });
+  flush();
+  await Bun.sleep(0);
+  flush();
+  expect(drawn(host)).toHaveLength(3);
+  const reading = bodies(host)[1]!;
+
+  click(heading(host));
+
+  expect(unfolded(host)).toEqual([false]);
+  expect(drawn(host)).toHaveLength(1);
+  expect(drawn(host)[0]).toContain("Session 1");
+  expect(bodies(host)[1]).toBe(reading);
+
+  click(heading(host));
+  expect(drawn(host)).toHaveLength(3);
+  expect(bodies(host)[1]).toBe(reading);
+});
+
+test("a folded group with nothing being read under it draws no rows at all", async () => {
+  const { host } = paint();
+  await listed(host);
+
+  expect(unfolded(host)).toEqual([true, false]);
+  expect(drawn(host, 1)).toEqual([]);
 });
 
 /**
@@ -572,11 +642,7 @@ test("a pinned project stands above one answered in more recently", async () => 
   expect(where(host)).toEqual(["/srv/api", "/srv/other", "~/dev/pim"]);
   // A pin is worn open and folded alike: the top of the list is not the whole
   // of the mark, or a collapsed header would say nothing about why it is there.
-  expect(directories(host).map((group) => group.open)).toEqual([
-    true,
-    false,
-    false,
-  ]);
+  expect(unfolded(host)).toEqual([true, false, false]);
   for (const index of [0, 1]) {
     expect(
       heading(host, index).querySelector('[aria-label="Pinned project"]')
@@ -678,9 +744,7 @@ test("the header's `⋯` and a right-click open the project's verbs, and fold no
   const { host } = paint();
   await listed(host);
 
-  const folds = (): readonly boolean[] =>
-    directories(host).map((group) => group.open);
-  expect(folds()).toEqual([true, false]);
+  expect(unfolded(host)).toEqual([true, false]);
 
   const trigger = projectMenu(host);
   expect(trigger.innerHTML).toContain("i-griddy-icons:more-horizontal");
@@ -691,13 +755,13 @@ test("the header's `⋯` and a right-click open the project's verbs, and fold no
   expect(verbs(host).map((option) => option.textContent)).toEqual([
     "Pin project",
   ]);
-  // The header is a `<summary>`: a press on the menu must not fold the group.
-  expect(folds()).toEqual([true, false]);
+  // The `⋯` stands beside the fold's handle, never inside it.
+  expect(unfolded(host)).toEqual([true, false]);
 
   document.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
   flush();
   expect(verbs(host)).toHaveLength(0);
-  expect(folds()).toEqual([true, false]);
+  expect(unfolded(host)).toEqual([true, false]);
 
   heading(host)
     .querySelector('[title="~/dev/pim"]')!
@@ -706,7 +770,7 @@ test("the header's `⋯` and a right-click open the project's verbs, and fold no
   expect(verbs(host).map((option) => option.textContent)).toEqual([
     "Pin project",
   ]);
-  expect(folds()).toEqual([true, false]);
+  expect(unfolded(host)).toEqual([true, false]);
 });
 
 test("the dot marks a session that has answered since anything read it", async () => {
@@ -836,7 +900,7 @@ test("a new chat is a row before it is a file, marked and ageless", async () => 
   // already there — a chat nobody has sent yet has settled at no time at all,
   // and stands above every session that has.
   expect(where(host)).toEqual(["~/dev/pim", "/srv/other"]);
-  expect(directories(host)[0]?.querySelectorAll("li")).toHaveLength(2);
+  expect(drawn(host)).toHaveLength(2);
   // Named by the message it is about to send, exactly as a written session is
   // named by the one it did.
   expect(rows[0]?.textContent).toContain("rework the sidebar");

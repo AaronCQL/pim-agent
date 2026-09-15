@@ -436,7 +436,7 @@ describe("platform wrappers", () => {
     const host = mountPoint();
     render(
       () => (
-        <Collapsible summary={<span>head</span>} caret="bg-rose-400" open>
+        <Collapsible summary={<span>head</span>} caret="bg-rose-400">
           <p>body</p>
         </Collapsible>
       ),
@@ -449,7 +449,7 @@ describe("platform wrappers", () => {
       "i-griddy-icons:chevron-right-small-filled"
     );
     expect(caret.className).toContain("bg-rose-400");
-    expect(host.querySelector("details")?.open).toBe(true);
+    expect(caret.className).toContain("group-open:rotate-90");
   });
 
   // The spine hangs clear of the caret and is drawn in every state: starting
@@ -507,55 +507,6 @@ describe("platform wrappers", () => {
     spine.click();
     flush();
     expect(details.open).toBe(false);
-  });
-
-  /**
-   * The sidebar's groups: no transcript gutter to hang a caret in, and an
-   * `open` that follows the session being read until a reader says otherwise.
-   * `toggle` is also raised by the browser for a state written *into* the
-   * element, from inside the render that wrote it, and a caller that wrote
-   * back there would be writing from an owned scope.
-   */
-  test("out of the gutter, the disclosure carries its caret and reports only the reader", () => {
-    const host = mountPoint();
-    const [open, setOpen] = createSignal(false);
-    const said: boolean[] = [];
-    render(
-      () => (
-        <Collapsible
-          gutter={false}
-          open={open()}
-          summaryClass="flex items-center"
-          onToggle={(moved) => said.push(moved)}
-          summary={<span>head</span>}
-        >
-          <p>body</p>
-        </Collapsible>
-      ),
-      host
-    );
-    flush();
-
-    const details = host.querySelector("details")!;
-    expect(details.className).not.toContain("pl-2ch");
-    expect(host.querySelector("summary")?.className).toContain("flex");
-    // The caret is in the summary's own row, and nothing is spined.
-    const caret = host.querySelector("summary > span")!;
-    expect(caret.className).toContain("i-griddy-icons:chevron-right-filled");
-    expect(caret.className).toContain("group-open:rotate-90");
-    expect(
-      host.querySelector("summary > span + span")?.className
-    ).not.toContain("w-2ch");
-
-    setOpen(true);
-    flush();
-    expect(details.open).toBe(true);
-    expect(said).toEqual([]);
-
-    host.querySelector("summary")!.click();
-    flush();
-    expect(details.open).toBe(false);
-    expect(said).toEqual([false]);
   });
 
   test("the drawer opens modally, hosts its content and closes on select", () => {

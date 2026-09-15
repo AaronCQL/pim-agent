@@ -929,8 +929,8 @@ describe("the composer, against a real gateway", () => {
 
     // Folded by directory, and this server has the one: a single group, named
     // for the working directory, with the session under it.
-    expect(list().querySelectorAll("details")).toHaveLength(1);
-    expect(list().querySelector("summary")?.textContent).toContain(
+    expect(list().querySelectorAll("h3 > button")).toHaveLength(1);
+    expect(list().querySelector("h3 > button")?.textContent).toContain(
       baseName(harness.tmp)
     );
     expect(list().querySelectorAll("li").length).toBeGreaterThan(0);

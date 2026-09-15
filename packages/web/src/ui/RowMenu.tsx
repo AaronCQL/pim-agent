@@ -64,10 +64,15 @@ export function RowMenu(props: {
 
   props.control?.({
     open: (where) => {
-      setAt(where);
-      if (!untrack(panel.open)) {
-        panel.toggle();
+      // A gesture that finds the menu already up leaves it exactly where it
+      // stands: one long press on Android is answered twice, by the hold and
+      // by the `contextmenu` that follows it a moment later, and taking the
+      // second one's point would jog the panel out from under the finger.
+      if (untrack(panel.open)) {
+        return;
       }
+      setAt(where);
+      panel.toggle();
     },
     close: panel.close,
   });

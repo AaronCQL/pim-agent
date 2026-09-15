@@ -17,10 +17,9 @@ import { version } from "../../../../package.json";
 import type { SessionScope, SessionStore } from "../session/SessionStore";
 import { abbreviateHome, baseName, relativeTime } from "../format";
 import { DirectoryModal } from "../topbar/DirectoryModal";
-import { ACTION, FIELD, FIELD_SKIN, ICON } from "../ui/classes";
-import { Collapsible } from "../ui/Collapsible";
+import { ACTION, FIELD_SKIN, ICON } from "../ui/classes";
 import { RowMenu, type RowMenuControl, type RowMenuItem } from "../ui/RowMenu";
-import { createPressMenu, type PressMenu } from "../ui/pressMenu";
+import { createPressMenu } from "../ui/pressMenu";
 import { Spinner } from "../ui/Spinner";
 
 type Row = {
@@ -229,6 +228,11 @@ export function Sidebar(props: {
 
   const shown = (cwd: string): boolean => opened()[cwd] ?? cwd === opening();
 
+  const fold = (cwd: string): void => {
+    const open = shown(cwd);
+    setOpened((was) => ({ ...was, [cwd]: !open }));
+  };
+
   // A count of files is not a count of rows — a session with nothing to call
   // itself is never drawn — so the count only ever suggests more, and a short
   // answer is what settles it.
@@ -345,15 +349,6 @@ export function Sidebar(props: {
         </div>
       </div>
 
-      <div class="shrink-0 px-3 pt-3">
-        <input
-          type="search"
-          aria-label="Search sessions"
-          placeholder="Search sessions"
-          class={`${FIELD} w-full`}
-        />
-      </div>
-
       <Show when={failure()}>
         {(message) => (
           <p
@@ -395,34 +390,24 @@ export function Sidebar(props: {
           {/* Keyed: a listing answers with fresh groups, and an unkeyed `<For>` remounts every row under them. */}
           <For each={groups()} keyed={(group: Group) => group.cwd}>
             {(group) => (
-              <Collapsible
-                gutter={false}
-                open={shown(group().cwd)}
-                caret={
-                  shown(group().cwd)
-                    ? "bg-neutral-200"
-                    : "bg-neutral-500 group-hover/head:bg-neutral-200"
-                }
-                onToggle={(open) => {
-                  setOpened((was) => ({ ...was, [group().cwd]: open }));
-                }}
-                summaryClass="group/head ml-3 mr-3 mt-2 py-0.5 flex items-center gap-2.4 text-sm text-neutral-350"
-                summary={
-                  <GroupHeader
-                    cwd={group().cwd}
-                    pinned={group().pinned}
-                    open={shown(group().cwd)}
-                    items={projectItems(group().cwd)}
-                    onNew={() => {
-                      setOpened((was) => ({ ...was, [group().cwd]: true }));
-                      go(() => props.store.openDirectory(group().cwd));
-                    }}
-                  />
-                }
-              >
+              <div class="group min-w-0">
+                <GroupHeader
+                  cwd={group().cwd}
+                  pinned={group().pinned}
+                  open={shown(group().cwd)}
+                  items={projectItems(group().cwd)}
+                  onToggle={() => {
+                    fold(group().cwd);
+                  }}
+                  onNew={() => {
+                    setOpened((was) => ({ ...was, [group().cwd]: true }));
+                    go(() => props.store.openDirectory(group().cwd));
+                  }}
+                />
                 <Listing
                   store={props.store}
                   rows={group().rows}
+                  folded={!shown(group().cwd)}
                   now={now()}
                   editing={editing()}
                   title={title}
@@ -431,7 +416,7 @@ export function Sidebar(props: {
                   onRename={rename}
                   onCancelRename={cancelRename}
                 >
-                  <Show when={more(group())}>
+                  <Show when={shown(group().cwd) && more(group())}>
                     <li>
                       <button
                         type="button"
@@ -449,7 +434,7 @@ export function Sidebar(props: {
                     </li>
                   </Show>
                 </Listing>
-              </Collapsible>
+              </div>
             )}
           </For>
         </Show>
@@ -487,13 +472,14 @@ export function Sidebar(props: {
   );
 }
 
-/** What the directory is called, and what can be done to the project itself. */
+/** What the directory is called, the caret that folds it, and what can be done to the project itself. */
 function GroupHeader(props: {
   readonly cwd: string;
   readonly pinned: boolean;
   /** The group this heads is unfolded: its name is read first, so it is lit first. */
   readonly open: boolean;
   readonly items: readonly RowMenuItem[];
+  readonly onToggle: () => void;
   readonly onNew: () => void;
 }) {
   let menu: RowMenuControl | undefined;
@@ -502,32 +488,46 @@ function GroupHeader(props: {
   const where = (): string => abbreviateHome(props.cwd);
 
   return (
-    <span
-      ref={(element: HTMLElement) => {
-        refuseHeld(element, press);
-      }}
-      class="flex min-w-0 flex-1 select-none items-center gap-2 [-webkit-touch-callout:none]"
-      {...press.handlers}
-    >
-      <span class="flex min-w-0 flex-1 items-center gap-2">
-        <h3
-          class={{
-            "truncate font-bold": true,
-            "text-neutral-50": props.open,
-            "text-neutral-400 group-hover/head:text-neutral-200": !props.open,
+    <div class="group/head ml-3 mr-3 mt-2 flex items-center gap-2.4 py-0.5 text-sm text-neutral-350">
+      <h3 class="min-w-0 flex-1">
+        <button
+          type="button"
+          aria-expanded={props.open ? "true" : "false"}
+          class="flex w-full min-w-0 select-none items-center gap-2 text-left [-webkit-touch-callout:none]"
+          onClick={() => {
+            if (!press.swallowed()) {
+              props.onToggle();
+            }
           }}
-          title={where()}
+          {...press.handlers}
         >
-          {baseName(props.cwd)}
-        </h3>
-        <Show when={props.pinned}>
           <span
-            class="i-griddy-icons:pin size-3.5 shrink-0 rotate-45 text-neutral-400"
-            aria-label="Pinned project"
+            class={{
+              "i-griddy-icons:chevron-right-filled size-3 shrink-0 transition-transform": true,
+              "rotate-90 bg-neutral-200": props.open,
+              "bg-neutral-500 group-hover/head:bg-neutral-200": !props.open,
+            }}
+            aria-hidden="true"
           />
-        </Show>
-      </span>
-      <span ref={refuseFold} class="flex shrink-0 items-center">
+          <span
+            class={{
+              "truncate font-bold": true,
+              "text-neutral-50": props.open,
+              "text-neutral-400 group-hover/head:text-neutral-200": !props.open,
+            }}
+            title={where()}
+          >
+            {baseName(props.cwd)}
+          </span>
+          <Show when={props.pinned}>
+            <span
+              class="i-griddy-icons:pin size-3.5 shrink-0 rotate-45 text-neutral-400"
+              aria-label="Pinned project"
+            />
+          </Show>
+        </button>
+      </h3>
+      <span class="flex shrink-0 items-center">
         <button
           type="button"
           aria-label={`New session in ${baseName(props.cwd)}`}
@@ -545,34 +545,20 @@ function GroupHeader(props: {
           }}
         />
       </span>
-    </span>
+    </div>
   );
 }
 
 /**
- * The header is a `<summary>`, which takes a press anywhere inside it for a
- * press on itself and folds the group. A listener on the element rather than a
- * delegated `onClick`: the disclosure reads the press before the document does.
+ * The sessions themselves, under a group header. Folded, the rows stay where
+ * they are and all but the one being read are put away: the session you are
+ * in is the one line a closed project still answers with, and it is the same
+ * element either way, so opening the project moves nothing around it.
  */
-function refuseFold(element: HTMLElement): void {
-  element.addEventListener("click", (event: Event) => {
-    event.preventDefault();
-  });
-}
-
-/** The click a long press leaves behind must not fold the group it opened the verbs on. */
-function refuseHeld(element: HTMLElement, press: PressMenu): void {
-  element.addEventListener("click", (event: Event) => {
-    if (press.swallowed()) {
-      event.preventDefault();
-    }
-  });
-}
-
-/** The sessions themselves, under a group header or flat under none. */
 function Listing(props: {
   readonly store: SessionStore;
   readonly rows: readonly Row[];
+  readonly folded: boolean;
   readonly now: number;
   readonly editing: string | undefined;
   readonly title: (row: Row) => string;
@@ -583,8 +569,17 @@ function Listing(props: {
   /** Whatever the group hangs under its rows, inside the spine and the same margins. */
   readonly children?: Element;
 }) {
+  const reading = (row: Row): boolean =>
+    row.sessionId === props.store.state.sessionId;
+
+  // `hidden` and `flex` both write `display`, so the fold swaps one for the
+  // other rather than layering them and trusting the sheet's order.
+  const away = (): boolean => props.folded && !props.rows.some(reading);
+
   return (
-    <ul class="ml-4.4 space-y-1 border-l border-neutral-700 pl-1 pr-3 pt-2 group-hover:border-neutral-500">
+    <ul
+      class={`ml-4.4 border-l border-neutral-700 pl-1 pr-3 pt-2 group-hover:border-neutral-500 ${away() ? "hidden" : "flex flex-col gap-1"}`}
+    >
       {/* Keyed: a listing answers with fresh objects, and an unkeyed `<For>` remounts every row. */}
       <For each={props.rows} keyed={(row: Row) => row.sessionId}>
         {(row) => (
@@ -592,6 +587,7 @@ function Listing(props: {
             store={props.store}
             row={row()}
             title={props.title(row())}
+            hidden={props.folded && !reading(row())}
             editing={props.editing === row().sessionId}
             items={props.items(row())}
             now={props.now}
@@ -615,6 +611,7 @@ function SessionRow(props: {
   readonly store: SessionStore;
   readonly row: Row;
   readonly title: string;
+  readonly hidden: boolean;
   readonly editing: boolean;
   readonly items: readonly RowMenuItem[];
   readonly now: number;
@@ -655,8 +652,8 @@ function SessionRow(props: {
     <li
       // Ungapped: the `⋯` is painted out until a caret lands on it, and a gap
       // ahead of a hidden trigger would hold the row's last glyph off the edge
-      // the search field and every other row end at.
-      class="group flex select-none items-center [-webkit-touch-callout:none]"
+      // every other row ends at.
+      class={`group select-none [-webkit-touch-callout:none] ${props.hidden ? "hidden" : "flex items-center"}`}
       {...press.handlers}
     >
       <Show
