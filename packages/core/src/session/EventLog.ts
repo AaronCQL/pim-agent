@@ -3,8 +3,9 @@ import type { BunFile } from "bun";
 import type { FileEntry, SessionHeader } from "@earendil-works/pi-coding-agent";
 import { parseSessionEntries } from "@earendil-works/pi-coding-agent";
 
-import { Attachments } from "../attachments/Attachments";
-import { MessageText } from "./MessageText";
+import { SessionDigest, type Durable } from "./SessionDigest";
+
+export type { SessionDigest } from "./SessionDigest";
 
 async function ifPresent<T>(read: () => Promise<T>, absent: T): Promise<T> {
   try {
@@ -28,33 +29,12 @@ type Cursor = {
   readonly seq: number;
 };
 
-const PROBE_LINES = 16;
-
 const PROBE_LIMIT = 16 * 1024 * 1024;
 
 const PROBE_CHUNK = 8 * 1024;
 const PROBE_CHUNK_MAX = 256 * 1024;
 
 const EMPTY = new Uint8Array();
-
-const TAIL_LINES = 10;
-
-const TITLE_LIMIT = 120;
-
-/** Cheap reject before decoding a line: pi writes the discriminant verbatim. */
-const NAMED = Buffer.from('"session_info"');
-
-const NEWLINE = 0x0a;
-
-/** What the session catalogue shows for one file without opening a session. */
-export type SessionDigest = {
-  /** The session's name if it has one, else its first user message; absent when it has neither. */
-  readonly title?: string;
-  /** True when `title` is a name somebody wrote rather than the opening message. */
-  readonly named?: true;
-  /** When the agent last wrote; it moves with an in-flight turn, so read it before starting one. */
-  readonly settledAt?: number;
-};
 
 function isHeader(entry: FileEntry): entry is SessionHeader {
   return entry.type === "session";
@@ -122,27 +102,19 @@ export class EventLog {
    * The name pi's own `/name` writes: the last `session_info` entry wins, and an
    * empty one clears it. Appended rather than replaced, so it is found by reading
    * the whole file — the one unbounded read the catalogue makes, and the only
-   * reason the bytes below are not a bounded head and tail.
+   * reason `SessionDigest` takes a whole file rather than a bounded head and tail.
    */
   public async name(): Promise<string | undefined> {
     const body = await durableBytes(Bun.file(this.path));
-    return body === undefined ? undefined : lastName(body);
+    return body === undefined ? undefined : SessionDigest.nameOf(body);
   }
 
   /** Title and settle time for the catalogue, without opening a session. */
   public async digest(): Promise<SessionDigest> {
     const body = await durableBytes(Bun.file(this.path));
-    if (body === undefined) {
-      return {};
-    }
-    const name = lastName(body);
-    const title = name ?? firstUserMessage(headLinesOf(body, PROBE_LINES));
-    const settledAt = settleTime(body);
-    return {
-      ...(title === undefined ? {} : { title: clamp(title) }),
-      ...(name === undefined ? {} : { named: true as const }),
-      ...(settledAt === undefined ? {} : { settledAt }),
-    };
+    return body === undefined
+      ? {}
+      : SessionDigest.of(SessionDigest.partsOf(body));
   }
 }
 
@@ -178,103 +150,7 @@ async function* headLines(
   }
 }
 
-/**
- * The file's durable bytes, undecoded: a whole session is megabytes of tool
- * output and the digest wants a handful of lines of it, so the search for the
- * name runs over the bytes and only the lines it keeps become strings.
- */
-type Durable = {
-  readonly bytes: Buffer;
-  /** Past the last newline; a trailing fragment is a write in progress and is not a line. */
-  readonly end: number;
-};
-
 async function durableBytes(file: BunFile): Promise<Durable | undefined> {
   const read = await ifPresent(() => file.bytes(), EMPTY);
-  const bytes = Buffer.from(read.buffer, read.byteOffset, read.byteLength);
-  const end = bytes.lastIndexOf(NEWLINE) + 1;
-  return end === 0 ? undefined : { bytes, end };
-}
-
-function headLinesOf({ bytes, end }: Durable, count: number): string[] {
-  let at = 0;
-  for (let taken = 0; taken < count && at < end; taken++) {
-    at = bytes.indexOf(NEWLINE, at) + 1;
-  }
-  return split(bytes.toString("utf8", 0, at));
-}
-
-function tailLinesOf({ bytes, end }: Durable, count: number): string[] {
-  let at = end - 1;
-  for (let taken = 0; taken < count && at > 0; taken++) {
-    at = bytes.lastIndexOf(NEWLINE, at - 1);
-  }
-  return split(bytes.toString("utf8", at + 1, end));
-}
-
-function split(text: string): string[] {
-  const lines = text.split("\n");
-  lines.pop();
-  return lines;
-}
-
-function settleTime(body: Durable): number | undefined {
-  return lastAgentTime(tailLinesOf(body, TAIL_LINES).reverse());
-}
-
-function lastAgentTime(lines: readonly string[]): number | undefined {
-  for (const line of lines) {
-    const entry = parseSessionEntries(line)[0];
-    if (entry?.type !== "message") {
-      continue;
-    }
-    const role = entry.message.role;
-    if (role === "assistant" || role === "toolResult") {
-      const at = Date.parse(entry.timestamp);
-      return Number.isNaN(at) ? undefined : at;
-    }
-  }
-  return undefined;
-}
-
-/** The last `session_info` line, found by walking the marker's occurrences backwards; a line that merely quotes the marker parses as something else, and the walk carries on past it. */
-function lastName({ bytes, end }: Durable): string | undefined {
-  let at = end - 1;
-  while (at >= 0) {
-    const found = bytes.lastIndexOf(NAMED, at);
-    if (found === -1) {
-      return undefined;
-    }
-    const from = bytes.lastIndexOf(NEWLINE, found) + 1;
-    const to = bytes.indexOf(NEWLINE, found);
-    const entry = parseSessionEntries(bytes.toString("utf8", from, to))[0];
-    if (entry?.type === "session_info") {
-      return entry.name?.trim() || undefined;
-    }
-    at = from - 1;
-  }
-  return undefined;
-}
-
-function clamp(text: string): string {
-  return text.length > TITLE_LIMIT
-    ? `${text.slice(0, TITLE_LIMIT).trimEnd()}…`
-    : text;
-}
-
-function firstUserMessage(lines: readonly string[]): string | undefined {
-  for (const line of lines.slice(0, PROBE_LINES)) {
-    const entry = parseSessionEntries(line)[0];
-    if (entry?.type !== "message" || entry.message.role !== "user") {
-      continue;
-    }
-    const said = Attachments.parse(MessageText.textOf(entry.message.content));
-    const text =
-      said.text.trim() ||
-      said.files.map((file) => Attachments.nameOf(file.path)).join(", ");
-    if (text !== "") {
-      return text;
-    }
-  }
-  return undefined;
+  return SessionDigest.durable(read);
 }

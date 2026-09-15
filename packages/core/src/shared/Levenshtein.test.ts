@@ -60,3 +60,23 @@ describe("Levenshtein.distance", () => {
     expect(Levenshtein.distance("abc", "abcxyz")).toBe(3);
   });
 });
+
+describe("Levenshtein.damerau", () => {
+  test("a transposition is one edit, where plain Levenshtein counts two", () => {
+    expect(Levenshtein.damerau("teh", "the", 2)).toBe(1);
+    expect(Levenshtein.distance("teh", "the")).toBe(2);
+    expect(Levenshtein.damerau("gatewya", "gateway", 1)).toBe(1);
+  });
+
+  test("agrees with plain Levenshtein on everything else", () => {
+    expect(Levenshtein.damerau("sidbar", "sidebar", 2)).toBe(1);
+    expect(Levenshtein.damerau("kitten", "sitting", 3)).toBe(3);
+    expect(Levenshtein.damerau("abc", "abc", 0)).toBe(0);
+  });
+
+  test("a pair further apart than the ceiling answers just past it", () => {
+    expect(Levenshtein.damerau("kitten", "sitting", 1)).toBe(2);
+    expect(Levenshtein.damerau("lease", "telegram", 2)).toBe(3);
+    expect(Levenshtein.damerau("", "abc", 2)).toBe(3);
+  });
+});
