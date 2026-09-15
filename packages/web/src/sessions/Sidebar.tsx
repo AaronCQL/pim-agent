@@ -244,15 +244,25 @@ export function Sidebar(props: {
       .sort(byPinThenSettle);
   });
 
-  // Derived rather than remembered: which project you are working in is the
-  // one thing a sidebar of ten collapsed lines has to answer without a click.
+  // Which project you are working in is the one thing a sidebar of ten
+  // collapsed lines has to answer without a click.
   const opening = createMemo((): string | undefined => {
     const here = props.store.state.cwd;
     const all = groups();
     return all.some((group) => group.cwd === here) ? here : all[0]?.cwd;
   });
 
-  const shown = (cwd: string): boolean => opened()[cwd] ?? cwd === opening();
+  // Written down once rather than read live: a standing derivation is
+  // single-valued, so moving to a second project would fold the first behind
+  // you — a fold nobody asked for. Recorded, the open project is a fold like
+  // any other, and only a hand closes it.
+  createEffect(opening, (here) => {
+    if (here !== undefined) {
+      setOpened((was) => (here in was ? was : { ...was, [here]: true }));
+    }
+  });
+
+  const shown = (cwd: string): boolean => opened()[cwd] ?? false;
 
   const fold = (cwd: string): void => {
     const open = shown(cwd);

@@ -440,7 +440,7 @@ test("groups stand in the order their newest session settled", async () => {
   expect(rows[1]?.textContent).toContain("a2");
 });
 
-test("the group holding the session being read is the open one", async () => {
+test("the group holding the session being read opens, and folds nothing", async () => {
   const { host, store } = paint();
   await listed(host);
 
@@ -461,7 +461,9 @@ test("the group holding the session being read is the open one", async () => {
   await Bun.sleep(0);
   flush();
 
-  expect(unfolded(host)).toEqual([false, true]);
+  // The project moved to opens itself; the one left behind was never folded
+  // by hand, so it stays as the reader left it.
+  expect(unfolded(host)).toEqual([true, true]);
 });
 
 /** One project's worth of rows, newest first, each one named so the server would draw it. */
