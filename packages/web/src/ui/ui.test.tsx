@@ -13,6 +13,7 @@ import { Lightbox } from "./Lightbox";
 import { Modal } from "./Modal";
 import { Menu } from "./Menu";
 import { Popover } from "./Popover";
+import { createBottomPin, type BottomPin } from "./scroll";
 
 type Nav = ReturnType<typeof createComboboxNavigation>;
 
@@ -1169,5 +1170,66 @@ describe("chip menu", () => {
     }
 
     expect(outstanding).toBe(0);
+  });
+});
+
+describe("bottom-origin scrollers", () => {
+  function bind(): {
+    readonly pin: BottomPin;
+    readonly scroller: HTMLElement;
+    readonly dispose: () => void;
+  } {
+    return createRoot((dispose) => {
+      const pin = createBottomPin();
+      const scroller = document.createElement("div");
+      pin.ref(scroller);
+      return { pin, scroller, dispose };
+    });
+  }
+
+  function scroll(element: HTMLElement, top: number): void {
+    element.scrollTop = top;
+    element.dispatchEvent(new Event("scroll"));
+    flush();
+  }
+
+  test("a fresh scroller follows, and reading back hands the position over", () => {
+    const { pin, scroller, dispose } = bind();
+    expect(pin.pinned()).toBe(true);
+
+    scroll(scroller, -120);
+    expect(pin.pinned()).toBe(false);
+
+    // Near the origin is at it: a wheel rarely settles on zero to the pixel.
+    scroll(scroller, -8);
+    expect(pin.pinned()).toBe(true);
+
+    dispose();
+  });
+
+  test("jumping, and a scroller mounted in its place, both follow again", async () => {
+    const { pin, scroller, dispose } = bind();
+
+    scroll(scroller, -400);
+    pin.jump();
+    flush();
+    expect(scroller.scrollTop).toBe(0);
+    expect(pin.pinned()).toBe(true);
+
+    scroll(scroller, -400);
+    pin.ref(document.createElement("div"));
+    await Promise.resolve();
+    flush();
+    expect(pin.pinned()).toBe(true);
+
+    dispose();
+  });
+
+  test("a disposed scroller stops reporting", () => {
+    const { pin, scroller, dispose } = bind();
+    dispose();
+
+    scroll(scroller, -400);
+    expect(pin.pinned()).toBe(true);
   });
 });

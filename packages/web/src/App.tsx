@@ -24,7 +24,7 @@ import { Splash } from "./transcript/Splash";
 import { SubagentModal } from "./transcript/SubagentModal";
 import { Transcript } from "./transcript/Transcript";
 import { Topbar } from "./topbar/Topbar";
-import { observeHeight } from "./ui/scroll";
+import { createBottomPin, observeHeight } from "./ui/scroll";
 import { Drawer } from "./ui/Drawer";
 import { createBackGuard } from "./ui/history";
 import { createMediaQuery, DESKTOP } from "./ui/media";
@@ -84,7 +84,7 @@ export function Shell(props: {
       globalThis.removeEventListener("keydown", onKeyDown);
     };
   });
-  let scroller: HTMLDivElement | undefined;
+  const pin = createBottomPin();
   const [inset, setInset] = createSignal(0);
   // An object rather than the string, so taking back the same words twice is two recalls.
   const [recalled, setRecalled] = createSignal<{ text: string }>();
@@ -119,16 +119,10 @@ export function Shell(props: {
     });
   };
 
-  const jump = (): void => {
-    if (scroller) {
-      scroller.scrollTop = 0;
-    }
-  };
-
   /** Back to the transcript, at its end: where both a session switch and a sent message land. */
   const navigate = (): void => {
     converse();
-    jump();
+    pin.jump();
   };
 
   /** A review is over the moment it is sent, and the moment it is thrown away. */
@@ -162,10 +156,11 @@ export function Shell(props: {
 
   const Conversation = () => (
     <div
-      ref={(element: HTMLDivElement) => {
-        scroller = element;
+      ref={pin.ref}
+      class={{
+        "flex h-full flex-col-reverse overflow-y-auto": true,
+        "[overflow-anchor:none]": pin.pinned(),
       }}
-      class="flex h-full flex-col-reverse overflow-y-auto"
     >
       <div
         class="mx-auto min-h-full w-full max-w-3xl flex-none space-y-[--line] p-3 leading-[--line]"

@@ -2,6 +2,7 @@ import { createMemo, Show } from "solid-js";
 
 import type { SessionStore } from "../session/SessionStore";
 import { Modal } from "../ui/Modal";
+import { createBottomPin } from "../ui/scroll";
 import { Spinner } from "../ui/Spinner";
 import { Body } from "../view/Blocks";
 import { buildRows, extendRows, type ToolRow } from "./rows";
@@ -11,6 +12,7 @@ import { Transcript } from "./Transcript";
 export function SubagentModal(props: { readonly store: SessionStore }) {
   const watched = () => props.store.state.subagent;
   const durable = createMemo(() => buildRows(props.store.state.durable));
+  const pin = createBottomPin();
 
   const row = createMemo((): ToolRow | undefined => {
     const callId = watched()?.callId;
@@ -51,7 +53,13 @@ export function SubagentModal(props: { readonly store: SessionStore }) {
         </div>
       }
     >
-      <div class="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto">
+      <div
+        ref={pin.ref}
+        class={{
+          "flex min-h-0 flex-1 flex-col-reverse overflow-y-auto": true,
+          "[overflow-anchor:none]": pin.pinned(),
+        }}
+      >
         <div class="mx-auto min-h-full w-full max-w-3xl flex-none space-y-[--line] p-3 leading-[--line]">
           <Show when={watched()}>
             {(child) => (
