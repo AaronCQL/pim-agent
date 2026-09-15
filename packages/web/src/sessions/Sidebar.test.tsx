@@ -1429,6 +1429,31 @@ test("the footer opens the archived listing, and a row comes back from it", asyn
 });
 
 /**
+ * Having asked nothing is not the same as having been answered nothing, and a
+ * view that answered once comes back from what it answered rather than from
+ * the wire, so neither flip crosses an empty list on its way.
+ */
+test("a listing that has yet to answer claims nothing, and a seen one repaints at once", async () => {
+  const { host } = paint({ archived: [PUT_AWAY] });
+
+  expect(host.textContent).not.toContain("No sessions yet.");
+  await listed(host);
+
+  click(named(host, "Archived"));
+  expect(bodies(host)).toHaveLength(0);
+  expect(host.textContent).not.toContain("Nothing archived.");
+  expect(host.textContent).not.toContain("Modernise the string building");
+
+  await listed(host);
+  expect(host.textContent).toContain("Put away last week");
+
+  click(named(host, "Back to sessions"));
+  expect(host.textContent).toContain("Modernise the string building");
+  expect(host.textContent).not.toContain("No sessions yet.");
+  expect(host.textContent).not.toContain("Put away last week");
+});
+
+/**
  * With nothing listed there is no header to press, so the only way to start
  * anything is the one the empty list offers: a directory to start it in.
  */

@@ -58,6 +58,20 @@ type Pages = Readonly<Record<string, number>>;
 /** The projects that answered short, which is the only word that a directory has no more rows to draw. */
 type Ended = Readonly<Record<string, true>>;
 
+/** What one listing answered, whole. */
+type Answer = {
+  readonly sessions: readonly SessionSummaryView[];
+  readonly projects: readonly ProjectView[];
+  readonly ended: Ended;
+};
+
+/**
+ * Each view's last answer, kept so a flip repaints the listing it last saw and
+ * refreshes underneath. A view missing from it has never answered, which is
+ * not the same as having answered empty.
+ */
+type Answers = Readonly<Partial<Record<View, Answer>>>;
+
 function settleOf(row: Row): number {
   return row.listed?.settledAt ?? UNSETTLED;
 }
@@ -77,14 +91,10 @@ export function Sidebar(props: {
   readonly onOpenSearch?: () => void;
   readonly onOpenSettings?: () => void;
 }) {
-  const [sessions, setSessions] = createSignal<readonly SessionSummaryView[]>(
-    []
-  );
-  const [projects, setProjects] = createSignal<readonly ProjectView[]>([]);
+  const [answers, setAnswers] = createSignal<Answers>({});
   const [view, setView] = createSignal<View>("live");
   const [opened, setOpened] = createSignal<Record<string, boolean>>({});
   const [pages, setPages] = createSignal<Pages>({});
-  const [ended, setEnded] = createSignal<Ended>({});
   const [editing, setEditing] = createSignal<string>();
   const [choosing, setChoosing] = createSignal(false);
   const [failure, setFailure] = createSignal("");
@@ -99,8 +109,8 @@ export function Sidebar(props: {
   let generation = 0;
 
   const load = (store: SessionStore, which: View, asked: Pages): void => {
-    // Bumped on every ask: the archived listing and the live one answer into
-    // the same rows, and the slower of two must not land last.
+    // Bumped on every ask: two reads of one view overlap, and the slower of
+    // them must not land last.
     const mine = ++generation;
     const archived: SessionScope =
       which === "archived" ? { archived: true } : {};
@@ -129,14 +139,17 @@ export function Sidebar(props: {
           short[cwd] = true;
         }
       }
-      setEnded(short);
-      setSessions(
-        [
-          ...listing.sessions.filter((row) => asked[row.cwd] === undefined),
-          ...expanded.flatMap((answer) => answer.sessions),
-        ].sort((one, other) => other.settledAt - one.settledAt)
-      );
-      setProjects(listing.projects);
+      setAnswers((was) => ({
+        ...was,
+        [which]: {
+          sessions: [
+            ...listing.sessions.filter((row) => asked[row.cwd] === undefined),
+            ...expanded.flatMap((page) => page.sessions),
+          ].sort((one, other) => other.settledAt - one.settledAt),
+          projects: listing.projects,
+          ended: short,
+        },
+      }));
     });
   };
 
@@ -171,11 +184,13 @@ export function Sidebar(props: {
       before?.sessionId === after?.sessionId && before?.cwd === after?.cwd,
   });
 
+  const answer = createMemo(() => answers()[view()]);
+
   const rows = createMemo<readonly Row[]>(() => {
     const archived = view() === "archived";
     // Sieved against the store, not the answer: archiving a row takes it off
     // the list at the press, and a refusal that rolls the flag back returns it.
-    const listed = sessions()
+    const listed = (answer()?.sessions ?? [])
       .filter(
         (session) => props.store.isArchived(session.sessionId) === archived
       )
@@ -197,7 +212,7 @@ export function Sidebar(props: {
 
   const groups = createMemo<readonly Group[]>(() => {
     const counted = new Map(
-      projects().map((project) => [project.cwd, project.count])
+      (answer()?.projects ?? []).map((project) => [project.cwd, project.count])
     );
     const byDirectory = new Map<string, Row[]>();
     for (const row of rows()) {
@@ -238,7 +253,7 @@ export function Sidebar(props: {
   // itself is never drawn — so the count only ever suggests more, and a short
   // answer is what settles it.
   const more = (group: Group): boolean =>
-    ended()[group.cwd] === undefined && group.count > group.rows.length;
+    answer()?.ended[group.cwd] === undefined && group.count > group.rows.length;
 
   const title = (row: Row): string =>
     props.store.sessionName(row.sessionId) ??
@@ -377,24 +392,26 @@ export function Sidebar(props: {
         <Show
           when={rows().length > 0}
           fallback={
-            <div class="space-y-3 px-3 py-2">
-              <p class="text-sm text-neutral-500">
-                {view() === "archived"
-                  ? "Nothing archived."
-                  : "No sessions yet."}
-              </p>
-              <Show when={view() === "live"}>
-                <button
-                  type="button"
-                  class={ACTION}
-                  onClick={() => {
-                    setChoosing(true);
-                  }}
-                >
-                  New session
-                </button>
-              </Show>
-            </div>
+            <Show when={answer() !== undefined}>
+              <div class="space-y-3 px-3 py-2">
+                <p class="text-sm text-neutral-500">
+                  {view() === "archived"
+                    ? "Nothing archived."
+                    : "No sessions yet."}
+                </p>
+                <Show when={view() === "live"}>
+                  <button
+                    type="button"
+                    class={ACTION}
+                    onClick={() => {
+                      setChoosing(true);
+                    }}
+                  >
+                    New session
+                  </button>
+                </Show>
+              </div>
+            </Show>
           }
         >
           {/* Keyed: a listing answers with fresh groups, and an unkeyed `<For>` remounts every row under them. */}
