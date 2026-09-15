@@ -1,0 +1,428 @@
+import "../test/dom";
+
+import { render } from "@solidjs/web";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createSignal, flush, type Accessor } from "solid-js";
+
+import type { SearchHitView } from "#protocol/ServerEvent";
+import { until } from "#core/shared/fixtures/wait";
+import { Shell } from "../App";
+import type { SessionSearch } from "../session/SessionStore";
+import { SessionStore } from "../session/SessionStore";
+import { Settings } from "../settings/Settings";
+import { mountPoint } from "../test/dom";
+import { SearchModal } from "./SearchModal";
+
+/**
+ * The ⌘K navigator, against a store told what the server would have said. The
+ * ranges are the planner's and the row draws them rather than looking for the
+ * query itself, so the fixtures below mark words that were never typed.
+ */
+
+const SCANNED = 214;
+
+const TITLE_AND_CONTENT: SearchHitView = {
+  sessionId: "aaaaaaaa-1111",
+  cwd: "/home/ada/dev/pim-agent",
+  title: "session-lease: refuse input mid-turn",
+  titleRanges: [[8, 13]],
+  settledAt: 0,
+  snippets: [
+    {
+      seq: 4,
+      role: "user",
+      text: "who holds the turn lease when both surfaces are up",
+      ranges: [[19, 24]],
+    },
+    {
+      seq: 9,
+      role: "assistant",
+      text: "the lease is released on the next idle edge",
+      ranges: [[4, 9]],
+    },
+  ],
+  total: 2,
+};
+
+const CHATTY: SearchHitView = {
+  sessionId: "bbbbbbbb-2222",
+  cwd: "/home/ada/dev/pim-agent",
+  title: "Reworking the sidebar",
+  titleRanges: [],
+  settledAt: 0,
+  snippets: [
+    { seq: 1, role: "user", text: "the lease again", ranges: [[4, 9]] },
+    { seq: 2, role: "assistant", text: "a lease, once more", ranges: [[2, 7]] },
+    {
+      seq: 3,
+      role: "user",
+      text: "and the lease a third time",
+      ranges: [[8, 13]],
+    },
+  ],
+  total: 5,
+};
+
+const ARCHIVED: SearchHitView = {
+  sessionId: "cccccccc-3333",
+  cwd: "/home/ada/dev/mmorpg",
+  title: "Daemon install",
+  titleRanges: [],
+  settledAt: 0,
+  archived: true,
+  snippets: [
+    {
+      seq: 7,
+      role: "user",
+      text: "does the lease survive a restart",
+      ranges: [[9, 14]],
+    },
+  ],
+  total: 1,
+};
+
+/** Nobody named it and it opens with no message of its own: all it has is what it said. */
+const NAMELESS: SearchHitView = {
+  sessionId: "dddddddd-4444",
+  cwd: "/home/ada/dev/pim-agent",
+  titleRanges: [],
+  settledAt: 0,
+  snippets: [
+    {
+      seq: 2,
+      role: "assistant",
+      text: "the lease is a file, not a lock",
+      ranges: [[4, 9]],
+    },
+  ],
+  total: 1,
+};
+
+function answer(hits: readonly SearchHitView[] = []): SessionSearch {
+  return { hits, dropped: [], scanned: SCANNED };
+}
+
+type Painted = {
+  readonly host: HTMLElement;
+  /** Every query that reached the store, the warm empty one first. */
+  readonly asked: readonly string[];
+  readonly switched: readonly string[];
+  readonly closes: Accessor<number>;
+};
+
+let dispose: (() => void) | undefined;
+let store: SessionStore | undefined;
+
+beforeEach(() => {
+  localStorage.clear();
+});
+
+afterEach(() => {
+  dispose?.();
+  dispose = undefined;
+  store?.dispose();
+  store = undefined;
+});
+
+function paint(
+  reply: (query: string) => SessionSearch = () => answer()
+): Painted {
+  const target = new SessionStore({ url: "ws://127.0.0.1:1" });
+  store = target;
+  const asked: string[] = [];
+  const switched: string[] = [];
+  target.searchSessions = async (query: string) => {
+    asked.push(query);
+    return reply(query);
+  };
+  target.switchTo = async (sessionId: string) => {
+    switched.push(sessionId);
+  };
+  const [closes, setCloses] = createSignal(0);
+  const host = mountPoint();
+  dispose = render(
+    () => (
+      <SearchModal
+        open={true}
+        store={target}
+        debounceMs={0}
+        onClose={() => {
+          setCloses((was) => was + 1);
+        }}
+      />
+    ),
+    host
+  );
+  flush();
+  return { host, asked, switched, closes };
+}
+
+function box(host: HTMLElement): HTMLInputElement {
+  return host.querySelector<HTMLInputElement>('[aria-label="Search query"]')!;
+}
+
+function type(host: HTMLElement, text: string): void {
+  const input = box(host);
+  input.value = text;
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  flush();
+}
+
+function press(host: HTMLElement, key: string): void {
+  box(host).dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+  flush();
+}
+
+function rows(host: HTMLElement): readonly HTMLElement[] {
+  return [...host.querySelectorAll<HTMLElement>('[role="option"]')];
+}
+
+function marks(host: HTMLElement): readonly string[] {
+  return [...host.querySelectorAll("mark")].map(
+    (mark) => mark.textContent ?? ""
+  );
+}
+
+/** Which row the keyboard is standing on. */
+function active(host: HTMLElement): number {
+  return rows(host).findIndex(
+    (row) => row.getAttribute("aria-selected") === "true"
+  );
+}
+
+/** Lets a debounce already set to zero fire, and the answer land on screen. */
+async function settle(host: HTMLElement, count: number): Promise<void> {
+  await until(() => {
+    flush();
+    return rows(host).length === count;
+  }, `${count} rows`);
+}
+
+/** Drains the macrotask a zero debounce would have fired on, for the queries that must not happen. */
+async function quiet(): Promise<void> {
+  for (let hop = 0; hop < 5; hop += 1) {
+    await Bun.sleep(0);
+    flush();
+  }
+}
+
+describe("the search modal", () => {
+  test("an empty query lists nothing and says what it will search", async () => {
+    const { host, asked } = paint();
+    await until(() => {
+      flush();
+      return host.textContent?.includes(`${SCANNED} sessions`) === true;
+    }, "the warm call's count");
+
+    // Not the fifty rows you just looked away from: a prompt, and the scope
+    // the sidebar's page of twelve percent cannot promise.
+    expect(rows(host)).toHaveLength(0);
+    expect(host.textContent).toContain(
+      "Search every session — titles and what was said"
+    );
+    expect(host.textContent).toContain("214 sessions, including archived");
+    // Opening is the warm call, and the only thing sent so far.
+    expect(asked).toEqual([""]);
+  });
+
+  test("a one-character query never reaches the server", async () => {
+    const { host, asked } = paint(() => answer([TITLE_AND_CONTENT]));
+
+    type(host, "l");
+    await quiet();
+
+    expect(asked).toEqual([""]);
+    expect(rows(host)).toHaveLength(0);
+
+    // And the second character is what lets it go.
+    type(host, "le");
+    await settle(host, 1);
+    expect(asked).toEqual(["", "le"]);
+  });
+
+  test("a session matched by title and by content is one row saying both", async () => {
+    const { host } = paint(() => answer([TITLE_AND_CONTENT]));
+
+    type(host, "lease");
+    await settle(host, 1);
+
+    const row = rows(host)[0]!;
+    expect(row.textContent).toContain("session-lease: refuse input mid-turn");
+    // Both halves of why it matched, marked where the planner marked them.
+    expect(marks(host)).toEqual(["lease", "lease", "lease"]);
+    // Who said it is most of the recognition value.
+    expect(row.textContent).toContain("you");
+    expect(row.textContent).toContain("pim");
+    expect(row.textContent).toContain("who holds the turn lease");
+    expect(row.textContent).toContain("the lease is released");
+    // Dimmed metadata, never structure.
+    expect(row.textContent).toContain("pim-agent");
+    expect(row.textContent).not.toContain("/home/ada");
+    expect(row.textContent).toMatch(/\d+[smhd]/);
+    // Each snippet is its own target, for the deep link that lands on it next.
+    expect(row.querySelectorAll("button")).toHaveLength(3);
+    expect(host.textContent).toContain(
+      "1 session · searched all 214 sessions, including archived"
+    );
+  });
+
+  test("a chatty session is counted rather than given a third snippet", async () => {
+    const { host } = paint(() => answer([CHATTY]));
+
+    type(host, "lease");
+    await settle(host, 1);
+
+    const row = rows(host)[0]!;
+    expect(row.textContent).toContain("the lease again");
+    expect(row.textContent).toContain("a lease, once more");
+    expect(row.textContent).not.toContain("a third time");
+    expect(row.textContent).toContain("+3 more matches");
+  });
+
+  test("a hit with no title reads as the first thing it matched", async () => {
+    const { host } = paint(() => answer([NAMELESS]));
+
+    type(host, "lease");
+    await settle(host, 1);
+
+    const row = rows(host)[0]!;
+    // Promoted, not repeated: the snippet is the row's name now, and the
+    // count says what is left rather than counting it twice.
+    expect(row.textContent).toContain("the lease is a file, not a lock");
+    expect(row.textContent?.match(/the lease is a file/g) ?? []).toHaveLength(
+      1
+    );
+    expect(row.textContent).not.toContain("Untitled");
+    expect(row.textContent).not.toContain("more matches");
+    expect(marks(host)).toEqual(["lease"]);
+  });
+
+  test("an archived hit is in scope, and badged", async () => {
+    const { host } = paint(() => answer([ARCHIVED]));
+
+    type(host, "lease");
+    await settle(host, 1);
+
+    expect(rows(host)[0]?.textContent).toContain("archived");
+    expect(rows(host)[0]?.textContent).toContain("mmorpg");
+  });
+
+  test("a word nobody said is named on screen", async () => {
+    const { host } = paint(() => ({
+      hits: [TITLE_AND_CONTENT],
+      dropped: ["quokka"],
+      scanned: SCANNED,
+    }));
+
+    type(host, "quokka lease");
+    await settle(host, 1);
+
+    // A silently dropped word is a search that lies about what it did.
+    expect(host.textContent).toContain("searched for lease");
+    expect(host.textContent).toContain("no results for quokka");
+  });
+
+  test("nothing found says the scope it found nothing in", async () => {
+    const { host } = paint(() => answer());
+
+    type(host, "quokka");
+    await until(() => {
+      flush();
+      return host.textContent?.includes("No matches") === true;
+    }, "the empty answer");
+
+    expect(host.textContent).toContain(
+      "No matches in 214 sessions, including archived."
+    );
+  });
+
+  test("arrows move, Enter opens and Escape closes", async () => {
+    const { host, switched, closes } = paint(() =>
+      answer([TITLE_AND_CONTENT, CHATTY, ARCHIVED])
+    );
+
+    type(host, "lease");
+    await settle(host, 3);
+    expect(active(host)).toBe(0);
+
+    press(host, "ArrowDown");
+    press(host, "ArrowDown");
+    expect(active(host)).toBe(2);
+    press(host, "ArrowUp");
+    expect(active(host)).toBe(1);
+
+    press(host, "Enter");
+    expect(switched).toEqual(["bbbbbbbb-2222"]);
+    expect(closes()).toBe(1);
+
+    press(host, "Escape");
+    expect(closes()).toBe(2);
+  });
+
+  test("clicking a snippet opens the session it was said in", async () => {
+    const { host, switched, closes } = paint(() => answer([TITLE_AND_CONTENT]));
+
+    type(host, "lease");
+    await settle(host, 1);
+
+    rows(host)[0]!.querySelectorAll("button")[2]!.click();
+    flush();
+
+    expect(switched).toEqual(["aaaaaaaa-1111"]);
+    expect(closes()).toBe(1);
+  });
+});
+
+/** The two ways in, wired where they actually live. */
+describe("opening it", () => {
+  function shell(): HTMLElement {
+    const target = new SessionStore({
+      url: "ws://127.0.0.1:1",
+      pickerDebounceMs: 0,
+    });
+    store = target;
+    target.searchSessions = async () => answer();
+    const host = mountPoint();
+    dispose = render(
+      () => <Shell store={target} settings={new Settings()} />,
+      host
+    );
+    flush();
+    return host;
+  }
+
+  function modal(host: HTMLElement): HTMLDialogElement {
+    return host.querySelector<HTMLDialogElement>(
+      'dialog[aria-label="Search Sessions"]'
+    )!;
+  }
+
+  test("the sidebar's icon opens it, and so does ⌘K", () => {
+    const host = shell();
+    expect(modal(host).open).toBe(false);
+
+    host
+      .querySelector<HTMLButtonElement>('[aria-label="Search sessions"]')!
+      .click();
+    flush();
+    expect(modal(host).open).toBe(true);
+
+    modal(host)
+      .querySelector<HTMLButtonElement>('[aria-label="Close"]')!
+      .click();
+    flush();
+    expect(modal(host).open).toBe(false);
+
+    const stroke = new KeyboardEvent("keydown", {
+      key: "k",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    globalThis.dispatchEvent(stroke);
+    flush();
+
+    expect(stroke.defaultPrevented).toBe(true);
+    expect(modal(host).open).toBe(true);
+  });
+});

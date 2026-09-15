@@ -74,6 +74,7 @@ function byPinThenSettle(one: Group, other: Group): number {
 export function Sidebar(props: {
   readonly store: SessionStore;
   readonly onNavigate?: () => void;
+  readonly onOpenSearch?: () => void;
   readonly onOpenSettings?: () => void;
 }) {
   const [sessions, setSessions] = createSignal<readonly SessionSummaryView[]>(
@@ -337,6 +338,15 @@ export function Sidebar(props: {
           </span>
         </div>
         <div class="flex shrink-0 items-center">
+          <button
+            type="button"
+            aria-label="Search sessions"
+            title="Search sessions"
+            class={ICON}
+            onClick={() => props.onOpenSearch?.()}
+          >
+            <span class="i-griddy-icons:search size-5" />
+          </button>
           <button
             type="button"
             aria-label="Settings"

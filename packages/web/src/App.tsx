@@ -16,6 +16,7 @@ import { GatewayOrigin } from "./session/Gateway";
 import { SessionStore } from "./session/SessionStore";
 import { Toast } from "./session/Toast";
 import { Sidebar } from "./sessions/Sidebar";
+import { SearchModal } from "./sessions/SearchModal";
 import { HideThinking, Settings } from "./settings/Settings";
 import { SettingsModal } from "./settings/SettingsModal";
 import { Skeleton } from "./transcript/Skeleton";
@@ -51,6 +52,7 @@ export function Shell(props: {
   const desktop = createMediaQuery(DESKTOP);
   const [sidebar, setSidebar] = createSignal(untrack(desktop));
   const [configuring, setConfiguring] = createSignal(false);
+  const [searching, setSearching] = createSignal(false);
   const [reviewing, setReviewing] = createSignal(false);
   const diff = new DiffStore(props.store);
   const comments = new Comments();
@@ -69,6 +71,19 @@ export function Shell(props: {
       comments.load(cwd);
     }
   );
+  // The icon is the discoverable way in; this is for the fingers that already know.
+  onSettled(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setSearching(true);
+      }
+    };
+    globalThis.addEventListener("keydown", onKeyDown);
+    return () => {
+      globalThis.removeEventListener("keydown", onKeyDown);
+    };
+  });
   let scroller: HTMLDivElement | undefined;
   const [inset, setInset] = createSignal(0);
   // An object rather than the string, so taking back the same words twice is two recalls.
@@ -185,6 +200,9 @@ export function Shell(props: {
               <Sidebar
                 store={props.store}
                 onNavigate={navigate}
+                onOpenSearch={() => {
+                  setSearching(true);
+                }}
                 onOpenSettings={() => {
                   setConfiguring(true);
                 }}
@@ -206,6 +224,10 @@ export function Shell(props: {
                 onNavigate={() => {
                   setSidebar(false);
                   navigate();
+                }}
+                onOpenSearch={() => {
+                  setSidebar(false);
+                  setSearching(true);
                 }}
                 onOpenSettings={() => {
                   setSidebar(false);
@@ -281,6 +303,14 @@ export function Shell(props: {
             </div>
           </div>
           <SubagentModal store={props.store} />
+          <SearchModal
+            open={searching()}
+            store={props.store}
+            onNavigate={navigate}
+            onClose={() => {
+              setSearching(false);
+            }}
+          />
           <SettingsModal
             open={configuring()}
             store={props.store}

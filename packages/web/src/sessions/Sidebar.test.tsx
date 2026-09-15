@@ -71,6 +71,7 @@ function counted(
 function paint(
   options: {
     readonly onNavigate?: () => void;
+    readonly onOpenSearch?: () => void;
     readonly onOpenSettings?: () => void;
     readonly unread?: readonly string[];
     readonly sessions?: readonly SessionSummaryView[];
@@ -150,6 +151,9 @@ function paint(
       <Sidebar
         store={store}
         {...(options.onNavigate ? { onNavigate: options.onNavigate } : {})}
+        {...(options.onOpenSearch
+          ? { onOpenSearch: options.onOpenSearch }
+          : {})}
         {...(options.onOpenSettings
           ? { onOpenSettings: options.onOpenSettings }
           : {})}
@@ -873,15 +877,24 @@ test("a row's age follows the clock, not the next render", async () => {
  */
 test("the header carries the app's own buttons and nothing about the socket", () => {
   const opened: number[] = [];
-  const { host } = paint({ onOpenSettings: () => opened.push(1) });
+  const searched: number[] = [];
+  const { host } = paint({
+    onOpenSearch: () => searched.push(1),
+    onOpenSettings: () => opened.push(1),
+  });
   const header = host.querySelector("h1")!.closest("div")!.parentElement!;
   const labels = [...header.querySelectorAll("button")].map((button) =>
     button.getAttribute("aria-label")
   );
 
-  expect(labels).toEqual(["Settings"]);
+  // Search first: the settings gear is the least-pressed thing here.
+  expect(labels).toEqual(["Search sessions", "Settings"]);
   expect(host.textContent).not.toContain("127.0.0.1:1");
 
+  header
+    .querySelector<HTMLButtonElement>('[aria-label="Search sessions"]')!
+    .click();
+  expect(searched).toHaveLength(1);
   header.querySelector<HTMLButtonElement>('[aria-label="Settings"]')!.click();
   expect(opened).toHaveLength(1);
 });
