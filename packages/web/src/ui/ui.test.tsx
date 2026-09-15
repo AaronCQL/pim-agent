@@ -239,6 +239,35 @@ describe("combobox list", () => {
     expect(selected).toEqual([0]);
   });
 
+  test("the pointer hands the caret over, and a dead row takes nothing", () => {
+    const host = mountPoint();
+    const activated: number[] = [];
+    render(
+      () => (
+        <Combobox
+          open
+          items={[{ label: "a.ts" }, { label: "b.ts", disabled: true }]}
+          activeIndex={0}
+          anchor={() => host}
+          onActivate={(index) => activated.push(index)}
+          onSelect={() => undefined}
+        />
+      ),
+      host
+    );
+    flush();
+
+    const rows = [...host.querySelectorAll('[role="option"]')];
+    // Hover and the keyboard are one reading, so the row the pointer crosses
+    // is the row the arrows go on from.
+    expect(rows[0]?.className).toContain("bg-neutral-800");
+    expect(rows[1]?.className).not.toContain("bg-neutral-800");
+
+    rows[1]?.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+    rows[0]?.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+    expect(activated).toEqual([-1, 0]);
+  });
+
   test("a tag is parked at the row's right edge, after the label", () => {
     const host = mountPoint();
     render(

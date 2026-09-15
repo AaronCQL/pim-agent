@@ -1,4 +1,4 @@
-import { createMemo, createSignal, onCleanup, Show } from "solid-js";
+import { createMemo, createSignal, onCleanup, Show, untrack } from "solid-js";
 
 import type { GitBranch } from "#core/shared/Git";
 import { relativeTime } from "../format";
@@ -70,6 +70,13 @@ function live(branch: GitBranch, now: number): boolean {
   );
 }
 
+function rowsOf(branches: readonly GitBranch[]): readonly Row[] {
+  const now = Date.now();
+  return branches
+    .filter((branch) => live(branch, now))
+    .map((branch) => rowOf(branch, now));
+}
+
 /** The branch segment: where the work is, and the two directions it can move. */
 export function BranchMenu(props: {
   readonly store: SessionStore;
@@ -99,18 +106,21 @@ export function BranchMenu(props: {
     props.store.listBranches().then(
       (found) => {
         setBranches(found);
+        // The caret lands here rather than at the open, because the list only
+        // arrives afterwards; an arrow pressed in between has already claimed
+        // it and keeps it.
+        if (untrack(navigation.activeIndex) < 0) {
+          navigation.setActiveIndex(
+            rowsOf(found).findIndex((row) => row.branch.current)
+          );
+        }
       },
       (error: Error) => {
         setFailure(error.message);
       }
     );
 
-  const shown = createMemo<readonly Row[]>(() => {
-    const now = Date.now();
-    return branches()
-      .filter((branch) => live(branch, now))
-      .map((branch) => rowOf(branch, now));
-  });
+  const shown = createMemo<readonly Row[]>(() => rowsOf(branches()));
 
   const attempt = (operation: Operation, run: () => Promise<void>): void => {
     setFailure("");
@@ -154,7 +164,7 @@ export function BranchMenu(props: {
   const panel = createDisclosure({
     onOpen: () => {
       setFailure("");
-      navigation.setActiveIndex(0);
+      navigation.setActiveIndex(-1);
       void load();
       // The counts only mean anything once the remote has been asked; the list paints before that lands.
       void props.store.refreshGit(true).then(load);

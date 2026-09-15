@@ -7,6 +7,7 @@ import {
   type Element,
 } from "solid-js";
 
+import { ROW_ACTIVE } from "./classes";
 import { Popover, type Point } from "./Popover";
 
 export type ComboboxNavigation = {
@@ -198,7 +199,7 @@ export function Combobox(props: {
           list = element;
         }}
         role="listbox"
-        class="max-h-64 min-h-0 w-full overflow-y-auto"
+        class="mr-[calc(-1*var(--scrollbar))] max-h-64 min-h-0 overflow-y-auto"
         onMouseLeave={() => {
           props.onLeave?.();
         }}
@@ -216,7 +217,7 @@ export function Combobox(props: {
                 role="option"
                 aria-selected={active() ? "true" : "false"}
                 {...(dead() ? { "aria-disabled": "true" } : {})}
-                class={`${ROW} ${dead() ? "cursor-default" : "cursor-pointer"} ${active() ? "bg-neutral-800" : ""} ${tone(item, active())}`}
+                class={`${ROW} ${dead() ? "cursor-default" : "cursor-pointer"} ${active() ? ROW_ACTIVE : ""} ${tone(item, active())}`}
                 onMouseMove={() => {
                   // A dead row under the pointer lights nothing: leaving the
                   // row above lit would point at the wrong verb.

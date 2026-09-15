@@ -10,7 +10,7 @@ import {
 import type { DirectoryListing } from "#core/shared/Directories";
 import { abbreviateHome } from "../format";
 import type { SessionStore } from "../session/SessionStore";
-import { ACTION, FIELD, ICON } from "../ui/classes";
+import { ACTION, FIELD, ICON, ROW_ACTIVE } from "../ui/classes";
 import { createComboboxNavigation } from "../ui/Combobox";
 import { createMediaQuery, KEYBOARD } from "../ui/media";
 import { Modal } from "../ui/Modal";
@@ -213,43 +213,44 @@ export function DirectoryModal(props: {
           />
         </div>
 
-        <ul role="listbox" class="min-h-0 flex-1 overflow-y-auto p-1 text-sm">
+        <ul
+          role="listbox"
+          class="min-h-0 flex-1 overflow-y-auto p-1 pr-[calc(0.25rem-var(--scrollbar))] text-sm"
+        >
           <Show when={rows().length === 0}>
             <li class="px-2 py-1 text-neutral-500">
               {failure() || "Nothing to open in here."}
             </li>
           </Show>
           <For each={rows()}>
-            {(row, index) => (
-              <li
-                role="option"
-                aria-selected={
-                  index() === navigation.activeIndex() ? "true" : "false"
-                }
-                class={{
-                  "flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1": true,
-                  "bg-neutral-800 text-neutral-50":
-                    index() === navigation.activeIndex(),
-                }}
-                onMouseEnter={() => {
-                  navigation.setActiveIndex(index());
-                }}
-                onClick={() => {
-                  choose(row);
-                }}
-              >
-                <span
-                  class={`size-4 shrink-0 ${row.recent ? "i-griddy-icons:time-back" : "i-griddy-icons:folder"}`}
-                  aria-hidden="true"
-                />
-                <span class="min-w-0 truncate">{row.label}</span>
-                <Show when={row.recent}>
-                  <span class="ml-auto shrink-0 pl-2 text-xs text-neutral-500">
-                    recent
-                  </span>
-                </Show>
-              </li>
-            )}
+            {(row, index) => {
+              const active = (): boolean =>
+                index() === navigation.activeIndex();
+              return (
+                <li
+                  role="option"
+                  aria-selected={active() ? "true" : "false"}
+                  class={`flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 ${active() ? `${ROW_ACTIVE} text-neutral-50` : ""}`}
+                  onMouseMove={() => {
+                    navigation.setActiveIndex(index());
+                  }}
+                  onClick={() => {
+                    choose(row);
+                  }}
+                >
+                  <span
+                    class={`size-4 shrink-0 ${row.recent ? "i-griddy-icons:time-back" : "i-griddy-icons:folder"}`}
+                    aria-hidden="true"
+                  />
+                  <span class="min-w-0 truncate">{row.label}</span>
+                  <Show when={row.recent}>
+                    <span class="ml-auto shrink-0 pl-2 text-xs text-neutral-500">
+                      recent
+                    </span>
+                  </Show>
+                </li>
+              );
+            }}
           </For>
         </ul>
 

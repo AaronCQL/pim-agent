@@ -49,20 +49,25 @@
    the first time one appeared. */
 @media (pointer: fine) {
   :root {
-    --scrollbar: 5px;
+    /* 0.25rem, the app's smallest padding step, so a padded list can subtract
+       it and land back on a round number. */
+    --scrollbar: 4px;
   }
 
   /* Reserved whether or not the pane overflows, so nothing shifts when the
      scrollbar arrives. Keyed on the utility every vertical scroller in the
      app already carries; the horizontal scrollers (a code fence, a table)
      are left out, since the gutter is an inline-edge one and would eat a
-     column inside every such block. */
+     column inside every such block. A list whose rows paint a background to
+     their own edges takes `--scrollbar` back out of its inline-end padding,
+     so the reserved gutter *is* that padding rather than a stripe beyond it:
+     otherwise every row stops short of the panel on one side only. */
   .overflow-y-auto {
     scrollbar-gutter: stable;
   }
 
   /* The standard properties cannot express an exact width — `scrollbar-width`
-     only offers auto/thin/none, and Chrome's `thin` is ~11px — so the 5px
+     only offers auto/thin/none, and Chrome's `thin` is ~11px — so the 4px
      comes from the -webkit- pseudo-elements and the standard ones are scoped
      to engines that lack them. Setting either standard property makes Chrome
      ignore the pseudo-elements outright, so this is an either/or, not a

@@ -39,3 +39,10 @@ export const CHIP_SEGMENT =
 /** A composer pill: dark and quiet until a pointer picks it out with a ring. */
 export const PILL =
   "flex items-center justify-center gap-1.5 rounded-full bg-neutral-900 text-neutral-350 ring-neutral-600 hover:text-neutral-100 hover:ring-1";
+
+/**
+ * The lift a list row takes under the caret. The pointer moves that caret as
+ * it passes, so hover and the keyboard are one reading and one fill: the keys
+ * take over from wherever the hand left off.
+ */
+export const ROW_ACTIVE = "bg-neutral-800";

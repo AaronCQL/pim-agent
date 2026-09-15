@@ -14,7 +14,7 @@ import type { SearchRange, SearchSnippet } from "#core/session/SearchIndex";
 import type { SearchHitView } from "#protocol/ServerEvent";
 import { baseName, relativeTime } from "../format";
 import type { SessionSearch, SessionStore } from "../session/SessionStore";
-import { FIELD_BARE, FIELD_BOX } from "../ui/classes";
+import { FIELD_BARE, FIELD_BOX, ROW_ACTIVE } from "../ui/classes";
 import { createComboboxNavigation } from "../ui/Combobox";
 import { Marked } from "../ui/Marked";
 import { createMediaQuery, KEYBOARD } from "../ui/media";
@@ -338,7 +338,7 @@ export function SearchModal(props: {
             list = element;
           }}
           role="listbox"
-          class="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2 text-sm"
+          class="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2 pr-[calc(0.5rem-var(--scrollbar))] text-sm"
         >
           <Switch>
             <Match when={phase() === "failed"}>
@@ -370,7 +370,7 @@ export function SearchModal(props: {
                     }
                     class={{
                       "rounded-lg": true,
-                      "bg-neutral-850": index() === navigation.activeIndex(),
+                      [ROW_ACTIVE]: index() === navigation.activeIndex(),
                     }}
                     onMouseMove={() => {
                       navigation.setActiveIndex(index());
