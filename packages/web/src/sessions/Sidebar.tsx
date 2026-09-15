@@ -38,6 +38,8 @@ type Group = {
   readonly settledAt: number;
   /** Pinned projects stand above every other, whatever the clock says. */
   readonly pinned: boolean;
+  /** Where it sorts among the pinned; meaningless for a project that is not. */
+  readonly rank: number;
 };
 
 /** Which listing the sidebar is showing: the live sessions, or the ones put away. */
@@ -76,10 +78,17 @@ function settleOf(row: Row): number {
   return row.listed?.settledAt ?? UNSETTLED;
 }
 
-/** A pin outranks the clock; among equals, the project answered in last stands first. */
+/**
+ * A pin outranks the clock. Among the pinned it is the order somebody put them
+ * in — a pin that changed places whenever a session answered in it would be no
+ * order at all — and among the rest, the project answered in last stands first.
+ */
 function byPinThenSettle(one: Group, other: Group): number {
   if (one.pinned !== other.pinned) {
     return one.pinned ? -1 : 1;
+  }
+  if (one.pinned) {
+    return one.rank - other.rank;
   }
   return other.settledAt - one.settledAt;
 }
@@ -230,6 +239,7 @@ export function Sidebar(props: {
         count: Math.max(counted.get(cwd) ?? 0, found.length),
         settledAt: Math.max(...found.map(settleOf)),
         pinned: props.store.isPinned(cwd),
+        rank: props.store.pinRankOf(cwd),
       }))
       .sort(byPinThenSettle);
   });
@@ -324,6 +334,8 @@ export function Sidebar(props: {
 
   const projectItems = (cwd: string): readonly RowMenuItem[] => {
     const pinned = props.store.isPinned(cwd);
+    const order = props.store.pinOrder();
+    const at = order.indexOf(cwd);
     return [
       {
         label: pinned ? "Unpin project" : "Pin project",
@@ -331,6 +343,27 @@ export function Sidebar(props: {
           attempt(() => props.store.setPinned(cwd, !pinned));
         },
       },
+      // Greyed at the ends rather than dropped: with two pins every menu is an
+      // end, and a verb that came and went would put `Move down` where `Move
+      // up` had just been.
+      ...(pinned
+        ? [
+            {
+              label: "Move up",
+              disabled: at <= 0,
+              onSelect: () => {
+                attempt(() => props.store.movePin(cwd, -1));
+              },
+            },
+            {
+              label: "Move down",
+              disabled: at === -1 || at === order.length - 1,
+              onSelect: () => {
+                attempt(() => props.store.movePin(cwd, 1));
+              },
+            },
+          ]
+        : []),
     ];
   };
 

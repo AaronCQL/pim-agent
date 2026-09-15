@@ -5,6 +5,7 @@ import { SearchIndex } from "#core/session/SearchIndex";
 import type { SearchHit } from "#core/session/SearchIndex";
 import type {
   ProjectEntry,
+  Pinning,
   SessionEntry,
   SessionMeta,
 } from "#core/session/SessionMeta";
@@ -111,10 +112,10 @@ export class SessionCatalogue {
   public async list(
     command: Command & { readonly type: "list_sessions" }
   ): Promise<SessionListing> {
-    const [summaries, overrides, pins] = await Promise.all([
+    const [summaries, overrides, pinning] = await Promise.all([
       this.deps.registry.list(command.cwd),
       this.deps.meta.sessions(),
-      this.deps.meta.projects(),
+      this.deps.meta.pinning(),
     ]);
     // Prune only on an unfiltered listing: a cwd-filtered one would forget every other directory.
     if (command.cwd === undefined) {
@@ -137,14 +138,14 @@ export class SessionCatalogue {
     return {
       sessions: await this.page(inScope, {
         overrides,
-        pins,
+        pins: pinning.projects,
         archived: scope,
         limit,
         // Absent, a project may fill the page; it is the page that bounds it either way.
         perProject: command.perProject ?? limit,
       }),
       // Counted before the cut, and over the whole scope: a collapsed group says how many it holds, and a row the cut dropped is one a client can still ask for.
-      projects: projectsOf(inScope, pins),
+      projects: projectsOf(inScope, pinning),
     };
   }
 
@@ -449,15 +450,18 @@ function choose(
 /** Every working directory the scope holds sessions in, newest first; the count is the header scan's, so it owes nothing to the page. */
 function projectsOf(
   summaries: readonly SessionSummary[],
-  pins: Pins
+  { projects, order }: Pinning
 ): readonly ProjectView[] {
   const counts = new Map<string, number>();
   for (const { cwd } of summaries) {
     counts.set(cwd, (counts.get(cwd) ?? 0) + 1);
   }
+  const ranks = new Map(order.map((cwd, rank) => [cwd, rank]));
   return [...counts].map(([cwd, count]) => ({
     cwd,
     count,
-    ...(pins.get(cwd)?.pinned === true ? { pinned: true as const } : {}),
+    ...(projects.get(cwd)?.pinned === true
+      ? { pinned: true as const, pinRank: ranks.get(cwd) ?? 0 }
+      : {}),
   }));
 }

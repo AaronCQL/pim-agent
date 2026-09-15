@@ -167,10 +167,12 @@ function rowOf(
 async function stored(): Promise<{
   readonly sessions: Record<string, unknown>;
   readonly projects: Record<string, unknown>;
+  readonly pins: readonly string[];
 }> {
   return (await Bun.file(metaPath()).json()) as {
     sessions: Record<string, unknown>;
     projects: Record<string, unknown>;
+    pins: readonly string[];
   };
 }
 
@@ -417,6 +419,43 @@ test("forgets a session that is gone, and keeps the pins", async () => {
   expect(after.projects).toEqual({ [tmp]: { pinned: true } });
 });
 
+test("ranks the pinned projects, and tells every window when the order moves", async () => {
+  const one = join(tmp, "one");
+  const two = join(tmp, "two");
+  await writeSession(ONE, minutesAgo(2), one);
+  await writeSession(TWO, minutesAgo(1), two);
+  const probe = await connect();
+  const other = await connect();
+  const orders = () =>
+    other.events.flatMap((event) =>
+      event.type === "pins_changed" ? [event.order] : []
+    );
+
+  await probe.setPinned(one, true);
+  await probe.setPinned(two, true);
+
+  // The newest pin is the top one, and the rank rides with the listing: a
+  // window that opens tomorrow needs no broadcast to sort them.
+  const ranked = (await probe.catalogue()).projects;
+  expect(projectOf(ranked, two)?.pinRank).toBe(0);
+  expect(projectOf(ranked, one)?.pinRank).toBe(1);
+
+  await probe.setPinOrder([one, two]);
+  const moved = (await probe.catalogue()).projects;
+  expect(projectOf(moved, one)?.pinRank).toBe(0);
+  expect(projectOf(moved, two)?.pinRank).toBe(1);
+  expect((await stored()).pins).toEqual([one, two]);
+
+  // Three words to the other window: both pins, and the move.
+  await until(() => orders().length === 3, "the pin broadcasts");
+  expect(orders()).toEqual([[one], [two, one], [one, two]]);
+
+  // An order is only ever where a pin sits, never whether it is one: naming a
+  // directory that is not pinned adds nothing.
+  await probe.setPinOrder([join(tmp, "never"), two, one]);
+  expect((await stored()).pins).toEqual([two, one]);
+});
+
 test("hands a pin back to a server that has been restarted under it", async () => {
   await writeSession(ONE, minutesAgo(1));
   const probe = await connect();
@@ -524,7 +563,7 @@ test("counts what a project holds, not what fitted on the page", async () => {
   await probe.setPinned(project, true);
   expect(
     projectOf((await probe.catalogue({ perProject: 2 })).projects, project)
-  ).toEqual({ cwd: project, count: 4, pinned: true });
+  ).toEqual({ cwd: project, count: 4, pinned: true, pinRank: 0 });
 });
 
 test("lists a page wider than the gate its reads fan out through", async () => {

@@ -178,6 +178,8 @@ export type EphemeralEvent =
       readonly cwd: string;
       readonly pinned: boolean;
     }
+  /** Sent to every connection: the pinned projects, in the order they are shown. */
+  | { readonly type: "pins_changed"; readonly order: readonly string[] }
   /** Sent to every connection: the sessions on disk changed, so any listing a client holds is stale. */
   | { readonly type: "sessions_changed" }
   /** Sent to every connection; the restart it ends in drops every socket. */
@@ -244,6 +246,8 @@ export type ProjectView = {
   /** Every session in it the listing's scope allows, including the ones the cut dropped. */
   readonly count: number;
   readonly pinned?: true;
+  /** Where it sorts among the pinned, 0 first; absent unless it is pinned. */
+  readonly pinRank?: number;
 };
 
 /**

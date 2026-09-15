@@ -275,6 +275,11 @@ export class ProbeClient {
     return this.send({ type: "set_project_pinned", cwd, value });
   }
 
+  /** Re-orders the pinned directories; the whole order, pinned ones only. */
+  public setPinOrder(order: readonly string[]): Promise<ResponseEvent> {
+    return this.send({ type: "set_pin_order", order });
+  }
+
   /** The model catalogue, plus this session's thinking levels; empty when unattached. */
   public async listModels(): Promise<{
     readonly models: readonly ModelView[];

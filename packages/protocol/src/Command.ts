@@ -102,6 +102,12 @@ export type Command =
       readonly cwd: string;
       readonly value: boolean;
     }
+  /** Re-orders the pinned projects. The whole order, never a move: two surfaces settle on the last one sent. */
+  | {
+      readonly id: string;
+      readonly type: "set_pin_order";
+      readonly order: readonly string[];
+    }
   /** The models this server can switch to, plus the current model's thinking levels; answers without a session. */
   | { readonly id: string; readonly type: "list_models" }
   /** Subdirectories of `path` on the server's filesystem; errors rather than answering empty when it is not a readable directory. */

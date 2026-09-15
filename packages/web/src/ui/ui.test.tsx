@@ -28,7 +28,10 @@ function key(
   return event;
 }
 
-function navigation(count: number): {
+function navigation(
+  count: number,
+  enabled?: (index: number) => boolean
+): {
   readonly press: (name: string, modifiers?: Partial<KeyboardEvent>) => boolean;
   readonly nav: Nav;
   readonly selected: number[];
@@ -42,6 +45,7 @@ function navigation(count: number): {
       open: () => true,
       onSelect: (index) => selected.push(index),
       onDismiss: () => dismissed.push(1),
+      ...(enabled === undefined ? {} : { enabled }),
     })
   );
   // A browser delivers each keydown in its own task, which is when Solid 2
@@ -121,6 +125,59 @@ describe("combobox keyboard navigation", () => {
     press("ArrowDown");
     expect(nav.activeIndex()).toBe(0);
     expect(selected).toEqual([]);
+  });
+
+  test("the caret steps over a dead row rather than resting on it", () => {
+    // A menu whose middle verb is greyed where it stands: `Move up` at the top
+    // of the pins, `Move down` at the foot.
+    const { press, nav, selected } = navigation(4, (index) => index % 2 === 0);
+
+    nav.setActiveIndex(-1);
+    flush();
+    press("ArrowDown");
+    expect(nav.activeIndex()).toBe(0);
+    press("ArrowDown");
+    expect(nav.activeIndex()).toBe(2);
+    // Wrapping skips it from the other side too.
+    press("ArrowDown");
+    expect(nav.activeIndex()).toBe(0);
+    press("ArrowUp");
+    expect(nav.activeIndex()).toBe(2);
+
+    // And both ends land on a verb that can be taken.
+    press("End");
+    expect(nav.activeIndex()).toBe(2);
+    press("Home");
+    expect(nav.activeIndex()).toBe(0);
+
+    press("Enter");
+    expect(selected).toEqual([0]);
+  });
+
+  test("a list of nothing but dead rows neither moves nor spins", () => {
+    const { press, nav, selected } = navigation(3, () => false);
+
+    // Opened by gesture, so nothing is under the caret to begin with.
+    nav.setActiveIndex(-1);
+    flush();
+    expect(press("ArrowDown")).toBe(true);
+    expect(nav.activeIndex()).toBe(-1);
+    expect(press("Enter")).toBe(false);
+    expect(selected).toEqual([]);
+  });
+
+  test("a menu opened with nothing lit takes the first row on the way down and the last on the way up", () => {
+    const { press, nav } = navigation(3);
+
+    nav.setActiveIndex(-1);
+    flush();
+    press("ArrowDown");
+    expect(nav.activeIndex()).toBe(0);
+
+    nav.setActiveIndex(-1);
+    flush();
+    press("ArrowUp");
+    expect(nav.activeIndex()).toBe(2);
   });
 
   test("type-to-refine drops the active row back to the top", () => {

@@ -344,6 +344,13 @@ export class WsGateway {
           cwd: command.cwd,
           pinned: command.value,
         });
+        // The flag and the place it takes are one fact to a sidebar; a pin
+        // that arrived without a rank would sort by nothing until the next listing.
+        this.broadcast({ type: "pins_changed", order: await this.meta.pins() });
+        return {};
+      case "set_pin_order":
+        await this.meta.setPinOrder(command.order);
+        this.broadcast({ type: "pins_changed", order: await this.meta.pins() });
         return {};
       case "list_models":
         return {
