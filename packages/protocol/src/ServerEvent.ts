@@ -259,6 +259,8 @@ export type SearchHitView = {
   readonly title?: string;
   /** Offsets into the clamped `title`, empty when the title did not match. */
   readonly titleRanges: readonly SearchRange[];
+  /** The session's opening ask, for a row whose name is all that matched and so has no snippet to show. */
+  readonly opening?: string;
   /** End of the last completed turn and the row's clock, never the file mtime; falls back to when the session started, as the sidebar's does. */
   readonly settledAt: number;
   /** Searched and found anyway: the badge that makes "archived are in scope" honest. */

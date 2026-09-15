@@ -23,6 +23,8 @@ export type SearchSnippet = {
   readonly text: string;
   /** Offsets into `text`, not into the message. */
   readonly ranges: readonly SearchRange[];
+  /** The window opened past the message's first word. */
+  readonly cutHead?: true;
 };
 
 export type SearchHit = {
@@ -34,6 +36,8 @@ export type SearchHit = {
   readonly named?: true;
   /** Offsets into the clamped `title`. */
   readonly titleRanges: readonly SearchRange[];
+  /** The session's opening ask, for a row whose name is all that matched and so has no snippet to show. */
+  readonly opening?: string;
   /** End of the last completed turn, falling back to when the session started: a row always has a clock to print. */
   readonly settledAt: number;
   readonly snippets: readonly SearchSnippet[];
@@ -124,10 +128,23 @@ const MAX_CANDIDATES = 4;
 
 const MAX_TYPOS = 2;
 
-/** Typesense's `highlight_affix_num_tokens`. */
+/** Typesense's `highlight_affix_num_tokens`, for the run-up only: how far back of the match a window opens. */
 const AFFIX = 4;
 
+/**
+ * How far past the window's start a snippet runs. A row is cut to pixels, and
+ * only the row knows how many it has, so the tail is not a window at all: it is
+ * more text than the widest row can draw — the modal is capped at 30rem, which
+ * is about 59 of these characters — and the client's own ellipsis does the
+ * cutting. A word count here cut short rows shorter still, on the wide screens
+ * that had the most room to spare.
+ */
+const TAIL = 100;
+
 const SNIPPETS = 2;
+
+/** What a row draws of an opening ask before its own box cuts it anyway. */
+const PREVIEW = 200;
 
 const LIMIT = 20;
 
@@ -541,12 +558,16 @@ function hitOf(
 ): SearchHit {
   const { title, named, settledAt } = entry.digest;
   const spoken = [...group.turns].sort(byRecognition);
+  const opening = entry.parts.opening;
   return {
     sessionId: entry.sessionId,
     cwd: entry.cwd,
     path: entry.path,
     ...(title === undefined ? {} : { title }),
     ...(named === undefined ? {} : { named }),
+    ...(named === true && opening !== undefined
+      ? { opening: opening.slice(0, PREVIEW) }
+      : {}),
     settledAt: settledAt ?? entry.createdAt,
     titleRanges:
       group.title && title !== undefined ? rangesOf(title, terms) : [],
@@ -562,14 +583,14 @@ function snippetOf(turn: Turn, terms: ReadonlySet<string>): SearchSnippet {
   );
   const at = tokens.findIndex((token) => terms.has(token.text));
   const head = at - AFFIX;
-  const tail = at + AFFIX;
   const from = head <= 0 ? 0 : tokens[head]!.start;
-  const to = tail >= tokens.length - 1 ? turn.text.length : tokens[tail]!.end;
+  const to = Math.min(turn.text.length, from + TAIL);
   return {
     seq: turn.seq,
     role: turn.role,
     text: turn.text.slice(from, to),
     ranges: rangesIn(tokens, terms, from, to),
+    ...(from > 0 ? { cutHead: true as const } : {}),
   };
 }
 

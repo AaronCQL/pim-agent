@@ -14,33 +14,36 @@ import type { SearchRange, SearchSnippet } from "#core/session/SearchIndex";
 import type { SearchHitView } from "#protocol/ServerEvent";
 import { baseName, relativeTime } from "../format";
 import type { SessionSearch, SessionStore } from "../session/SessionStore";
-import { FIELD } from "../ui/classes";
+import { FIELD_BARE, FIELD_BOX } from "../ui/classes";
 import { createComboboxNavigation } from "../ui/Combobox";
 import { Marked } from "../ui/Marked";
 import { createMediaQuery, KEYBOARD } from "../ui/media";
 import { Modal } from "../ui/Modal";
 import { Spinner } from "../ui/Spinner";
 
-/** What one row draws before the rest becomes a count: one chatty session must not eat the viewport. */
-const SNIPPET_LIMIT = 2;
-
 /** Shorter than this and a query is a keystroke rather than a question, so it never leaves the browser. */
 const MIN_QUERY = 2;
 
 const DEBOUNCE_MS = 100;
 
+/**
+ * A line drawn from a window onto something longer, with the server's marks on
+ * it. Only the head says whether it was cut: `text-overflow` can ellipsise the
+ * end of a line and not the start, so the tail is the box's to cut and the
+ * head is the server's.
+ */
 type Marks = {
   readonly text: string;
   readonly ranges: readonly SearchRange[];
+  readonly cutHead?: true;
 };
 
 /** One matched session, cut to what the row shows of it. */
 type Row = {
   readonly hit: SearchHitView;
   readonly heading: Marks;
-  readonly snippets: readonly SearchSnippet[];
-  /** Matching messages this row does not draw. */
-  readonly more: number;
+  /** The one line under the heading: the best matching message, or the opening ask when the name is all that matched. */
+  readonly said?: Marks;
 };
 
 /** What the list holds: a search that never happened, an unasked question, one in flight, one nothing answered, or the rows. */
@@ -62,8 +65,8 @@ function Waiting() {
 /** Nothing to list yet: the promise the feature rests on, and the count that lets a reader check it. */
 function Prompt(props: { readonly ready: boolean; readonly scanned: number }) {
   return (
-    <li class="space-y-1 px-2 py-6 text-center text-neutral-500">
-      <p>Search every session — titles and what was said</p>
+    <li class="space-y-1 px-2 py-6 text-center text-neutral-400">
+      <p>Search session titles and content</p>
       <Show when={props.ready} fallback={<Waiting />}>
         <p>{scopeOf(props.scanned)}</p>
       </Show>
@@ -71,31 +74,68 @@ function Prompt(props: { readonly ready: boolean; readonly scanned: number }) {
   );
 }
 
+/** A windowed line, with the ellipsis for the run-up the window left behind. */
+function Excerpt(props: { readonly marks: Marks }) {
+  return (
+    <>
+      <Show when={props.marks.cutHead}>…</Show>
+      <Marked text={props.marks.text} ranges={props.marks.ranges} />
+    </>
+  );
+}
+
+function marksOf(snippet: SearchSnippet): Marks {
+  return {
+    text: snippet.text,
+    ranges: snippet.ranges,
+    ...(snippet.cutHead === true ? { cutHead: true as const } : {}),
+  };
+}
+
+/**
+ * What stands between two facts on the meta line. Two stops below the facts it
+ * parts, because a separator painted as brightly as its operands stops parting
+ * them and becomes a third fact.
+ */
+function Dot() {
+  return (
+    <span class="shrink-0 text-neutral-600" aria-hidden="true">
+      ·
+    </span>
+  );
+}
+
 /**
  * A session with no title is one nobody named that opens with no message of
  * its own, so what it matched on is a truer name for it than any word made up
  * here; failing even that, the id, as the sidebar does.
+ *
+ * The line beneath it is the best matching message the heading is not already
+ * saying — an unnamed session is named by its opening ask, and a window onto
+ * that same ask under it would be the row saying one thing twice — falling
+ * back to the opening ask itself for a row the name alone matched.
  */
-function headingOf(hit: SearchHitView, promoted?: SearchSnippet): Marks {
-  if (hit.title !== undefined) {
-    return { text: hit.title, ranges: hit.titleRanges };
-  }
-  return promoted === undefined
-    ? { text: hit.sessionId.slice(0, 8), ranges: [] }
-    : { text: promoted.text, ranges: promoted.ranges };
-}
-
 function rowOf(hit: SearchHitView): Row {
   const promoted = hit.title === undefined ? hit.snippets[0] : undefined;
-  const snippets = hit.snippets
-    .slice(promoted === undefined ? 0 : 1)
-    .slice(0, SNIPPET_LIMIT);
-  const drawn = snippets.length + (promoted === undefined ? 0 : 1);
+  const heading =
+    hit.title !== undefined
+      ? { text: hit.title, ranges: hit.titleRanges }
+      : promoted === undefined
+        ? { text: hit.sessionId.slice(0, 8), ranges: [] }
+        : marksOf(promoted);
+  const snippet = hit.snippets.find(
+    (candidate) => !heading.text.includes(candidate.text)
+  );
+  const said =
+    snippet !== undefined
+      ? marksOf(snippet)
+      : hit.opening === undefined
+        ? undefined
+        : { text: hit.opening, ranges: [] };
   return {
     hit,
-    heading: headingOf(hit, promoted),
-    snippets,
-    more: Math.max(0, hit.total - drawn),
+    heading,
+    ...(said === undefined ? {} : { said }),
   };
 }
 
@@ -256,10 +296,9 @@ export function SearchModal(props: {
       open={props.open}
       onClose={props.onClose}
       label="Search Sessions"
-      header={<div class="font-bold leading-[--line]">Search Sessions</div>}
-    >
-      <Show when={props.open}>
-        <div class="flex items-center gap-2 border-b border-neutral-700 p-3">
+      size="column"
+      header={
+        <div class={FIELD_BOX}>
           <span
             class="i-griddy-icons:search size-4 shrink-0 text-neutral-500"
             aria-hidden="true"
@@ -274,15 +313,17 @@ export function SearchModal(props: {
             autocapitalize="off"
             autocomplete="off"
             aria-label="Search query"
-            placeholder="Search every session"
-            class={FIELD}
+            placeholder="Enter search term"
+            class={FIELD_BARE}
             onInput={(event: InputEvent) => {
               setInput((event.currentTarget as HTMLInputElement).value);
             }}
             onKeyDown={navigation.onKeyDown}
           />
         </div>
-
+      }
+    >
+      <Show when={props.open}>
         <Show when={lost().length > 0}>
           <p class="shrink-0 border-b border-neutral-750 px-3 py-2 text-xs text-neutral-400">
             {`searched for `}
@@ -297,7 +338,7 @@ export function SearchModal(props: {
             list = element;
           }}
           role="listbox"
-          class="min-h-0 flex-1 overflow-y-auto p-1 text-sm"
+          class="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2 text-sm"
         >
           <Switch>
             <Match when={phase() === "failed"}>
@@ -328,66 +369,75 @@ export function SearchModal(props: {
                       index() === navigation.activeIndex() ? "true" : "false"
                     }
                     class={{
-                      "rounded-lg px-1 py-1": true,
-                      "bg-neutral-800": index() === navigation.activeIndex(),
+                      "rounded-lg": true,
+                      "bg-neutral-850": index() === navigation.activeIndex(),
                     }}
-                    onMouseEnter={() => {
+                    onMouseMove={() => {
                       navigation.setActiveIndex(index());
                     }}
                   >
                     <button
                       type="button"
-                      class="flex w-full min-w-0 items-baseline gap-2 px-1 text-left"
+                      class="flex w-full min-w-0 items-center gap-3 rounded-lg px-3 py-2 text-left"
                       onClick={() => {
                         attach(row.hit);
                       }}
                     >
-                      <span class="min-w-0 flex-1 truncate text-neutral-100">
-                        <Marked
-                          text={row.heading.text}
-                          ranges={row.heading.ranges}
-                        />
-                      </span>
-                      <Show when={row.hit.archived}>
-                        <span class="shrink-0 rounded-full bg-neutral-850 px-2 text-xs text-neutral-400">
-                          archived
-                        </span>
-                      </Show>
-                      <span class="shrink-0 text-xs text-neutral-500">
-                        {baseName(row.hit.cwd)}
-                      </span>
-                      <span class="shrink-0 text-xs text-neutral-500">
-                        {relativeTime(row.hit.settledAt)}
-                      </span>
-                    </button>
-
-                    <For each={row.snippets}>
-                      {(snippet) => (
-                        <button
-                          type="button"
-                          class="flex w-full min-w-0 items-baseline gap-2 rounded-lg px-1 text-left text-neutral-400 hover:text-neutral-100"
-                          onClick={() => {
-                            attach(row.hit);
-                          }}
-                        >
-                          <span class="w-8 shrink-0 text-neutral-500">
-                            {snippet.role === "user" ? "you" : "pim"}
+                      <span class="flex min-w-0 flex-1 flex-col">
+                        <span class="flex h-[--line] min-w-0 items-center gap-[1ch] text-sm text-neutral-400">
+                          <span class="truncate text-neutral-350">
+                            {baseName(row.hit.cwd)}
                           </span>
-                          <span class="min-w-0 flex-1 truncate">
-                            <Marked
-                              text={snippet.text}
-                              ranges={snippet.ranges}
+                          <Show when={row.hit.archived}>
+                            <span
+                              class="i-griddy-icons:archive size-3.5 shrink-0 text-neutral-500"
+                              role="img"
+                              aria-label="Archived"
                             />
+                          </Show>
+                          <Dot />
+                          <span class="shrink-0">
+                            {relativeTime(row.hit.settledAt)}
                           </span>
-                        </button>
-                      )}
-                    </For>
-
-                    <Show when={row.more > 0}>
-                      <p class="pl-10 text-xs text-neutral-500">
-                        {`+${row.more} more matches`}
-                      </p>
-                    </Show>
+                          <Show when={row.hit.total > 1}>
+                            <Dot />
+                            <span class="shrink-0">
+                              {`${row.hit.total} matches`}
+                            </span>
+                          </Show>
+                        </span>
+                        <span class="h-[--line] truncate font-semibold leading-[--line] text-neutral-100">
+                          <Excerpt marks={row.heading} />
+                        </span>
+                        <span class="flex h-[--line] min-w-0 items-center gap-2 text-neutral-400">
+                          <Show when={row.said}>
+                            {(said) => (
+                              <>
+                                <span
+                                  class="i-griddy-icons:arrow-elbow-down-right size-3.5 shrink-0 text-neutral-600"
+                                  aria-hidden="true"
+                                />
+                                <span class="truncate">
+                                  <Excerpt marks={said()} />
+                                </span>
+                              </>
+                            )}
+                          </Show>
+                        </span>
+                      </span>
+                      <span
+                        class={{
+                          "i-griddy-icons:chevron-right size-4 shrink-0": true,
+                          // The glyph never swaps: only its brightness says
+                          // which row is picked, so the eye stays on the text.
+                          "text-neutral-300":
+                            index() === navigation.activeIndex(),
+                          "text-neutral-500":
+                            index() !== navigation.activeIndex(),
+                        }}
+                        aria-hidden="true"
+                      />
+                    </button>
                   </li>
                 )}
               </For>
@@ -395,12 +445,49 @@ export function SearchModal(props: {
           </Switch>
         </ul>
 
-        <Show when={rows().length > 0}>
-          <div class="flex shrink-0 items-center border-t border-neutral-700 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-sm text-neutral-400">
-            {`${rows().length} session${rows().length === 1 ? "" : "s"} · searched all ${scopeOf(scanned())}`}
+        <Show when={phase() === "hits"}>
+          <div class="flex shrink-0 items-center gap-4 border-t border-neutral-700 px-3 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] text-xs text-neutral-500">
+            <Show when={typing()}>
+              <Legend
+                icons={["i-griddy-icons:arrow-elbow-down-left"]}
+                verb="Open"
+              />
+              <Legend
+                icons={["i-griddy-icons:arrow-up", "i-griddy-icons:arrow-down"]}
+                verb="Move"
+              />
+              <span class="flex items-center gap-1.5">
+                <kbd class="rounded bg-neutral-850 px-1">Esc</kbd>
+                Close
+              </span>
+            </Show>
+            <span class="ml-auto truncate">
+              {`${rows().length} of ${scanned()} sessions`}
+            </span>
           </div>
         </Show>
       </Show>
     </Modal>
+  );
+}
+
+/** One key, or one pair of them, and what it does to the list. */
+function Legend(props: {
+  readonly icons: readonly string[];
+  readonly verb: string;
+}) {
+  return (
+    <span class="flex items-center gap-1.5">
+      <span class="flex items-center gap-1">
+        <For each={props.icons}>
+          {(icon) => (
+            <kbd class="flex size-4 items-center justify-center rounded bg-neutral-850">
+              <span class={`${icon} size-3`} aria-hidden="true" />
+            </kbd>
+          )}
+        </For>
+      </span>
+      {props.verb}
+    </span>
   );
 }

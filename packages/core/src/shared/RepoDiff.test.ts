@@ -154,6 +154,52 @@ describe("the five bases", () => {
       RepoDiff.listChanges(root, { kind: "commit", ref: "nope" }, monitor)
     ).rejects.toThrow(/nope/);
   });
+
+  test("a branch with no commit on it yet calls every file added", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pim-repo-diff-"));
+    roots.push(root);
+    await git(root, ["init", "--initial-branch=main"]);
+    await write(root, "a.txt", "one\ntwo\nthree\n");
+    await git(root, ["add", "a.txt"]);
+    await write(root, "loose.txt", "u\n");
+
+    const list = await RepoDiff.listChanges(
+      root,
+      { kind: "worktree" },
+      monitor
+    );
+    const diff = await RepoDiff.fileDiff(
+      root,
+      { kind: "worktree" },
+      "a.txt",
+      monitor
+    );
+
+    expect(pathsOf(list)).toEqual(["a.txt", "loose.txt"]);
+    expect(rowOf(list, "a.txt")).toMatchObject({
+      status: "added",
+      added: 3,
+      removed: 0,
+    });
+    expect(rowOf(list, "loose.txt").status).toBe("untracked");
+    expect(diff.hunks[0]?.lines.every((line) => line.kind === "added")).toBe(
+      true
+    );
+  });
+
+  test("an orphan branch shares no commit with the one it was cut from", async () => {
+    const root = await repo();
+    await git(root, ["checkout", "--orphan", "fresh"]);
+
+    const list = await RepoDiff.listChanges(
+      root,
+      { kind: "branch", ref: "main" },
+      monitor
+    );
+
+    expect(pathsOf(list)).toEqual(["a.txt"]);
+    expect(rowOf(list, "a.txt")).toMatchObject({ status: "added", added: 3 });
+  });
 });
 
 describe("the long tail of one file", () => {

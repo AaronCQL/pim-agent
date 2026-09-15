@@ -98,6 +98,62 @@ const NAMELESS: SearchHitView = {
   total: 1,
 };
 
+/** A window onto the middle of a long message: the row owes the reader both ellipses. */
+const WINDOWED: SearchHitView = {
+  sessionId: "eeeeeeee-5555",
+  cwd: "/home/ada/dev/pim-agent",
+  title: "Daemon notes",
+  titleRanges: [],
+  settledAt: 0,
+  snippets: [
+    {
+      seq: 3,
+      role: "user",
+      text: "whether the lease survives",
+      ranges: [[12, 17]],
+      cutHead: true,
+    },
+  ],
+  total: 1,
+};
+
+/** Named, and the name is the only thing that matched: nothing was said with the word in it. */
+const NAMED_ONLY: SearchHitView = {
+  sessionId: "ffffffff-6666",
+  cwd: "/home/ada/dev/pim-agent",
+  title: "Turn lease rework",
+  titleRanges: [[5, 10]],
+  opening: "Start with the handshake and work outwards",
+  settledAt: 0,
+  snippets: [],
+  total: 0,
+};
+
+/** Unnamed, so its opening ask is its title — and the snippet cut from that same ask says nothing new. */
+const TITLE_ECHO: SearchHitView = {
+  sessionId: "gggggggg-7777",
+  cwd: "/home/ada/dev/pim-agent",
+  title: "who holds the turn lease when both surfaces are up",
+  titleRanges: [[19, 24]],
+  settledAt: 0,
+  snippets: [
+    {
+      seq: 1,
+      role: "user",
+      text: "holds the turn lease when both",
+      ranges: [[14, 19]],
+      cutHead: true,
+    },
+    {
+      seq: 6,
+      role: "assistant",
+      text: "the lease is released on the next idle edge",
+      ranges: [[4, 9]],
+    },
+  ],
+  total: 2,
+};
+
 function answer(hits: readonly SearchHitView[] = []): SessionSearch {
   return { hits, dropped: [], scanned: SCANNED };
 }
@@ -195,6 +251,14 @@ function active(host: HTMLElement): number {
   );
 }
 
+/** A pointer event on a row, bubbling as the browser bubbles it: all but `mouseenter` do. */
+function point(host: HTMLElement, index: number, kind: string): void {
+  rows(host)[index]!.dispatchEvent(
+    new MouseEvent(kind, { bubbles: kind !== "mouseenter" })
+  );
+  flush();
+}
+
 /** Lets a debounce already set to zero fire, and the answer land on screen. */
 async function settle(host: HTMLElement, count: number): Promise<void> {
   await until(() => {
@@ -222,9 +286,7 @@ describe("the search modal", () => {
     // Not the fifty rows you just looked away from: a prompt, and the scope
     // the sidebar's page of twelve percent cannot promise.
     expect(rows(host)).toHaveLength(0);
-    expect(host.textContent).toContain(
-      "Search every session — titles and what was said"
-    );
+    expect(host.textContent).toContain("Search session titles and content");
     expect(host.textContent).toContain("214 sessions, including archived");
     // Opening is the warm call, and the only thing sent so far.
     expect(asked).toEqual([""]);
@@ -253,25 +315,22 @@ describe("the search modal", () => {
 
     const row = rows(host)[0]!;
     expect(row.textContent).toContain("session-lease: refuse input mid-turn");
-    // Both halves of why it matched, marked where the planner marked them.
-    expect(marks(host)).toEqual(["lease", "lease", "lease"]);
-    // Who said it is most of the recognition value.
-    expect(row.textContent).toContain("you");
-    expect(row.textContent).toContain("pim");
+    // Both halves of why it matched, marked where the planner marked them:
+    // the title, and the one message the row makes room for.
+    expect(marks(host)).toEqual(["lease", "lease"]);
     expect(row.textContent).toContain("who holds the turn lease");
-    expect(row.textContent).toContain("the lease is released");
+    expect(row.textContent).not.toContain("the lease is released");
     // Dimmed metadata, never structure.
     expect(row.textContent).toContain("pim-agent");
     expect(row.textContent).not.toContain("/home/ada");
     expect(row.textContent).toMatch(/\d+[smhd]/);
-    // Each snippet is its own target, for the deep link that lands on it next.
-    expect(row.querySelectorAll("button")).toHaveLength(3);
-    expect(host.textContent).toContain(
-      "1 session · searched all 214 sessions, including archived"
-    );
+    // One session, one target: every line of the row opens the same file.
+    expect(row.querySelectorAll("button")).toHaveLength(1);
+    expect(host.textContent).toContain("1 of 214 sessions");
+    expect(host.textContent).not.toContain("1 of 214 sessions, including");
   });
 
-  test("a chatty session is counted rather than given a third snippet", async () => {
+  test("a chatty session is counted rather than given a second snippet", async () => {
     const { host } = paint(() => answer([CHATTY]));
 
     type(host, "lease");
@@ -279,9 +338,9 @@ describe("the search modal", () => {
 
     const row = rows(host)[0]!;
     expect(row.textContent).toContain("the lease again");
-    expect(row.textContent).toContain("a lease, once more");
+    expect(row.textContent).not.toContain("a lease, once more");
     expect(row.textContent).not.toContain("a third time");
-    expect(row.textContent).toContain("+3 more matches");
+    expect(row.textContent).toContain("5 matches");
   });
 
   test("a hit with no title reads as the first thing it matched", async () => {
@@ -298,7 +357,7 @@ describe("the search modal", () => {
       1
     );
     expect(row.textContent).not.toContain("Untitled");
-    expect(row.textContent).not.toContain("more matches");
+    expect(row.textContent).not.toContain("matches");
     expect(marks(host)).toEqual(["lease"]);
   });
 
@@ -308,8 +367,44 @@ describe("the search modal", () => {
     type(host, "lease");
     await settle(host, 1);
 
-    expect(rows(host)[0]?.textContent).toContain("archived");
+    expect(
+      rows(host)[0]?.querySelector('[aria-label="Archived"]')
+    ).not.toBeNull();
     expect(rows(host)[0]?.textContent).toContain("mmorpg");
+  });
+
+  test("a snippet opened mid-message says so, and leaves its tail to the box", async () => {
+    const { host } = paint(() => answer([WINDOWED]));
+
+    type(host, "lease");
+    await settle(host, 1);
+
+    expect(rows(host)[0]?.textContent).toContain("…whether the lease survives");
+    expect(rows(host)[0]?.textContent).not.toContain("survives…");
+  });
+
+  test("a row the name alone matched reads its opening ask", async () => {
+    const { host } = paint(() => answer([NAMED_ONLY]));
+
+    type(host, "lease");
+    await settle(host, 1);
+
+    // Every row is the same height, so the line under the title is never
+    // blank while the session has anything at all to say.
+    expect(rows(host)[0]?.textContent).toContain(
+      "Start with the handshake and work outwards"
+    );
+  });
+
+  test("a snippet the title already says is skipped for one that adds to it", async () => {
+    const { host } = paint(() => answer([TITLE_ECHO]));
+
+    type(host, "lease");
+    await settle(host, 1);
+
+    const row = rows(host)[0]!;
+    expect(row.textContent).toContain("the lease is released");
+    expect(row.textContent).not.toContain("…holds the turn lease when both…");
   });
 
   test("a word nobody said is named on screen", async () => {
@@ -415,13 +510,38 @@ describe("the search modal", () => {
     expect(closes()).toBe(2);
   });
 
-  test("clicking a snippet opens the session it was said in", async () => {
+  test("a row scrolled under a still pointer does not steal the arrows' place", async () => {
+    const { host } = paint(() =>
+      answer([TITLE_AND_CONTENT, CHATTY, ARCHIVED, NAMELESS])
+    );
+
+    type(host, "lease");
+    await settle(host, 4);
+
+    press(host, "ArrowDown");
+    press(host, "ArrowDown");
+    expect(active(host)).toBe(2);
+
+    // Scrolling the list slides a row under the cursor, and the boundary event
+    // that follows is the browser's, not the hand's.
+    point(host, 0, "mouseenter");
+    point(host, 0, "mouseover");
+    expect(active(host)).toBe(2);
+
+    press(host, "ArrowDown");
+    expect(active(host)).toBe(3);
+
+    point(host, 0, "mousemove");
+    expect(active(host)).toBe(0);
+  });
+
+  test("clicking a row opens the session it matched in", async () => {
     const { host, switched, closes } = paint(() => answer([TITLE_AND_CONTENT]));
 
     type(host, "lease");
     await settle(host, 1);
 
-    rows(host)[0]!.querySelectorAll("button")[2]!.click();
+    rows(host)[0]!.querySelector("button")!.click();
     flush();
 
     expect(switched).toEqual(["aaaaaaaa-1111"]);

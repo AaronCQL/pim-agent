@@ -206,9 +206,23 @@ test("a title's ranges are cut to the clamp, not to the message", async () => {
   expect(hit.title).toEndWith("…");
   expectRanges(hit.title!, hit.titleRanges);
   expect(marked(hit.title!, hit.titleRanges)).toEqual(["Throughput"]);
-  // Four tokens either side of the match, and the second `throughput` is far
-  // past them: a snippet is a window, not the message.
-  expect(hit.snippets[0]!.text).toBe("Throughput on the render path");
+  // A window opened on the message's first word has no run-up to mark.
+  expect(hit.snippets[0]!.text).toStartWith("Throughput on the render path");
+  expect(hit.snippets[0]!.cutHead).toBeUndefined();
+});
+
+test("a window opened mid-message says so, and runs past what a row can draw", async () => {
+  const snippet = hitOf(await index.search("encoder"), "long-opening")
+    .snippets[0]!;
+
+  // Four tokens of run-up, marked as cut, because `text-overflow` cannot
+  // ellipsise the start of a line.
+  expect(snippet.cutHead).toBe(true);
+  expect(snippet.text).not.toStartWith("Throughput");
+  expect(snippet.text).toStartWith("cannot tell whether the encoder");
+  // Past the run-up the window stops measuring in words: it carries more than
+  // the widest row has room for, and the row's own ellipsis does the cutting.
+  expect(snippet.text).toHaveLength(100);
 });
 
 test("a title hit outranks a user hit, which outranks the agent's prose", async () => {
@@ -217,6 +231,19 @@ test("a title hit outranks a user hit, which outranks the agent's prose", async 
     "web-client",
     "sidebar-rows",
   ]);
+});
+
+test("a hit the name alone matched carries the opening ask instead", async () => {
+  const hit = hitOf(await index.search("nightly"), "telemetry");
+
+  expect(hit.snippets).toEqual([]);
+  expect(hit.opening).toBe("Sweep the telemetry at least once a night.");
+});
+
+test("a session named by its own opening ask does not repeat it", async () => {
+  expect(
+    hitOf(await index.search("lease"), "lease-turn").opening
+  ).toBeUndefined();
 });
 
 test("recency breaks a tie between two hits of the same kind", async () => {

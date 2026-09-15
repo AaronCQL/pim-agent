@@ -11,6 +11,12 @@ import { Popover, type Point } from "./Popover";
 
 export type ComboboxNavigation = {
   readonly activeIndex: Accessor<number>;
+  /**
+   * The pointer's way in. Wire it to `mousemove`, never `mouseenter`: moving
+   * the active row scrolls it into view, that scroll slides a row under a
+   * still cursor, and the boundary event it fires would undo the keypress
+   * that scrolled. Motion is the only pointer event a hand has to author.
+   */
   readonly setActiveIndex: (index: number) => void;
   /** True when the key belonged to the list and the caller must not act on it. */
   readonly onKeyDown: (event: KeyboardEvent) => boolean;
@@ -165,7 +171,7 @@ export function Combobox(props: {
                 role="option"
                 aria-selected={active() ? "true" : "false"}
                 class={`${ROW} ${active() ? "bg-neutral-800" : ""} ${tone(item.selected, active())}`}
-                onMouseEnter={() => {
+                onMouseMove={() => {
                   props.onActivate(index());
                 }}
                 onMouseDown={(event: MouseEvent) => {

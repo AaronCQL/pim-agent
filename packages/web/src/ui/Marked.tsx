@@ -5,9 +5,10 @@ import type { SearchRange } from "#core/session/SearchIndex";
 /**
  * The tint `::selection` wears, on the element that means it: a match is the
  * same statement a selection makes, and the UA's yellow is picked for a light
- * page.
+ * page. The word takes the hue as well, so one match still reads as a match
+ * in a line the eye is skimming rather than reading.
  */
-const MARK = "rounded-[2px] bg-indigo-500/35 text-inherit";
+const MARK = "rounded-[2px] bg-indigo-500/25 text-indigo-300";
 
 type Segment = {
   readonly text: string;
