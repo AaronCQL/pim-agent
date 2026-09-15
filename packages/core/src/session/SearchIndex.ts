@@ -34,7 +34,8 @@ export type SearchHit = {
   readonly named?: true;
   /** Offsets into the clamped `title`. */
   readonly titleRanges: readonly SearchRange[];
-  readonly settledAt?: number;
+  /** End of the last completed turn, falling back to when the session started: a row always has a clock to print. */
+  readonly settledAt: number;
   readonly snippets: readonly SearchSnippet[];
   /** Matching messages in this session, before the snippet cut. */
   readonly total: number;
@@ -76,6 +77,7 @@ type Entry = {
   readonly sessionId: string;
   readonly cwd: string;
   readonly path: string;
+  readonly createdAt: number;
   modifiedAt: number;
   /** Durable bytes taken from the file, and the resume point of the next tail read. */
   offset: number;
@@ -471,6 +473,7 @@ function blank(summary: SessionSummary): Entry {
     sessionId: summary.sessionId,
     cwd: summary.cwd,
     path: summary.path,
+    createdAt: summary.createdAt,
     modifiedAt: summary.modifiedAt,
     offset: 0,
     seq: 0,
@@ -544,7 +547,7 @@ function hitOf(
     path: entry.path,
     ...(title === undefined ? {} : { title }),
     ...(named === undefined ? {} : { named }),
-    ...(settledAt === undefined ? {} : { settledAt }),
+    settledAt: settledAt ?? entry.createdAt,
     titleRanges:
       group.title && title !== undefined ? rangesOf(title, terms) : [],
     snippets: spoken.slice(0, SNIPPETS).map((turn) => snippetOf(turn, terms)),
@@ -618,7 +621,7 @@ function byRank(a: SearchHit, b: SearchHit): number {
   if (a.typos !== b.typos) {
     return a.typos ? 1 : -1;
   }
-  return fieldOf(a) - fieldOf(b) || (b.settledAt ?? 0) - (a.settledAt ?? 0);
+  return fieldOf(a) - fieldOf(b) || b.settledAt - a.settledAt;
 }
 
 function fieldOf(hit: SearchHit): number {

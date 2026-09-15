@@ -5,7 +5,12 @@ import { flush } from "solid-js";
 
 import type { ToolView } from "#core/view/ViewBlock";
 import { PROTOCOL_VERSION } from "#protocol/Protocol";
-import type { ServerEvent, SessionSummaryView } from "#protocol/ServerEvent";
+import type {
+  ResponseEvent,
+  SearchHitView,
+  ServerEvent,
+  SessionSummaryView,
+} from "#protocol/ServerEvent";
 import { toRows, type ToolRow } from "../transcript/rows";
 import { SessionStore } from "./SessionStore";
 
@@ -1048,6 +1053,100 @@ describe("archive, names and pins", () => {
       "/quiet",
     ]);
     expect(target.isPinned("/forgotten")).toBe(true);
+  });
+});
+
+/**
+ * The sidebar can page a fraction of the tree, so search is the server's
+ * answer or it is a lie. One command carries both calls the modal makes: the
+ * query somebody typed, and the empty one that opens it.
+ */
+describe("search", () => {
+  const hit: SearchHitView = {
+    sessionId: "s1",
+    cwd: "/repo",
+    title: "session-lease: refuse input mid-turn",
+    titleRanges: [[8, 13]],
+    settledAt: 5,
+    snippets: [],
+    total: 1,
+  };
+
+  type Sent = Record<string, unknown> & { readonly type: string };
+
+  function wire(
+    target: SessionStore,
+    answer: Omit<ResponseEvent, "type" | "id">
+  ): readonly Sent[] {
+    const sent: Sent[] = [];
+    target.client.send = (async (command: Sent) => {
+      sent.push(command);
+      return { type: "response" as const, id: "1", ...answer };
+    }) as typeof target.client.send;
+    return sent;
+  }
+
+  test("the query goes out with the scope it was given, and nothing else", async () => {
+    const target = store();
+    const sent = wire(target, { success: true, hits: [hit], scanned: 214 });
+
+    const answer = await target.searchSessions("lease");
+    await target.searchSessions("lease", {
+      cwd: "/repo",
+      archived: false,
+      limit: 5,
+    });
+
+    expect(answer.hits).toEqual([hit]);
+    expect(sent).toEqual([
+      { type: "search_sessions", query: "lease" },
+      {
+        type: "search_sessions",
+        query: "lease",
+        cwd: "/repo",
+        archived: false,
+        limit: 5,
+      },
+    ]);
+  });
+
+  test("the warm call is the empty query, answering the scope it built over", async () => {
+    const target = store();
+    const sent = wire(target, { success: true, hits: [], scanned: 214 });
+
+    const warm = await target.searchSessions("");
+
+    // No rows to list, and the count the empty state promises the reader with.
+    expect(warm.hits).toEqual([]);
+    expect(warm.scanned).toBe(214);
+    expect(sent).toEqual([{ type: "search_sessions", query: "" }]);
+  });
+
+  test("the words the server had to drop come back with the hits", async () => {
+    const target = store();
+    wire(target, {
+      success: true,
+      hits: [hit],
+      dropped: ["quokka"],
+      scanned: 214,
+    });
+
+    expect((await target.searchSessions("quokka lease")).dropped).toEqual([
+      "quokka",
+    ]);
+  });
+
+  test("a refused search answers an empty one, as a listing does", async () => {
+    const target = store();
+    target.client.send = (async () => {
+      throw new Error("the socket went away");
+    }) as typeof target.client.send;
+
+    expect(await target.searchSessions("lease")).toEqual({
+      hits: [],
+      dropped: [],
+      scanned: 0,
+    });
   });
 });
 

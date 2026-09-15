@@ -280,10 +280,26 @@ test("a hit's title and settle time are the digest's, to the character", async (
     for (const hit of answer.hits) {
       const digest = await new EventLog(hit.path).digest();
       expect(hit.title).toBe(digest.title);
-      expect(hit.settledAt).toBe(digest.settledAt);
+      expect(hit.settledAt).toBe(
+        digest.settledAt ?? summaryOf(hit.sessionId).createdAt
+      );
       expect(hit.named).toBe(digest.named);
     }
   }
+});
+
+test("a session the agent never answered is dated by when it started", async () => {
+  const quiet = summaryOf("quiet-note");
+  await SearchCorpus.edit(quiet, (text) =>
+    text
+      .split("\n")
+      .filter((line) => !line.includes(`"role":"assistant"`))
+      .join("\n")
+  );
+
+  const hit = hitOf(await index.search("interesting"), "quiet-note");
+  expect((await new EventLog(hit.path).digest()).settledAt).toBeUndefined();
+  expect(hit.settledAt).toBe(quiet.createdAt);
 });
 
 test("an appended turn is queryable without re-reading the file", async () => {

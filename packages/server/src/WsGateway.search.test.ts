@@ -195,3 +195,22 @@ test("names the word it had to drop to answer at all", async () => {
   expect(answer.dropped).toEqual(["quokka"]);
   expect(ids(answer.hits)).toContain("lease-turn");
 });
+
+test("every hit carries a clock, answered or not", async () => {
+  const quiet = summaryOf("quiet-note");
+  await SearchCorpus.edit(quiet, (text) =>
+    text
+      .split("\n")
+      .filter((line) => !line.includes(`"role":"assistant"`))
+      .join("\n")
+  );
+  const probe = await connect();
+
+  const answered = await probe.search("lease");
+  expect(answered.hits.every((hit) => hit.settledAt > 0)).toBe(true);
+
+  // Nothing ever settled a turn here, so the row is dated by the session's own start.
+  expect(hitOf((await probe.search("interesting")).hits, "quiet-note")).toEqual(
+    expect.objectContaining({ settledAt: quiet.createdAt })
+  );
+});

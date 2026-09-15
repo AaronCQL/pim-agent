@@ -405,7 +405,7 @@ function hitOf(hit: SearchHit, archived: boolean): SearchHitView {
     cwd: hit.cwd,
     ...(hit.title === undefined ? {} : { title: hit.title }),
     titleRanges: hit.titleRanges,
-    ...(hit.settledAt === undefined ? {} : { settledAt: hit.settledAt }),
+    settledAt: hit.settledAt,
     ...(archived ? { archived: true as const } : {}),
     snippets: hit.snippets,
     total: hit.total,

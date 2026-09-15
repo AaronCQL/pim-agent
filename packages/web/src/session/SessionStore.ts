@@ -19,6 +19,7 @@ import type {
   EphemeralEvent,
   ModelView,
   ProjectView,
+  SearchHitView,
   ServerEvent,
   SessionStatus,
   SessionSummaryView,
@@ -148,6 +149,22 @@ export type SessionListing = {
   readonly sessions: readonly SessionSummaryView[];
   /** Counted before the per-project cut, so a group can say what a page of it leaves out. */
   readonly projects: readonly ProjectView[];
+};
+
+/** Which sessions a search may reach; unscoped, it is every session on disk, the archived among them. */
+export type SearchScope = {
+  readonly cwd?: string;
+  /** Omitted, the archived are searched too and say so; `false` leaves them out, `true` searches only them. */
+  readonly archived?: boolean;
+  readonly limit?: number;
+};
+
+/** One answer to `search_sessions`: the ranked rows, the words no session held, and the scope it read. */
+export type SessionSearch = {
+  readonly hits: readonly SearchHitView[];
+  readonly dropped: readonly string[];
+  /** Sessions searched, whole: what the empty state and the result footer say out loud. */
+  readonly scanned: number;
 };
 
 /** The flags a row draws from this store alone, each one a command away. */
@@ -790,6 +807,32 @@ export class SessionStore {
     if (!this.guessed.has(`${record}:${key}`)) {
       state[record][key] = value;
     }
+  }
+
+  /**
+   * Ranked search over every session on disk, titles and what was said, which
+   * is the only honest one: a page of the sidebar is a fraction of the tree.
+   * An empty `query` is the warm call — it builds the index, answers no hits,
+   * and counts the whole scope, which is the number the empty state prints.
+   */
+  public async searchSessions(
+    query: string,
+    scope: SearchScope = {}
+  ): Promise<SessionSearch> {
+    const response = await this.client
+      .send({
+        type: "search_sessions",
+        query,
+        ...(scope.cwd === undefined ? {} : { cwd: scope.cwd }),
+        ...(scope.archived === undefined ? {} : { archived: scope.archived }),
+        ...(scope.limit === undefined ? {} : { limit: scope.limit }),
+      })
+      .catch(() => undefined);
+    return {
+      hits: response?.hits ?? [],
+      dropped: response?.dropped ?? [],
+      scanned: response?.scanned ?? 0,
+    };
   }
 
   public unwrittenSummary(): UnwrittenSummary | undefined {
