@@ -814,24 +814,28 @@ export class SessionStore {
    * is the only honest one: a page of the sidebar is a fraction of the tree.
    * An empty `query` is the warm call — it builds the index, answers no hits,
    * and counts the whole scope, which is the number the empty state prints.
+   * Raises where a listing swallows: a listing that fails draws no rows and
+   * looks empty, which is nearly true, but a search that fails still owes the
+   * reader a scope, and `scanned: 0` would have it claim it searched nothing.
    */
   public async searchSessions(
     query: string,
     scope: SearchScope = {}
   ): Promise<SessionSearch> {
-    const response = await this.client
-      .send({
-        type: "search_sessions",
-        query,
-        ...(scope.cwd === undefined ? {} : { cwd: scope.cwd }),
-        ...(scope.archived === undefined ? {} : { archived: scope.archived }),
-        ...(scope.limit === undefined ? {} : { limit: scope.limit }),
-      })
-      .catch(() => undefined);
+    const response = await this.client.send({
+      type: "search_sessions",
+      query,
+      ...(scope.cwd === undefined ? {} : { cwd: scope.cwd }),
+      ...(scope.archived === undefined ? {} : { archived: scope.archived }),
+      ...(scope.limit === undefined ? {} : { limit: scope.limit }),
+    });
+    if (!response.success) {
+      throw new Error(response.error ?? "the search was refused");
+    }
     return {
-      hits: response?.hits ?? [],
-      dropped: response?.dropped ?? [],
-      scanned: response?.scanned ?? 0,
+      hits: response.hits ?? [],
+      dropped: response.dropped ?? [],
+      scanned: response.scanned ?? 0,
     };
   }
 

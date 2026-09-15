@@ -1136,17 +1136,39 @@ describe("search", () => {
     ]);
   });
 
-  test("a refused search answers an empty one, as a listing does", async () => {
+  /**
+   * A listing that fails draws no rows, and an empty sidebar is roughly true.
+   * A search that fails still owes the reader a scope, and a swallowed answer
+   * has it claim it read every session and found nothing in them — so this
+   * one raises where `listSessions` goes on swallowing.
+   */
+  test("a search nothing carried raises rather than answering a scope of nothing", async () => {
     const target = store();
     target.client.send = (async () => {
       throw new Error("the socket went away");
     }) as typeof target.client.send;
 
-    expect(await target.searchSessions("lease")).toEqual({
-      hits: [],
-      dropped: [],
-      scanned: 0,
-    });
+    await expect(target.searchSessions("lease")).rejects.toThrow(
+      "the socket went away"
+    );
+  });
+
+  test("a search the server refuses raises what it refused with", async () => {
+    const target = store();
+    wire(target, { success: false, error: "the index could not be read" });
+
+    await expect(target.searchSessions("lease")).rejects.toThrow(
+      "the index could not be read"
+    );
+  });
+
+  test("a listing keeps its swallow: rows nobody sent are an empty page", async () => {
+    const target = store();
+    target.client.send = (async () => {
+      throw new Error("the socket went away");
+    }) as typeof target.client.send;
+
+    expect(await target.listSessions()).toEqual({ sessions: [], projects: [] });
   });
 });
 

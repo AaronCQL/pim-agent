@@ -177,6 +177,11 @@ function rows(host: HTMLElement): readonly HTMLElement[] {
   return [...host.querySelectorAll<HTMLElement>('[role="option"]')];
 }
 
+/** The ring the modal draws while the index builds or a query is in flight. */
+function spinning(host: HTMLElement): boolean {
+  return host.querySelector(".animate-spin") !== null;
+}
+
 function marks(host: HTMLElement): readonly string[] {
   return [...host.querySelectorAll("mark")].map(
     (mark) => mark.textContent ?? ""
@@ -334,6 +339,57 @@ describe("the search modal", () => {
     expect(host.textContent).toContain(
       "No matches in 214 sessions, including archived."
     );
+  });
+
+  /**
+   * The scope line is the feature's whole credibility argument, so a search
+   * that never happened must say so rather than name a scope of nothing —
+   * "0 sessions, including archived" is the lie the modal exists to avoid.
+   */
+  test("a refused warm call says the search failed instead of a scope of nothing", async () => {
+    const { host } = paint(() => {
+      throw new Error("not connected");
+    });
+
+    await until(() => {
+      flush();
+      return host.textContent?.includes("The search failed") === true;
+    }, "the refusal");
+
+    expect(host.textContent).toContain("The search failed — not connected");
+    expect(host.textContent).not.toContain("0 sessions");
+    expect(host.textContent).not.toContain("including archived");
+    // The warm call is what ends the wait, so a refused one must end it too.
+    expect(spinning(host)).toBe(false);
+  });
+
+  test("a refused query says the search failed rather than finding no matches", async () => {
+    const { host } = paint((query) => {
+      if (query !== "") {
+        throw new Error("the socket went away");
+      }
+      return answer();
+    });
+
+    await until(() => {
+      flush();
+      return host.textContent?.includes("214 sessions") === true;
+    }, "the warm call's count");
+
+    type(host, "lease");
+    await until(() => {
+      flush();
+      return host.textContent?.includes("The search failed") === true;
+    }, "the refusal");
+
+    // The scope the warm call counted is not a scope this query read.
+    expect(host.textContent).toContain(
+      "The search failed — the socket went away"
+    );
+    expect(host.textContent).not.toContain("No matches");
+    expect(host.textContent).not.toContain("214 sessions");
+    expect(rows(host)).toHaveLength(0);
+    expect(spinning(host)).toBe(false);
   });
 
   test("arrows move, Enter opens and Escape closes", async () => {

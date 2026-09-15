@@ -43,8 +43,8 @@ type Row = {
   readonly more: number;
 };
 
-/** What the list holds: an unasked question, one in flight, one nothing answered, or the rows. */
-type Phase = "prompt" | "waiting" | "empty" | "hits";
+/** What the list holds: a search that never happened, an unasked question, one in flight, one nothing answered, or the rows. */
+type Phase = "failed" | "prompt" | "waiting" | "empty" | "hits";
 
 function scopeOf(scanned: number): string {
   return `${scanned} session${scanned === 1 ? "" : "s"}, including archived`;
@@ -116,6 +116,7 @@ export function SearchModal(props: {
   }>();
   const [scanned, setScanned] = createSignal(0);
   const [ready, setReady] = createSignal(false);
+  const [failure, setFailure] = createSignal("");
   let box: HTMLInputElement | undefined;
   let list: HTMLUListElement | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -130,6 +131,11 @@ export function SearchModal(props: {
   const took = (found: SessionSearch): void => {
     setScanned(found.scanned);
     setReady(true);
+    setFailure("");
+  };
+
+  const refused = (error: Error): void => {
+    setFailure(error.message);
   };
 
   createEffect(
@@ -139,12 +145,13 @@ export function SearchModal(props: {
         return;
       }
       setInput("");
+      setFailure("");
       if (untrack(typing) && box) {
         box.focus();
       }
       // The empty query is the warm call: it builds the index while the first
       // keystrokes are still being typed, and counts what the modal promises.
-      void store.searchSessions("").then(took);
+      void store.searchSessions("").then(took, refused);
     }
   );
 
@@ -163,13 +170,22 @@ export function SearchModal(props: {
         return;
       }
       timer = setTimeout(() => {
-        void store.searchSessions(query).then((found) => {
-          if (mine !== generation) {
-            return;
+        void store.searchSessions(query).then(
+          (found) => {
+            if (mine !== generation) {
+              return;
+            }
+            setAnswer({ asked: query, found });
+            took(found);
+          },
+          (error: Error) => {
+            if (mine !== generation) {
+              return;
+            }
+            setAnswer(undefined);
+            refused(error);
           }
-          setAnswer({ asked: query, found });
-          took(found);
-        });
+        );
       }, wait);
     }
   );
@@ -184,6 +200,11 @@ export function SearchModal(props: {
   );
 
   const phase = createMemo((): Phase => {
+    // A search that did not happen owns the whole body: every other state
+    // here names a scope, and there is none to name.
+    if (failure() !== "") {
+      return "failed";
+    }
     if (asked().length < MIN_QUERY) {
       return "prompt";
     }
@@ -279,6 +300,11 @@ export function SearchModal(props: {
           class="min-h-0 flex-1 overflow-y-auto p-1 text-sm"
         >
           <Switch>
+            <Match when={phase() === "failed"}>
+              <li class="px-2 py-1 text-neutral-500">
+                {`The search failed — ${failure()}`}
+              </li>
+            </Match>
             <Match when={phase() === "prompt"}>
               <Prompt ready={ready()} scanned={scanned()} />
             </Match>
