@@ -23,6 +23,7 @@ import { CLOSE_PROTOCOL_MISMATCH, PROTOCOL_VERSION } from "#protocol/Protocol";
 import type {
   ModelView,
   ProjectView,
+  SearchHitView,
   ServerEvent,
   SessionSummaryView,
 } from "#protocol/ServerEvent";
@@ -64,6 +65,9 @@ type Outcome = {
   readonly items?: readonly PickerItem[];
   readonly sessions?: readonly SessionSummaryView[];
   readonly projects?: readonly ProjectView[];
+  readonly hits?: readonly SearchHitView[];
+  readonly dropped?: readonly string[];
+  readonly scanned?: number;
   readonly models?: readonly ModelView[];
   readonly thinkingLevels?: readonly string[];
   readonly directory?: DirectoryListing;
@@ -298,6 +302,8 @@ export class WsGateway {
       }
       case "list_sessions":
         return await this.catalogue.list(command);
+      case "search_sessions":
+        return await this.catalogue.search(command);
       // The four below take a session this server may never have opened: a row
       // is archived or renamed from the sidebar without being attached to, so
       // none of them may reach for a stream. A sidecar write moves no session

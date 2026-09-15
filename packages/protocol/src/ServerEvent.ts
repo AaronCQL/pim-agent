@@ -1,6 +1,7 @@
 import type { DirectoryListing } from "#core/shared/Directories";
 import type { CommitResult, GitBranch } from "#core/shared/Git";
 import type { PickerItem } from "#core/picker/PickerItem";
+import type { SearchRange, SearchSnippet } from "#core/session/SearchIndex";
 import type { LeaseFrontend } from "#core/session/SessionLease";
 import type { UpdateSkip } from "#core/shared/Updater";
 import type { NoticeSeverity, ToolView } from "#core/view/ViewBlock";
@@ -245,6 +246,29 @@ export type ProjectView = {
   readonly pinned?: true;
 };
 
+/**
+ * One session a search matched. Deliberately not a `SessionSummaryView`: what
+ * a ranked list needs is why the row matched, and `unread` is the sidebar's
+ * triage, `pinned` is a project sort key a flat list has no use for, and
+ * `status` resolves itself the moment the session opens.
+ */
+export type SearchHitView = {
+  readonly sessionId: string;
+  readonly cwd: string;
+  /** Its name if it has one, else the clamped opening message; the digest's, so it agrees with the sidebar's. */
+  readonly title?: string;
+  /** Offsets into the clamped `title`, empty when the title did not match. */
+  readonly titleRanges: readonly SearchRange[];
+  /** End of the last completed turn; absent for a session that never settled one. */
+  readonly settledAt?: number;
+  /** Searched and found anyway: the badge that makes "archived are in scope" honest. */
+  readonly archived?: true;
+  /** What matched, in the words it was said in, each with its own ranges. */
+  readonly snippets: readonly SearchSnippet[];
+  /** Matching messages in this session, before the snippet cut. */
+  readonly total: number;
+};
+
 /** One model the server can be switched to, for the composer's model menu. */
 export type ModelView = {
   readonly id: string;
@@ -265,6 +289,12 @@ export type ResponseEvent = {
   readonly sessions?: readonly SessionSummaryView[];
   /** The directories those sessions came from, for `list_sessions`. */
   readonly projects?: readonly ProjectView[];
+  /** The ranked sessions, for `search_sessions`. */
+  readonly hits?: readonly SearchHitView[];
+  /** Query words no session held, dropped so the rest could match, for `search_sessions`. */
+  readonly dropped?: readonly string[];
+  /** Sessions the query actually searched, for `search_sessions`. */
+  readonly scanned?: number;
   /** The model catalogue, for `list_models`. */
   readonly models?: readonly ModelView[];
   /** What the *current* model supports, on the same answer. */

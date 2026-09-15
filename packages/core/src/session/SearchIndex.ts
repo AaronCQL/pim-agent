@@ -28,6 +28,7 @@ export type SearchSnippet = {
 export type SearchHit = {
   readonly sessionId: string;
   readonly cwd: string;
+  /** This machine's path to the session file: local to whoever reads it, and never fit for a wire. */
   readonly path: string;
   readonly title?: string;
   readonly named?: true;

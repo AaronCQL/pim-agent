@@ -70,6 +70,17 @@ export type Command =
       /** List the archived sessions instead of the live ones. */
       readonly archived?: boolean;
     }
+  /** Ranked search over every session on disk, titles and what was said; an empty `query` warms the index and answers with no hits. */
+  | {
+      readonly id: string;
+      readonly type: "search_sessions";
+      readonly query: string;
+      readonly limit?: number;
+      /** Restrict to one working directory; omit for every session on disk. */
+      readonly cwd?: string;
+      /** Omitted, the archived are searched too and their hits say so; `false` leaves them out, `true` searches only them. */
+      readonly archived?: boolean;
+    }
   /** Names a session through pi's own `session_info`, so its terminal picker shows the name too; `null` clears it. */
   | {
       readonly id: string;

@@ -9,6 +9,7 @@ import {
   type ModelView,
   type ProjectView,
   type ResponseEvent,
+  type SearchHitView,
   type ServerEvent,
   type SessionSummaryView,
 } from "#protocol/ServerEvent";
@@ -38,6 +39,13 @@ export type SessionScope = {
   readonly limit?: number;
   /** Keep at most this many sessions per working directory. */
   readonly perProject?: number;
+};
+
+/** Which sessions a search is asking about; omitting `archived` searches them too. */
+export type SearchScope = {
+  readonly cwd?: string;
+  readonly archived?: boolean;
+  readonly limit?: number;
 };
 
 /** What `POST /upload` answers with, all of it server-side. */
@@ -212,6 +220,32 @@ export class ProbeClient {
     return {
       sessions: response.sessions ?? [],
       projects: response.projects ?? [],
+    };
+  }
+
+  /** Searches every session on disk; an empty query warms the index and answers with no hits. */
+  public async search(
+    query: string,
+    scope: SearchScope = {}
+  ): Promise<{
+    readonly hits: readonly SearchHitView[];
+    readonly dropped: readonly string[];
+    readonly scanned: number;
+  }> {
+    const response = await this.send({
+      type: "search_sessions",
+      query,
+      ...(scope.cwd === undefined ? {} : { cwd: scope.cwd }),
+      ...(scope.archived === undefined ? {} : { archived: scope.archived }),
+      ...(scope.limit === undefined ? {} : { limit: scope.limit }),
+    });
+    if (!response.success) {
+      throw new Error(response.error ?? "search_sessions failed");
+    }
+    return {
+      hits: response.hits ?? [],
+      dropped: response.dropped ?? [],
+      scanned: response.scanned ?? 0,
     };
   }
 
