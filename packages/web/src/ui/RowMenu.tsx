@@ -12,6 +12,8 @@ import type { Point } from "./Popover";
 export type RowMenuItem = {
   readonly label: string;
   readonly onSelect: () => void;
+  /** Offered but not here: greyed, and the menu keeps its shape rather than shuffling the verbs under a thumb. */
+  readonly disabled?: boolean;
 };
 
 /** The menu, for whatever opens it other than its own trigger. */
@@ -21,8 +23,13 @@ export type RowMenuControl = {
   readonly close: () => void;
 };
 
-/** Labels are short and the trigger is a glyph; this is the floor a verb reads at. */
-const PANEL_WIDTH = 180;
+/**
+ * The floor a verb reads at, and the width the placement keeps clear: a menu
+ * summoned by a finger has no trigger to measure, so without this one opened
+ * near the right edge of the screen would be a column of broken words. Close
+ * to what the labels want, so a highlighted row is padding and not a field.
+ */
+const PANEL_WIDTH = 120;
 
 /**
  * The `⋯` a row hangs its verbs on. A pointer opens it by right-click and a
@@ -40,18 +47,27 @@ export function RowMenu(props: {
   const [at, setAt] = createSignal<Point | undefined>(undefined);
 
   const rows = createMemo<readonly ComboboxItem[]>(() =>
-    props.items.map((item) => ({ label: item.label }))
+    props.items.map((item) => ({
+      label: item.label,
+      ...(item.disabled === true ? { disabled: true } : {}),
+    }))
   );
 
   const choose = (index: number): void => {
     const item = props.items[index];
+    if (item?.disabled === true) {
+      return;
+    }
     panel.close();
     item?.onSelect();
   };
 
   const panel = createDisclosure({
     onOpen: () => {
-      navigation.setActiveIndex(0);
+      // Nothing is lit until a pointer or a key picks a row: a menu that opens
+      // with its first verb highlighted reads as though that verb is the one
+      // about to happen.
+      navigation.setActiveIndex(-1);
     },
   });
 
@@ -60,6 +76,7 @@ export function RowMenu(props: {
     open: panel.open,
     onSelect: choose,
     onDismiss: panel.close,
+    enabled: (index) => props.items[index]?.disabled !== true,
   });
 
   props.control?.({
@@ -112,6 +129,9 @@ export function RowMenu(props: {
           items={rows()}
           activeIndex={navigation.activeIndex()}
           onActivate={navigation.setActiveIndex}
+          onLeave={() => {
+            navigation.setActiveIndex(-1);
+          }}
           onSelect={choose}
         />
       </Show>

@@ -19,6 +19,7 @@ import type {
   EphemeralEvent,
   ModelView,
   ProjectView,
+  SearchHitView,
   ServerEvent,
   SessionStatus,
   SessionSummaryView,
@@ -117,6 +118,8 @@ export type SessionState = {
   names: Record<string, string | null>;
   /** Pinned projects, keyed by absolute working directory rather than by session. */
   pinned: Record<string, boolean>;
+  /** Where each pinned project sorts, 0 first; the server owns it, so a directory it has nothing for is absent. */
+  pinRank: Record<string, number>;
   drafts: Record<string, string>;
   attachments: Record<string, readonly UploadedAttachment[]>;
   openings: Record<string, string>;
@@ -148,6 +151,22 @@ export type SessionListing = {
   readonly sessions: readonly SessionSummaryView[];
   /** Counted before the per-project cut, so a group can say what a page of it leaves out. */
   readonly projects: readonly ProjectView[];
+};
+
+/** Which sessions a search may reach; unscoped, it is every session on disk, the archived among them. */
+export type SearchScope = {
+  readonly cwd?: string;
+  /** Omitted, the archived are searched too and say so; `false` leaves them out, `true` searches only them. */
+  readonly archived?: boolean;
+  readonly limit?: number;
+};
+
+/** One answer to `search_sessions`: the ranked rows, the words no session held, and the scope it read. */
+export type SessionSearch = {
+  readonly hits: readonly SearchHitView[];
+  readonly dropped: readonly string[];
+  /** Sessions searched, whole: what the empty state and the result footer say out loud. */
+  readonly scanned: number;
 };
 
 /** The flags a row draws from this store alone, each one a command away. */
@@ -250,6 +269,7 @@ export class SessionStore {
       archived: {},
       names: {},
       pinned: {},
+      pinRank: {},
       drafts: { ...drafts },
       attachments: {},
       openings: {},
@@ -720,13 +740,13 @@ export class SessionStore {
         recent.push(cwd);
       }
     }
-    const pinned = new Set(
-      listing.projects
-        .filter((project) => project.pinned === true)
-        .map((project) => project.cwd)
-    );
+    const pinned = new Set(this.pinOrder());
     return [
-      ...recent.filter((cwd) => pinned.has(cwd)),
+      // In the pinned order, not the clock's: a pin that changed places
+      // whenever a session answered would be no order at all.
+      ...recent
+        .filter((cwd) => pinned.has(cwd))
+        .sort((one, other) => this.pinRankOf(one) - this.pinRankOf(other)),
       ...recent.filter((cwd) => !pinned.has(cwd)),
     ].slice(0, limit);
   }
@@ -769,6 +789,15 @@ export class SessionStore {
       // row of it: its pin is only ever said here.
       for (const project of response?.projects ?? []) {
         this.seed(draft, "pinned", project.cwd, project.pinned === true);
+        // Under the pin's own key: a rank is half of the same guess, and a
+        // listing computed before the pin reached the server carries neither.
+        if (!this.guessed.has(`pinned:${project.cwd}`)) {
+          if (project.pinRank === undefined) {
+            delete draft.pinRank[project.cwd];
+          } else {
+            draft.pinRank[project.cwd] = project.pinRank;
+          }
+        }
       }
     });
     const unwritten = this.state.unwritten;
@@ -790,6 +819,36 @@ export class SessionStore {
     if (!this.guessed.has(`${record}:${key}`)) {
       state[record][key] = value;
     }
+  }
+
+  /**
+   * Ranked search over every session on disk, titles and what was said, which
+   * is the only honest one: a page of the sidebar is a fraction of the tree.
+   * An empty `query` is the warm call — it builds the index, answers no hits,
+   * and counts the whole scope, which is the number the empty state prints.
+   * Raises where a listing swallows: a listing that fails draws no rows and
+   * looks empty, which is nearly true, but a search that fails still owes the
+   * reader a scope, and `scanned: 0` would have it claim it searched nothing.
+   */
+  public async searchSessions(
+    query: string,
+    scope: SearchScope = {}
+  ): Promise<SessionSearch> {
+    const response = await this.client.send({
+      type: "search_sessions",
+      query,
+      ...(scope.cwd === undefined ? {} : { cwd: scope.cwd }),
+      ...(scope.archived === undefined ? {} : { archived: scope.archived }),
+      ...(scope.limit === undefined ? {} : { limit: scope.limit }),
+    });
+    if (!response.success) {
+      throw new Error(response.error ?? "the search was refused");
+    }
+    return {
+      hits: response.hits ?? [],
+      dropped: response.dropped ?? [],
+      scanned: response.scanned ?? 0,
+    };
   }
 
   public unwrittenSummary(): UnwrittenSummary | undefined {
@@ -910,6 +969,23 @@ export class SessionStore {
     return this.state.pinned[cwd] ?? false;
   }
 
+  /**
+   * The pinned projects in the order they are shown; the sidebar sorts by it
+   * and `movePin` moves within it. Off the flag, not off the ranks: the flag
+   * is what a pin is, and a rank is only where it sits, so a project heard of
+   * without one sorts last rather than falling out of the pinned altogether.
+   */
+  public pinOrder(): readonly string[] {
+    return Object.keys(this.state.pinned)
+      .filter((cwd) => this.isPinned(cwd))
+      .sort((one, other) => this.pinRankOf(one) - this.pinRankOf(other));
+  }
+
+  /** Where a pinned project sorts; a directory with no pin sorts after every one that has. */
+  public pinRankOf(cwd: string): number {
+    return this.state.pinRank[cwd] ?? Number.MAX_SAFE_INTEGER;
+  }
+
   /** The name somebody wrote for the session, absent when it goes by its opening message. */
   public sessionName(sessionId: string): string | undefined {
     return this.state.names[sessionId] ?? undefined;
@@ -973,6 +1049,42 @@ export class SessionStore {
       value,
       "the server refused the pin"
     );
+  }
+
+  /**
+   * Swaps a pinned project with its neighbour and sends the whole order, so
+   * the row moves on the press rather than on the listing that follows it.
+   * The order is the server's, which can name a project this page has no rows
+   * for; a swap past one of those reads as a press that did nothing, and a
+   * second press moves on.
+   */
+  public async movePin(cwd: string, delta: -1 | 1): Promise<void> {
+    const order = [...this.pinOrder()];
+    const at = order.indexOf(cwd);
+    const to = at + delta;
+    const moved = order[at];
+    const displaced = order[to];
+    if (moved === undefined || displaced === undefined) {
+      return;
+    }
+    order[at] = displaced;
+    order[to] = moved;
+    const before = { ...this.state.pinRank };
+    this.setState((draft) => {
+      draft.pinRank[moved] = to;
+      draft.pinRank[displaced] = at;
+    });
+    try {
+      await this.demand(
+        { type: "set_pin_order", order },
+        "the server refused the order"
+      );
+    } catch (error) {
+      this.setState((draft) => {
+        draft.pinRank = before;
+      });
+      throw error;
+    }
   }
 
   /**
@@ -1221,6 +1333,13 @@ export class SessionStore {
       case "project_meta":
         this.setState((draft) => {
           draft.pinned[event.cwd] = event.pinned;
+        });
+        return;
+      case "pins_changed":
+        this.setState((draft) => {
+          draft.pinRank = Object.fromEntries(
+            event.order.map((cwd, rank) => [cwd, rank])
+          );
         });
         return;
       case "sessions_changed":

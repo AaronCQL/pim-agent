@@ -70,6 +70,17 @@ export type Command =
       /** List the archived sessions instead of the live ones. */
       readonly archived?: boolean;
     }
+  /** Ranked search over every session on disk, titles and what was said; an empty `query` warms the index and answers with no hits. */
+  | {
+      readonly id: string;
+      readonly type: "search_sessions";
+      readonly query: string;
+      readonly limit?: number;
+      /** Restrict to one working directory; omit for every session on disk. */
+      readonly cwd?: string;
+      /** Omitted, the archived are searched too and their hits say so; `false` leaves them out, `true` searches only them. */
+      readonly archived?: boolean;
+    }
   /** Names a session through pi's own `session_info`, so its terminal picker shows the name too; `null` clears it. */
   | {
       readonly id: string;
@@ -90,6 +101,12 @@ export type Command =
       readonly type: "set_project_pinned";
       readonly cwd: string;
       readonly value: boolean;
+    }
+  /** Re-orders the pinned projects. The whole order, never a move: two surfaces settle on the last one sent. */
+  | {
+      readonly id: string;
+      readonly type: "set_pin_order";
+      readonly order: readonly string[];
     }
   /** The models this server can switch to, plus the current model's thinking levels; answers without a session. */
   | { readonly id: string; readonly type: "list_models" }

@@ -38,6 +38,8 @@ type Group = {
   readonly settledAt: number;
   /** Pinned projects stand above every other, whatever the clock says. */
   readonly pinned: boolean;
+  /** Where it sorts among the pinned; meaningless for a project that is not. */
+  readonly rank: number;
 };
 
 /** Which listing the sidebar is showing: the live sessions, or the ones put away. */
@@ -58,14 +60,35 @@ type Pages = Readonly<Record<string, number>>;
 /** The projects that answered short, which is the only word that a directory has no more rows to draw. */
 type Ended = Readonly<Record<string, true>>;
 
+/** What one listing answered, whole. */
+type Answer = {
+  readonly sessions: readonly SessionSummaryView[];
+  readonly projects: readonly ProjectView[];
+  readonly ended: Ended;
+};
+
+/**
+ * Each view's last answer, kept so a flip repaints the listing it last saw and
+ * refreshes underneath. A view missing from it has never answered, which is
+ * not the same as having answered empty.
+ */
+type Answers = Readonly<Partial<Record<View, Answer>>>;
+
 function settleOf(row: Row): number {
   return row.listed?.settledAt ?? UNSETTLED;
 }
 
-/** A pin outranks the clock; among equals, the project answered in last stands first. */
+/**
+ * A pin outranks the clock. Among the pinned it is the order somebody put them
+ * in — a pin that changed places whenever a session answered in it would be no
+ * order at all — and among the rest, the project answered in last stands first.
+ */
 function byPinThenSettle(one: Group, other: Group): number {
   if (one.pinned !== other.pinned) {
     return one.pinned ? -1 : 1;
+  }
+  if (one.pinned) {
+    return one.rank - other.rank;
   }
   return other.settledAt - one.settledAt;
 }
@@ -74,16 +97,13 @@ function byPinThenSettle(one: Group, other: Group): number {
 export function Sidebar(props: {
   readonly store: SessionStore;
   readonly onNavigate?: () => void;
+  readonly onOpenSearch?: () => void;
   readonly onOpenSettings?: () => void;
 }) {
-  const [sessions, setSessions] = createSignal<readonly SessionSummaryView[]>(
-    []
-  );
-  const [projects, setProjects] = createSignal<readonly ProjectView[]>([]);
+  const [answers, setAnswers] = createSignal<Answers>({});
   const [view, setView] = createSignal<View>("live");
   const [opened, setOpened] = createSignal<Record<string, boolean>>({});
   const [pages, setPages] = createSignal<Pages>({});
-  const [ended, setEnded] = createSignal<Ended>({});
   const [editing, setEditing] = createSignal<string>();
   const [choosing, setChoosing] = createSignal(false);
   const [failure, setFailure] = createSignal("");
@@ -98,8 +118,8 @@ export function Sidebar(props: {
   let generation = 0;
 
   const load = (store: SessionStore, which: View, asked: Pages): void => {
-    // Bumped on every ask: the archived listing and the live one answer into
-    // the same rows, and the slower of two must not land last.
+    // Bumped on every ask: two reads of one view overlap, and the slower of
+    // them must not land last.
     const mine = ++generation;
     const archived: SessionScope =
       which === "archived" ? { archived: true } : {};
@@ -128,14 +148,17 @@ export function Sidebar(props: {
           short[cwd] = true;
         }
       }
-      setEnded(short);
-      setSessions(
-        [
-          ...listing.sessions.filter((row) => asked[row.cwd] === undefined),
-          ...expanded.flatMap((answer) => answer.sessions),
-        ].sort((one, other) => other.settledAt - one.settledAt)
-      );
-      setProjects(listing.projects);
+      setAnswers((was) => ({
+        ...was,
+        [which]: {
+          sessions: [
+            ...listing.sessions.filter((row) => asked[row.cwd] === undefined),
+            ...expanded.flatMap((page) => page.sessions),
+          ].sort((one, other) => other.settledAt - one.settledAt),
+          projects: listing.projects,
+          ended: short,
+        },
+      }));
     });
   };
 
@@ -170,11 +193,13 @@ export function Sidebar(props: {
       before?.sessionId === after?.sessionId && before?.cwd === after?.cwd,
   });
 
+  const answer = createMemo(() => answers()[view()]);
+
   const rows = createMemo<readonly Row[]>(() => {
     const archived = view() === "archived";
     // Sieved against the store, not the answer: archiving a row takes it off
     // the list at the press, and a refusal that rolls the flag back returns it.
-    const listed = sessions()
+    const listed = (answer()?.sessions ?? [])
       .filter(
         (session) => props.store.isArchived(session.sessionId) === archived
       )
@@ -196,7 +221,7 @@ export function Sidebar(props: {
 
   const groups = createMemo<readonly Group[]>(() => {
     const counted = new Map(
-      projects().map((project) => [project.cwd, project.count])
+      (answer()?.projects ?? []).map((project) => [project.cwd, project.count])
     );
     const byDirectory = new Map<string, Row[]>();
     for (const row of rows()) {
@@ -214,19 +239,30 @@ export function Sidebar(props: {
         count: Math.max(counted.get(cwd) ?? 0, found.length),
         settledAt: Math.max(...found.map(settleOf)),
         pinned: props.store.isPinned(cwd),
+        rank: props.store.pinRankOf(cwd),
       }))
       .sort(byPinThenSettle);
   });
 
-  // Derived rather than remembered: which project you are working in is the
-  // one thing a sidebar of ten collapsed lines has to answer without a click.
+  // Which project you are working in is the one thing a sidebar of ten
+  // collapsed lines has to answer without a click.
   const opening = createMemo((): string | undefined => {
     const here = props.store.state.cwd;
     const all = groups();
     return all.some((group) => group.cwd === here) ? here : all[0]?.cwd;
   });
 
-  const shown = (cwd: string): boolean => opened()[cwd] ?? cwd === opening();
+  // Written down once rather than read live: a standing derivation is
+  // single-valued, so moving to a second project would fold the first behind
+  // you — a fold nobody asked for. Recorded, the open project is a fold like
+  // any other, and only a hand closes it.
+  createEffect(opening, (here) => {
+    if (here !== undefined) {
+      setOpened((was) => (here in was ? was : { ...was, [here]: true }));
+    }
+  });
+
+  const shown = (cwd: string): boolean => opened()[cwd] ?? false;
 
   const fold = (cwd: string): void => {
     const open = shown(cwd);
@@ -237,7 +273,7 @@ export function Sidebar(props: {
   // itself is never drawn — so the count only ever suggests more, and a short
   // answer is what settles it.
   const more = (group: Group): boolean =>
-    ended()[group.cwd] === undefined && group.count > group.rows.length;
+    answer()?.ended[group.cwd] === undefined && group.count > group.rows.length;
 
   const title = (row: Row): string =>
     props.store.sessionName(row.sessionId) ??
@@ -308,6 +344,8 @@ export function Sidebar(props: {
 
   const projectItems = (cwd: string): readonly RowMenuItem[] => {
     const pinned = props.store.isPinned(cwd);
+    const order = props.store.pinOrder();
+    const at = order.indexOf(cwd);
     return [
       {
         label: pinned ? "Unpin project" : "Pin project",
@@ -315,6 +353,27 @@ export function Sidebar(props: {
           attempt(() => props.store.setPinned(cwd, !pinned));
         },
       },
+      // Greyed at the ends rather than dropped: with two pins every menu is an
+      // end, and a verb that came and went would put `Move down` where `Move
+      // up` had just been.
+      ...(pinned
+        ? [
+            {
+              label: "Move up",
+              disabled: at <= 0,
+              onSelect: () => {
+                attempt(() => props.store.movePin(cwd, -1));
+              },
+            },
+            {
+              label: "Move down",
+              disabled: at === -1 || at === order.length - 1,
+              onSelect: () => {
+                attempt(() => props.store.movePin(cwd, 1));
+              },
+            },
+          ]
+        : []),
     ];
   };
 
@@ -337,6 +396,15 @@ export function Sidebar(props: {
           </span>
         </div>
         <div class="flex shrink-0 items-center">
+          <button
+            type="button"
+            aria-label="Search sessions"
+            title="Search sessions"
+            class={ICON}
+            onClick={() => props.onOpenSearch?.()}
+          >
+            <span class="i-griddy-icons:search size-5" />
+          </button>
           <button
             type="button"
             aria-label="Settings"
@@ -367,24 +435,26 @@ export function Sidebar(props: {
         <Show
           when={rows().length > 0}
           fallback={
-            <div class="space-y-3 px-3 py-2">
-              <p class="text-sm text-neutral-500">
-                {view() === "archived"
-                  ? "Nothing archived."
-                  : "No sessions yet."}
-              </p>
-              <Show when={view() === "live"}>
-                <button
-                  type="button"
-                  class={ACTION}
-                  onClick={() => {
-                    setChoosing(true);
-                  }}
-                >
-                  New session
-                </button>
-              </Show>
-            </div>
+            <Show when={answer() !== undefined}>
+              <div class="space-y-3 px-3 py-2">
+                <p class="text-sm text-neutral-500">
+                  {view() === "archived"
+                    ? "Nothing archived."
+                    : "No sessions yet."}
+                </p>
+                <Show when={view() === "live"}>
+                  <button
+                    type="button"
+                    class={ACTION}
+                    onClick={() => {
+                      setChoosing(true);
+                    }}
+                  >
+                    New session
+                  </button>
+                </Show>
+              </div>
+            </Show>
           }
         >
           {/* Keyed: a listing answers with fresh groups, and an unkeyed `<For>` remounts every row under them. */}

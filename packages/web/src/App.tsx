@@ -16,6 +16,7 @@ import { GatewayOrigin } from "./session/Gateway";
 import { SessionStore } from "./session/SessionStore";
 import { Toast } from "./session/Toast";
 import { Sidebar } from "./sessions/Sidebar";
+import { SearchModal } from "./sessions/SearchModal";
 import { HideThinking, Settings } from "./settings/Settings";
 import { SettingsModal } from "./settings/SettingsModal";
 import { Skeleton } from "./transcript/Skeleton";
@@ -23,7 +24,7 @@ import { Splash } from "./transcript/Splash";
 import { SubagentModal } from "./transcript/SubagentModal";
 import { Transcript } from "./transcript/Transcript";
 import { Topbar } from "./topbar/Topbar";
-import { observeHeight } from "./ui/scroll";
+import { createBottomPin, observeHeight } from "./ui/scroll";
 import { Drawer } from "./ui/Drawer";
 import { createBackGuard } from "./ui/history";
 import { createMediaQuery, DESKTOP } from "./ui/media";
@@ -51,6 +52,7 @@ export function Shell(props: {
   const desktop = createMediaQuery(DESKTOP);
   const [sidebar, setSidebar] = createSignal(untrack(desktop));
   const [configuring, setConfiguring] = createSignal(false);
+  const [searching, setSearching] = createSignal(false);
   const [reviewing, setReviewing] = createSignal(false);
   const diff = new DiffStore(props.store);
   const comments = new Comments();
@@ -69,7 +71,20 @@ export function Shell(props: {
       comments.load(cwd);
     }
   );
-  let scroller: HTMLDivElement | undefined;
+  // The icon is the discoverable way in; this is for the fingers that already know.
+  onSettled(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setSearching(true);
+      }
+    };
+    globalThis.addEventListener("keydown", onKeyDown);
+    return () => {
+      globalThis.removeEventListener("keydown", onKeyDown);
+    };
+  });
+  const pin = createBottomPin();
   const [inset, setInset] = createSignal(0);
   // An object rather than the string, so taking back the same words twice is two recalls.
   const [recalled, setRecalled] = createSignal<{ text: string }>();
@@ -104,16 +119,10 @@ export function Shell(props: {
     });
   };
 
-  const jump = (): void => {
-    if (scroller) {
-      scroller.scrollTop = 0;
-    }
-  };
-
   /** Back to the transcript, at its end: where both a session switch and a sent message land. */
   const navigate = (): void => {
     converse();
-    jump();
+    pin.jump();
   };
 
   /** A review is over the moment it is sent, and the moment it is thrown away. */
@@ -147,10 +156,11 @@ export function Shell(props: {
 
   const Conversation = () => (
     <div
-      ref={(element: HTMLDivElement) => {
-        scroller = element;
+      ref={pin.ref}
+      class={{
+        "flex h-full flex-col-reverse overflow-y-auto": true,
+        "[overflow-anchor:none]": pin.pinned(),
       }}
-      class="flex h-full flex-col-reverse overflow-y-auto"
     >
       <div
         class="mx-auto min-h-full w-full max-w-3xl flex-none space-y-[--line] p-3 leading-[--line]"
@@ -185,6 +195,9 @@ export function Shell(props: {
               <Sidebar
                 store={props.store}
                 onNavigate={navigate}
+                onOpenSearch={() => {
+                  setSearching(true);
+                }}
                 onOpenSettings={() => {
                   setConfiguring(true);
                 }}
@@ -206,6 +219,10 @@ export function Shell(props: {
                 onNavigate={() => {
                   setSidebar(false);
                   navigate();
+                }}
+                onOpenSearch={() => {
+                  setSidebar(false);
+                  setSearching(true);
                 }}
                 onOpenSettings={() => {
                   setSidebar(false);
@@ -281,6 +298,14 @@ export function Shell(props: {
             </div>
           </div>
           <SubagentModal store={props.store} />
+          <SearchModal
+            open={searching()}
+            store={props.store}
+            onNavigate={navigate}
+            onClose={() => {
+              setSearching(false);
+            }}
+          />
           <SettingsModal
             open={configuring()}
             store={props.store}

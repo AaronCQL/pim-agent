@@ -97,6 +97,11 @@ function scrollerOf(host: HTMLElement): HTMLElement {
   return host.querySelector<HTMLElement>("div.overflow-y-auto")!;
 }
 
+/** Pinned to the newest content: the scroller, not the browser's anchoring, owns the position. */
+function follows(scroller: HTMLElement): boolean {
+  return scroller.classList.contains("[overflow-anchor:none]");
+}
+
 function message(seq: number, text: string): ServerEvent {
   return {
     seq,
@@ -815,6 +820,9 @@ describe("the shell, painted from events alone", () => {
 
     const scroller = scrollerOf(host);
     scroller.scrollTop = -500;
+    scroller.dispatchEvent(new Event("scroll"));
+    flush();
+    expect(follows(scroller)).toBe(false);
 
     const input = host.querySelector("textarea")!;
     const draft = "first line\nsecond line\nthird line\nfourth line";
@@ -825,6 +833,7 @@ describe("the shell, painted from events alone", () => {
     expect(store.state.optimistic[0]?.text).toBe(draft);
     expect(input.value).toBe("");
     expect(scroller.scrollTop).toBe(0);
+    expect(follows(scroller)).toBe(true);
   });
 
   test("the bottom-origin layout keeps messages in chronological DOM order", () => {
@@ -837,6 +846,7 @@ describe("the shell, painted from events alone", () => {
     const scroller = scrollerOf(host);
     expect(scroller.classList.contains("flex")).toBe(true);
     expect(scroller.classList.contains("flex-col-reverse")).toBe(true);
+    expect(follows(scroller)).toBe(true);
     expect(scroller.children).toHaveLength(1);
     const content = scroller.firstElementChild!;
     expect(content.classList.contains("flex-none")).toBe(true);
@@ -861,6 +871,26 @@ describe("the shell, painted from events alone", () => {
     store.ingest(message(3, "and the next one"));
     flush();
     expect(scroller.scrollTop).toBe(-120);
+  });
+
+  test("reading back a way hands the position to scroll anchoring, and coming back takes it away", () => {
+    const store = offline();
+    const host = paint(store);
+    store.ingest(attached());
+    store.ingest(message(1, "earlier message"));
+    flush();
+    const scroller = scrollerOf(host);
+
+    scroller.scrollTop = -120;
+    scroller.dispatchEvent(new Event("scroll"));
+    flush();
+    expect(follows(scroller)).toBe(false);
+
+    // A wheel or a momentum scroll settles near the origin, not on it.
+    scroller.scrollTop = -8;
+    scroller.dispatchEvent(new Event("scroll"));
+    flush();
+    expect(follows(scroller)).toBe(true);
   });
 });
 

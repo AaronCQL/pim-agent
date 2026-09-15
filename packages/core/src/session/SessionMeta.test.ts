@@ -108,6 +108,63 @@ describe("SessionMeta", () => {
     );
   });
 
+  test("a new pin goes to the top and the order survives a restart", async () => {
+    const meta = new SessionMeta(file);
+    await meta.setPinned("/work/one", true);
+    await meta.setPinned("/work/two", true);
+
+    // Newest first: it goes where you have just put it, and it displaces
+    // nothing that was already arranged.
+    expect(await meta.pins()).toEqual(["/work/two", "/work/one"]);
+    expect(await new SessionMeta(file).pins()).toEqual([
+      "/work/two",
+      "/work/one",
+    ]);
+  });
+
+  test("an order outlives the moves that made it, and a pin that leaves it", async () => {
+    const meta = new SessionMeta(file);
+    await meta.setPinned("/work/one", true);
+    await meta.setPinned("/work/two", true);
+    await meta.setPinOrder(["/work/one", "/work/two"]);
+
+    expect(await new SessionMeta(file).pins()).toEqual([
+      "/work/one",
+      "/work/two",
+    ]);
+
+    // Unpinned, it leaves the order with the flag; pinned again, it is new.
+    await meta.setPinned("/work/one", false);
+    expect(await meta.pins()).toEqual(["/work/two"]);
+    await meta.setPinned("/work/one", true);
+    expect(await meta.pins()).toEqual(["/work/one", "/work/two"]);
+  });
+
+  test("the order is a hint over the flags, so it can say nothing true and cost nothing", async () => {
+    // Written by a pim that predates the order, or by one that dropped it: two
+    // pins and no word on where they sit.
+    await Bun.write(
+      file,
+      JSON.stringify({
+        version: 1,
+        sessions: {},
+        projects: { "/work/two": { pinned: true }, "/work/one": {} },
+      })
+    );
+    const meta = new SessionMeta(file);
+    await meta.setPinned("/work/one", true);
+
+    // The pin it has heard of first, then the one it has not, by path.
+    expect(await meta.pins()).toEqual(["/work/one", "/work/two"]);
+
+    // And an order naming what is not pinned keeps only what is.
+    await meta.setPinOrder(["/work/gone", "/work/two", "/work/one"]);
+    expect(await new SessionMeta(file).pins()).toEqual([
+      "/work/two",
+      "/work/one",
+    ]);
+  });
+
   test("pruning forgets dead sessions and keeps every project", async () => {
     const meta = new SessionMeta(file);
     await meta.setArchived("kept", true);

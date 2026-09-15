@@ -9,6 +9,7 @@ import {
   type ModelView,
   type ProjectView,
   type ResponseEvent,
+  type SearchHitView,
   type ServerEvent,
   type SessionSummaryView,
 } from "#protocol/ServerEvent";
@@ -38,6 +39,13 @@ export type SessionScope = {
   readonly limit?: number;
   /** Keep at most this many sessions per working directory. */
   readonly perProject?: number;
+};
+
+/** Which sessions a search is asking about; omitting `archived` searches them too. */
+export type SearchScope = {
+  readonly cwd?: string;
+  readonly archived?: boolean;
+  readonly limit?: number;
 };
 
 /** What `POST /upload` answers with, all of it server-side. */
@@ -215,6 +223,32 @@ export class ProbeClient {
     };
   }
 
+  /** Searches every session on disk; an empty query warms the index and answers with no hits. */
+  public async search(
+    query: string,
+    scope: SearchScope = {}
+  ): Promise<{
+    readonly hits: readonly SearchHitView[];
+    readonly dropped: readonly string[];
+    readonly scanned: number;
+  }> {
+    const response = await this.send({
+      type: "search_sessions",
+      query,
+      ...(scope.cwd === undefined ? {} : { cwd: scope.cwd }),
+      ...(scope.archived === undefined ? {} : { archived: scope.archived }),
+      ...(scope.limit === undefined ? {} : { limit: scope.limit }),
+    });
+    if (!response.success) {
+      throw new Error(response.error ?? "search_sessions failed");
+    }
+    return {
+      hits: response.hits ?? [],
+      dropped: response.dropped ?? [],
+      scanned: response.scanned ?? 0,
+    };
+  }
+
   /** Names a session through pi's own name; `null` clears it back to its opening message. */
   public rename(
     sessionId: string,
@@ -239,6 +273,11 @@ export class ProbeClient {
   /** Pins a working directory, not a session. */
   public setPinned(cwd: string, value: boolean): Promise<ResponseEvent> {
     return this.send({ type: "set_project_pinned", cwd, value });
+  }
+
+  /** Re-orders the pinned directories; the whole order, pinned ones only. */
+  public setPinOrder(order: readonly string[]): Promise<ResponseEvent> {
+    return this.send({ type: "set_pin_order", order });
   }
 
   /** The model catalogue, plus this session's thinking levels; empty when unattached. */
