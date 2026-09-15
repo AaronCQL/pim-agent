@@ -162,6 +162,21 @@ export type EphemeralEvent =
     }
   /** Sent to every connection; the read cursor is one per session, not one per client. */
   | { readonly type: "session_read"; readonly sessionId: string }
+  /** Sent to every connection: one session's name or overrides changed, so a listing a client holds can be patched in place. */
+  | {
+      readonly type: "session_meta";
+      readonly sessionId: string;
+      /** The session's own name, `null` once it is cleared. */
+      readonly name?: string | null;
+      readonly archived?: boolean;
+      readonly unread?: boolean;
+    }
+  /** Sent to every connection; keyed by absolute working directory, not by session. */
+  | {
+      readonly type: "project_meta";
+      readonly cwd: string;
+      readonly pinned: boolean;
+    }
   /** Sent to every connection: the sessions on disk changed, so any listing a client holds is stale. */
   | { readonly type: "sessions_changed" }
   /** Sent to every connection; the restart it ends in drops every socket. */
@@ -196,6 +211,8 @@ export type EphemeralEvent =
       readonly dirtyCount?: number;
       readonly ahead?: number;
       readonly behind?: number;
+      /** Changes whenever the working copy does, content of a dirty file included. */
+      readonly repoRevision?: string;
     }
   /** A frame the server could not attribute to any command. */
   | { readonly type: "error"; readonly message: string };
@@ -209,10 +226,23 @@ export type SessionSummaryView = {
   readonly settledAt: number;
   /** The session's first user message, trimmed; absent when it has none. */
   readonly title?: string;
+  /** True when `title` is a name somebody wrote, rather than the first message. */
+  readonly named?: true;
+  readonly archived?: true;
+  /** This row's working directory is a pinned project. */
+  readonly pinned?: true;
   /** Has answered since anything last read it; absent means it has not. */
   readonly unread?: boolean;
   /** Absent when idle, and for a session this server does not hold open. */
   readonly status?: SessionStatus;
+};
+
+/** One working directory the catalogue holds sessions for, counted before any per-project cut. */
+export type ProjectView = {
+  readonly cwd: string;
+  /** Every session in it the listing's scope allows, including the ones the cut dropped. */
+  readonly count: number;
+  readonly pinned?: true;
 };
 
 /** One model the server can be switched to, for the composer's model menu. */
@@ -233,6 +263,8 @@ export type ResponseEvent = {
   readonly items?: readonly PickerItem[];
   /** The catalogue, for `list_sessions`. */
   readonly sessions?: readonly SessionSummaryView[];
+  /** The directories those sessions came from, for `list_sessions`. */
+  readonly projects?: readonly ProjectView[];
   /** The model catalogue, for `list_models`. */
   readonly models?: readonly ModelView[];
   /** What the *current* model supports, on the same answer. */

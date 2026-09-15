@@ -1,9 +1,14 @@
 import type { Element } from "solid-js";
 
+const CHEVRON = "i-griddy-icons:chevron-right-small-filled";
+
+/** What a caret does when the disclosure it stands on opens. */
+const TURN = "transition-transform group-open:rotate-90";
+
 export function Caret(props: { readonly class?: string }) {
   return (
     <Glyph
-      icon="i-griddy-icons:chevron-right-small-filled"
+      icon={CHEVRON}
       class={`scale-175 ${props.class ?? "bg-neutral-300"}`}
     />
   );
@@ -46,17 +51,14 @@ export function Spine(props: {
 /** The one wrapper for hiding a payload behind a disclosure; nothing outside `ui/` writes `<details>` directly. */
 export function Collapsible(props: {
   readonly summary: Element;
-  readonly open?: boolean;
   readonly caret?: string;
   readonly spine?: string;
   readonly children: Element;
 }) {
   return (
-    <details class="group relative min-w-0 pl-2ch" open={props.open === true}>
+    <details class="group relative min-w-0 pl-2ch">
       <summary class="min-w-0 flow-root cursor-pointer list-none">
-        <Caret
-          class={`transition-transform group-open:rotate-90 ${props.caret ?? "bg-neutral-300"}`}
-        />
+        <Caret class={`${TURN} ${props.caret ?? "bg-neutral-300"}`} />
         <Spine class={props.spine} grip />
         {props.summary}
       </summary>

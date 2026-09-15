@@ -414,3 +414,14 @@ test("drops the watch when the client attaches elsewhere", async () => {
   expect(socket.watched).toHaveLength(1);
   expect(socket.frames.length).toBeGreaterThan(sent);
 });
+
+test("takes its reader's attention from the attach that brought it back", async () => {
+  const { stream, connection } = build();
+  await connection.attach(stream, 0, false);
+  expect(connection.attentive).toBe(false);
+
+  connection.setAttentive(true);
+  await connection.attach(stream, 0, false);
+
+  expect(connection.attentive).toBe(false);
+});

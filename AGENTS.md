@@ -18,6 +18,12 @@ Plain layered directories under `packages/*` — no workspaces, no per-directory
 | `packages/web` | Solid 2 browser client: `WsClient`, `SessionStore` (the only place an intent becomes a command), HTML `ViewBlock` painter, `Markdown`, `highlight` (lazy highlight.js, same engine and roles as the TUI). Ships built `dist/client`, not sources. |
 | `packages/daemon` | The composition root behind `--mode daemon`: `Surfaces` (`--surfaces web,telegram`), `Daemon` (starts and stops each surface in isolation — one that throws never touches another), `WebSurface`, `TelegramSurface`, and `DaemonInstall` (freezes the unit's argv, supersedes the old per-surface units). The only package that may see both `server` and `telegram`; they stay blind to each other. |
 
+## Checks
+
+`bun run check` is the only way to run the tests. Never `bun test` directly: bare, it silently skips `packages/web`; aimed there, it fails tests that pass in isolation, because happy-dom's globals and pi's module state outlive the file that made them. `check.ts` owns the `--isolate` that fixes it, and is the one place the runners' arguments live.
+
+Narrow with a task name and forward flags to it — `bun run check web`, `bun run check agent --changed`, `bun run check -h`. A green run prints one line; anything else is a failure or a file the formatter rewrote.
+
 ## On-demand Docs
 
 | When you are… | Read |

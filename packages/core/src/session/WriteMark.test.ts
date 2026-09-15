@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { appendFile } from "node:fs/promises";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 
 import { EventLog } from "./EventLog";
@@ -33,6 +34,10 @@ function holding(count: number): { getEntries(): readonly unknown[] } {
   return { getEntries: () => Array.from({ length: count }, (_, i) => i) };
 }
 
+async function append(path: string, entry: object): Promise<void> {
+  await appendFile(path, `${JSON.stringify(entry)}\n`);
+}
+
 test("counts the file's durable lines against pi's entries in memory", async () => {
   const path = await writeSession(3);
 
@@ -63,4 +68,34 @@ test("the whole of a file that did not exist at the mark is pi's own", () => {
   expect(
     WriteMark.foreignSince(WriteMark.UNREAD, { head: 6, entries: 4 })
   ).toBe(true);
+});
+
+test("a rename somebody else appended is a line nobody has to replay", async () => {
+  const path = await writeSession(3);
+  const log = new EventLog(path);
+  const mark = await WriteMark.of(log, holding(3));
+  await append(path, { type: "session_info", id: "n1", name: "renamed" });
+
+  expect(await WriteMark.benignSince(log, mark)).toBe(true);
+});
+
+test("a message beside the rename is not benign, and neither is history alone", async () => {
+  const path = await writeSession(3);
+  const log = new EventLog(path);
+  const mark = await WriteMark.of(log, holding(3));
+  await append(path, { type: "session_info", id: "n1", name: "renamed" });
+  await append(path, { type: "message", id: "x1" });
+
+  expect(await WriteMark.benignSince(log, mark)).toBe(false);
+  expect(
+    await WriteMark.benignSince(log, await WriteMark.of(log, holding(3)))
+  ).toBe(false);
+});
+
+test("a whole file that appeared since the mark is never benign", async () => {
+  const path = await writeSession(3);
+
+  expect(
+    await WriteMark.benignSince(new EventLog(path), WriteMark.UNREAD)
+  ).toBe(false);
 });

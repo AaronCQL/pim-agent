@@ -38,8 +38,6 @@ export type DiffState = {
   removed: number;
   /** The repository has more changed files than the list holds. */
   truncated: boolean;
-  /** The repository moved under the list; a reader asks for the new one rather than being given it. */
-  stale: boolean;
   /** `ready` only once a list has landed, so an empty overlay never claims a clean tree it has not read. */
   status: "idle" | "loading" | "ready";
   error: string | undefined;
@@ -52,6 +50,9 @@ export type DiffState = {
   committed: string | undefined;
 };
 
+/** A burst of writes — one turn's edits — is one re-read. */
+const SETTLE_MS = 200;
+
 /** A working copy's change set: what it is measured against, and the hunks read so far. */
 export class DiffStore {
   public readonly state: Store<DiffState>;
@@ -62,20 +63,29 @@ export class DiffStore {
   /** Flat and keyed by path, so a row tracks its own file and not every other row's. */
   private readonly diffs: Store<Record<string, FileState>>;
   private readonly setDiffs: StoreSetter<Record<string, FileState>>;
+  /** Which files a reader has unfolded; list state, so a re-read of the list can keep or clear it. */
+  private readonly opened: Store<Record<string, boolean>>;
+  private readonly setOpened: StoreSetter<Record<string, boolean>>;
   private readonly session: SessionStore;
+  private readonly settleMs: number;
   private queue: Promise<unknown> = Promise.resolve();
   private generation = 0;
-  /** The next change to the repository is our own commit landing, not somebody else's edit. */
-  private expected = false;
+  /** The repository as it stood when the list in hand was read. */
+  private synced = "";
+  /** Nothing is re-read for a pane nobody is looking at. */
+  private watching = false;
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private syncing = false;
+  private resync = false;
 
-  public constructor(session: SessionStore) {
+  public constructor(session: SessionStore, settleMs: number = SETTLE_MS) {
     this.session = session;
+    this.settleMs = settleMs;
     const [state, setState] = createStore<DiffState>({
       base: "worktree",
       added: 0,
       removed: 0,
       truncated: false,
-      stale: false,
       status: "idle",
       error: undefined,
       message: "",
@@ -84,11 +94,14 @@ export class DiffStore {
       committed: undefined,
     });
     const [diffs, setDiffs] = createStore<Record<string, FileState>>({});
+    const [opened, setOpened] = createStore<Record<string, boolean>>({});
     const [files, setFiles] = createSignal<readonly ChangeSummary[]>([]);
     this.state = state;
     this.setState = setState;
     this.diffs = diffs;
     this.setDiffs = setDiffs;
+    this.opened = opened;
+    this.setOpened = setOpened;
     this.files = files;
     this.setFiles = setFiles;
 
@@ -102,15 +115,10 @@ export class DiffStore {
     );
 
     createEffect(
-      () => this.session.state.dirtyCount,
-      (count, previous) => {
-        if (previous !== undefined && count !== previous) {
-          if (this.expected) {
-            this.expected = false;
-            void this.refresh();
-          } else {
-            this.markStale();
-          }
+      () => this.session.state.repoRevision,
+      (revision, previous) => {
+        if (previous !== undefined && revision !== previous) {
+          this.schedule();
         }
       }
     );
@@ -128,13 +136,72 @@ export class DiffStore {
 
   /** Re-reads the file list and drops every hunk read against the last one. */
   public async refresh(): Promise<void> {
-    const mine = ++this.generation;
+    ++this.generation;
     this.setState((draft) => {
       draft.status = "loading";
       draft.error = undefined;
-      draft.stale = false;
     });
     this.forget();
+    await this.load(false);
+  }
+
+  /** Whether a reader is on the change set, and so whether it is kept current. */
+  public watch(active: boolean): void {
+    this.watching = active;
+    if (active) {
+      void this.sync();
+    } else {
+      clearTimeout(this.timer);
+      this.timer = undefined;
+    }
+  }
+
+  private schedule(): void {
+    if (!this.watching) {
+      return;
+    }
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      void this.sync();
+    }, this.settleMs);
+  }
+
+  /** Re-reads what the repository has made of the list in hand, painting no spinner over it. */
+  private async sync(): Promise<void> {
+    if (this.syncing) {
+      this.resync = true;
+      return;
+    }
+    const revision = untrack(() => this.session.state.repoRevision);
+    if (
+      untrack(() => this.state.status) === "idle" ||
+      revision === this.synced
+    ) {
+      return;
+    }
+    // The list was read before the server said where the repository stood; the
+    // first word of it is not news of a change.
+    if (this.synced === "") {
+      this.synced = revision;
+      return;
+    }
+    this.syncing = true;
+    try {
+      await this.load(true);
+    } finally {
+      this.syncing = false;
+      if (this.resync) {
+        this.resync = false;
+        void this.sync();
+      }
+    }
+  }
+
+  /** Reads the list; a quiet read keeps the rows that survived it and re-reads the hunks of those that moved. */
+  private async load(quiet: boolean): Promise<void> {
+    const mine = this.generation;
+    this.synced = untrack(() => this.session.state.repoRevision);
     try {
       const changes = await this.enqueue(() =>
         this.session.listChanges(this.base())
@@ -142,18 +209,24 @@ export class DiffStore {
       if (mine !== this.generation) {
         return;
       }
+      const moved = quiet ? this.reconcileDiffs(changes.files) : [];
       this.setFiles(changes.files);
       this.setState((draft) => {
         draft.added = changes.added;
         draft.removed = changes.removed;
         draft.truncated = changes.truncated === true;
+        draft.error = undefined;
         draft.status = "ready";
       });
+      for (const path of moved) {
+        void this.reread(path);
+      }
     } catch (error) {
       if (mine !== this.generation) {
         return;
       }
       this.setFiles([]);
+      this.forget();
       this.setState((draft) => {
         draft.added = 0;
         draft.removed = 0;
@@ -164,14 +237,59 @@ export class DiffStore {
     }
   }
 
-  /** The repository changed under a list already read; nothing is re-read until a reader says so. */
-  private markStale(): void {
-    if (untrack(() => this.state.status) === "idle") {
-      return;
+  /** Drops the hunks of files the list has lost, and names those whose content moved. */
+  private reconcileDiffs(files: readonly ChangeSummary[]): readonly string[] {
+    const next = new Map(files.map((file) => [file.path, file.fingerprint]));
+    const held = new Map(
+      untrack(() => this.files()).map((file) => [file.path, file.fingerprint])
+    );
+    const moved: string[] = [];
+    const gone: string[] = [];
+    for (const path of untrack(() => Object.keys(this.diffs))) {
+      const fingerprint = next.get(path);
+      // A read already in flight lands on its own; anything else the
+      // repository has moved under is read again, a refusal included.
+      if (fingerprint === undefined) {
+        gone.push(path);
+      } else if (
+        fingerprint !== held.get(path) &&
+        untrack(() => this.diffs[path])?.kind !== "loading"
+      ) {
+        moved.push(path);
+      }
     }
-    this.setState((draft) => {
-      draft.stale = true;
-    });
+    for (const path of gone) {
+      this.setDiffs((draft) => {
+        delete draft[path];
+      });
+      this.setOpened((draft) => {
+        delete draft[path];
+      });
+    }
+    return moved;
+  }
+
+  /** Reads one open file's hunks again, leaving the ones on screen until they land. */
+  private async reread(path: string): Promise<void> {
+    const mine = this.generation;
+    try {
+      const diff = await this.enqueue(() =>
+        this.session.fileDiff(path, this.base())
+      );
+      if (mine !== this.generation) {
+        return;
+      }
+      this.setDiffs((draft) => {
+        draft[path] = { kind: "ready", diff, lines: new Map(), opening: false };
+      });
+    } catch (error) {
+      if (mine !== this.generation) {
+        return;
+      }
+      this.setDiffs((draft) => {
+        draft[path] = { kind: "error", message: (error as Error).message };
+      });
+    }
   }
 
   /** Another working copy: every file, hunk and count read against the last one is void. */
@@ -183,7 +301,6 @@ export class DiffStore {
       draft.added = 0;
       draft.removed = 0;
       draft.truncated = false;
-      draft.stale = false;
       draft.status = "idle";
       draft.error = undefined;
       draft.message = "";
@@ -227,9 +344,6 @@ export class DiffStore {
         draft.message = "";
         draft.committed = sha;
       });
-      // The change the repository is about to report is this commit landing:
-      // re-read on it rather than calling the list somebody else made stale.
-      this.expected = true;
       await this.refresh();
     } catch (error) {
       this.setState((draft) => {
@@ -247,6 +361,22 @@ export class DiffStore {
       draft.base = base;
     });
     void this.refresh();
+  }
+
+  /** Whether a reader has this file unfolded. */
+  public isOpen(path: string): boolean {
+    return this.opened[path] === true;
+  }
+
+  /** Folds a file open or shut; the first opening reads its hunks. */
+  public toggle(path: string): void {
+    const open = !untrack(() => this.opened[path]);
+    this.setOpened((draft) => {
+      draft[path] = open;
+    });
+    if (open) {
+      void this.expand(path);
+    }
   }
 
   /** The first expansion of a file reads it; every later one is answered from the cache. */
@@ -321,6 +451,11 @@ export class DiffStore {
 
   private forget(): void {
     this.setDiffs((draft) => {
+      for (const path of Object.keys(draft)) {
+        delete draft[path];
+      }
+    });
+    this.setOpened((draft) => {
       for (const path of Object.keys(draft)) {
         delete draft[path];
       }

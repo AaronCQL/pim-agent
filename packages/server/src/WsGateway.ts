@@ -12,6 +12,7 @@ import { GitMonitor, type GitRun } from "#core/shared/GitMonitor";
 import { RepoDiff } from "#core/shared/RepoDiff";
 import { ReadCursors } from "#core/session/ReadCursors";
 import type { SessionHost } from "#core/session/SessionHost";
+import { SessionMeta } from "#core/session/SessionMeta";
 import type { SessionRegistry } from "#core/session/SessionRegistry";
 import { PimVersion } from "#core/shared/PimVersion";
 import { SubagentLogs } from "#core/shared/SubagentLogs";
@@ -21,6 +22,7 @@ import type { ChangeList, FileDiff, FileLines } from "#protocol/Diff";
 import { CLOSE_PROTOCOL_MISMATCH, PROTOCOL_VERSION } from "#protocol/Protocol";
 import type {
   ModelView,
+  ProjectView,
   ServerEvent,
   SessionSummaryView,
 } from "#protocol/ServerEvent";
@@ -45,6 +47,8 @@ export type WsGatewayDeps = {
   readonly imagesRoot?: string;
   /** Where the read cursors live; defaults to `~/.pim/read.json`. */
   readonly readCursorsPath?: string;
+  /** Where the per-session and per-project overrides live; defaults to `~/.pim/sessions.json`. */
+  readonly sessionMetaPath?: string;
   /** How often a session file is polled where `fs.watch` says nothing; the default is a second. */
   readonly pollMs?: number;
   /** The built web client; defaults to the bundle shipped beside this package. */
@@ -59,6 +63,7 @@ type Outcome = {
   readonly error?: string;
   readonly items?: readonly PickerItem[];
   readonly sessions?: readonly SessionSummaryView[];
+  readonly projects?: readonly ProjectView[];
   readonly models?: readonly ModelView[];
   readonly thinkingLevels?: readonly string[];
   readonly directory?: DirectoryListing;
@@ -92,6 +97,7 @@ export class WsGateway {
   private readonly uploads: AttachmentEndpoint;
   private readonly images: ImageEndpoint;
   private readonly catalogue: SessionCatalogue;
+  private readonly meta: SessionMeta;
   private readonly client: StaticClient;
   private readonly streams = new Map<string, SessionStream>();
   private readonly opening = new Map<string, Promise<SessionStream>>();
@@ -117,9 +123,11 @@ export class WsGateway {
     this.images = new ImageEndpoint(
       deps.imagesRoot === undefined ? {} : { root: deps.imagesRoot }
     );
+    this.meta = new SessionMeta(deps.sessionMetaPath);
     this.catalogue = new SessionCatalogue({
       registry: deps.registry,
       cursors: new ReadCursors(deps.readCursorsPath),
+      meta: this.meta,
       liveStatus: (sessionId) => this.streams.get(sessionId)?.host.status,
       liveSessionIds: () => this.streams.keys(),
       isBeingRead: (sessionId) => this.isBeingRead(sessionId),
@@ -279,8 +287,58 @@ export class WsGateway {
     switch (command.type) {
       case "attach":
         return await this.attach(connection, command);
+      case "attention": {
+        const regained = command.value && !connection.attentive;
+        connection.setAttentive(command.value);
+        const sessionId = connection.sessionId;
+        if (regained && sessionId !== undefined) {
+          await this.catalogue.markRead(sessionId);
+        }
+        return {};
+      }
       case "list_sessions":
-        return { sessions: await this.catalogue.list(command) };
+        return await this.catalogue.list(command);
+      // The four below take a session this server may never have opened: a row
+      // is archived or renamed from the sidebar without being attached to, so
+      // none of them may reach for a stream. A sidecar write moves no session
+      // file and produces no `sessions_changed`, so the broadcast each ends
+      // with is the only word a listing already in a client's hands gets.
+      case "set_session_name": {
+        const name = await this.registry.setName(
+          command.sessionId,
+          command.value
+        );
+        this.broadcast({
+          type: "session_meta",
+          sessionId: command.sessionId,
+          name: name ?? null,
+        });
+        return {};
+      }
+      case "set_session_archived":
+        await this.meta.setArchived(command.sessionId, command.value);
+        this.broadcast({
+          type: "session_meta",
+          sessionId: command.sessionId,
+          archived: command.value,
+        });
+        return {};
+      case "set_session_unread":
+        await this.meta.setUnread(command.sessionId, command.value);
+        this.broadcast({
+          type: "session_meta",
+          sessionId: command.sessionId,
+          unread: command.value,
+        });
+        return {};
+      case "set_project_pinned":
+        await this.meta.setPinned(command.cwd, command.value);
+        this.broadcast({
+          type: "project_meta",
+          cwd: command.cwd,
+          pinned: command.value,
+        });
+        return {};
       case "list_models":
         return {
           models: this.registry.models(),
@@ -456,6 +514,7 @@ export class WsGateway {
     connection: ClientConnection,
     command: Command & { readonly type: "attach" }
   ): Promise<Outcome> {
+    const attentive = command.attentive !== false;
     const like =
       command.like === undefined
         ? undefined
@@ -479,16 +538,19 @@ export class WsGateway {
       pimVersion,
       piVersion,
     });
-    await connection.attach(stream, command.fromSeq);
+    await connection.attach(stream, command.fromSeq, attentive);
     this.syncWatches();
-    await this.catalogue.markRead(stream.sessionId);
+    if (attentive) {
+      await this.catalogue.markRead(stream.sessionId);
+    }
     return {};
   }
 
-  /** A watch costs a poll, so only sessions someone is reading get one — and the catalogue only while someone is connected. */
+  /** A watch costs a poll, so only attached sessions get one — and the catalogue only while someone is connected. */
   private syncWatches(): void {
     for (const [sessionId, stream] of this.streams) {
-      stream.watchFiles(this.isBeingRead(sessionId));
+      // Attachment, not attention: a hidden tab that lost its watches would stop hearing about the session.
+      stream.watchFiles(this.isAttached(sessionId));
     }
     this.catalogue.watch(this.connections.size > 0);
   }
@@ -584,9 +646,19 @@ export class WsGateway {
     return this.versionsRead;
   }
 
-  private isBeingRead(sessionId: string): boolean {
+  private isAttached(sessionId: string): boolean {
     for (const connection of this.connections.values()) {
       if (connection.sessionId === sessionId) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // The TUI never attaches, so reading a session there clears no dot here and a turn it runs trips no mark.
+  private isBeingRead(sessionId: string): boolean {
+    for (const connection of this.connections.values()) {
+      if (connection.sessionId === sessionId && connection.attentive) {
         return true;
       }
     }

@@ -2,7 +2,7 @@ import "../test/dom";
 
 import { render } from "@solidjs/web";
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { flush } from "solid-js";
+import { createSignal, flush } from "solid-js";
 
 import { DiffLines, type ToolDiffHunk } from "#core/shared/DiffLines";
 import type { ChangeSummary } from "#protocol/Diff";
@@ -243,6 +243,7 @@ function row(comments: Comments): HTMLElement {
     lines: new Map(),
     opening: false,
   };
+  const [open, setOpen] = createSignal(false);
   dispose = render(
     () => (
       <ReviewComments value={() => comments}>
@@ -250,7 +251,10 @@ function row(comments: Comments): HTMLElement {
           file={summary()}
           state={state}
           split={false}
-          onExpand={() => {}}
+          open={open()}
+          onToggle={() => {
+            setOpen(!open());
+          }}
           onOpen={() => {}}
         />
       </ReviewComments>

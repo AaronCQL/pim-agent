@@ -37,6 +37,20 @@ type Pending = {
 
 const MAX_BACKOFF_MS = 10_000;
 
+/**
+ * Frames that name their own subject — a session, a directory, or nothing at
+ * all — and so belong to no attach. Gating one on the attach window drops a
+ * broadcast every time this client switches session.
+ */
+const UNGATED = new Set<ServerEvent["type"]>([
+  "session_activity",
+  "session_read",
+  "session_meta",
+  "project_meta",
+  "sessions_changed",
+  "update_state",
+]);
+
 function defaultBackoff(attempt: number): number {
   return Math.min(MAX_BACKOFF_MS, 250 * 2 ** (attempt - 1));
 }
@@ -55,6 +69,8 @@ export class WsClient {
   private attempt = 0;
   private retry: ReturnType<typeof setTimeout> | undefined;
   private disposed = false;
+  /** Declared on every attach: an inattentive client never consumes a turn as read. */
+  private attention = true;
   /** Gate: frames between an `attach` and its `attached` belong to the old session. */
   private settled = false;
   private outdated = false;
@@ -76,6 +92,11 @@ export class WsClient {
 
   public get sessionId(): string | undefined {
     return this.target.sessionId;
+  }
+
+  /** Whether this client last told the server its reader was looking. */
+  public get attentive(): boolean {
+    return this.attention;
   }
 
   /** Highest durable `seq` this client has painted; the resume cursor. */
@@ -128,6 +149,22 @@ export class WsClient {
     });
   }
 
+  /**
+   * Whether the reader is looking at this tab. Told to the server while the
+   * socket is up, and carried by the next attach frame when it is not — so a
+   * hidden tab that reconnects stays hidden.
+   */
+  public setAttention(value: boolean): void {
+    if (this.attention === value) {
+      return;
+    }
+    this.attention = value;
+    if (this.socket?.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    void this.send({ type: "attention", value }).catch(() => undefined);
+  }
+
   public close(): void {
     this.disposed = true;
     this.cancelRetry();
@@ -172,6 +209,7 @@ export class WsClient {
       ...(this.target.cwd === undefined ? {} : { cwd: this.target.cwd }),
       ...(this.target.like === undefined ? {} : { like: this.target.like }),
       fromSeq: this.cursor,
+      attentive: this.attention,
     });
   }
 
@@ -255,13 +293,7 @@ export class WsClient {
       waiter?.resolve(event);
       return;
     }
-    // Session-scoped frames name their session, so they pass the attach gate
-    // and disturb no cursor.
-    if (
-      event.type === "session_activity" ||
-      event.type === "sessions_changed" ||
-      event.type === "update_state"
-    ) {
+    if (UNGATED.has(event.type)) {
       this.options.onEvent(event);
       return;
     }

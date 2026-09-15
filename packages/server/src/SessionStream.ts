@@ -262,7 +262,8 @@ export class SessionStream {
     const tps = this.host.tps;
     const usage = this.host.usage();
     const cwd = this.host.cwd;
-    const { branch, dirtyCount, ahead, behind } = this.git.stateOf(cwd);
+    const { branch, dirtyCount, ahead, behind, revision } =
+      this.git.stateOf(cwd);
     const modelLabel = this.host.currentModelLabel;
     const turnElapsedMs =
       this.host.status === "idle" || this.turnStartedAt === 0
@@ -286,7 +287,9 @@ export class SessionStream {
             contextPercent: usage.percent,
             contextWindow: usage.contextWindow,
           }),
-      ...(branch === null ? {} : { branch, dirtyCount, ahead, behind }),
+      ...(branch === null
+        ? {}
+        : { branch, dirtyCount, ahead, behind, repoRevision: revision }),
     };
   }
 
@@ -434,6 +437,8 @@ export class SessionStream {
         });
         if (Tools.effectOf(event.toolName)?.kind !== "readOnly") {
           this.invalidatePickers("files");
+          // The tool just wrote the worktree, which `.git` never reports.
+          void this.git.refresh(this.host.cwd);
         }
         return;
       }

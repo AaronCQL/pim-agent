@@ -44,6 +44,7 @@ export class ClientConnection {
   private paused = false;
   private cursor = 0;
   private closed = false;
+  private reading = true;
   private watch: SubagentWatch | undefined;
 
   public constructor(ws: ServerWebSocket<undefined>) {
@@ -52,6 +53,11 @@ export class ClientConnection {
 
   public get sessionId(): string | undefined {
     return this.stream?.sessionId;
+  }
+
+  /** Whether the reader behind this socket is looking at the session right now. */
+  public get attentive(): boolean {
+    return this.reading;
   }
 
   /** Highest durable `seq` this client has been handed. */
@@ -66,15 +72,21 @@ export class ClientConnection {
 
   public async attach(
     stream: AttachableStream,
-    fromSeq: number
+    fromSeq: number,
+    attentive = true
   ): Promise<void> {
     this.detach();
     this.stream = stream;
     this.cursor = fromSeq;
+    this.reading = attentive;
     this.unsubscribe = stream.subscribe((event) => {
       this.onStreamEvent(event);
     });
     await this.sync();
+  }
+
+  public setAttentive(attentive: boolean): void {
+    this.reading = attentive;
   }
 
   /** Read a subagent's log alongside the attached session; at most one watch at a time. */

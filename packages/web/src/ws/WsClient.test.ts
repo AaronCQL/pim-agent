@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import type { ServerWebSocket } from "bun";
 import { join } from "node:path";
 import { flush } from "solid-js";
 
-import type { DurableEvent } from "#protocol/ServerEvent";
+import type { DurableEvent, ServerEvent } from "#protocol/ServerEvent";
+import { PROTOCOL_VERSION } from "#protocol/Protocol";
 import { SessionStore } from "../session/SessionStore";
 import { toRows } from "../transcript/rows";
 import {
@@ -13,9 +15,12 @@ import {
   TOOL_PROSE,
 } from "../test/gateway";
 import { until } from "#core/shared/fixtures/wait";
+import { WsClient } from "./WsClient";
 
 let harness: GatewayHarness;
 let stores: SessionStore[] = [];
+let recorder: FrameRecorder | undefined;
+let clients: WsClient[] = [];
 
 function open(
   options: { readonly sessionId?: string; readonly cwd?: string } = {}
@@ -62,6 +67,12 @@ afterEach(async () => {
     store.dispose();
   }
   stores = [];
+  for (const one of clients) {
+    one.close();
+  }
+  clients = [];
+  await recorder?.stop();
+  recorder = undefined;
   await harness.stop();
 });
 
@@ -400,7 +411,7 @@ test("switching sessions swaps the log and keeps the socket", async () => {
 
   // A session pi has not written a header for yet is not in the catalogue,
   // which is right: there is nothing there to resume.
-  const listed = await store.listSessions();
+  const { sessions: listed } = await store.listSessions();
   expect(listed.map((row) => row.sessionId)).toContain(first);
   expect(listed.every((row) => row.cwd === harness.tmp)).toBe(true);
   expect(second).not.toBe(first);
@@ -489,7 +500,7 @@ test("a new chat is the browser's alone until pi writes its first line", async (
   // and with an empty composer there is nothing to draw a row with either.
   expect(store.unwrittenSummary()).toBeUndefined();
   expect(
-    (await store.listSessions()).map((row) => row.sessionId)
+    (await store.listSessions()).sessions.map((row) => row.sessionId)
   ).not.toContain(first);
 
   store.setDraftText("say hello");
@@ -516,7 +527,7 @@ test("a new chat is the browser's alone until pi writes its first line", async (
   expect(store.localTitle(first)).toBe("say hello");
   await idle(store);
 
-  const listed = await store.listSessions();
+  const { sessions: listed } = await store.listSessions();
   flush();
   expect(listed.map((row) => row.sessionId)).toContain(first);
   // A second row for a session the listing has would be the same
@@ -548,7 +559,7 @@ test("a session sent to and left keeps its name against the real listing", async
   await until(() => store.state.sessionId !== first, "a second session");
   flush();
 
-  const listed = await store.listSessions();
+  const { sessions: listed } = await store.listSessions();
   flush();
   // Exactly what the sidebar paints, in the order it asks the questions.
   const row = listed.find((entry) => entry.sessionId === first);
@@ -569,7 +580,7 @@ test("`/clear` opens a session beside the one it was typed into", async () => {
   // still named, which is what a browser can offer that a terminal cannot.
   expect(store.state.durable).toEqual([]);
   expect(store.state.cwd).toBe(harness.tmp);
-  const listed = await store.listSessions();
+  const { sessions: listed } = await store.listSessions();
   expect(listed.find((row) => row.sessionId === first)?.title).toBe(
     "say hello"
   );
@@ -615,4 +626,181 @@ test("a directory that cannot be opened leaves the session being read alone", as
   await store.prompt("say hello");
   await idle(store);
   expect(store.state.durable.length).toBeGreaterThan(0);
+});
+
+type Frame = Record<string, unknown> & {
+  readonly type: string;
+  readonly id: string;
+};
+
+/**
+ * A server that answers every frame and keeps it. The gateway is the wrong
+ * instrument for what a client *declares*: it answers the same way whether the
+ * field arrived or not.
+ */
+class FrameRecorder {
+  private readonly frames: Frame[] = [];
+  private readonly sockets = new Set<ServerWebSocket<unknown>>();
+  private readonly server: ReturnType<typeof Bun.serve>;
+  /** Frames slipped in ahead of the next `attached`, which is the window a client gates on. */
+  public readonly ahead: ServerEvent[] = [];
+
+  public constructor() {
+    this.server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      idleTimeout: 0,
+      fetch: (request, self) =>
+        self.upgrade(request, { data: undefined })
+          ? undefined
+          : new Response("no", { status: 400 }),
+      websocket: {
+        open: (socket) => {
+          this.sockets.add(socket);
+        },
+        close: (socket) => {
+          this.sockets.delete(socket);
+        },
+        message: (socket, raw) => {
+          this.answer(socket, String(raw));
+        },
+      },
+    });
+  }
+
+  public get url(): string {
+    return `ws://127.0.0.1:${String(this.server.port)}`;
+  }
+
+  public of(type: string): readonly Frame[] {
+    return this.frames.filter((frame) => frame.type === type);
+  }
+
+  /** Hangs up on the client without stopping the server, so it reconnects. */
+  public drop(): void {
+    for (const socket of this.sockets) {
+      socket.close();
+    }
+  }
+
+  public async stop(): Promise<void> {
+    await this.server.stop(true);
+  }
+
+  private answer(socket: ServerWebSocket<unknown>, raw: string): void {
+    const frame = JSON.parse(raw) as Frame;
+    this.frames.push(frame);
+    if (frame.type === "attach") {
+      for (const event of this.ahead.splice(0)) {
+        socket.send(JSON.stringify(event));
+      }
+      socket.send(
+        JSON.stringify({
+          type: "attached",
+          protocolVersion: PROTOCOL_VERSION,
+          sessionId: "s1",
+          cwd: "/repo",
+          head: 0,
+          pimVersion: "1.2.3",
+          piVersion: "0.9.0",
+        })
+      );
+    }
+    socket.send(
+      JSON.stringify({ type: "response", id: frame.id, success: true })
+    );
+  }
+}
+
+function record(): FrameRecorder {
+  recorder = new FrameRecorder();
+  return recorder;
+}
+
+function client(
+  server: FrameRecorder,
+  onEvent: (event: ServerEvent) => void = () => {}
+): WsClient {
+  const one = new WsClient({
+    url: server.url,
+    sessionId: "s1",
+    onEvent,
+    backoffMs: () => 1,
+  });
+  clients.push(one);
+  return one;
+}
+
+test("a broadcast that lands inside the attach window is not dropped", async () => {
+  const server = record();
+  const seen: ServerEvent[] = [];
+  const one = client(server, (event) => {
+    seen.push(event);
+  });
+  // Everything the server says to every connection, rather than to this
+  // session: none of it is the old session's, and none of it comes again.
+  server.ahead.push(
+    { type: "session_meta", sessionId: "s2", archived: true },
+    { type: "project_meta", cwd: "/repo", pinned: true },
+    { type: "session_read", sessionId: "s2" },
+    { type: "sessions_changed" }
+  );
+
+  await one.connect();
+
+  expect(seen.map((event) => event.type)).toEqual([
+    "session_meta",
+    "project_meta",
+    "session_read",
+    "sessions_changed",
+    "attached",
+  ]);
+});
+
+test("a hidden tab stays hidden across a reconnect", async () => {
+  const server = record();
+  const one = client(server);
+  await one.connect();
+  expect(server.of("attach").at(-1)?.attentive).toBe(true);
+
+  one.setAttention(false);
+  await until(
+    () => server.of("attention").length === 1,
+    "the attention command"
+  );
+  expect(server.of("attention")[0]?.value).toBe(false);
+
+  server.drop();
+  await until(() => server.of("attach").length === 2, "the reconnect");
+  // The frame that would otherwise consume the turn this tab is not watching.
+  expect(server.of("attach").at(-1)?.attentive).toBe(false);
+});
+
+test("attention is declared on change and not repeated", async () => {
+  const server = record();
+  const one = client(server);
+  await one.connect();
+
+  one.setAttention(false);
+  one.setAttention(false);
+  one.setAttention(true);
+  await until(() => server.of("attention").length === 2, "both declarations");
+
+  expect(server.of("attention").map((frame) => frame.value)).toEqual([
+    false,
+    true,
+  ]);
+  expect(one.attentive).toBe(true);
+});
+
+test("attention declared while the socket is down rides the next attach", async () => {
+  const server = record();
+  const one = client(server);
+
+  one.setAttention(false);
+  await one.connect();
+
+  expect(server.of("attach").at(-1)?.attentive).toBe(false);
+  // Nothing was queued behind the socket: the attach frame said it instead.
+  expect(server.of("attention")).toEqual([]);
 });

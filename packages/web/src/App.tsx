@@ -245,7 +245,7 @@ export function Shell(props: {
                 ref={observeHeight(setInset)}
                 class={{
                   "pointer-events-none flex": true,
-                  "absolute right-[--scrollbar] bottom-0 left-0 justify-center bg-neutral-925 px-3 pt-10 pb-[max(0.75rem,env(safe-area-inset-bottom))]":
+                  "absolute right-[--scrollbar] bottom-0 left-0 justify-center bg-linear-to-t from-neutral-925 to-neutral-925/0 from-75% to-100% px-3 pt-10 pb-[max(0.75rem,env(safe-area-inset-bottom))]":
                     !showSplash(),
                   "absolute inset-0 items-center justify-center overflow-hidden px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]":
                     showSplash(),

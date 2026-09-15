@@ -131,7 +131,7 @@ async function appendEntry(
   );
 }
 
-/** A whole session file written by a process this server knows nothing about. */
+/** A whole session file written by a process this server knows nothing about; pi puts the file on disk with the opening message already in it, and a file without one is not a session anybody can see. */
 async function writeForeignSession(id: string, cwd: string): Promise<string> {
   const dir = join(agentDir, "sessions", "foreign");
   await mkdir(dir, { recursive: true });
@@ -146,6 +146,10 @@ async function writeForeignSession(id: string, cwd: string): Promise<string> {
       cwd,
     })}\n`
   );
+  await appendEntry(path, id, {
+    role: "user",
+    content: [{ type: "text", text: "say hello" }],
+  });
   return path;
 }
 
@@ -217,6 +221,7 @@ beforeEach(async () => {
     registry,
     port: 0,
     readCursorsPath: join(tmp, "read.json"),
+    sessionMetaPath: join(tmp, "sessions.json"),
     // Out of reach: what a foreign write reaches this server by has to be the
     // file watch, and a line arriving a second late is a line that was missed.
     pollMs: 60_000,

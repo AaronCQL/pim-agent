@@ -59,6 +59,7 @@ describe("createFooterWidget", () => {
       dirtyCount: 0,
       ahead: 0,
       behind: 0,
+      revision: "",
     };
     const monitor = new GitMonitor({ status: () => Promise.resolve(branch) });
     let renderRequests = 0;
@@ -82,7 +83,13 @@ describe("createFooterWidget", () => {
     expect(widget.render(80)).toEqual(["main"]);
     expect(renderRequests).toBe(1);
 
-    branch = { branch: "next", dirtyCount: 1, ahead: 1, behind: 0 };
+    branch = {
+      branch: "next",
+      dirtyCount: 1,
+      ahead: 1,
+      behind: 0,
+      revision: "next",
+    };
     await monitor.refresh("/repo");
 
     expect(widget.render(80)).toEqual(["next"]);

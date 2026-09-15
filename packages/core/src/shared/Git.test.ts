@@ -39,6 +39,7 @@ describe("parseGitStatus", () => {
       dirtyCount: 0,
       ahead: 0,
       behind: 0,
+      revision: expect.any(String),
     });
   });
 
@@ -59,6 +60,7 @@ describe("parseGitStatus", () => {
       dirtyCount: 2,
       ahead: 12,
       behind: 3,
+      revision: expect.any(String),
     });
   });
 
@@ -68,6 +70,7 @@ describe("parseGitStatus", () => {
       dirtyCount: 0,
       ahead: 0,
       behind: 0,
+      revision: expect.any(String),
     });
   });
 });
@@ -77,6 +80,19 @@ describe("fetchGitStatus", () => {
     const root = await tempRoot();
 
     expect(await Git.fetchStatus(root)).toEqual(Git.EMPTY);
+  });
+
+  test("moves the revision on an edit the count cannot see", async () => {
+    const root = await repo();
+    await Bun.write(join(root, "file.txt"), "two\n");
+    const dirty = await Git.fetchStatus(root);
+
+    await Bun.write(join(root, "file.txt"), "three\n");
+    const edited = await Git.fetchStatus(root);
+
+    expect(edited.dirtyCount).toBe(dirty.dirtyCount);
+    expect(edited.revision).not.toBe(dirty.revision);
+    expect((await Git.fetchStatus(root)).revision).toBe(edited.revision);
   });
 });
 
