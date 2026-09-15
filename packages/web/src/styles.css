@@ -267,9 +267,9 @@ button {
 }
 
 .pim-markdown blockquote {
-  border-left: 1.5px solid rgb(82 82 82);
+  border-left: 1.5px solid rgb(218 178 255);
   padding-left: calc(1.5ch - 0.75px);
-  color: rgb(163 163 163);
+  color: rgb(218 178 255);
 }
 
 .pim-markdown hr {
