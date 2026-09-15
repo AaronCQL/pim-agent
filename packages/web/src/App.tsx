@@ -26,6 +26,7 @@ import { Transcript } from "./transcript/Transcript";
 import { Topbar } from "./topbar/Topbar";
 import { createBottomPin, observeHeight } from "./ui/scroll";
 import { Drawer } from "./ui/Drawer";
+import { Fade } from "./ui/Fade";
 import { createBackGuard } from "./ui/history";
 import { createMediaQuery, DESKTOP } from "./ui/media";
 import { createViewportHeight } from "./ui/viewport";
@@ -85,7 +86,7 @@ export function Shell(props: {
     };
   });
   const pin = createBottomPin();
-  const [inset, setInset] = createSignal(0);
+  const [overlay, setOverlay] = createSignal(0);
   // An object rather than the string, so taking back the same words twice is two recalls.
   const [recalled, setRecalled] = createSignal<{ text: string }>();
 
@@ -152,16 +153,26 @@ export function Shell(props: {
       !reviewing() && !props.store.state.loading && !hasTranscript()
   );
 
+  /**
+   * How much of the transcript's foot the composer covers. Nothing under the
+   * splash, where the composer lies over the whole pane rather than its foot:
+   * charging its height there pads an empty transcript past its own scroller
+   * and raises a scrollbar over nothing.
+   */
+  const inset = createMemo((): number => (showSplash() ? 0 : overlay()));
+
   const viewportHeight = createViewportHeight();
 
   const Conversation = () => (
     <div
       ref={pin.ref}
       class={{
-        "flex h-full flex-col-reverse overflow-y-auto": true,
+        "isolate flex h-full flex-col-reverse overflow-y-auto": true,
         "[overflow-anchor:none]": pin.pinned(),
       }}
     >
+      {/* First in a reversed column is the foot of the transcript. */}
+      <Fade height={inset()} />
       <div
         class="mx-auto min-h-full w-full max-w-3xl flex-none space-y-[--line] p-3 leading-[--line]"
         style={{ "padding-bottom": `calc(${inset()}px + var(--line))` }}
@@ -259,10 +270,10 @@ export function Shell(props: {
               </Show>
 
               <div
-                ref={observeHeight(setInset)}
+                ref={observeHeight(setOverlay)}
                 class={{
                   "pointer-events-none flex": true,
-                  "absolute right-[--scrollbar] bottom-0 left-0 justify-center bg-linear-to-t from-neutral-925 to-neutral-925/0 from-75% to-100% px-3 pt-10 pb-[max(0.75rem,env(safe-area-inset-bottom))]":
+                  "absolute right-[--scrollbar] bottom-0 left-0 justify-center px-3 pt-10 pb-[max(0.75rem,env(safe-area-inset-bottom))]":
                     !showSplash(),
                   "absolute inset-0 items-center justify-center overflow-hidden px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]":
                     showSplash(),

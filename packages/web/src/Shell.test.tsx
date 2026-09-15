@@ -847,8 +847,11 @@ describe("the shell, painted from events alone", () => {
     expect(scroller.classList.contains("flex")).toBe(true);
     expect(scroller.classList.contains("flex-col-reverse")).toBe(true);
     expect(follows(scroller)).toBe(true);
-    expect(scroller.children).toHaveLength(1);
-    const content = scroller.firstElementChild!;
+    // Two items, and the reversed column puts the first of them at the foot:
+    // the fade the composer floats over, then the transcript above it.
+    expect(scroller.children).toHaveLength(2);
+    expect(scroller.firstElementChild!.className).toContain("sticky");
+    const content = scroller.lastElementChild!;
     expect(content.classList.contains("flex-none")).toBe(true);
     expect(content.classList.contains("min-h-full")).toBe(true);
     expect(

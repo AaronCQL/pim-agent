@@ -10,6 +10,7 @@ import {
 
 import type { Settings } from "../settings/Settings";
 import { ACTION, ICON, QUIET } from "../ui/classes";
+import { Fade } from "../ui/Fade";
 import { Menu, type MenuOption } from "../ui/Menu";
 import { observeWidth } from "../ui/scroll";
 import { CommitModal } from "./CommitModal";
@@ -161,64 +162,69 @@ export function DiffView(props: {
       {/* Isolated: the file bars inside stack against each other and the hunks
           they scroll over, and never against the composer floating over the
           foot of the same pane. */}
-      <div
-        ref={measure}
-        class="isolate min-h-0 flex-1 overflow-y-auto"
-        style={{ "padding-bottom": `${props.inset}px` }}
-      >
-        <Show when={props.diff.state.error}>
-          {(message) => (
-            <p class="px-3 py-2 text-sm whitespace-pre-wrap text-rose-400">
-              {message()}
+      <div ref={measure} class="isolate min-h-0 flex-1 overflow-y-auto">
+        {/* The foot the composer covers is padded here rather than on the
+            scroller: a stickily positioned box is held within its containing
+            block, and padding down there would hold the fade that much above
+            the edge it belongs on. */}
+        <div style={{ "padding-bottom": `${props.inset}px` }}>
+          <Show when={props.diff.state.error}>
+            {(message) => (
+              <p class="px-3 py-2 text-sm whitespace-pre-wrap text-rose-400">
+                {message()}
+              </p>
+            )}
+          </Show>
+          <Show
+            when={
+              props.diff.state.error === undefined &&
+              props.diff.state.status === "ready" &&
+              all() === 0
+            }
+          >
+            <p class="px-3 py-2 text-sm text-neutral-400">
+              Nothing has changed.
             </p>
-          )}
-        </Show>
-        <Show
-          when={
-            props.diff.state.error === undefined &&
-            props.diff.state.status === "ready" &&
-            all() === 0
-          }
-        >
-          <p class="px-3 py-2 text-sm text-neutral-400">Nothing has changed.</p>
-        </Show>
-        <For each={shown()} keyed={(file) => file.path}>
-          {(file) => (
-            <FileRow
-              file={file()}
-              state={props.diff.fileState(file().path)}
-              open={props.diff.isOpen(file().path)}
-              split={split()}
-              onToggle={() => {
-                props.diff.toggle(file().path);
-              }}
-              onOpen={(gap) => {
-                void props.diff.open(file().path, gap);
-              }}
-            />
-          )}
-        </For>
-        <Show when={all() > shown().length}>
-          <div class="flex items-center gap-2 px-3 py-2 text-sm text-neutral-400">
-            <span class="tabular-nums">
-              {shown().length} of {all()}
-            </span>
-            <button
-              type="button"
-              class={`${QUIET} ml-auto`}
-              onClick={() => {
-                setVisible((rows) => rows + PAGE);
-              }}
-            >
-              show more
-            </button>
-          </div>
-        </Show>
-        <Show when={props.diff.state.truncated}>
-          <p class="px-3 py-2 text-sm text-amber-400">
-            More files changed than this list holds.
-          </p>
-        </Show>
+          </Show>
+          <For each={shown()} keyed={(file) => file.path}>
+            {(file) => (
+              <FileRow
+                file={file()}
+                state={props.diff.fileState(file().path)}
+                open={props.diff.isOpen(file().path)}
+                split={split()}
+                onToggle={() => {
+                  props.diff.toggle(file().path);
+                }}
+                onOpen={(gap) => {
+                  void props.diff.open(file().path, gap);
+                }}
+              />
+            )}
+          </For>
+          <Show when={all() > shown().length}>
+            <div class="flex items-center gap-2 px-3 py-2 text-sm text-neutral-400">
+              <span class="tabular-nums">
+                {shown().length} of {all()}
+              </span>
+              <button
+                type="button"
+                class={`${QUIET} ml-auto`}
+                onClick={() => {
+                  setVisible((rows) => rows + PAGE);
+                }}
+              >
+                show more
+              </button>
+            </div>
+          </Show>
+          <Show when={props.diff.state.truncated}>
+            <p class="px-3 py-2 text-sm text-amber-400">
+              More files changed than this list holds.
+            </p>
+          </Show>
+        </div>
+        <Fade height={props.inset} />
       </div>
 
       <CommitModal
