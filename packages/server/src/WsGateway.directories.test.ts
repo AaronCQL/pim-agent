@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 
 import { SessionRegistry } from "#core/session/SessionRegistry";
-import { PROTOCOL_VERSION } from "#protocol/Protocol";
 import type { ServerEvent } from "#protocol/ServerEvent";
 import { ProbeClient } from "./ProbeClient";
 import { WsGateway } from "./WsGateway";
@@ -182,7 +181,6 @@ test("a new session opened `like` another runs its model in its directory", asyn
   // No cwd: the session being copied answers for that too.
   const response = await probe.send({
     type: "attach",
-    protocolVersion: PROTOCOL_VERSION,
     like: first,
     fromSeq: 0,
   });
@@ -203,7 +201,6 @@ test("a directory given alongside `like` is the one that wins", async () => {
   const mark = probe.events.length;
   await probe.send({
     type: "attach",
-    protocolVersion: PROTOCOL_VERSION,
     cwd: join(tmp, "elsewhere"),
     like: first,
     fromSeq: 0,
@@ -223,7 +220,6 @@ test("a `like` this server has never held opens the session anyway", async () =>
   const mark = probe.events.length;
   const response = await probe.send({
     type: "attach",
-    protocolVersion: PROTOCOL_VERSION,
     cwd,
     like: "00000000-0000-4000-8000-000000000000",
     fromSeq: 0,
@@ -245,7 +241,6 @@ test("a session cannot be opened in a directory that is not one", async () => {
 
   const response = await probe.send({
     type: "attach",
-    protocolVersion: PROTOCOL_VERSION,
     cwd: join(cwd, "README.md"),
     fromSeq: 0,
   });

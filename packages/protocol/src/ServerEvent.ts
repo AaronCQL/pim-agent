@@ -6,7 +6,6 @@ import type { LeaseFrontend } from "#core/session/SessionLease";
 import type { UpdateSkip } from "#core/shared/Updater";
 import type { NoticeSeverity, ToolView } from "#core/view/ViewBlock";
 import type { ChangeList, FileDiff, FileLines } from "./Diff";
-import type { ProtocolVersion } from "./Protocol";
 
 export type SessionStatus = "idle" | "thinking" | "streaming" | "tool";
 
@@ -95,11 +94,11 @@ export type UpdateStateEvent =
 export type EphemeralEvent =
   | {
       readonly type: "attached";
-      readonly protocolVersion: ProtocolVersion;
       readonly sessionId: string;
       readonly cwd: string;
       /** Highest durable `seq` at attach time; replay follows immediately. */
       readonly head: number;
+      /** The server's build; a client built from another one is stale and should reload. */
       readonly pimVersion: string;
       readonly piVersion: string;
     }

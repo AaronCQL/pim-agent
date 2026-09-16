@@ -12,7 +12,6 @@ import {
 import { flush, untrack } from "solid-js";
 
 import type { CommandDraft } from "#protocol/Command";
-import { PROTOCOL_VERSION } from "#protocol/Protocol";
 import type { ProjectView, SessionSummaryView } from "#protocol/ServerEvent";
 import { SessionStore } from "../session/SessionStore";
 import { mountPoint } from "../test/dom";
@@ -469,7 +468,6 @@ test("attaching to a session in a folded project unfolds nothing", async () => {
 
   store.ingest({
     type: "attached",
-    protocolVersion: PROTOCOL_VERSION,
     sessionId: "bbbbbbbb-2222",
     cwd: "/srv/other",
     head: 0,
@@ -693,7 +691,6 @@ test("a folded group keeps the session being read, and nothing else", async () =
 
   store.ingest({
     type: "attached",
-    protocolVersion: PROTOCOL_VERSION,
     sessionId: "s1",
     cwd: "/home/ada/dev/pim",
     head: 0,
@@ -1170,7 +1167,6 @@ test("a listed session with no title yet is named by its first message", async (
   // turn is still growing. The row has the message in hand either way.
   store.ingest({
     type: "attached",
-    protocolVersion: PROTOCOL_VERSION,
     sessionId: "bbbbbbbb-2222",
     cwd: "/srv/other",
     head: 0,
@@ -1219,7 +1215,6 @@ test("a running turn spins where the age would be", async () => {
 
   store.ingest({
     type: "attached",
-    protocolVersion: PROTOCOL_VERSION,
     sessionId: "aaaaaaaa-1111",
     cwd: "/home/ada/dev/pim",
     head: 12,
@@ -1317,7 +1312,6 @@ test("typing into a new chat leaves the rows around it standing", async () => {
 
   store.ingest({
     type: "attached",
-    protocolVersion: PROTOCOL_VERSION,
     sessionId: "draft-1",
     cwd: "/home/ada/dev/pim",
     head: 0,
@@ -1369,7 +1363,6 @@ test("switching moves the highlight without rebuilding the list", async () => {
 
   store.ingest({
     type: "attached",
-    protocolVersion: PROTOCOL_VERSION,
     sessionId: "bbbbbbbb-2222",
     cwd: "/srv/other",
     head: 0,

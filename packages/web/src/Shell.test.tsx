@@ -4,7 +4,6 @@ import { render } from "@solidjs/web";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { flush } from "solid-js";
 
-import { PROTOCOL_VERSION } from "#protocol/Protocol";
 import type { ServerEvent, SessionStatus } from "#protocol/ServerEvent";
 import { Shell } from "./App";
 import { baseName } from "./format";
@@ -18,7 +17,6 @@ import { fakeViewport } from "./test/viewport";
 function attached(sessionId = "s1"): ServerEvent {
   return {
     type: "attached",
-    protocolVersion: PROTOCOL_VERSION,
     sessionId,
     cwd: "/repo",
     head: 0,

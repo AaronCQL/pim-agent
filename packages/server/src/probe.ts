@@ -40,7 +40,6 @@ const USAGE = `pim probe — CLI client for pim-server, dumps every frame as JSO
                            without stopping it
   --wait                   keep streaming after the turn ends (Ctrl-C to stop)
   --quiet                  print only durable events
-  --protocol-version <n>   override the handshake version (to test rejection)
 `;
 
 const { values } = parseArgs({
@@ -67,7 +66,6 @@ const { values } = parseArgs({
     dequeue: { type: "boolean", default: false },
     wait: { type: "boolean", default: false },
     quiet: { type: "boolean", default: false },
-    "protocol-version": { type: "string" },
     help: { type: "boolean", default: false },
   },
   allowPositionals: false,
@@ -90,9 +88,6 @@ const probe = new ProbeClient({
   ...(values.session === undefined ? {} : { sessionId: values.session }),
   ...(values.cwd === undefined ? {} : { cwd: values.cwd }),
   fromSeq: Number(values["from-seq"]),
-  ...(values["protocol-version"] === undefined
-    ? {}
-    : { protocolVersion: Number(values["protocol-version"]) }),
   onEvent: dump,
 });
 

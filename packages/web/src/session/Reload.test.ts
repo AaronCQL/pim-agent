@@ -11,8 +11,8 @@ import {
 } from "bun:test";
 import { flush } from "solid-js";
 
-import { PROTOCOL_VERSION } from "#protocol/Protocol";
 import type { ServerEvent, UpdateStateEvent } from "#protocol/ServerEvent";
+import { version } from "../../../../package.json";
 import { Reload } from "./Reload";
 import { SessionStore } from "./SessionStore";
 
@@ -20,19 +20,25 @@ const URL = "ws://127.0.0.1:4319";
 const KEY = `pim.reload:${URL}`;
 const DISMISS_MS = 10_000;
 const TARGET = { sessionId: "s1", cwd: "/repo" };
+/** A server running the very build this bundle came from: nothing to nudge. */
 const ATTACHED: ServerEvent = {
   type: "attached",
-  protocolVersion: PROTOCOL_VERSION,
   ...TARGET,
   head: 0,
-  pimVersion: "1.2.3",
+  pimVersion: version,
   piVersion: "0.9.0",
+};
+/** The same server one release along, which this page was not built from. */
+const STALE_ATTACHED: ServerEvent = {
+  ...ATTACHED,
+  type: "attached",
+  pimVersion: "9.9.9",
 };
 const RESTARTING: UpdateStateEvent = {
   type: "update_state",
   phase: "restarting",
   from: "1.2.2",
-  to: "1.2.3",
+  to: version,
   skipped: [],
 };
 
@@ -63,7 +69,6 @@ test("intent survives one page reload, preserves the session, and toasts the run
   update.connection("open");
   update.connection("open");
   update.ingest(ATTACHED);
-  update.connection("outdated");
   expect(navigate).toHaveBeenCalledTimes(1);
   expect(sessionStorage.getItem(KEY)).not.toBeNull();
   update.dispose();
@@ -77,7 +82,7 @@ test("intent survives one page reload, preserves the session, and toasts the run
   expect(fresh.update.state.pending).toBe(false);
   expect(fresh.update.state.notice).toEqual({
     tone: "success",
-    text: "Restarted with pim 1.2.3.",
+    text: `Restarted with pim ${version}.`,
   });
   expect(sessionStorage.getItem(KEY)).toBeNull();
   jest.advanceTimersByTime(DISMISS_MS);
@@ -103,25 +108,60 @@ test("ordinary reconnects and attaches during an update never claim a completed 
   update.dispose();
 });
 
-test("a protocol refusal reloads only an intentional restart, never loops after navigation", () => {
+/**
+ * A build the page did not come from is a nudge, never a lockout: the only
+ * tab that navigates on its own is one that asked for the restart, and the
+ * rest are told which half is behind and left connected.
+ */
+test("a server on another build reloads only an intentional restart, and never loops", () => {
   const navigate = mock(() => {});
   const update = new Reload(URL, navigate);
-  update.connection("outdated");
+  update.ingest(STALE_ATTACHED);
   expect(navigate).not.toHaveBeenCalled();
   update.begin(TARGET);
-  update.connection("outdated");
+  update.ingest(STALE_ATTACHED);
   expect(navigate).toHaveBeenCalledTimes(1);
   update.dispose();
 
   const fresh = new Reload(URL, navigate);
-  fresh.connection("outdated");
+  fresh.ingest(STALE_ATTACHED);
   flush();
+  // The page reloaded once and came back to the same mismatch: say so and
+  // stop, rather than navigating into the same bundle again.
   expect(navigate).toHaveBeenCalledTimes(1);
   expect(fresh.state.pending).toBe(false);
-  expect(fresh.state.notice?.text).toContain("outdated");
+  expect(fresh.state.stale).toBe(true);
+  expect(fresh.state.notice?.tone).toBe("warning");
+  expect(fresh.state.notice?.text).toContain(`pim ${version}`);
+  expect(fresh.state.notice?.text).toContain("server runs 9.9.9");
   expect(sessionStorage.getItem(KEY)).toBeNull();
   fresh.refresh();
   expect(navigate).toHaveBeenCalledTimes(2);
+
+  // And a server that catches up clears the mark without a reload.
+  const synced = new Reload(URL, navigate);
+  synced.ingest(STALE_ATTACHED);
+  synced.ingest(ATTACHED);
+  flush();
+  expect(synced.state.stale).toBe(false);
+});
+
+test("a dropped socket does not re-raise a nudge the reader dismissed", () => {
+  const update = new Reload(URL, () => {});
+  update.ingest(STALE_ATTACHED);
+  flush();
+  expect(update.state.notice?.tone).toBe("warning");
+  update.dismiss();
+  flush();
+  expect(update.state.notice).toBeUndefined();
+
+  // A phone waking up re-attaches to the same mismatch it was already told about.
+  update.connection("reconnecting");
+  update.connection("open");
+  update.ingest(STALE_ATTACHED);
+  flush();
+  expect(update.state.stale).toBe(true);
+  expect(update.state.notice).toBeUndefined();
 });
 
 test("other tabs show broadcast progress but never acquire navigation intent", () => {
@@ -133,12 +173,32 @@ test("other tabs show broadcast progress but never acquire navigation intent", (
   update.ingest(RESTARTING);
   update.connection("reconnecting");
   update.connection("open");
-  update.ingest(ATTACHED);
+  // The restart someone else asked for landed on a newer server than this
+  // page was built from, which is the whole reason to tell this tab anything.
+  update.ingest(STALE_ATTACHED);
   flush();
   expect(navigate).not.toHaveBeenCalled();
   expect(sessionStorage.getItem(KEY)).toBeNull();
   expect(update.state.pending).toBe(false);
   expect(update.state.notice?.tone).toBe("warning");
+});
+
+test("a bystander whose build the restart did not move is left in peace", () => {
+  const navigate = mock(() => {});
+  const update = new Reload(URL, navigate);
+  update.ingest({ type: "update_state", phase: "step", label: "build" });
+  update.ingest(RESTARTING);
+  update.connection("reconnecting");
+  update.connection("open");
+  update.ingest(ATTACHED);
+  flush();
+  expect(navigate).not.toHaveBeenCalled();
+  // The spinner stops, but nothing asks for a reload that would change nothing.
+  expect(update.state.pending).toBe(false);
+  expect(update.state.notice).toBeUndefined();
+  jest.advanceTimersByTime(180_000);
+  flush();
+  expect(update.state.notice).toBeUndefined();
 });
 
 test("refusal and update failure clear intent and cancel the deadline", () => {
@@ -199,7 +259,7 @@ test("a note survives navigation and stays a success reporting the handshake, no
   fresh.ingest(ATTACHED);
   flush();
   expect(fresh.state.notice?.tone).toBe("success");
-  expect(fresh.state.notice?.text).toContain("pim 1.2.3");
+  expect(fresh.state.notice?.text).toContain(`pim ${version}`);
   expect(fresh.state.notice?.text).not.toContain("9.9.9");
   expect(fresh.state.notice?.text).toContain("Skipped git pull: dirty tree");
   jest.advanceTimersByTime(DISMISS_MS);

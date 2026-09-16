@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { flush } from "solid-js";
 
 import type { ToolView } from "#core/view/ViewBlock";
-import { PROTOCOL_VERSION } from "#protocol/Protocol";
 import type {
   ResponseEvent,
   SearchHitView,
@@ -55,7 +54,6 @@ function toolRow(target: SessionStore, callId: string): ToolRow | undefined {
 function attached(sessionId: string, head = 0): ServerEvent {
   return {
     type: "attached",
-    protocolVersion: PROTOCOL_VERSION,
     sessionId,
     cwd: "/repo",
     head,

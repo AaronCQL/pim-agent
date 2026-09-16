@@ -155,18 +155,25 @@ test("the shell paints progress and a dismissible result outside the modal", () 
 });
 
 /**
- * A refused socket leaves a tab running a client the server will not talk to.
- * The toast names that in words and asks for a refresh — no button of its own,
- * since the browser's own reload is the thing it is asking for.
+ * A tab left open across a release is painting a build the server no longer
+ * runs. The toast names both halves and asks for a refresh — no button of its
+ * own, since the browser's own reload is the thing it is asking for.
  */
-test("an outdated tab is told its client is stale", () => {
+test("a tab from another build is told which half is behind", () => {
   store.dispose();
   store = new SessionStore({ url: harness.url });
   const host = shell();
-  store.update.connection("outdated");
+  store.ingest({
+    type: "attached",
+    sessionId: "s1",
+    cwd: harness.tmp,
+    head: 0,
+    pimVersion: "9.9.9",
+    piVersion: "0.9.0",
+  });
   flush();
   const toast = host.querySelector('[role="status"]')!;
-  expect(toast.textContent).toContain("Client is outdated");
+  expect(toast.textContent).toContain("the server runs 9.9.9");
   expect(
     [...toast.querySelectorAll("button")].map((button) =>
       button.getAttribute("aria-label")

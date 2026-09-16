@@ -19,7 +19,6 @@ import { SubagentLogs } from "#core/shared/SubagentLogs";
 import type { UpdateOutcome } from "#core/shared/Updater";
 import type { Command } from "#protocol/Command";
 import type { ChangeList, FileDiff, FileLines } from "#protocol/Diff";
-import { CLOSE_PROTOCOL_MISMATCH, PROTOCOL_VERSION } from "#protocol/Protocol";
 import type {
   ModelView,
   ProjectView,
@@ -172,7 +171,9 @@ export class WsGateway {
       fetch: (req, server) => {
         const { pathname } = new URL(req.url);
         if (pathname === "/health") {
-          return Response.json({ ok: true, protocolVersion: PROTOCOL_VERSION });
+          return this.versions().then(([pimVersion]) =>
+            Response.json({ ok: true, pimVersion })
+          );
         }
         if (AttachmentEndpoint.owns(pathname)) {
           return this.uploads.handle(req);
@@ -246,19 +247,6 @@ export class WsGateway {
     }
     if (typeof command?.id !== "string" || typeof command?.type !== "string") {
       connection.send({ type: "error", message: "frame is not a command" });
-      return;
-    }
-    if (
-      command.type === "attach" &&
-      command.protocolVersion !== PROTOCOL_VERSION
-    ) {
-      connection.send({
-        type: "response",
-        id: command.id,
-        success: false,
-        error: `unsupported protocol version ${String(command.protocolVersion)}; this server speaks ${PROTOCOL_VERSION}`,
-      });
-      ws.close(CLOSE_PROTOCOL_MISMATCH, "protocol version mismatch");
       return;
     }
     try {
@@ -552,7 +540,6 @@ export class WsGateway {
     ]);
     connection.send({
       type: "attached",
-      protocolVersion: PROTOCOL_VERSION,
       sessionId: stream.sessionId,
       cwd: stream.host.cwd,
       head: await stream.refresh(),

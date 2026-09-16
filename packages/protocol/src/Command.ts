@@ -1,5 +1,4 @@
 import type { DiffBase, LineSpan } from "./Diff";
-import type { ProtocolVersion } from "./Protocol";
 
 /** A file already uploaded via `POST /upload`, by the id that endpoint answered with; never a client-local path. */
 export type AttachmentRef = {
@@ -12,7 +11,6 @@ export type Command =
   | {
       readonly id: string;
       readonly type: "attach";
-      readonly protocolVersion: ProtocolVersion;
       readonly sessionId?: string;
       readonly cwd?: string;
       /** Copy model, thinking level and cwd from this session; ignored when `sessionId` is set or the session is not held open. */

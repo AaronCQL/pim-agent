@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Type } from "typebox";
 
 import { makeRepo } from "#core/shared/fixtures/repo";
+import type { CommandDraft } from "#protocol/Command";
 import { SessionRegistry } from "#core/session/SessionRegistry";
 import { Tools, type PimToolDefinition } from "#core/shared/Tools";
 import {
@@ -1034,21 +1035,27 @@ test("session state carries context usage and the cwd's git branch", async () =>
   expect(usage?.type === "session_state" && usage.contextPercent).toBeNumber();
 });
 
-test("rejects a client speaking another protocol version", async () => {
-  const probe = new ProbeClient({
-    url: gateway.url,
-    cwd: tmp,
-    protocolVersion: 999,
-  });
+/**
+ * There is no version handshake: client and server ship together, and the
+ * only skew is a tab left open across a restart. So a client from another
+ * build must degrade to the features both halves know, never to a dead
+ * socket — the one command it asked for is refused, and it stays attached.
+ */
+test("a command this server does not know is refused without dropping the client", async () => {
+  const probe = new ProbeClient({ url: gateway.url, cwd: tmp });
   probes.push(probe);
+  const attached = await probe.connect();
+  expect(attached.success).toBe(true);
 
-  const response = await probe.connect();
+  const response = await probe.send({
+    type: "invented_by_a_newer_client",
+  } as unknown as CommandDraft);
   expect(response.success).toBe(false);
-  expect(response.error).toContain("unsupported protocol version 999");
-  expect(await probe.closed()).toEqual({
-    code: 4001,
-    reason: "protocol version mismatch",
-  });
+  expect(response.error).toContain("unknown command");
+
+  // Still a working client: the session it attached to still answers.
+  const after = await probe.send({ type: "attention", value: true });
+  expect(after.success).toBe(true);
 });
 
 test("refuses commands before an attach", async () => {
