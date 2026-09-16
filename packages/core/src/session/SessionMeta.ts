@@ -12,6 +12,8 @@ export type SessionEntry = {
 
 export type ProjectEntry = {
   readonly pinned?: boolean;
+  /** The sidebar group stands unfolded; absent is folded, which is where a project starts. */
+  readonly expanded?: boolean;
 };
 
 /** The pin flags and the order they are shown in, from one read of the file. */
@@ -101,6 +103,14 @@ export class SessionMeta {
       }
       return put(loaded.projects, cwd, { pinned });
     });
+  }
+
+  /**
+   * Folds a project's group, or unfolds it. Kept beside the pin rather than
+   * in the browser, so the fold a phone made is the fold a desktop opens to.
+   */
+  public setExpanded(cwd: string, expanded: boolean): Promise<void> {
+    return this.mutate((loaded) => put(loaded.projects, cwd, { expanded }));
   }
 
   /** Takes the whole order rather than a move, so two surfaces settle on the last one written. */
@@ -226,10 +236,10 @@ function parseSession(value: unknown): SessionEntry | undefined {
 
 function parseProject(value: unknown): ProjectEntry | undefined {
   const raw = Json.asRecord(value);
-  if (raw === undefined || !isFlag(raw.pinned)) {
+  if (raw === undefined || !isFlag(raw.pinned) || !isFlag(raw.expanded)) {
     return undefined;
   }
-  return onlySet({ pinned: raw.pinned });
+  return onlySet({ pinned: raw.pinned, expanded: raw.expanded });
 }
 
 function isFlag(value: unknown): value is boolean | undefined {

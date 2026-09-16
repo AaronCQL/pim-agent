@@ -102,7 +102,6 @@ export function Sidebar(props: {
 }) {
   const [answers, setAnswers] = createSignal<Answers>({});
   const [view, setView] = createSignal<View>("live");
-  const [opened, setOpened] = createSignal<Record<string, boolean>>({});
   const [pages, setPages] = createSignal<Pages>({});
   const [editing, setEditing] = createSignal<string>();
   const [choosing, setChoosing] = createSignal(false);
@@ -244,29 +243,16 @@ export function Sidebar(props: {
       .sort(byPinThenSettle);
   });
 
-  // Which project you are working in is the one thing a sidebar of ten
-  // collapsed lines has to answer without a click.
-  const opening = createMemo((): string | undefined => {
-    const here = props.store.state.cwd;
-    const all = groups();
-    return all.some((group) => group.cwd === here) ? here : all[0]?.cwd;
-  });
-
-  // Written down once rather than read live: a standing derivation is
-  // single-valued, so moving to a second project would fold the first behind
-  // you — a fold nobody asked for. Recorded, the open project is a fold like
-  // any other, and only a hand closes it.
-  createEffect(opening, (here) => {
-    if (here !== undefined) {
-      setOpened((was) => (here in was ? was : { ...was, [here]: true }));
-    }
-  });
-
-  const shown = (cwd: string): boolean => opened()[cwd] ?? false;
+  // The server's, not this tab's: a fold is a thing somebody did, so it
+  // outlives the reload that made this sidebar and reaches the other surface
+  // they are reading on. Nothing unfolds a group but a hand — navigating into
+  // a project leaves its neighbours exactly as they were left, and the row
+  // being read is drawn by a folded group anyway, so arriving somewhere is
+  // never arriving nowhere.
+  const shown = (cwd: string): boolean => props.store.isExpanded(cwd);
 
   const fold = (cwd: string): void => {
-    const open = shown(cwd);
-    setOpened((was) => ({ ...was, [cwd]: !open }));
+    attempt(() => props.store.setExpanded(cwd, !shown(cwd)));
   };
 
   // A count of files is not a count of rows — a session with nothing to call
@@ -470,7 +456,9 @@ export function Sidebar(props: {
                     fold(group().cwd);
                   }}
                   onNew={() => {
-                    setOpened((was) => ({ ...was, [group().cwd]: true }));
+                    // The row it is about to make would land under a folded
+                    // header; unfolding it is as much the press as the session is.
+                    attempt(() => props.store.setExpanded(group().cwd, true));
                     go(() => props.store.openDirectory(group().cwd));
                   }}
                 />

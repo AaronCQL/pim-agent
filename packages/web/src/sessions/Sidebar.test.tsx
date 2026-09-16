@@ -80,6 +80,8 @@ function paint(
     readonly archived?: readonly SessionSummaryView[];
     /** Directories the server already holds a pin for. */
     readonly pinned?: readonly string[];
+    /** Directories the server already holds unfolded; every other group starts closed. */
+    readonly expanded?: readonly string[];
     /** What the server refuses every mutating command with. */
     readonly refuse?: string;
   } = {}
@@ -93,6 +95,9 @@ function paint(
   // server keeps it, newest pin first, so a listing carries ranks and not only
   // flags.
   const pins: string[] = [...(options.pinned ?? [])];
+  // The fold is the server's too, and kept for the same reason: a test that
+  // opens a group and re-lists is asking whether the fold stuck.
+  const folds = new Set(options.expanded ?? []);
   store.client.send = async (draft) => {
     sent.push(draft);
     if (options.refuse === undefined) {
@@ -103,6 +108,13 @@ function paint(
         }
         if (draft.value) {
           pins.unshift(draft.cwd);
+        }
+      }
+      if (draft.type === "set_project_expanded") {
+        if (draft.value) {
+          folds.add(draft.cwd);
+        } else {
+          folds.delete(draft.cwd);
         }
       }
       if (draft.type === "set_pin_order") {
@@ -125,9 +137,11 @@ function paint(
         success: true,
         projects: (options.projects ?? counted(scope)).map((project) => {
           const rank = pins.indexOf(project.cwd);
-          return rank === -1
-            ? project
-            : { ...project, pinned: true as const, pinRank: rank };
+          return {
+            ...project,
+            ...(rank === -1 ? {} : { pinned: true as const, pinRank: rank }),
+            ...(folds.has(project.cwd) ? { expanded: true as const } : {}),
+          };
         }),
         sessions: (draft.perProject === undefined
           ? answered
@@ -440,13 +454,18 @@ test("groups stand in the order their newest session settled", async () => {
   expect(rows[1]?.textContent).toContain("a2");
 });
 
-test("the group holding the session being read opens, and folds nothing", async () => {
-  const { host, store } = paint();
+/**
+ * The fold answers to hands and to nothing else. Moving into a project used
+ * to unfold it, which meant the sidebar rearranged itself behind a reader who
+ * had arranged it already — and now that the server keeps the fold, that
+ * would have been a phone quietly reopening groups on a desktop. Arriving is
+ * still never arriving nowhere: a folded group draws the row being read.
+ */
+test("attaching to a session in a folded project unfolds nothing", async () => {
+  const { host, store, sent } = paint();
   await listed(host);
 
-  // Nothing attached yet: the newest project stands open, so the sidebar is
-  // never a wall of closed headers.
-  expect(unfolded(host)).toEqual([true, false]);
+  expect(unfolded(host)).toEqual([false, false]);
 
   store.ingest({
     type: "attached",
@@ -461,9 +480,56 @@ test("the group holding the session being read opens, and folds nothing", async 
   await Bun.sleep(0);
   flush();
 
-  // The project moved to opens itself; the one left behind was never folded
-  // by hand, so it stays as the reader left it.
-  expect(unfolded(host)).toEqual([true, true]);
+  expect(unfolded(host)).toEqual([false, false]);
+  // Nothing was said about the fold, so nothing was written down about it.
+  expect(sent.map((draft) => draft.type)).not.toContain("set_project_expanded");
+  // The session moved to is still on screen, under its own closed header.
+  expect(drawn(host, 1)).toHaveLength(1);
+  expect(drawn(host, 1)[0]).toContain("bbbbbbbb");
+});
+
+/**
+ * The fold is the server's, so it is the one thing about a sidebar that a
+ * reload cannot lose and a second surface cannot disagree about.
+ */
+test("a group unfolded by hand is written to the server and read back from it", async () => {
+  const { host, sent, store } = paint();
+  await listed(host);
+
+  click(heading(host, 1));
+  await Bun.sleep(0);
+  flush();
+
+  expect(sent.at(-1)).toEqual({
+    type: "set_project_expanded",
+    cwd: "/srv/other",
+    value: true,
+  });
+  expect(unfolded(host)).toEqual([false, true]);
+
+  // What another window folded: the broadcast is the whole word on it, and it
+  // moves this sidebar without a listing.
+  store.ingest({ type: "project_meta", cwd: "/srv/other", expanded: false });
+  flush();
+  expect(unfolded(host)).toEqual([false, false]);
+});
+
+/** A fold and a pin travel apart: neither broadcast may quietly clear the other. */
+test("a fold says nothing about the pin beside it", async () => {
+  const { host, store } = paint({ pinned: ["/srv/other"] });
+  await listed(host);
+
+  expect(where(host)).toEqual(["/srv/other", "~/dev/pim"]);
+
+  store.ingest({ type: "project_meta", cwd: "/srv/other", expanded: true });
+  flush();
+
+  expect(unfolded(host)).toEqual([true, false]);
+  // Still pinned, so still first, and still wearing the mark.
+  expect(where(host)).toEqual(["/srv/other", "~/dev/pim"]);
+  expect(
+    heading(host).querySelector('[aria-label="Pinned project"]')
+  ).not.toBeNull();
 });
 
 /** One project's worth of rows, newest first, each one named so the server would draw it. */
@@ -500,6 +566,7 @@ test("a group with more sessions than the page holds reads ten more per press", 
   const { host, sent } = paint({
     onNavigate: () => navigated.push(1),
     sessions: many(25),
+    expanded: ["/home/ada/dev/pim"],
   });
   await listed(host);
 
@@ -545,6 +612,7 @@ test("a directory that answers short retires the button", async () => {
   const { host } = paint({
     sessions: many(12),
     projects: [{ cwd: "/home/ada/dev/pim", count: 14 }],
+    expanded: ["/home/ada/dev/pim"],
   });
   await listed(host);
 
@@ -563,7 +631,7 @@ test("a directory that answers short retires the button", async () => {
  */
 test("a header's `+` starts a session in that directory and unfolds it", async () => {
   const navigated: number[] = [];
-  const { host, store } = paint({ onNavigate: () => navigated.push(1) });
+  const { host, store, sent } = paint({ onNavigate: () => navigated.push(1) });
   await listed(host);
   const opened: string[] = [];
   store.openDirectory = async (cwd?: string) => {
@@ -576,19 +644,28 @@ test("a header's `+` starts a session in that directory and unfolds it", async (
     ),
   ];
   expect(plus).toHaveLength(2);
-  expect(unfolded(host)).toEqual([true, false]);
+  expect(unfolded(host)).toEqual([false, false]);
 
   click(plus[1]!);
 
   expect(opened).toEqual(["/srv/other"]);
-  // The row it just made is under a header that was folded; both groups stand open.
-  expect(unfolded(host)).toEqual([true, true]);
+  // The row it just made would be under a folded header, so the press unfolds
+  // it — and that is a hand, so it is written down like any other.
+  expect(unfolded(host)).toEqual([false, true]);
+  expect(sent).toContainEqual({
+    type: "set_project_expanded",
+    cwd: "/srv/other",
+    value: true,
+  });
   expect(navigated).toEqual([1]);
 });
 
 test("opening and closing a group moves nothing but the group", async () => {
   const navigated: number[] = [];
-  const { host, switched } = paint({ onNavigate: () => navigated.push(1) });
+  const { host, switched } = paint({
+    onNavigate: () => navigated.push(1),
+    expanded: ["/home/ada/dev/pim"],
+  });
   await listed(host);
 
   click(heading(host, 1));
@@ -608,7 +685,10 @@ test("opening and closing a group moves nothing but the group", async () => {
  * project grows the list around it rather than redrawing it.
  */
 test("a folded group keeps the session being read, and nothing else", async () => {
-  const { host, store } = paint({ sessions: many(3) });
+  const { host, store } = paint({
+    sessions: many(3),
+    expanded: ["/home/ada/dev/pim"],
+  });
   await listed(host);
 
   store.ingest({
@@ -642,7 +722,7 @@ test("a folded group with nothing being read under it draws no rows at all", asy
   const { host } = paint();
   await listed(host);
 
-  expect(unfolded(host)).toEqual([true, false]);
+  expect(unfolded(host)).toEqual([false, false]);
   expect(drawn(host, 1)).toEqual([]);
 });
 
@@ -670,7 +750,7 @@ test("a pinned project stands above one answered in more recently", async () => 
   expect(where(host)).toEqual(["/srv/api", "/srv/other", "~/dev/pim"]);
   // A pin is worn open and folded alike: the top of the list is not the whole
   // of the mark, or a collapsed header would say nothing about why it is there.
-  expect(unfolded(host)).toEqual([true, false, false]);
+  expect(unfolded(host)).toEqual([false, false, false]);
   for (const index of [0, 1]) {
     expect(
       heading(host, index).querySelector('[aria-label="Pinned project"]')
@@ -855,7 +935,9 @@ test("a refused pin drops the project back where it was and says why", async () 
 });
 
 test("the header's `⋯` and a right-click open the project's verbs, and fold nothing", async () => {
-  const { host } = paint();
+  // One group open and one closed, so "fold nothing" has something to be
+  // untrue of in either direction.
+  const { host } = paint({ expanded: ["/home/ada/dev/pim"] });
   await listed(host);
 
   expect(unfolded(host)).toEqual([true, false]);
@@ -1012,7 +1094,10 @@ test("the header carries the app's own buttons and nothing about the socket", ()
 test("a new chat is a row before it is a file, marked and ageless", async () => {
   unwritten("draft-1");
   draft("draft-1", "rework the sidebar");
-  const { host } = paint();
+  // Unfolded, because this seeds the draft straight into storage and never
+  // attaches: a real new chat is the session being read, which a folded group
+  // draws anyway.
+  const { host } = paint({ expanded: ["/home/ada/dev/pim"] });
   await Bun.sleep(0);
   flush();
 

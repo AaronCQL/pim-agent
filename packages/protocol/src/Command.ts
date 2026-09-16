@@ -95,10 +95,13 @@ export type Command =
       readonly sessionId: string;
       readonly value: boolean;
     }
-  /** Pins a working directory, not a session; a pinned project sorts above every other. */
+  /**
+   * pim's own overrides on a working directory rather than a session: pinned
+   * sorts it above every other, expanded stands its sidebar group unfolded.
+   */
   | {
       readonly id: string;
-      readonly type: "set_project_pinned";
+      readonly type: "set_project_pinned" | "set_project_expanded";
       readonly cwd: string;
       readonly value: boolean;
     }

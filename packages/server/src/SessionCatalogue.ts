@@ -463,5 +463,8 @@ function projectsOf(
     ...(projects.get(cwd)?.pinned === true
       ? { pinned: true as const, pinRank: ranks.get(cwd) ?? 0 }
       : {}),
+    ...(projects.get(cwd)?.expanded === true
+      ? { expanded: true as const }
+      : {}),
   }));
 }

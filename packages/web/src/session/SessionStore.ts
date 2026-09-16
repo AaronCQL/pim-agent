@@ -120,6 +120,8 @@ export type SessionState = {
   pinned: Record<string, boolean>;
   /** Where each pinned project sorts, 0 first; the server owns it, so a directory it has nothing for is absent. */
   pinRank: Record<string, number>;
+  /** Projects whose sidebar group stands unfolded, keyed by absolute working directory. */
+  expanded: Record<string, boolean>;
   drafts: Record<string, string>;
   attachments: Record<string, readonly UploadedAttachment[]>;
   openings: Record<string, string>;
@@ -169,8 +171,8 @@ export type SessionSearch = {
   readonly scanned: number;
 };
 
-/** The flags a row draws from this store alone, each one a command away. */
-type FlagRecord = "archived" | "unread" | "pinned";
+/** The flags a row or a group draws from this store alone, each one a command away. */
+type FlagRecord = "archived" | "unread" | "pinned" | "expanded";
 
 const FILE_PICKER_LIMIT = 50;
 const COMMAND_PICKER_LIMIT = 20;
@@ -270,6 +272,7 @@ export class SessionStore {
       names: {},
       pinned: {},
       pinRank: {},
+      expanded: {},
       drafts: { ...drafts },
       attachments: {},
       openings: {},
@@ -789,6 +792,7 @@ export class SessionStore {
       // row of it: its pin is only ever said here.
       for (const project of response?.projects ?? []) {
         this.seed(draft, "pinned", project.cwd, project.pinned === true);
+        this.seed(draft, "expanded", project.cwd, project.expanded === true);
         // Under the pin's own key: a rank is half of the same guess, and a
         // listing computed before the pin reached the server carries neither.
         if (!this.guessed.has(`pinned:${project.cwd}`)) {
@@ -984,6 +988,25 @@ export class SessionStore {
   /** Where a pinned project sorts; a directory with no pin sorts after every one that has. */
   public pinRankOf(cwd: string): number {
     return this.state.pinRank[cwd] ?? Number.MAX_SAFE_INTEGER;
+  }
+
+  /** True when that project's sidebar group stands unfolded. Folded is where one starts. */
+  public isExpanded(cwd: string): boolean {
+    return this.state.expanded[cwd] ?? false;
+  }
+
+  /**
+   * Folds a project's group, or unfolds it. The server keeps it, so the fold
+   * survives a reload and every surface opens to the same sidebar.
+   */
+  public setExpanded(cwd: string, value: boolean): Promise<void> {
+    return this.flag(
+      { type: "set_project_expanded", cwd, value },
+      "expanded",
+      cwd,
+      value,
+      "the server refused the fold"
+    );
   }
 
   /** The name somebody wrote for the session, absent when it goes by its opening message. */
@@ -1332,7 +1355,13 @@ export class SessionStore {
         return;
       case "project_meta":
         this.setState((draft) => {
-          draft.pinned[event.cwd] = event.pinned;
+          // A patch: a fold says nothing about the pin beside it, and vice versa.
+          if (event.pinned !== undefined) {
+            draft.pinned[event.cwd] = event.pinned;
+          }
+          if (event.expanded !== undefined) {
+            draft.expanded[event.cwd] = event.expanded;
+          }
         });
         return;
       case "pins_changed":

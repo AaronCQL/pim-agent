@@ -348,6 +348,14 @@ export class WsGateway {
         // that arrived without a rank would sort by nothing until the next listing.
         this.broadcast({ type: "pins_changed", order: await this.meta.pins() });
         return {};
+      case "set_project_expanded":
+        await this.meta.setExpanded(command.cwd, command.value);
+        this.broadcast({
+          type: "project_meta",
+          cwd: command.cwd,
+          expanded: command.value,
+        });
+        return {};
       case "set_pin_order":
         await this.meta.setPinOrder(command.order);
         this.broadcast({ type: "pins_changed", order: await this.meta.pins() });

@@ -172,11 +172,16 @@ export type EphemeralEvent =
       readonly archived?: boolean;
       readonly unread?: boolean;
     }
-  /** Sent to every connection; keyed by absolute working directory, not by session. */
+  /**
+   * Sent to every connection; keyed by absolute working directory, not by
+   * session. A patch like `session_meta`: only what changed is said, so a
+   * fold carries no claim about the pin beside it.
+   */
   | {
       readonly type: "project_meta";
       readonly cwd: string;
-      readonly pinned: boolean;
+      readonly pinned?: boolean;
+      readonly expanded?: boolean;
     }
   /** Sent to every connection: the pinned projects, in the order they are shown. */
   | { readonly type: "pins_changed"; readonly order: readonly string[] }
@@ -248,6 +253,8 @@ export type ProjectView = {
   readonly pinned?: true;
   /** Where it sorts among the pinned, 0 first; absent unless it is pinned. */
   readonly pinRank?: number;
+  /** The sidebar group stands unfolded; absent is folded. */
+  readonly expanded?: true;
 };
 
 /**

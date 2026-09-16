@@ -323,17 +323,37 @@ test("tells every other connection what one of them changed", async () => {
   await one.setArchived(ONE, true);
   await one.markUnread(ONE, true);
   await one.setPinned(tmp, true);
+  await one.setExpanded(tmp, true);
   await one.rename(ONE, "Parser work");
 
   // No session file moved for three of these, so no `sessions_changed` will
   // follow them: this is the only word the other window gets.
-  await until(() => heard().length === 4, "the four broadcasts");
+  await until(() => heard().length === 5, "the five broadcasts");
   expect(heard()).toEqual([
     { type: "session_meta", sessionId: ONE, archived: true },
     { type: "session_meta", sessionId: ONE, unread: true },
     { type: "project_meta", cwd: tmp, pinned: true },
+    // A patch, like the `session_meta` rows above it: the fold says nothing
+    // about the pin it was just given, so neither can clear the other.
+    { type: "project_meta", cwd: tmp, expanded: true },
     { type: "session_meta", sessionId: ONE, name: "Parser work" },
   ]);
+});
+
+/** The fold is the server's, so a second window opens to the sidebar the first one arranged. */
+test("a listing carries the fold each project was left at", async () => {
+  await writeSession(ONE, minutesAgo(1));
+  const probe = await connect();
+
+  const folded = await probe.catalogue();
+  expect(folded.projects.map((project) => project.expanded)).toEqual([
+    undefined,
+  ]);
+
+  await probe.setExpanded(tmp, true);
+
+  const opened = await probe.catalogue();
+  expect(opened.projects.map((project) => project.expanded)).toEqual([true]);
 });
 
 test("refuses a name it cannot write, and changes nothing", async () => {

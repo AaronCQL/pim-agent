@@ -280,6 +280,11 @@ export class ProbeClient {
     return this.send({ type: "set_pin_order", order });
   }
 
+  /** Unfolds a working directory's sidebar group, or folds it. */
+  public setExpanded(cwd: string, value: boolean): Promise<ResponseEvent> {
+    return this.send({ type: "set_project_expanded", cwd, value });
+  }
+
   /** The model catalogue, plus this session's thinking levels; empty when unattached. */
   public async listModels(): Promise<{
     readonly models: readonly ModelView[];
