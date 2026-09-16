@@ -24,7 +24,7 @@ import { themeCliArgs } from "#tui/themes/themeCliArgs";
 // `_init` must stay first: it installs the runtime guard.
 const extensionFactories: readonly PimInlineExtension[] = [
   { name: "_init", factory: init },
-  ...CoreExtensions.list,
+  ...CoreExtensions.list("terminal"),
   { name: "command-picker", factory: commandPicker },
   { name: "file-picker", factory: filePicker },
   { name: "footer", factory: footer },

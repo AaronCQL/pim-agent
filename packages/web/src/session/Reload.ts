@@ -1,6 +1,7 @@
 import { createStore, type Store, type StoreSetter } from "solid-js";
 
 import type { ServerEvent, UpdateStateEvent } from "#protocol/ServerEvent";
+import { version } from "../../../../package.json";
 import type { AttachTarget, ConnectionStatus } from "../ws/WsClient";
 
 export type ReloadNotice = {
@@ -21,6 +22,8 @@ type State = {
   label: string;
   notice: ReloadNotice | undefined;
   dismissed: boolean;
+  /** Whether the server answers from a different build than this page was made from. */
+  stale: boolean;
 };
 
 const TIMEOUT_MS = 180_000;
@@ -29,10 +32,18 @@ const TIMEOUT_NOTICE: ReloadNotice = {
   tone: "warning",
   text: "Restart timed out. The server may still be updating; check it before trying again.",
 };
-const STALE_NOTICE: ReloadNotice = {
-  tone: "warning",
-  text: "Client is outdated. Refresh the page to use the latest client.",
-};
+
+/**
+ * Says which half is behind rather than assuming the page is: the server is a
+ * process that stays old until it restarts, while the bundle it serves is new
+ * the moment it is built, so either one can be the stale one.
+ */
+function staleNotice(server: string): ReloadNotice {
+  return {
+    tone: "warning",
+    text: `This page was built from pim ${version} but the server runs ${server}. Reload the page; if that does not settle it, restart the server.`,
+  };
+}
 
 /** Per-tab restart intent: only the tab that asked for it navigates. */
 export class Reload {
@@ -62,6 +73,7 @@ export class Reload {
       label: this.intent ? "Waiting for server…" : "",
       notice: expired ? TIMEOUT_NOTICE : undefined,
       dismissed: false,
+      stale: false,
     });
     this.state = state;
     this.setState = setState;
@@ -101,14 +113,6 @@ export class Reload {
     if (this.navigating) {
       return;
     }
-    if (status === "outdated") {
-      if (this.intent && this.intent.phase !== "loaded") {
-        this.refresh();
-      } else {
-        this.finish(STALE_NOTICE);
-      }
-      return;
-    }
     if (status === "reconnecting") {
       this.disconnected = true;
     }
@@ -117,7 +121,9 @@ export class Reload {
       if (this.intent?.phase === "restarting") {
         this.refresh();
       } else if (!this.intent && this.timer !== undefined) {
-        this.finish(STALE_NOTICE);
+        // A bystander watched someone else's restart land: stop waiting on it.
+        // Whether this page is now behind is the attach's answer, not this one's.
+        this.finish();
       }
     }
   }
@@ -128,6 +134,24 @@ export class Reload {
       return;
     }
     if (event.type === "attached") {
+      // The versions decide this, not the socket: a mismatched page still works,
+      // it is only painting a build the server no longer runs.
+      const stale = event.pimVersion !== version;
+      // Only the crossing is news: a dropped socket coming back must not
+      // re-raise a nudge the reader already dismissed.
+      const crossed = stale !== this.state.stale;
+      this.setState((state) => {
+        state.stale = stale;
+      });
+      if (stale) {
+        // Mid-restart the page is simply behind the server it just updated.
+        if (this.intent && this.intent.phase !== "loaded") {
+          this.refresh();
+        } else if (crossed) {
+          this.finish(staleNotice(event.pimVersion));
+        }
+        return;
+      }
       if (this.intent?.phase === "loaded") {
         const { skipped, blocking } = this.intent;
         this.finish({
@@ -218,7 +242,7 @@ export class Reload {
     );
   }
 
-  private finish(notice: ReloadNotice): void {
+  private finish(notice?: ReloadNotice): void {
     this.dispose();
     this.intent = undefined;
     this.persist();
@@ -228,7 +252,7 @@ export class Reload {
       state.notice = notice;
       state.dismissed = false;
     });
-    if (notice.tone === "success") {
+    if (notice?.tone === "success") {
       this.dismissTimer = setTimeout(() => this.dismiss(), DISMISS_MS);
     }
   }

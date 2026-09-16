@@ -1,11 +1,11 @@
 import type { DirectoryListing } from "#core/shared/Directories";
 import type { CommitResult, GitBranch } from "#core/shared/Git";
 import type { PickerItem } from "#core/picker/PickerItem";
+import type { SearchRange, SearchSnippet } from "#core/session/SearchIndex";
 import type { LeaseFrontend } from "#core/session/SessionLease";
 import type { UpdateSkip } from "#core/shared/Updater";
 import type { NoticeSeverity, ToolView } from "#core/view/ViewBlock";
 import type { ChangeList, FileDiff, FileLines } from "./Diff";
-import type { ProtocolVersion } from "./Protocol";
 
 export type SessionStatus = "idle" | "thinking" | "streaming" | "tool";
 
@@ -94,11 +94,11 @@ export type UpdateStateEvent =
 export type EphemeralEvent =
   | {
       readonly type: "attached";
-      readonly protocolVersion: ProtocolVersion;
       readonly sessionId: string;
       readonly cwd: string;
       /** Highest durable `seq` at attach time; replay follows immediately. */
       readonly head: number;
+      /** The server's build; a client built from another one is stale and should reload. */
       readonly pimVersion: string;
       readonly piVersion: string;
     }
@@ -171,12 +171,19 @@ export type EphemeralEvent =
       readonly archived?: boolean;
       readonly unread?: boolean;
     }
-  /** Sent to every connection; keyed by absolute working directory, not by session. */
+  /**
+   * Sent to every connection; keyed by absolute working directory, not by
+   * session. A patch like `session_meta`: only what changed is said, so a
+   * fold carries no claim about the pin beside it.
+   */
   | {
       readonly type: "project_meta";
       readonly cwd: string;
-      readonly pinned: boolean;
+      readonly pinned?: boolean;
+      readonly expanded?: boolean;
     }
+  /** Sent to every connection: the pinned projects, in the order they are shown. */
+  | { readonly type: "pins_changed"; readonly order: readonly string[] }
   /** Sent to every connection: the sessions on disk changed, so any listing a client holds is stale. */
   | { readonly type: "sessions_changed" }
   /** Sent to every connection; the restart it ends in drops every socket. */
@@ -243,6 +250,35 @@ export type ProjectView = {
   /** Every session in it the listing's scope allows, including the ones the cut dropped. */
   readonly count: number;
   readonly pinned?: true;
+  /** Where it sorts among the pinned, 0 first; absent unless it is pinned. */
+  readonly pinRank?: number;
+  /** The sidebar group stands unfolded; absent is folded. */
+  readonly expanded?: true;
+};
+
+/**
+ * One session a search matched. Deliberately not a `SessionSummaryView`: what
+ * a ranked list needs is why the row matched, and `unread` is the sidebar's
+ * triage, `pinned` is a project sort key a flat list has no use for, and
+ * `status` resolves itself the moment the session opens.
+ */
+export type SearchHitView = {
+  readonly sessionId: string;
+  readonly cwd: string;
+  /** Its name if it has one, else the clamped opening message; the digest's, so it agrees with the sidebar's. */
+  readonly title?: string;
+  /** Offsets into the clamped `title`, empty when the title did not match. */
+  readonly titleRanges: readonly SearchRange[];
+  /** The session's opening ask, for a row whose name is all that matched and so has no snippet to show. */
+  readonly opening?: string;
+  /** End of the last completed turn and the row's clock, never the file mtime; falls back to when the session started, as the sidebar's does. */
+  readonly settledAt: number;
+  /** Searched and found anyway: the badge that makes "archived are in scope" honest. */
+  readonly archived?: true;
+  /** What matched, in the words it was said in, each with its own ranges. */
+  readonly snippets: readonly SearchSnippet[];
+  /** Matching messages in this session, before the snippet cut. */
+  readonly total: number;
 };
 
 /** One model the server can be switched to, for the composer's model menu. */
@@ -265,6 +301,12 @@ export type ResponseEvent = {
   readonly sessions?: readonly SessionSummaryView[];
   /** The directories those sessions came from, for `list_sessions`. */
   readonly projects?: readonly ProjectView[];
+  /** The ranked sessions, for `search_sessions`. */
+  readonly hits?: readonly SearchHitView[];
+  /** Query words no session held, dropped so the rest could match, for `search_sessions`. */
+  readonly dropped?: readonly string[];
+  /** Sessions the query actually searched, for `search_sessions`. */
+  readonly scanned?: number;
   /** The model catalogue, for `list_models`. */
   readonly models?: readonly ModelView[];
   /** What the *current* model supports, on the same answer. */

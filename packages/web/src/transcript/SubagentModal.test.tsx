@@ -342,6 +342,7 @@ test("the child's bottom-origin layout leaves scrolling to the browser", async (
   )!;
   expect(scroller.classList.contains("flex")).toBe(true);
   expect(scroller.classList.contains("flex-col-reverse")).toBe(true);
+  expect(scroller.classList.contains("[overflow-anchor:none]")).toBe(true);
   expect(scroller.children).toHaveLength(1);
   expect(scroller.firstElementChild!.classList.contains("flex-none")).toBe(
     true
@@ -359,4 +360,5 @@ test("the child's bottom-origin layout leaves scrolling to the browser", async (
 
   expect(scroller.textContent).toContain("and one more thing");
   expect(scroller.scrollTop).toBe(-120);
+  expect(scroller.classList.contains("[overflow-anchor:none]")).toBe(false);
 });

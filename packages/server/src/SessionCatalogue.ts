@@ -1,8 +1,11 @@
 import { EventLog } from "#core/session/EventLog";
 import type { SessionDigest } from "#core/session/EventLog";
 import type { ReadCursors } from "#core/session/ReadCursors";
+import { SearchIndex } from "#core/session/SearchIndex";
+import type { SearchHit } from "#core/session/SearchIndex";
 import type {
   ProjectEntry,
+  Pinning,
   SessionEntry,
   SessionMeta,
 } from "#core/session/SessionMeta";
@@ -15,6 +18,7 @@ import { Pool } from "#core/shared/Pool";
 import type { Command } from "#protocol/Command";
 import type {
   ProjectView,
+  SearchHitView,
   ServerEvent,
   SessionStatus,
   SessionSummaryView,
@@ -36,6 +40,13 @@ export type SessionCatalogueDeps = {
 export type SessionListing = {
   readonly sessions: readonly SessionSummaryView[];
   readonly projects: readonly ProjectView[];
+};
+
+/** One search's whole answer: the ranked rows, the words nobody said, and the scope it read. */
+export type SessionSearch = {
+  readonly hits: readonly SearchHitView[];
+  readonly dropped: readonly string[];
+  readonly scanned: number;
 };
 
 const DEFAULT_SESSION_LIMIT = 50;
@@ -66,11 +77,13 @@ export class SessionCatalogue {
   private readonly activity = new Map<string, SessionStatus>();
   private readonly settled = new Map<string, number>();
   private readonly watches = new Map<string, () => void>();
+  private index: SearchIndex;
   private watching = false;
   private announcing: ReturnType<typeof setTimeout> | undefined;
 
   public constructor(deps: SessionCatalogueDeps) {
     this.deps = deps;
+    this.index = this.newIndex();
   }
 
   /**
@@ -99,10 +112,10 @@ export class SessionCatalogue {
   public async list(
     command: Command & { readonly type: "list_sessions" }
   ): Promise<SessionListing> {
-    const [summaries, overrides, pins] = await Promise.all([
+    const [summaries, overrides, pinning] = await Promise.all([
       this.deps.registry.list(command.cwd),
       this.deps.meta.sessions(),
-      this.deps.meta.projects(),
+      this.deps.meta.pinning(),
     ]);
     // Prune only on an unfiltered listing: a cwd-filtered one would forget every other directory.
     if (command.cwd === undefined) {
@@ -125,14 +138,42 @@ export class SessionCatalogue {
     return {
       sessions: await this.page(inScope, {
         overrides,
-        pins,
+        pins: pinning.projects,
         archived: scope,
         limit,
         // Absent, a project may fill the page; it is the page that bounds it either way.
         perProject: command.perProject ?? limit,
       }),
       // Counted before the cut, and over the whole scope: a collapsed group says how many it holds, and a row the cut dropped is one a client can still ask for.
-      projects: projectsOf(inScope, pins),
+      projects: projectsOf(inScope, pinning),
+    };
+  }
+
+  /**
+   * The index cannot see the sidecar, so the archived scope is a predicate it
+   * calls before its own limit, and the badge is a `Map.get` over the one read
+   * of `sessions.json` this query makes.
+   */
+  public async search(
+    command: Command & { readonly type: "search_sessions" }
+  ): Promise<SessionSearch> {
+    const overrides = await this.deps.meta.sessions();
+    const archivedOf = (sessionId: string): boolean =>
+      overrides.get(sessionId)?.archived === true;
+    const { hits, dropped, scanned } = await this.index.search(command.query, {
+      ...(command.limit === undefined ? {} : { limit: command.limit }),
+      ...(command.cwd === undefined ? {} : { cwd: command.cwd }),
+      ...(command.archived === undefined
+        ? {}
+        : {
+            accept: (sessionId: string) =>
+              archivedOf(sessionId) === command.archived,
+          }),
+    });
+    return {
+      hits: hits.map((hit) => hitOf(hit, archivedOf(hit.sessionId))),
+      dropped,
+      scanned,
     };
   }
 
@@ -170,6 +211,12 @@ export class SessionCatalogue {
     this.digests.clear();
     this.activity.clear();
     this.settled.clear();
+    this.index = this.newIndex();
+  }
+
+  /** One index per catalogue, and so one per session root; the registry's listing is the tree it follows. */
+  private newIndex(): SearchIndex {
+    return new SearchIndex({ list: () => this.deps.registry.list() });
   }
 
   /**
@@ -352,6 +399,21 @@ export class SessionCatalogue {
   }
 }
 
+/** The row the wire carries: the index's hit, plus the one thing about it only the sidecar knows. */
+function hitOf(hit: SearchHit, archived: boolean): SearchHitView {
+  return {
+    sessionId: hit.sessionId,
+    cwd: hit.cwd,
+    ...(hit.title === undefined ? {} : { title: hit.title }),
+    titleRanges: hit.titleRanges,
+    ...(hit.opening === undefined ? {} : { opening: hit.opening }),
+    settledAt: hit.settledAt,
+    ...(archived ? { archived: true as const } : {}),
+    snippets: hit.snippets,
+    total: hit.total,
+  };
+}
+
 /** A live session's own name wins over the file's: a rename lands on the row before the digest behind it expires. */
 function renamed(
   digest: SessionDigest,
@@ -388,15 +450,21 @@ function choose(
 /** Every working directory the scope holds sessions in, newest first; the count is the header scan's, so it owes nothing to the page. */
 function projectsOf(
   summaries: readonly SessionSummary[],
-  pins: Pins
+  { projects, order }: Pinning
 ): readonly ProjectView[] {
   const counts = new Map<string, number>();
   for (const { cwd } of summaries) {
     counts.set(cwd, (counts.get(cwd) ?? 0) + 1);
   }
+  const ranks = new Map(order.map((cwd, rank) => [cwd, rank]));
   return [...counts].map(([cwd, count]) => ({
     cwd,
     count,
-    ...(pins.get(cwd)?.pinned === true ? { pinned: true as const } : {}),
+    ...(projects.get(cwd)?.pinned === true
+      ? { pinned: true as const, pinRank: ranks.get(cwd) ?? 0 }
+      : {}),
+    ...(projects.get(cwd)?.expanded === true
+      ? { expanded: true as const }
+      : {}),
   }));
 }

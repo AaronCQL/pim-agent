@@ -1,11 +1,19 @@
 export const ICON =
   "flex size-8 shrink-0 items-center justify-center rounded-lg text-neutral-350 hover:bg-neutral-850 hover:text-neutral-50";
 
+const FIELD_PAINT = "bg-neutral-850 ring-1 ring-transparent";
+
 /** How a text field is painted, less the box it takes: for one written over something that sets its own. */
-export const FIELD_SKIN =
-  "bg-neutral-850 outline-none ring-1 ring-transparent focus:ring-neutral-600";
+export const FIELD_SKIN = `${FIELD_PAINT} outline-none focus:ring-neutral-600`;
 
 export const FIELD = `h-8 min-w-0 flex-1 rounded-lg px-3 text-sm ${FIELD_SKIN}`;
+
+/** A field that holds something besides its input — a leading icon, a trailing key — so the box rings for whatever inside it has focus. */
+export const FIELD_BOX = `flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg px-3 text-sm ${FIELD_PAINT} focus-within:ring-neutral-600`;
+
+/** The input inside a `FIELD_BOX`: the box draws everything, so this draws nothing. */
+export const FIELD_BARE =
+  "min-w-0 flex-1 bg-transparent outline-none placeholder:text-neutral-500";
 
 export const ACTION =
   "h-8 shrink-0 rounded-lg bg-indigo-500 px-3 text-sm font-semibold text-white hover:bg-indigo-400 disabled:bg-neutral-850 disabled:text-neutral-500";
@@ -31,3 +39,10 @@ export const CHIP_SEGMENT =
 /** A composer pill: dark and quiet until a pointer picks it out with a ring. */
 export const PILL =
   "flex items-center justify-center gap-1.5 rounded-full bg-neutral-900 text-neutral-350 ring-neutral-600 hover:text-neutral-100 hover:ring-1";
+
+/**
+ * The lift a list row takes under the caret. The pointer moves that caret as
+ * it passes, so hover and the keyboard are one reading and one fill: the keys
+ * take over from wherever the hand left off.
+ */
+export const ROW_ACTIVE = "bg-neutral-800";

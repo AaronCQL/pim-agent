@@ -22,6 +22,7 @@ import { unlink } from "node:fs/promises";
 import { CoreExtensions } from "../extensions/CoreExtensions";
 import { Directories } from "../shared/Directories";
 import { FuzzyMatcher, type FuzzyCandidate } from "../shared/FuzzyMatcher";
+import type { Surface } from "../shared/Surface";
 import { EventLog } from "./EventLog";
 import {
   SessionLease,
@@ -94,6 +95,8 @@ export type SessionHostDeps = {
   readonly mainSessionPath?: () => string;
   readonly isolatedSessionPath?: () => string;
   readonly systemInstruction?: () => Promise<string | undefined>;
+  /** Where this host's human is reading; surfaces in the system prompt's environment block. */
+  readonly surface?: Surface;
   readonly customTools?: (
     context: CustomToolContext
   ) => readonly ToolDefinition[];
@@ -729,7 +732,7 @@ export class SessionHost {
       agentDir: this.deps.agentDir,
       settingsManager,
       // Load core tools in-process: a disk-loaded copy registers views into a second `Tools`.
-      extensionFactories: CoreExtensions.gated(),
+      extensionFactories: CoreExtensions.gated(this.deps.surface),
       appendSystemPromptOverride: (base) => {
         return promptRef.wrapped ? [...base, promptRef.wrapped] : base;
       },

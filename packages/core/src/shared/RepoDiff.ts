@@ -112,6 +112,30 @@ async function read(
   return result.stdout;
 }
 
+/**
+ * Whether the branch checked out has a commit on it. A repository whose first
+ * commit is still unwritten has an unborn `HEAD`: it names nothing, and every
+ * `git diff HEAD` of it fails outright instead of calling the tree new.
+ */
+async function born(cwd: string): Promise<boolean> {
+  const head = await git(cwd, ["rev-parse", "--quiet", "--verify", "HEAD"]);
+  return head.code === 0;
+}
+
+/**
+ * The base an unborn `HEAD` is diffed against, so that every file reads as
+ * added. `hash-object` names git's empty tree without writing it, and names it
+ * right in a sha256 repository too, where the familiar `4b825dc…` is not it.
+ */
+async function emptyTree(cwd: string): Promise<string> {
+  const sha = await read(
+    cwd,
+    ["hash-object", "-t", "tree", "/dev/null"],
+    "could not name the empty tree"
+  );
+  return sha.trim();
+}
+
 /** What every `git diff` of this base is asked about; `branch` resolves to the merge base first. */
 async function baseArgs(
   cwd: string,
@@ -119,7 +143,7 @@ async function baseArgs(
 ): Promise<readonly string[]> {
   switch (base.kind) {
     case "worktree":
-      return ["HEAD"];
+      return (await born(cwd)) ? ["HEAD"] : [await emptyTree(cwd)];
     case "unstaged":
       return [];
     case "staged":
@@ -127,6 +151,10 @@ async function baseArgs(
     case "commit":
       return [base.ref];
     case "branch": {
+      // Nothing is shared with a branch when this one has no commits at all.
+      if (!(await born(cwd))) {
+        return [await emptyTree(cwd)];
+      }
       const merged = await read(
         cwd,
         ["merge-base", "HEAD", base.ref],

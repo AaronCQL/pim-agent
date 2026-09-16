@@ -19,10 +19,10 @@ import { SubagentLogs } from "#core/shared/SubagentLogs";
 import type { UpdateOutcome } from "#core/shared/Updater";
 import type { Command } from "#protocol/Command";
 import type { ChangeList, FileDiff, FileLines } from "#protocol/Diff";
-import { CLOSE_PROTOCOL_MISMATCH, PROTOCOL_VERSION } from "#protocol/Protocol";
 import type {
   ModelView,
   ProjectView,
+  SearchHitView,
   ServerEvent,
   SessionSummaryView,
 } from "#protocol/ServerEvent";
@@ -64,6 +64,9 @@ type Outcome = {
   readonly items?: readonly PickerItem[];
   readonly sessions?: readonly SessionSummaryView[];
   readonly projects?: readonly ProjectView[];
+  readonly hits?: readonly SearchHitView[];
+  readonly dropped?: readonly string[];
+  readonly scanned?: number;
   readonly models?: readonly ModelView[];
   readonly thinkingLevels?: readonly string[];
   readonly directory?: DirectoryListing;
@@ -168,7 +171,9 @@ export class WsGateway {
       fetch: (req, server) => {
         const { pathname } = new URL(req.url);
         if (pathname === "/health") {
-          return Response.json({ ok: true, protocolVersion: PROTOCOL_VERSION });
+          return this.versions().then(([pimVersion]) =>
+            Response.json({ ok: true, pimVersion })
+          );
         }
         if (AttachmentEndpoint.owns(pathname)) {
           return this.uploads.handle(req);
@@ -244,19 +249,6 @@ export class WsGateway {
       connection.send({ type: "error", message: "frame is not a command" });
       return;
     }
-    if (
-      command.type === "attach" &&
-      command.protocolVersion !== PROTOCOL_VERSION
-    ) {
-      connection.send({
-        type: "response",
-        id: command.id,
-        success: false,
-        error: `unsupported protocol version ${String(command.protocolVersion)}; this server speaks ${PROTOCOL_VERSION}`,
-      });
-      ws.close(CLOSE_PROTOCOL_MISMATCH, "protocol version mismatch");
-      return;
-    }
     try {
       const { error, after, ...answer } = await this.dispatch(
         connection,
@@ -298,6 +290,8 @@ export class WsGateway {
       }
       case "list_sessions":
         return await this.catalogue.list(command);
+      case "search_sessions":
+        return await this.catalogue.search(command);
       // The four below take a session this server may never have opened: a row
       // is archived or renamed from the sidebar without being attached to, so
       // none of them may reach for a stream. A sidecar write moves no session
@@ -338,6 +332,21 @@ export class WsGateway {
           cwd: command.cwd,
           pinned: command.value,
         });
+        // The flag and the place it takes are one fact to a sidebar; a pin
+        // that arrived without a rank would sort by nothing until the next listing.
+        this.broadcast({ type: "pins_changed", order: await this.meta.pins() });
+        return {};
+      case "set_project_expanded":
+        await this.meta.setExpanded(command.cwd, command.value);
+        this.broadcast({
+          type: "project_meta",
+          cwd: command.cwd,
+          expanded: command.value,
+        });
+        return {};
+      case "set_pin_order":
+        await this.meta.setPinOrder(command.order);
+        this.broadcast({ type: "pins_changed", order: await this.meta.pins() });
         return {};
       case "list_models":
         return {
@@ -531,7 +540,6 @@ export class WsGateway {
     ]);
     connection.send({
       type: "attached",
-      protocolVersion: PROTOCOL_VERSION,
       sessionId: stream.sessionId,
       cwd: stream.host.cwd,
       head: await stream.refresh(),

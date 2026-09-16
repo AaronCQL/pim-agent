@@ -3,12 +3,12 @@ import { basename } from "node:path";
 import type { PickerItem } from "#core/picker/PickerItem";
 import { RemoteFilePickerSuggestionEngine } from "#core/picker/RemoteFilePickerSuggestionEngine";
 import type { AttachmentRef, CommandDraft } from "#protocol/Command";
-import { PROTOCOL_VERSION } from "#protocol/Protocol";
 import {
   isDurableEvent,
   type ModelView,
   type ProjectView,
   type ResponseEvent,
+  type SearchHitView,
   type ServerEvent,
   type SessionSummaryView,
 } from "#protocol/ServerEvent";
@@ -23,8 +23,6 @@ export type ProbeOptions = {
   readonly attentive?: boolean;
   /** Called for every frame, in arrival order. */
   readonly onEvent?: (event: ServerEvent) => void;
-  /** Sent instead of the real one, to exercise version rejection. */
-  readonly protocolVersion?: number;
   /** Keystroke debounce for `files`; 0 makes tests deterministic. */
   readonly debounceMs?: number;
 };
@@ -38,6 +36,13 @@ export type SessionScope = {
   readonly limit?: number;
   /** Keep at most this many sessions per working directory. */
   readonly perProject?: number;
+};
+
+/** Which sessions a search is asking about; omitting `archived` searches them too. */
+export type SearchScope = {
+  readonly cwd?: string;
+  readonly archived?: boolean;
+  readonly limit?: number;
 };
 
 /** What `POST /upload` answers with, all of it server-side. */
@@ -70,9 +75,6 @@ export class ProbeClient {
   }>();
   private socket: WebSocket | undefined;
   private nextId = 0;
-  private closeInfo:
-    | { readonly code: number; readonly reason: string }
-    | undefined;
 
   public constructor(options: ProbeOptions) {
     this.options = options;
@@ -92,7 +94,6 @@ export class ProbeClient {
       this.receive(String(event.data));
     });
     socket.addEventListener("close", (event) => {
-      this.closeInfo = { code: event.code, reason: event.reason };
       for (const { reject } of this.pending.values()) {
         reject(new Error(`socket closed: ${event.code} ${event.reason}`));
       }
@@ -108,8 +109,6 @@ export class ProbeClient {
     });
     return await this.send({
       type: "attach",
-      protocolVersion: (this.options.protocolVersion ??
-        PROTOCOL_VERSION) as typeof PROTOCOL_VERSION,
       ...(this.sessionId === undefined ? {} : { sessionId: this.sessionId }),
       ...(this.options.cwd === undefined ? {} : { cwd: this.options.cwd }),
       ...(this.options.attentive === undefined
@@ -215,6 +214,32 @@ export class ProbeClient {
     };
   }
 
+  /** Searches every session on disk; an empty query warms the index and answers with no hits. */
+  public async search(
+    query: string,
+    scope: SearchScope = {}
+  ): Promise<{
+    readonly hits: readonly SearchHitView[];
+    readonly dropped: readonly string[];
+    readonly scanned: number;
+  }> {
+    const response = await this.send({
+      type: "search_sessions",
+      query,
+      ...(scope.cwd === undefined ? {} : { cwd: scope.cwd }),
+      ...(scope.archived === undefined ? {} : { archived: scope.archived }),
+      ...(scope.limit === undefined ? {} : { limit: scope.limit }),
+    });
+    if (!response.success) {
+      throw new Error(response.error ?? "search_sessions failed");
+    }
+    return {
+      hits: response.hits ?? [],
+      dropped: response.dropped ?? [],
+      scanned: response.scanned ?? 0,
+    };
+  }
+
   /** Names a session through pi's own name; `null` clears it back to its opening message. */
   public rename(
     sessionId: string,
@@ -239,6 +264,16 @@ export class ProbeClient {
   /** Pins a working directory, not a session. */
   public setPinned(cwd: string, value: boolean): Promise<ResponseEvent> {
     return this.send({ type: "set_project_pinned", cwd, value });
+  }
+
+  /** Re-orders the pinned directories; the whole order, pinned ones only. */
+  public setPinOrder(order: readonly string[]): Promise<ResponseEvent> {
+    return this.send({ type: "set_pin_order", order });
+  }
+
+  /** Unfolds a working directory's sidebar group, or folds it. */
+  public setExpanded(cwd: string, value: boolean): Promise<ResponseEvent> {
+    return this.send({ type: "set_project_expanded", cwd, value });
   }
 
   /** The model catalogue, plus this session's thinking levels; empty when unattached. */
@@ -311,17 +346,6 @@ export class ProbeClient {
       }, timeoutMs);
       timer.unref?.();
     });
-  }
-
-  /** Resolves when the socket closes, e.g. after a protocol rejection. */
-  public async closed(): Promise<{
-    readonly code: number;
-    readonly reason: string;
-  }> {
-    while (!this.closeInfo) {
-      await Bun.sleep(5);
-    }
-    return this.closeInfo;
   }
 
   /** Drops the socket without a close frame, the way a killed client would. */

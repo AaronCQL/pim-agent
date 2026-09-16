@@ -113,8 +113,10 @@ test("lists the trunk first and marks where the session stands", async () => {
   const host = await open();
 
   expect(names(host)).toEqual(["main", "feat/work"]);
-  expect(rows(host)[1]?.getAttribute("aria-selected")).toBe("false");
-  // The check is on the branch in force, which is the one navigation starts on.
+  // The check is on the branch in force, and the arrows start there rather
+  // than on the trunk, which Enter would check out.
+  expect(rows(host)[0]?.getAttribute("aria-selected")).toBe("false");
+  expect(rows(host)[1]?.getAttribute("aria-selected")).toBe("true");
   expect(
     rows(host)[1]?.querySelector(".i-griddy-icons\\:check")
   ).not.toBeNull();

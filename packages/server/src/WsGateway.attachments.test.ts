@@ -15,13 +15,12 @@ import { WsGateway } from "./WsGateway";
 
 const REPLY = "got it";
 /**
- * What `serve.ts` tells every session it hosts, verbatim. Copied rather than
- * imported because it is a fact about the deployment and not about any one
- * tool: `serve.ts` says where the user is, and `send_file` is one of the
- * things that follow from the answer being "a browser".
+ * What the web surface puts in every prompt's environment block, verbatim.
+ * Copied rather than imported because it is a fact about the deployment and
+ * not about any one tool: the surface says where the user is, and `send_file`
+ * is one of the things that follow from the answer being "a browser".
  */
-const BROWSER_INSTRUCTION =
-  "The user is interacting with you via a web browser.";
+const BROWSER_SURFACE = "- surface: web browser";
 /** What makes the model reach for `send_file` instead of just talking. */
 const ASK_TO_SEND = "send the chart";
 const CHART = "chart.png";
@@ -180,7 +179,7 @@ beforeEach(async () => {
         })
       ) as unknown as ToolDefinition,
     ],
-    systemInstruction: async () => BROWSER_INSTRUCTION,
+    surface: "web browser",
   });
   await registry.init();
   gateway = new WsGateway({
@@ -408,7 +407,7 @@ test("a file the agent sent is delivered as bytes the browser can fetch", async 
   // over rather than say where it wrote one — and on a terminal it would be
   // right. The instruction is what makes the tool worth reaching for, so it
   // has to be in the prompt the model actually answered.
-  expect(modelRequests.join("\n")).toContain(BROWSER_INSTRUCTION);
+  expect(modelRequests.join("\n")).toContain(BROWSER_SURFACE);
 
   const url = block?.kind === "attachment" ? block.url : "";
   const response = await fetch(`http://127.0.0.1:${gateway.port}${url}`);

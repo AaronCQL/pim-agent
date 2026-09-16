@@ -12,17 +12,36 @@ export type SessionEntry = {
 
 export type ProjectEntry = {
   readonly pinned?: boolean;
+  /** The sidebar group stands unfolded; absent is folded, which is where a project starts. */
+  readonly expanded?: boolean;
+};
+
+/** The pin flags and the order they are shown in, from one read of the file. */
+export type Pinning = {
+  /** Keyed by absolute cwd. */
+  readonly projects: ReadonlyMap<string, ProjectEntry>;
+  /** The pinned directories, in the order they are shown. */
+  readonly order: readonly string[];
 };
 
 type Stored = {
   readonly version: 1;
   readonly sessions: Record<string, SessionEntry>;
   readonly projects: Record<string, ProjectEntry>;
+  /**
+   * Where the pinned directories sort, and only that: `projects` stays the
+   * truth of whether one is pinned. An entry here that is not pinned is
+   * ignored and a pin it has never heard of still sorts, so a file written by
+   * a pim that predates the order — or by one that does not write it — needs
+   * no migration.
+   */
+  readonly pins: readonly string[];
 };
 
 type Loaded = {
   readonly sessions: Map<string, SessionEntry>;
   readonly projects: Map<string, ProjectEntry>;
+  pins: string[];
 };
 
 const NONE: SessionEntry = {};
@@ -51,6 +70,17 @@ export class SessionMeta {
     return (await this.read()).projects;
   }
 
+  /** The pinned directories in display order; a listing wants both halves, and this is one read for them. */
+  public async pinning(): Promise<Pinning> {
+    const loaded = await this.read();
+    return { projects: loaded.projects, order: ordered(loaded) };
+  }
+
+  /** The pinned directories in display order. */
+  public async pins(): Promise<readonly string[]> {
+    return ordered(await this.read());
+  }
+
   public setArchived(sessionId: string, archived: boolean): Promise<void> {
     return this.mutate((loaded) =>
       put(loaded.sessions, sessionId, { archived })
@@ -61,8 +91,36 @@ export class SessionMeta {
     return this.mutate((loaded) => put(loaded.sessions, sessionId, { unread }));
   }
 
+  /** A new pin goes to the top, where you have just put it; an old one leaves the order with the flag. */
   public setPinned(cwd: string, pinned: boolean): Promise<void> {
-    return this.mutate((loaded) => put(loaded.projects, cwd, { pinned }));
+    return this.mutate((loaded) => {
+      const at = loaded.pins.indexOf(cwd);
+      if (at !== -1) {
+        loaded.pins.splice(at, 1);
+      }
+      if (pinned) {
+        loaded.pins.unshift(cwd);
+      }
+      return put(loaded.projects, cwd, { pinned });
+    });
+  }
+
+  /**
+   * Folds a project's group, or unfolds it. Kept beside the pin rather than
+   * in the browser, so the fold a phone made is the fold a desktop opens to.
+   */
+  public setExpanded(cwd: string, expanded: boolean): Promise<void> {
+    return this.mutate((loaded) => put(loaded.projects, cwd, { expanded }));
+  }
+
+  /** Takes the whole order rather than a move, so two surfaces settle on the last one written. */
+  public setPinOrder(order: readonly string[]): Promise<void> {
+    return this.mutate((loaded) => {
+      loaded.pins = [...new Set(order)].filter(
+        (cwd) => loaded.projects.get(cwd)?.pinned === true
+      );
+      return true;
+    });
   }
 
   /** Drops the sessions that are gone; a pin outlives every session of its project. */
@@ -89,11 +147,14 @@ export class SessionMeta {
       await Fs.readJsonOr<unknown>(this.file, undefined)
     );
     if (raw?.version !== 1) {
-      return { sessions: new Map(), projects: new Map() };
+      return { sessions: new Map(), projects: new Map(), pins: [] };
     }
     return {
       sessions: parseAll(raw.sessions, parseSession),
       projects: parseAll(raw.projects, parseProject),
+      pins: Array.isArray(raw.pins)
+        ? raw.pins.filter((cwd) => typeof cwd === "string")
+        : [],
     };
   }
 
@@ -109,9 +170,25 @@ export class SessionMeta {
         version: 1,
         sessions: Object.fromEntries(loaded.sessions),
         projects: Object.fromEntries(loaded.projects),
+        pins: loaded.pins,
       } satisfies Stored);
     });
   }
+}
+
+/**
+ * The pinned directories in display order: the ones the stored order names,
+ * then any pin it has not heard of, by path. A duplicate in the order is
+ * taken once, at the first place it appears.
+ */
+function ordered({ projects, pins }: Loaded): readonly string[] {
+  const unplaced = new Set(
+    [...projects]
+      .filter(([, entry]) => entry.pinned === true)
+      .map(([cwd]) => cwd)
+  );
+  const listed = pins.filter((cwd) => unplaced.delete(cwd));
+  return [...listed, ...[...unplaced].sort()];
 }
 
 function put<T extends object>(
@@ -159,10 +236,10 @@ function parseSession(value: unknown): SessionEntry | undefined {
 
 function parseProject(value: unknown): ProjectEntry | undefined {
   const raw = Json.asRecord(value);
-  if (raw === undefined || !isFlag(raw.pinned)) {
+  if (raw === undefined || !isFlag(raw.pinned) || !isFlag(raw.expanded)) {
     return undefined;
   }
-  return onlySet({ pinned: raw.pinned });
+  return onlySet({ pinned: raw.pinned, expanded: raw.expanded });
 }
 
 function isFlag(value: unknown): value is boolean | undefined {

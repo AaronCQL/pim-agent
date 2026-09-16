@@ -1,18 +1,15 @@
 import type { CommandDraft } from "#protocol/Command";
-import { CLOSE_PROTOCOL_MISMATCH, PROTOCOL_VERSION } from "#protocol/Protocol";
 import {
   isDurableEvent,
   type ResponseEvent,
   type ServerEvent,
 } from "#protocol/ServerEvent";
 
-/** `outdated` is terminal: the server refused this client's protocol version. */
 export type ConnectionStatus =
   | "connecting"
   | "open"
   | "reconnecting"
-  | "closed"
-  | "outdated";
+  | "closed";
 
 /** Which session the client wants; an absent `sessionId` means "make me one". */
 export type AttachTarget = {
@@ -73,7 +70,6 @@ export class WsClient {
   private attention = true;
   /** Gate: frames between an `attach` and its `attached` belong to the old session. */
   private settled = false;
-  private outdated = false;
   private state: ConnectionStatus = "closed";
 
   public constructor(options: WsClientOptions) {
@@ -183,8 +179,8 @@ export class WsClient {
     socket.addEventListener("message", (event) => {
       this.receive(String((event as MessageEvent).data));
     });
-    socket.addEventListener("close", (event) => {
-      this.onClose(socket, (event as CloseEvent).code);
+    socket.addEventListener("close", () => {
+      this.onClose(socket);
     });
     return new Promise<void>((resolve, reject) => {
       socket.addEventListener("open", () => {
@@ -202,7 +198,6 @@ export class WsClient {
     this.settled = false;
     return this.send({
       type: "attach",
-      protocolVersion: PROTOCOL_VERSION,
       ...(this.target.sessionId === undefined
         ? {}
         : { sessionId: this.target.sessionId }),
@@ -213,7 +208,7 @@ export class WsClient {
     });
   }
 
-  private onClose(socket: WebSocket, code: number): void {
+  private onClose(socket: WebSocket): void {
     if (this.socket !== socket) {
       return;
     }
@@ -221,12 +216,6 @@ export class WsClient {
     this.rejectPending(new Error("socket closed"));
     if (this.disposed) {
       this.setStatus("closed");
-      return;
-    }
-    // A version refusal will repeat, so do not retry it.
-    if (code === CLOSE_PROTOCOL_MISMATCH) {
-      this.outdated = true;
-      this.setStatus("outdated");
       return;
     }
     this.setStatus("reconnecting");
@@ -241,7 +230,7 @@ export class WsClient {
   }
 
   private scheduleRetry(): void {
-    if (this.retry !== undefined || this.outdated) {
+    if (this.retry !== undefined) {
       return;
     }
     const attempt = ++this.attempt;

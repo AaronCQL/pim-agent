@@ -25,8 +25,7 @@ function create(args: ReadonlyArray<string>, runtime: AgentRuntime): Surface {
             SendFileTool.build({ store, cwd, sessionId })
           ) as ToolDefinition,
         ],
-        systemInstruction: async () =>
-          "The user is interacting with you via a web browser.",
+        surface: "web browser",
       });
       await registry.init();
 

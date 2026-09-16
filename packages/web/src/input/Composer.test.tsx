@@ -5,7 +5,6 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { createSignal, flush } from "solid-js";
 
 import type { PickerItem } from "#core/picker/PickerItem";
-import { PROTOCOL_VERSION } from "#protocol/Protocol";
 import type { ServerEvent } from "#protocol/ServerEvent";
 import { SessionStore } from "../session/SessionStore";
 import { mountPoint } from "../test/dom";
@@ -19,7 +18,6 @@ type Answer = (command: Command) => Promise<unknown> | unknown;
 function attached(sessionId = "s1"): ServerEvent {
   return {
     type: "attached",
-    protocolVersion: PROTOCOL_VERSION,
     sessionId,
     cwd: "/repo",
     head: 0,

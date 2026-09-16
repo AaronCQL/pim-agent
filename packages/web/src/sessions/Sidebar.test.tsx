@@ -12,7 +12,6 @@ import {
 import { flush, untrack } from "solid-js";
 
 import type { CommandDraft } from "#protocol/Command";
-import { PROTOCOL_VERSION } from "#protocol/Protocol";
 import type { ProjectView, SessionSummaryView } from "#protocol/ServerEvent";
 import { SessionStore } from "../session/SessionStore";
 import { mountPoint } from "../test/dom";
@@ -71,6 +70,7 @@ function counted(
 function paint(
   options: {
     readonly onNavigate?: () => void;
+    readonly onOpenSearch?: () => void;
     readonly onOpenSettings?: () => void;
     readonly unread?: readonly string[];
     readonly sessions?: readonly SessionSummaryView[];
@@ -79,6 +79,8 @@ function paint(
     readonly archived?: readonly SessionSummaryView[];
     /** Directories the server already holds a pin for. */
     readonly pinned?: readonly string[];
+    /** Directories the server already holds unfolded; every other group starts closed. */
+    readonly expanded?: readonly string[];
     /** What the server refuses every mutating command with. */
     readonly refuse?: string;
   } = {}
@@ -88,15 +90,38 @@ function paint(
   const sent: CommandDraft[] = [];
   const live = options.sessions ?? SESSIONS;
   // Kept, not merely answered: a pin is the server's to remember, and the
-  // listing that follows one is where a client learns it stuck.
-  const pins = new Set(options.pinned ?? []);
+  // listing that follows one is where a client learns it stuck. Ordered as the
+  // server keeps it, newest pin first, so a listing carries ranks and not only
+  // flags.
+  const pins: string[] = [...(options.pinned ?? [])];
+  // The fold is the server's too, and kept for the same reason: a test that
+  // opens a group and re-lists is asking whether the fold stuck.
+  const folds = new Set(options.expanded ?? []);
   store.client.send = async (draft) => {
     sent.push(draft);
-    if (draft.type === "set_project_pinned" && options.refuse === undefined) {
-      if (draft.value) {
-        pins.add(draft.cwd);
-      } else {
-        pins.delete(draft.cwd);
+    if (options.refuse === undefined) {
+      if (draft.type === "set_project_pinned") {
+        const at = pins.indexOf(draft.cwd);
+        if (at !== -1) {
+          pins.splice(at, 1);
+        }
+        if (draft.value) {
+          pins.unshift(draft.cwd);
+        }
+      }
+      if (draft.type === "set_project_expanded") {
+        if (draft.value) {
+          folds.add(draft.cwd);
+        } else {
+          folds.delete(draft.cwd);
+        }
+      }
+      if (draft.type === "set_pin_order") {
+        pins.splice(
+          0,
+          pins.length,
+          ...draft.order.filter((cwd) => pins.includes(cwd))
+        );
       }
     }
     if (draft.type === "list_sessions") {
@@ -109,11 +134,14 @@ function paint(
         type: "response",
         id: "1",
         success: true,
-        projects: (options.projects ?? counted(scope)).map((project) =>
-          pins.has(project.cwd)
-            ? { ...project, pinned: true as const }
-            : project
-        ),
+        projects: (options.projects ?? counted(scope)).map((project) => {
+          const rank = pins.indexOf(project.cwd);
+          return {
+            ...project,
+            ...(rank === -1 ? {} : { pinned: true as const, pinRank: rank }),
+            ...(folds.has(project.cwd) ? { expanded: true as const } : {}),
+          };
+        }),
         sessions: (draft.perProject === undefined
           ? answered
           : cut(answered, draft.perProject)
@@ -131,7 +159,7 @@ function paint(
             ...((options.unread ?? []).includes(session.sessionId)
               ? { unread: true }
               : {}),
-            ...(pins.has(session.cwd) ? { pinned: true as const } : {}),
+            ...(pins.includes(session.cwd) ? { pinned: true as const } : {}),
             ...(status === undefined || status === "idle" ? {} : { status }),
           };
         }),
@@ -150,6 +178,9 @@ function paint(
       <Sidebar
         store={store}
         {...(options.onNavigate ? { onNavigate: options.onNavigate } : {})}
+        {...(options.onOpenSearch
+          ? { onOpenSearch: options.onOpenSearch }
+          : {})}
         {...(options.onOpenSettings
           ? { onOpenSettings: options.onOpenSettings }
           : {})}
@@ -346,6 +377,14 @@ async function listed(host: HTMLElement): Promise<void> {
   }
 }
 
+/** A listing that changes no row: `listed` waits on rows, and these are drawn already. */
+async function relisted(): Promise<void> {
+  for (let hop = 0; hop < 20; hop += 1) {
+    await Promise.resolve();
+    flush();
+  }
+}
+
 test("the header uses the compact pixel wordmark with an accessible name", () => {
   const { host } = paint();
   const logo = host.querySelector("h1 img");
@@ -414,17 +453,21 @@ test("groups stand in the order their newest session settled", async () => {
   expect(rows[1]?.textContent).toContain("a2");
 });
 
-test("the group holding the session being read is the open one", async () => {
-  const { host, store } = paint();
+/**
+ * The fold answers to hands and to nothing else. Moving into a project used
+ * to unfold it, which meant the sidebar rearranged itself behind a reader who
+ * had arranged it already — and now that the server keeps the fold, that
+ * would have been a phone quietly reopening groups on a desktop. Arriving is
+ * still never arriving nowhere: a folded group draws the row being read.
+ */
+test("attaching to a session in a folded project unfolds nothing", async () => {
+  const { host, store, sent } = paint();
   await listed(host);
 
-  // Nothing attached yet: the newest project stands open, so the sidebar is
-  // never a wall of closed headers.
-  expect(unfolded(host)).toEqual([true, false]);
+  expect(unfolded(host)).toEqual([false, false]);
 
   store.ingest({
     type: "attached",
-    protocolVersion: PROTOCOL_VERSION,
     sessionId: "bbbbbbbb-2222",
     cwd: "/srv/other",
     head: 0,
@@ -435,7 +478,56 @@ test("the group holding the session being read is the open one", async () => {
   await Bun.sleep(0);
   flush();
 
+  expect(unfolded(host)).toEqual([false, false]);
+  // Nothing was said about the fold, so nothing was written down about it.
+  expect(sent.map((draft) => draft.type)).not.toContain("set_project_expanded");
+  // The session moved to is still on screen, under its own closed header.
+  expect(drawn(host, 1)).toHaveLength(1);
+  expect(drawn(host, 1)[0]).toContain("bbbbbbbb");
+});
+
+/**
+ * The fold is the server's, so it is the one thing about a sidebar that a
+ * reload cannot lose and a second surface cannot disagree about.
+ */
+test("a group unfolded by hand is written to the server and read back from it", async () => {
+  const { host, sent, store } = paint();
+  await listed(host);
+
+  click(heading(host, 1));
+  await Bun.sleep(0);
+  flush();
+
+  expect(sent.at(-1)).toEqual({
+    type: "set_project_expanded",
+    cwd: "/srv/other",
+    value: true,
+  });
   expect(unfolded(host)).toEqual([false, true]);
+
+  // What another window folded: the broadcast is the whole word on it, and it
+  // moves this sidebar without a listing.
+  store.ingest({ type: "project_meta", cwd: "/srv/other", expanded: false });
+  flush();
+  expect(unfolded(host)).toEqual([false, false]);
+});
+
+/** A fold and a pin travel apart: neither broadcast may quietly clear the other. */
+test("a fold says nothing about the pin beside it", async () => {
+  const { host, store } = paint({ pinned: ["/srv/other"] });
+  await listed(host);
+
+  expect(where(host)).toEqual(["/srv/other", "~/dev/pim"]);
+
+  store.ingest({ type: "project_meta", cwd: "/srv/other", expanded: true });
+  flush();
+
+  expect(unfolded(host)).toEqual([true, false]);
+  // Still pinned, so still first, and still wearing the mark.
+  expect(where(host)).toEqual(["/srv/other", "~/dev/pim"]);
+  expect(
+    heading(host).querySelector('[aria-label="Pinned project"]')
+  ).not.toBeNull();
 });
 
 /** One project's worth of rows, newest first, each one named so the server would draw it. */
@@ -472,6 +564,7 @@ test("a group with more sessions than the page holds reads ten more per press", 
   const { host, sent } = paint({
     onNavigate: () => navigated.push(1),
     sessions: many(25),
+    expanded: ["/home/ada/dev/pim"],
   });
   await listed(host);
 
@@ -517,6 +610,7 @@ test("a directory that answers short retires the button", async () => {
   const { host } = paint({
     sessions: many(12),
     projects: [{ cwd: "/home/ada/dev/pim", count: 14 }],
+    expanded: ["/home/ada/dev/pim"],
   });
   await listed(host);
 
@@ -535,7 +629,7 @@ test("a directory that answers short retires the button", async () => {
  */
 test("a header's `+` starts a session in that directory and unfolds it", async () => {
   const navigated: number[] = [];
-  const { host, store } = paint({ onNavigate: () => navigated.push(1) });
+  const { host, store, sent } = paint({ onNavigate: () => navigated.push(1) });
   await listed(host);
   const opened: string[] = [];
   store.openDirectory = async (cwd?: string) => {
@@ -548,19 +642,28 @@ test("a header's `+` starts a session in that directory and unfolds it", async (
     ),
   ];
   expect(plus).toHaveLength(2);
-  expect(unfolded(host)).toEqual([true, false]);
+  expect(unfolded(host)).toEqual([false, false]);
 
   click(plus[1]!);
 
   expect(opened).toEqual(["/srv/other"]);
-  // The row it just made is under a header that was folded; both groups stand open.
-  expect(unfolded(host)).toEqual([true, true]);
+  // The row it just made would be under a folded header, so the press unfolds
+  // it — and that is a hand, so it is written down like any other.
+  expect(unfolded(host)).toEqual([false, true]);
+  expect(sent).toContainEqual({
+    type: "set_project_expanded",
+    cwd: "/srv/other",
+    value: true,
+  });
   expect(navigated).toEqual([1]);
 });
 
 test("opening and closing a group moves nothing but the group", async () => {
   const navigated: number[] = [];
-  const { host, switched } = paint({ onNavigate: () => navigated.push(1) });
+  const { host, switched } = paint({
+    onNavigate: () => navigated.push(1),
+    expanded: ["/home/ada/dev/pim"],
+  });
   await listed(host);
 
   click(heading(host, 1));
@@ -580,12 +683,14 @@ test("opening and closing a group moves nothing but the group", async () => {
  * project grows the list around it rather than redrawing it.
  */
 test("a folded group keeps the session being read, and nothing else", async () => {
-  const { host, store } = paint({ sessions: many(3) });
+  const { host, store } = paint({
+    sessions: many(3),
+    expanded: ["/home/ada/dev/pim"],
+  });
   await listed(host);
 
   store.ingest({
     type: "attached",
-    protocolVersion: PROTOCOL_VERSION,
     sessionId: "s1",
     cwd: "/home/ada/dev/pim",
     head: 0,
@@ -614,7 +719,7 @@ test("a folded group with nothing being read under it draws no rows at all", asy
   const { host } = paint();
   await listed(host);
 
-  expect(unfolded(host)).toEqual([true, false]);
+  expect(unfolded(host)).toEqual([false, false]);
   expect(drawn(host, 1)).toEqual([]);
 });
 
@@ -642,7 +747,7 @@ test("a pinned project stands above one answered in more recently", async () => 
   expect(where(host)).toEqual(["/srv/api", "/srv/other", "~/dev/pim"]);
   // A pin is worn open and folded alike: the top of the list is not the whole
   // of the mark, or a collapsed header would say nothing about why it is there.
-  expect(unfolded(host)).toEqual([true, false, false]);
+  expect(unfolded(host)).toEqual([false, false, false]);
   for (const index of [0, 1]) {
     expect(
       heading(host, index).querySelector('[aria-label="Pinned project"]')
@@ -655,14 +760,94 @@ test("a pinned project stands above one answered in more recently", async () => 
   expect(heading(host, 2).innerHTML).not.toContain("i-griddy-icons:pin");
 
   // What another window pinned: no session file moved, so this broadcast is
-  // the whole word on it and the fold follows it without a listing.
+  // the whole word on it and the fold follows it without a listing. The flag
+  // and the place it takes travel together: a pin nobody has ranked yet sits
+  // at the foot of the pinned rather than jumping the ones already there.
   store.ingest({
     type: "project_meta",
     cwd: "/home/ada/dev/pim",
     pinned: true,
   });
   flush();
+  expect(where(host)).toEqual(["/srv/api", "/srv/other", "~/dev/pim"]);
+
+  store.ingest({
+    type: "pins_changed",
+    order: ["/home/ada/dev/pim", "/srv/api", "/srv/other"],
+  });
+  flush();
   expect(where(host)).toEqual(["~/dev/pim", "/srv/api", "/srv/other"]);
+});
+
+/**
+ * The complaint this answers: two pins that swapped places whenever a turn
+ * landed in one of them. A pin is an arrangement somebody made, and the clock
+ * is not allowed to undo it.
+ */
+test("pinned projects hold their order, whichever one was answered in last", async () => {
+  const sessions: SessionSummaryView[] = [
+    { sessionId: "a1", cwd: "/srv/api", createdAt: 0, settledAt: 100 },
+    { sessionId: "b1", cwd: "/srv/web", createdAt: 0, settledAt: 200 },
+  ];
+  const { host, store } = paint({
+    // Pinned in this order, and `/srv/web` is the one answered in since.
+    pinned: ["/srv/api", "/srv/web"],
+    sessions,
+  });
+  await listed(host);
+  expect(where(host)).toEqual(["/srv/api", "/srv/web"]);
+
+  // A turn lands in the lower one, which is exactly what used to move it.
+  sessions[0] = { ...sessions[0]!, settledAt: 1_000 };
+  sessions[1] = { ...sessions[1]!, settledAt: 2_000 };
+  store.ingest({ type: "sessions_changed" });
+  await relisted();
+
+  expect(where(host)).toEqual(["/srv/api", "/srv/web"]);
+});
+
+test("Move up swaps a pin with the one above it and sends the whole order", async () => {
+  const { host, sent, store } = paint({
+    pinned: ["/srv/api", "/srv/web"],
+    sessions: [
+      { sessionId: "a1", cwd: "/srv/api", createdAt: 0, settledAt: 100 },
+      { sessionId: "b1", cwd: "/srv/web", createdAt: 0, settledAt: 200 },
+    ],
+  });
+  await listed(host);
+
+  // The top one is already at the top: the verb is there, greyed, so the menu
+  // keeps its shape and `Move down` stays where the thumb left it.
+  click(projectMenu(host, 0));
+  expect(verbs(host).map((verb) => verb.textContent)).toEqual([
+    "Unpin project",
+    "Move up",
+    "Move down",
+  ]);
+  expect(verbs(host).map((verb) => verb.getAttribute("aria-disabled"))).toEqual(
+    [null, "true", null]
+  );
+  // And it refuses the press it is greyed for.
+  choose(host, "Move up");
+  expect(sent.at(-1)?.type).not.toBe("set_pin_order");
+  press(projectMenu(host, 0), "Escape");
+
+  click(projectMenu(host, 1));
+  choose(host, "Move up");
+
+  // The whole order, never a move: two windows settle on the last one sent.
+  expect(sent.at(-1)).toEqual({
+    type: "set_pin_order",
+    order: ["/srv/web", "/srv/api"],
+  });
+  // Guessed at, so the row moves under the thumb rather than after a listing.
+  expect(where(host)).toEqual(["/srv/web", "/srv/api"]);
+
+  // And the server's word for it lands on the same order.
+  store.ingest({ type: "sessions_changed" });
+  await relisted();
+  expect(where(host)).toEqual(["/srv/web", "/srv/api"]);
+  expect(store.pinOrder()).toEqual(["/srv/web", "/srv/api"]);
 });
 
 test("pinning a project lifts it at the press and keeps it through a re-list", async () => {
@@ -708,11 +893,17 @@ test("pinning a project lifts it at the press and keeps it through a re-list", a
   expect(
     heading(host).querySelector('[aria-label="Pinned project"]')
   ).not.toBeNull();
-  // And the verb reads back the other way.
+  // And the verb reads back the other way, beside the two that move it.
   click(projectMenu(host));
   expect(verbs(host).map((option) => option.textContent)).toEqual([
     "Unpin project",
+    "Move up",
+    "Move down",
   ]);
+  // The only pin there is, so it is both ends of the order at once.
+  expect(
+    verbs(host).map((option) => option.getAttribute("aria-disabled"))
+  ).toEqual([null, "true", "true"]);
   choose(host, "Unpin project");
   expect(sent.at(-1)).toEqual({
     type: "set_project_pinned",
@@ -741,7 +932,9 @@ test("a refused pin drops the project back where it was and says why", async () 
 });
 
 test("the header's `⋯` and a right-click open the project's verbs, and fold nothing", async () => {
-  const { host } = paint();
+  // One group open and one closed, so "fold nothing" has something to be
+  // untrue of in either direction.
+  const { host } = paint({ expanded: ["/home/ada/dev/pim"] });
   await listed(host);
 
   expect(unfolded(host)).toEqual([true, false]);
@@ -873,15 +1066,24 @@ test("a row's age follows the clock, not the next render", async () => {
  */
 test("the header carries the app's own buttons and nothing about the socket", () => {
   const opened: number[] = [];
-  const { host } = paint({ onOpenSettings: () => opened.push(1) });
+  const searched: number[] = [];
+  const { host } = paint({
+    onOpenSearch: () => searched.push(1),
+    onOpenSettings: () => opened.push(1),
+  });
   const header = host.querySelector("h1")!.closest("div")!.parentElement!;
   const labels = [...header.querySelectorAll("button")].map((button) =>
     button.getAttribute("aria-label")
   );
 
-  expect(labels).toEqual(["Settings"]);
+  // Search first: the settings gear is the least-pressed thing here.
+  expect(labels).toEqual(["Search sessions", "Settings"]);
   expect(host.textContent).not.toContain("127.0.0.1:1");
 
+  header
+    .querySelector<HTMLButtonElement>('[aria-label="Search sessions"]')!
+    .click();
+  expect(searched).toHaveLength(1);
   header.querySelector<HTMLButtonElement>('[aria-label="Settings"]')!.click();
   expect(opened).toHaveLength(1);
 });
@@ -889,7 +1091,10 @@ test("the header carries the app's own buttons and nothing about the socket", ()
 test("a new chat is a row before it is a file, marked and ageless", async () => {
   unwritten("draft-1");
   draft("draft-1", "rework the sidebar");
-  const { host } = paint();
+  // Unfolded, because this seeds the draft straight into storage and never
+  // attaches: a real new chat is the session being read, which a folded group
+  // draws anyway.
+  const { host } = paint({ expanded: ["/home/ada/dev/pim"] });
   await Bun.sleep(0);
   flush();
 
@@ -962,7 +1167,6 @@ test("a listed session with no title yet is named by its first message", async (
   // turn is still growing. The row has the message in hand either way.
   store.ingest({
     type: "attached",
-    protocolVersion: PROTOCOL_VERSION,
     sessionId: "bbbbbbbb-2222",
     cwd: "/srv/other",
     head: 0,
@@ -1011,7 +1215,6 @@ test("a running turn spins where the age would be", async () => {
 
   store.ingest({
     type: "attached",
-    protocolVersion: PROTOCOL_VERSION,
     sessionId: "aaaaaaaa-1111",
     cwd: "/home/ada/dev/pim",
     head: 12,
@@ -1109,7 +1312,6 @@ test("typing into a new chat leaves the rows around it standing", async () => {
 
   store.ingest({
     type: "attached",
-    protocolVersion: PROTOCOL_VERSION,
     sessionId: "draft-1",
     cwd: "/home/ada/dev/pim",
     head: 0,
@@ -1161,7 +1363,6 @@ test("switching moves the highlight without rebuilding the list", async () => {
 
   store.ingest({
     type: "attached",
-    protocolVersion: PROTOCOL_VERSION,
     sessionId: "bbbbbbbb-2222",
     cwd: "/srv/other",
     head: 0,
@@ -1416,6 +1617,31 @@ test("the footer opens the archived listing, and a row comes back from it", asyn
 });
 
 /**
+ * Having asked nothing is not the same as having been answered nothing, and a
+ * view that answered once comes back from what it answered rather than from
+ * the wire, so neither flip crosses an empty list on its way.
+ */
+test("a listing that has yet to answer claims nothing, and a seen one repaints at once", async () => {
+  const { host } = paint({ archived: [PUT_AWAY] });
+
+  expect(host.textContent).not.toContain("No sessions yet.");
+  await listed(host);
+
+  click(named(host, "Archived"));
+  expect(bodies(host)).toHaveLength(0);
+  expect(host.textContent).not.toContain("Nothing archived.");
+  expect(host.textContent).not.toContain("Modernise the string building");
+
+  await listed(host);
+  expect(host.textContent).toContain("Put away last week");
+
+  click(named(host, "Back to sessions"));
+  expect(host.textContent).toContain("Modernise the string building");
+  expect(host.textContent).not.toContain("No sessions yet.");
+  expect(host.textContent).not.toContain("Put away last week");
+});
+
+/**
  * With nothing listed there is no header to press, so the only way to start
  * anything is the one the empty list offers: a directory to start it in.
  */
@@ -1439,8 +1665,13 @@ test("the keyboard walks the menu and commits the row it stands on", async () =>
 
   const trigger = menu(host);
   click(trigger);
+  // It opens with nothing under the caret: the first verb lit at the open
+  // reads as the one about to happen.
+  expect(verbs(host).map((verb) => verb.getAttribute("aria-selected"))).toEqual(
+    ["false", "false", "false"]
+  );
   press(trigger, "ArrowDown");
-  expect(verbs(host)[1]?.getAttribute("aria-selected")).toBe("true");
+  expect(verbs(host)[0]?.getAttribute("aria-selected")).toBe("true");
   press(trigger, "End");
   expect(verbs(host)[2]?.getAttribute("aria-selected")).toBe("true");
   press(trigger, "Enter");

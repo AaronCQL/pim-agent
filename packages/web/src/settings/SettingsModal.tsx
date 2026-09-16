@@ -33,7 +33,7 @@ export function SettingsModal(props: {
     }
   );
 
-  const outdated = (): boolean => props.store.state.connection === "outdated";
+  const outdated = (): boolean => props.store.update.state.stale;
   const busy = (): number => props.store.runningIds().length;
   const pending = (): boolean => props.store.update.state.pending;
 
@@ -151,7 +151,7 @@ export function SettingsModal(props: {
               class={`${ACTION} flex items-center gap-2`}
               disabled={
                 pending() ||
-                !["open", "outdated"].includes(props.store.state.connection)
+                (!outdated() && props.store.state.connection !== "open")
               }
               onClick={restart}
             >
@@ -183,14 +183,16 @@ function Status(props: {
   const host = (): string =>
     URL.parse(props.settings.gateway())?.host ?? props.settings.gateway();
   const state = (): { readonly tone: string; readonly text: string } => {
+    // Staleness rides on a working connection now, so it answers before it.
+    if (props.store.update.state.stale) {
+      return {
+        tone: "text-amber-400",
+        text: `Connected to ${host()}, running pim ${props.store.state.pimVersion ?? "?"}`,
+      };
+    }
     switch (props.store.state.connection) {
       case "open":
         return { tone: "text-emerald-400", text: `Connected to ${host()}` };
-      case "outdated":
-        return {
-          tone: "text-slate-500",
-          text: "This tab is outdated — reload it",
-        };
       case "closed":
         return { tone: "text-neutral-500", text: "Not connected" };
       default:

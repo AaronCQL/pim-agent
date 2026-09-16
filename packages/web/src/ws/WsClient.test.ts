@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { flush } from "solid-js";
 
 import type { DurableEvent, ServerEvent } from "#protocol/ServerEvent";
-import { PROTOCOL_VERSION } from "#protocol/Protocol";
 import { SessionStore } from "../session/SessionStore";
 import { toRows } from "../transcript/rows";
 import {
@@ -697,7 +696,6 @@ class FrameRecorder {
       socket.send(
         JSON.stringify({
           type: "attached",
-          protocolVersion: PROTOCOL_VERSION,
           sessionId: "s1",
           cwd: "/repo",
           head: 0,

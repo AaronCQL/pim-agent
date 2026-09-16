@@ -16,6 +16,7 @@ import { GatewayOrigin } from "./session/Gateway";
 import { SessionStore } from "./session/SessionStore";
 import { Toast } from "./session/Toast";
 import { Sidebar } from "./sessions/Sidebar";
+import { SearchModal } from "./sessions/SearchModal";
 import { HideThinking, Settings } from "./settings/Settings";
 import { SettingsModal } from "./settings/SettingsModal";
 import { Skeleton } from "./transcript/Skeleton";
@@ -23,8 +24,9 @@ import { Splash } from "./transcript/Splash";
 import { SubagentModal } from "./transcript/SubagentModal";
 import { Transcript } from "./transcript/Transcript";
 import { Topbar } from "./topbar/Topbar";
-import { observeHeight } from "./ui/scroll";
+import { createBottomPin, observeHeight } from "./ui/scroll";
 import { Drawer } from "./ui/Drawer";
+import { Fade } from "./ui/Fade";
 import { createBackGuard } from "./ui/history";
 import { createMediaQuery, DESKTOP } from "./ui/media";
 import { createViewportHeight } from "./ui/viewport";
@@ -51,6 +53,7 @@ export function Shell(props: {
   const desktop = createMediaQuery(DESKTOP);
   const [sidebar, setSidebar] = createSignal(untrack(desktop));
   const [configuring, setConfiguring] = createSignal(false);
+  const [searching, setSearching] = createSignal(false);
   const [reviewing, setReviewing] = createSignal(false);
   const diff = new DiffStore(props.store);
   const comments = new Comments();
@@ -69,8 +72,21 @@ export function Shell(props: {
       comments.load(cwd);
     }
   );
-  let scroller: HTMLDivElement | undefined;
-  const [inset, setInset] = createSignal(0);
+  // The icon is the discoverable way in; this is for the fingers that already know.
+  onSettled(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setSearching(true);
+      }
+    };
+    globalThis.addEventListener("keydown", onKeyDown);
+    return () => {
+      globalThis.removeEventListener("keydown", onKeyDown);
+    };
+  });
+  const pin = createBottomPin();
+  const [overlay, setOverlay] = createSignal(0);
   // An object rather than the string, so taking back the same words twice is two recalls.
   const [recalled, setRecalled] = createSignal<{ text: string }>();
 
@@ -104,16 +120,10 @@ export function Shell(props: {
     });
   };
 
-  const jump = (): void => {
-    if (scroller) {
-      scroller.scrollTop = 0;
-    }
-  };
-
   /** Back to the transcript, at its end: where both a session switch and a sent message land. */
   const navigate = (): void => {
     converse();
-    jump();
+    pin.jump();
   };
 
   /** A review is over the moment it is sent, and the moment it is thrown away. */
@@ -143,15 +153,26 @@ export function Shell(props: {
       !reviewing() && !props.store.state.loading && !hasTranscript()
   );
 
+  /**
+   * How much of the transcript's foot the composer covers. Nothing under the
+   * splash, where the composer lies over the whole pane rather than its foot:
+   * charging its height there pads an empty transcript past its own scroller
+   * and raises a scrollbar over nothing.
+   */
+  const inset = createMemo((): number => (showSplash() ? 0 : overlay()));
+
   const viewportHeight = createViewportHeight();
 
   const Conversation = () => (
     <div
-      ref={(element: HTMLDivElement) => {
-        scroller = element;
+      ref={pin.ref}
+      class={{
+        "isolate flex h-full flex-col-reverse overflow-y-auto": true,
+        "[overflow-anchor:none]": pin.pinned(),
       }}
-      class="flex h-full flex-col-reverse overflow-y-auto"
     >
+      {/* First in a reversed column is the foot of the transcript. */}
+      <Fade height={inset()} />
       <div
         class="mx-auto min-h-full w-full max-w-3xl flex-none space-y-[--line] p-3 leading-[--line]"
         style={{ "padding-bottom": `calc(${inset()}px + var(--line))` }}
@@ -185,6 +206,9 @@ export function Shell(props: {
               <Sidebar
                 store={props.store}
                 onNavigate={navigate}
+                onOpenSearch={() => {
+                  setSearching(true);
+                }}
                 onOpenSettings={() => {
                   setConfiguring(true);
                 }}
@@ -206,6 +230,10 @@ export function Shell(props: {
                 onNavigate={() => {
                   setSidebar(false);
                   navigate();
+                }}
+                onOpenSearch={() => {
+                  setSidebar(false);
+                  setSearching(true);
                 }}
                 onOpenSettings={() => {
                   setSidebar(false);
@@ -242,10 +270,10 @@ export function Shell(props: {
               </Show>
 
               <div
-                ref={observeHeight(setInset)}
+                ref={observeHeight(setOverlay)}
                 class={{
                   "pointer-events-none flex": true,
-                  "absolute right-[--scrollbar] bottom-0 left-0 justify-center bg-linear-to-t from-neutral-925 to-neutral-925/0 from-75% to-100% px-3 pt-10 pb-[max(0.75rem,env(safe-area-inset-bottom))]":
+                  "absolute right-[--scrollbar] bottom-0 left-0 justify-center px-3 pt-10 pb-[max(0.75rem,env(safe-area-inset-bottom))]":
                     !showSplash(),
                   "absolute inset-0 items-center justify-center overflow-hidden px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]":
                     showSplash(),
@@ -281,6 +309,14 @@ export function Shell(props: {
             </div>
           </div>
           <SubagentModal store={props.store} />
+          <SearchModal
+            open={searching()}
+            store={props.store}
+            onNavigate={navigate}
+            onClose={() => {
+              setSearching(false);
+            }}
+          />
           <SettingsModal
             open={configuring()}
             store={props.store}

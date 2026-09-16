@@ -13,6 +13,7 @@ import { Lightbox } from "./Lightbox";
 import { Modal } from "./Modal";
 import { Menu } from "./Menu";
 import { Popover } from "./Popover";
+import { createBottomPin, type BottomPin } from "./scroll";
 
 type Nav = ReturnType<typeof createComboboxNavigation>;
 
@@ -28,7 +29,10 @@ function key(
   return event;
 }
 
-function navigation(count: number): {
+function navigation(
+  count: number,
+  enabled?: (index: number) => boolean
+): {
   readonly press: (name: string, modifiers?: Partial<KeyboardEvent>) => boolean;
   readonly nav: Nav;
   readonly selected: number[];
@@ -42,6 +46,7 @@ function navigation(count: number): {
       open: () => true,
       onSelect: (index) => selected.push(index),
       onDismiss: () => dismissed.push(1),
+      ...(enabled === undefined ? {} : { enabled }),
     })
   );
   // A browser delivers each keydown in its own task, which is when Solid 2
@@ -123,6 +128,59 @@ describe("combobox keyboard navigation", () => {
     expect(selected).toEqual([]);
   });
 
+  test("the caret steps over a dead row rather than resting on it", () => {
+    // A menu whose middle verb is greyed where it stands: `Move up` at the top
+    // of the pins, `Move down` at the foot.
+    const { press, nav, selected } = navigation(4, (index) => index % 2 === 0);
+
+    nav.setActiveIndex(-1);
+    flush();
+    press("ArrowDown");
+    expect(nav.activeIndex()).toBe(0);
+    press("ArrowDown");
+    expect(nav.activeIndex()).toBe(2);
+    // Wrapping skips it from the other side too.
+    press("ArrowDown");
+    expect(nav.activeIndex()).toBe(0);
+    press("ArrowUp");
+    expect(nav.activeIndex()).toBe(2);
+
+    // And both ends land on a verb that can be taken.
+    press("End");
+    expect(nav.activeIndex()).toBe(2);
+    press("Home");
+    expect(nav.activeIndex()).toBe(0);
+
+    press("Enter");
+    expect(selected).toEqual([0]);
+  });
+
+  test("a list of nothing but dead rows neither moves nor spins", () => {
+    const { press, nav, selected } = navigation(3, () => false);
+
+    // Opened by gesture, so nothing is under the caret to begin with.
+    nav.setActiveIndex(-1);
+    flush();
+    expect(press("ArrowDown")).toBe(true);
+    expect(nav.activeIndex()).toBe(-1);
+    expect(press("Enter")).toBe(false);
+    expect(selected).toEqual([]);
+  });
+
+  test("a menu opened with nothing lit takes the first row on the way down and the last on the way up", () => {
+    const { press, nav } = navigation(3);
+
+    nav.setActiveIndex(-1);
+    flush();
+    press("ArrowDown");
+    expect(nav.activeIndex()).toBe(0);
+
+    nav.setActiveIndex(-1);
+    flush();
+    press("ArrowUp");
+    expect(nav.activeIndex()).toBe(2);
+  });
+
   test("type-to-refine drops the active row back to the top", () => {
     // Built inside the root and driven outside it: a keypress is imperative,
     // and a root's body is a pure scope, where a write is a defect the dev
@@ -179,6 +237,35 @@ describe("combobox list", () => {
 
     rows[0]?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     expect(selected).toEqual([0]);
+  });
+
+  test("the pointer hands the caret over, and a dead row takes nothing", () => {
+    const host = mountPoint();
+    const activated: number[] = [];
+    render(
+      () => (
+        <Combobox
+          open
+          items={[{ label: "a.ts" }, { label: "b.ts", disabled: true }]}
+          activeIndex={0}
+          anchor={() => host}
+          onActivate={(index) => activated.push(index)}
+          onSelect={() => undefined}
+        />
+      ),
+      host
+    );
+    flush();
+
+    const rows = [...host.querySelectorAll('[role="option"]')];
+    // Hover and the keyboard are one reading, so the row the pointer crosses
+    // is the row the arrows go on from.
+    expect(rows[0]?.className).toContain("bg-neutral-800");
+    expect(rows[1]?.className).not.toContain("bg-neutral-800");
+
+    rows[1]?.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+    rows[0]?.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+    expect(activated).toEqual([-1, 0]);
   });
 
   test("a tag is parked at the row's right edge, after the label", () => {
@@ -1112,5 +1199,66 @@ describe("chip menu", () => {
     }
 
     expect(outstanding).toBe(0);
+  });
+});
+
+describe("bottom-origin scrollers", () => {
+  function bind(): {
+    readonly pin: BottomPin;
+    readonly scroller: HTMLElement;
+    readonly dispose: () => void;
+  } {
+    return createRoot((dispose) => {
+      const pin = createBottomPin();
+      const scroller = document.createElement("div");
+      pin.ref(scroller);
+      return { pin, scroller, dispose };
+    });
+  }
+
+  function scroll(element: HTMLElement, top: number): void {
+    element.scrollTop = top;
+    element.dispatchEvent(new Event("scroll"));
+    flush();
+  }
+
+  test("a fresh scroller follows, and reading back hands the position over", () => {
+    const { pin, scroller, dispose } = bind();
+    expect(pin.pinned()).toBe(true);
+
+    scroll(scroller, -120);
+    expect(pin.pinned()).toBe(false);
+
+    // Near the origin is at it: a wheel rarely settles on zero to the pixel.
+    scroll(scroller, -8);
+    expect(pin.pinned()).toBe(true);
+
+    dispose();
+  });
+
+  test("jumping, and a scroller mounted in its place, both follow again", async () => {
+    const { pin, scroller, dispose } = bind();
+
+    scroll(scroller, -400);
+    pin.jump();
+    flush();
+    expect(scroller.scrollTop).toBe(0);
+    expect(pin.pinned()).toBe(true);
+
+    scroll(scroller, -400);
+    pin.ref(document.createElement("div"));
+    await Promise.resolve();
+    flush();
+    expect(pin.pinned()).toBe(true);
+
+    dispose();
+  });
+
+  test("a disposed scroller stops reporting", () => {
+    const { pin, scroller, dispose } = bind();
+    dispose();
+
+    scroll(scroller, -400);
+    expect(pin.pinned()).toBe(true);
   });
 });

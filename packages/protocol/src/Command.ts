@@ -1,5 +1,4 @@
 import type { DiffBase, LineSpan } from "./Diff";
-import type { ProtocolVersion } from "./Protocol";
 
 /** A file already uploaded via `POST /upload`, by the id that endpoint answered with; never a client-local path. */
 export type AttachmentRef = {
@@ -12,7 +11,6 @@ export type Command =
   | {
       readonly id: string;
       readonly type: "attach";
-      readonly protocolVersion: ProtocolVersion;
       readonly sessionId?: string;
       readonly cwd?: string;
       /** Copy model, thinking level and cwd from this session; ignored when `sessionId` is set or the session is not held open. */
@@ -70,6 +68,17 @@ export type Command =
       /** List the archived sessions instead of the live ones. */
       readonly archived?: boolean;
     }
+  /** Ranked search over every session on disk, titles and what was said; an empty `query` warms the index and answers with no hits. */
+  | {
+      readonly id: string;
+      readonly type: "search_sessions";
+      readonly query: string;
+      readonly limit?: number;
+      /** Restrict to one working directory; omit for every session on disk. */
+      readonly cwd?: string;
+      /** Omitted, the archived are searched too and their hits say so; `false` leaves them out, `true` searches only them. */
+      readonly archived?: boolean;
+    }
   /** Names a session through pi's own `session_info`, so its terminal picker shows the name too; `null` clears it. */
   | {
       readonly id: string;
@@ -84,12 +93,21 @@ export type Command =
       readonly sessionId: string;
       readonly value: boolean;
     }
-  /** Pins a working directory, not a session; a pinned project sorts above every other. */
+  /**
+   * pim's own overrides on a working directory rather than a session: pinned
+   * sorts it above every other, expanded stands its sidebar group unfolded.
+   */
   | {
       readonly id: string;
-      readonly type: "set_project_pinned";
+      readonly type: "set_project_pinned" | "set_project_expanded";
       readonly cwd: string;
       readonly value: boolean;
+    }
+  /** Re-orders the pinned projects. The whole order, never a move: two surfaces settle on the last one sent. */
+  | {
+      readonly id: string;
+      readonly type: "set_pin_order";
+      readonly order: readonly string[];
     }
   /** The models this server can switch to, plus the current model's thinking levels; answers without a session. */
   | { readonly id: string; readonly type: "list_models" }

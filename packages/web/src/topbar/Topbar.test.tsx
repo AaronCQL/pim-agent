@@ -4,7 +4,6 @@ import { render } from "@solidjs/web";
 import { describe, expect, test } from "bun:test";
 import { flush } from "solid-js";
 
-import { CLOSE_PROTOCOL_MISMATCH, PROTOCOL_VERSION } from "#protocol/Protocol";
 import { SessionStore } from "../session/SessionStore";
 import { mountPoint } from "../test/dom";
 import { until } from "#core/shared/fixtures/wait";
@@ -14,7 +13,6 @@ function stocked(cwd: string, branch: string, dirtyCount = 3): SessionStore {
   const store = new SessionStore({ url: "ws://127.0.0.1:1" });
   store.ingest({
     type: "attached",
-    protocolVersion: PROTOCOL_VERSION,
     sessionId: "s1",
     cwd,
     head: 0,
@@ -106,47 +104,20 @@ describe("the disconnected mark", () => {
   });
 
   /**
-   * An outdated tab holds a socket the server refused on protocol version.
-   * The toast says so in words and the fix is a reload; a mark reading "not
-   * connected" would send the reader looking at their network instead.
+   * A tab from another build is still talking to the server perfectly well;
+   * only the toast asks for a reload. A mark reading "not connected" would
+   * send the reader looking at their network instead.
    */
-  test("stays away for a tab the server has refused", async () => {
-    const server = refusing();
-    const store = new SessionStore({ url: `ws://127.0.0.1:${server.port}` });
+  test("stays away for a tab running another build", () => {
+    // `stocked` attaches to a server on 1.2.3, which is not this bundle.
+    const store = stocked("/repo", "main");
     const host = paint(store, false);
-    await store.connect().catch(() => undefined);
-    await until(
-      () => store.state.connection === "outdated",
-      "the server to hang up"
-    );
     flush();
+    expect(store.update.state.stale).toBe(true);
     expect(mark(host)).toBeNull();
     store.dispose();
-    await server.stop(true);
   });
 });
-
-/** A newer server meeting an older client: answer, then refuse the version. */
-function refusing(): ReturnType<typeof Bun.serve> {
-  return Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    idleTimeout: 0,
-    fetch: (request, self) =>
-      self.upgrade(request, { data: undefined })
-        ? undefined
-        : new Response("no", { status: 400 }),
-    websocket: {
-      message: (socket, raw) => {
-        const { id } = JSON.parse(String(raw)) as { readonly id: string };
-        socket.send(
-          JSON.stringify({ type: "response", id, success: false, error: "old" })
-        );
-        socket.close(CLOSE_PROTOCOL_MISMATCH, "protocol version mismatch");
-      },
-    },
-  });
-}
 
 describe("the topbar's chips", () => {
   test("a wide row spells the whole path and the divergence", () => {

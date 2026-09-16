@@ -279,9 +279,8 @@ test("a file's title bar pins to the top of the list, opaque", async () => {
   expect(bar().className).toContain("top-0");
   expect(bar().className).toContain("bg-neutral-925");
   expect(bar().className).toMatch(/\bz-\d/);
-  const list = bar().parentElement?.parentElement as HTMLElement;
+  const list = bar().closest(".overflow-y-auto") as HTMLElement;
   expect(list.className).toContain("isolate");
-  expect(list.className).toContain("overflow-y-auto");
 
   rows(host)[0]?.click();
   await settle(() => host.textContent?.includes("THREE") === true, "the hunks");

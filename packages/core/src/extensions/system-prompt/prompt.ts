@@ -1,5 +1,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+import type { Surface } from "../../shared/Surface";
+
 type BuildOptions = {
   readonly model?: ExtensionContext["model"];
   readonly cwd: string;
@@ -12,6 +14,7 @@ type BuildOptions = {
   readonly appendSystemPrompt?: string;
   readonly customPrompt?: string;
   readonly os?: string;
+  readonly surface?: Surface;
 };
 
 type RunCommand = (cmd: ReadonlyArray<string>) => string | undefined;
@@ -40,7 +43,7 @@ export function buildSystemPrompt(opts: BuildOptions): string {
     sections.push(
       [
         "<system_instructions>",
-        "You are pim (Pi IMproved), a Bun-native, opinionated extension pack for the [pi agent harness](https://pi.dev/).",
+        "You are Pim (Pi IMproved), a batteries-included agent built on the Pi harness.",
         ...opts.toolGuidelines.map((g) => `- ${g}`),
         ...dynamicGuidelines().map((g) => `- ${g}`),
         "</system_instructions>",
@@ -57,6 +60,7 @@ export function buildSystemPrompt(opts: BuildOptions): string {
       `- cwd: ${opts.cwd}`,
       `- os: ${opts.os ?? describeOs()}`,
       `- model: ${model}`,
+      ...(opts.surface ? [`- surface: ${opts.surface}`] : []),
       `- datetime: ${formatDatetime(new Date())}`,
       "</environment>",
     ].join("\n")

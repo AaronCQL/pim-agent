@@ -14,6 +14,21 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toContain("- os: Ubuntu 24.04.2 LTS");
     expect(prompt).not.toContain("- platform:");
   });
+
+  test("names the surface the user is on, and omits it for a subagent", () => {
+    const options = {
+      cwd: "/repo",
+      contextFiles: [],
+      skillsBlock: "",
+      toolGuidelines: [],
+      os: "Ubuntu 24.04.2 LTS",
+    } as const;
+
+    expect(buildSystemPrompt({ ...options, surface: "web browser" })).toContain(
+      "- surface: web browser"
+    );
+    expect(buildSystemPrompt(options)).not.toContain("- surface:");
+  });
 });
 
 describe("describeOs", () => {
