@@ -11,14 +11,16 @@ import {
 } from "solid-js";
 
 import type { SearchRange, SearchSnippet } from "#core/session/SearchIndex";
-import type { SearchHitView } from "#protocol/ServerEvent";
+import { Format } from "#core/shared/Format";
+import type { SearchHitView, SessionSearch } from "#protocol/ServerEvent";
 import { baseName, relativeTime } from "../format";
-import type { SessionSearch, SessionStore } from "../session/SessionStore";
+import type { SessionStore } from "../session/SessionStore";
 import { FIELD_BARE, FIELD_BOX, ROW_ACTIVE } from "../ui/classes";
 import { createComboboxNavigation } from "../ui/Combobox";
 import { Marked } from "../ui/Marked";
 import { createMediaQuery, KEYBOARD } from "../ui/media";
 import { Modal } from "../ui/Modal";
+import { followActive } from "../ui/scroll";
 import { Spinner } from "../ui/Spinner";
 
 /** Shorter than this and a query is a keystroke rather than a question, so it never leaves the browser. */
@@ -50,7 +52,7 @@ type Row = {
 type Phase = "failed" | "prompt" | "waiting" | "empty" | "hits";
 
 function scopeOf(scanned: number): string {
-  return `${scanned} session${scanned === 1 ? "" : "s"}, including archived`;
+  return `${Format.count(scanned, "session")}, including archived`;
 }
 
 /** The index building, or a query in flight: the same ring either way. */
@@ -280,15 +282,10 @@ export function SearchModal(props: {
     onDismiss: props.onClose,
   });
 
-  createEffect(
-    () => ({ index: navigation.activeIndex(), open: props.open }),
-    ({ index, open }) => {
-      if (open) {
-        list
-          ?.querySelector(`[data-index="${index}"]`)
-          ?.scrollIntoView({ block: "nearest" });
-      }
-    }
+  followActive(
+    () => list,
+    navigation.activeIndex,
+    () => props.open
   );
 
   return (

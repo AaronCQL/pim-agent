@@ -4,10 +4,9 @@ import { render } from "@solidjs/web";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createSignal, flush, type Accessor } from "solid-js";
 
-import type { SearchHitView } from "#protocol/ServerEvent";
+import type { SearchHitView, SessionSearch } from "#protocol/ServerEvent";
 import { until } from "#core/shared/fixtures/wait";
 import { Shell } from "../App";
-import type { SessionSearch } from "../session/SessionStore";
 import { SessionStore } from "../session/SessionStore";
 import { Settings } from "../settings/Settings";
 import { mountPoint } from "../test/dom";

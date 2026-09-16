@@ -655,22 +655,19 @@ export class WsGateway {
   }
 
   private isAttached(sessionId: string): boolean {
-    for (const connection of this.connections.values()) {
-      if (connection.sessionId === sessionId) {
-        return true;
-      }
-    }
-    return false;
+    return this.connections
+      .values()
+      .some((connection) => connection.sessionId === sessionId);
   }
 
   // The TUI never attaches, so reading a session there clears no dot here and a turn it runs trips no mark.
   private isBeingRead(sessionId: string): boolean {
-    for (const connection of this.connections.values()) {
-      if (connection.sessionId === sessionId && connection.attentive) {
-        return true;
-      }
-    }
-    return false;
+    return this.connections
+      .values()
+      .some(
+        (connection) =>
+          connection.sessionId === sessionId && connection.attentive
+      );
   }
 
   private broadcast(event: ServerEvent): void {

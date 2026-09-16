@@ -20,7 +20,6 @@ export type RowMenuItem = {
 export type RowMenuControl = {
   /** `at` is where the gesture landed; the panel drops from there. */
   readonly open: (at: Point) => void;
-  readonly close: () => void;
 };
 
 /**
@@ -91,7 +90,6 @@ export function RowMenu(props: {
       setAt(where);
       panel.toggle();
     },
-    close: panel.close,
   });
 
   return (

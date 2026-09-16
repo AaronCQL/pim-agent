@@ -4,7 +4,6 @@ import type { ReadCursors } from "#core/session/ReadCursors";
 import { SearchIndex } from "#core/session/SearchIndex";
 import type { SearchHit } from "#core/session/SearchIndex";
 import type {
-  ProjectEntry,
   Pinning,
   SessionEntry,
   SessionMeta,
@@ -20,6 +19,8 @@ import type {
   ProjectView,
   SearchHitView,
   ServerEvent,
+  SessionListing,
+  SessionSearch,
   SessionStatus,
   SessionSummaryView,
 } from "#protocol/ServerEvent";
@@ -36,19 +37,6 @@ export type SessionCatalogueDeps = {
   readonly announce: (event: ServerEvent) => void;
 };
 
-/** The rows the page kept, and every directory the same scope holds sessions in. */
-export type SessionListing = {
-  readonly sessions: readonly SessionSummaryView[];
-  readonly projects: readonly ProjectView[];
-};
-
-/** One search's whole answer: the ranked rows, the words nobody said, and the scope it read. */
-export type SessionSearch = {
-  readonly hits: readonly SearchHitView[];
-  readonly dropped: readonly string[];
-  readonly scanned: number;
-};
-
 const DEFAULT_SESSION_LIMIT = 50;
 
 /** A digest is a whole-file read; a page of them at once is a page of files in memory at once. */
@@ -60,11 +48,9 @@ const ANNOUNCE_MS = 500;
 type CachedDigest = SessionDigest & { readonly modifiedAt: number };
 
 type Overrides = ReadonlyMap<string, SessionEntry>;
-type Pins = ReadonlyMap<string, ProjectEntry>;
 
 type PageScope = {
   readonly overrides: Overrides;
-  readonly pins: Pins;
   /** True while listing the archived sessions rather than the live ones. */
   readonly archived: boolean;
   readonly limit: number;
@@ -138,7 +124,6 @@ export class SessionCatalogue {
     return {
       sessions: await this.page(inScope, {
         overrides,
-        pins: pinning.projects,
         archived: scope,
         limit,
         // Absent, a project may fill the page; it is the page that bounds it either way.
@@ -259,7 +244,7 @@ export class SessionCatalogue {
   /** Nothing for a session that never asked anything and was never named: the row it would draw is a truncated UUID. */
   private async row(
     { sessionId, cwd, path, createdAt, modifiedAt }: SessionSummary,
-    { overrides, pins, archived }: PageScope
+    { overrides, archived }: PageScope
   ): Promise<SessionSummaryView | undefined> {
     const status = this.deps.liveStatus(sessionId);
     const { title, named, settledAt } = await this.digestOf(
@@ -283,7 +268,6 @@ export class SessionCatalogue {
       title,
       ...(named === true ? { named } : {}),
       ...(archived ? { archived: true as const } : {}),
-      ...(pins.get(cwd)?.pinned === true ? { pinned: true as const } : {}),
       ...(status === undefined || status === "idle" ? {} : { status }),
       ...(unread ? { unread: true } : {}),
     };
@@ -457,14 +441,15 @@ function projectsOf(
     counts.set(cwd, (counts.get(cwd) ?? 0) + 1);
   }
   const ranks = new Map(order.map((cwd, rank) => [cwd, rank]));
-  return [...counts].map(([cwd, count]) => ({
-    cwd,
-    count,
-    ...(projects.get(cwd)?.pinned === true
-      ? { pinned: true as const, pinRank: ranks.get(cwd) ?? 0 }
-      : {}),
-    ...(projects.get(cwd)?.expanded === true
-      ? { expanded: true as const }
-      : {}),
-  }));
+  return [...counts].map(([cwd, count]) => {
+    const entry = projects.get(cwd);
+    return {
+      cwd,
+      count,
+      ...(entry?.pinned === true
+        ? { pinned: true as const, pinRank: ranks.get(cwd) ?? 0 }
+        : {}),
+      ...(entry?.expanded === true ? { expanded: true as const } : {}),
+    };
+  });
 }

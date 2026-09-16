@@ -1,4 +1,5 @@
 import {
+  createEffect,
   createSignal,
   getOwner,
   onCleanup,
@@ -39,6 +40,29 @@ export function observeWidth(
   report: (width: number) => void
 ): (element: HTMLElement) => void {
   return observe((element) => element.offsetWidth, report);
+}
+
+/**
+ * Holds a listbox's active row in view as the keyboard walks it, by the
+ * `data-index` the rows carry. Closed, it scrolls nothing: the caret is moved
+ * again on the way back in.
+ */
+export function followActive(
+  list: () => HTMLElement | undefined,
+  index: () => number,
+  open: () => boolean
+): void {
+  createEffect(
+    () => ({ index: index(), open: open() }),
+    ({ index: active, open: shown }) => {
+      if (!shown) {
+        return;
+      }
+      list()
+        ?.querySelector(`[data-index="${active}"]`)
+        ?.scrollIntoView({ block: "nearest" });
+    }
+  );
 }
 
 export type BottomPin = {

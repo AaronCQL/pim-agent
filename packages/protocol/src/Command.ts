@@ -198,3 +198,15 @@ export type CommandDraft = Command extends infer T
     ? Omit<T, "id">
     : never
   : never;
+
+/** Which sessions a listing is asking for: the `list_sessions` payload, named so a client can pass it around. */
+export type SessionScope = Omit<
+  Extract<CommandDraft, { readonly type: "list_sessions" }>,
+  "type"
+>;
+
+/** Which sessions a search may reach: the `search_sessions` payload without the query it is asked with. */
+export type SearchScope = Omit<
+  Extract<CommandDraft, { readonly type: "search_sessions" }>,
+  "type" | "query"
+>;

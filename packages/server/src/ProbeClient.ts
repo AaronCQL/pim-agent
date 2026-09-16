@@ -2,15 +2,19 @@ import { basename } from "node:path";
 
 import type { PickerItem } from "#core/picker/PickerItem";
 import { RemoteFilePickerSuggestionEngine } from "#core/picker/RemoteFilePickerSuggestionEngine";
-import type { AttachmentRef, CommandDraft } from "#protocol/Command";
+import type {
+  AttachmentRef,
+  CommandDraft,
+  SearchScope,
+  SessionScope,
+} from "#protocol/Command";
 import {
   isDurableEvent,
   type ModelView,
-  type ProjectView,
   type ResponseEvent,
-  type SearchHitView,
   type ServerEvent,
-  type SessionSummaryView,
+  type SessionListing,
+  type SessionSearch,
 } from "#protocol/ServerEvent";
 
 export type ProbeOptions = {
@@ -25,24 +29,6 @@ export type ProbeOptions = {
   readonly onEvent?: (event: ServerEvent) => void;
   /** Keystroke debounce for `files`; 0 makes tests deterministic. */
   readonly debounceMs?: number;
-};
-
-/** Which sessions a listing is asking for. */
-export type SessionScope = {
-  /** Restrict to one working directory; omit for every session on disk. */
-  readonly cwd?: string;
-  /** List the archived sessions instead of the live ones. */
-  readonly archived?: boolean;
-  readonly limit?: number;
-  /** Keep at most this many sessions per working directory. */
-  readonly perProject?: number;
-};
-
-/** Which sessions a search is asking about; omitting `archived` searches them too. */
-export type SearchScope = {
-  readonly cwd?: string;
-  readonly archived?: boolean;
-  readonly limit?: number;
 };
 
 /** What `POST /upload` answers with, all of it server-side. */
@@ -187,24 +173,13 @@ export class ProbeClient {
   /** Pi's session catalogue; answers whether or not this probe is attached. */
   public async listSessions(
     scope: SessionScope = {}
-  ): Promise<readonly SessionSummaryView[]> {
+  ): Promise<SessionListing["sessions"]> {
     return (await this.catalogue(scope)).sessions;
   }
 
   /** The listing whole: the rows the page kept and the projects they came from. */
-  public async catalogue(scope: SessionScope = {}): Promise<{
-    readonly sessions: readonly SessionSummaryView[];
-    readonly projects: readonly ProjectView[];
-  }> {
-    const response = await this.send({
-      type: "list_sessions",
-      ...(scope.cwd === undefined ? {} : { cwd: scope.cwd }),
-      ...(scope.archived === true ? { archived: true } : {}),
-      ...(scope.limit === undefined ? {} : { limit: scope.limit }),
-      ...(scope.perProject === undefined
-        ? {}
-        : { perProject: scope.perProject }),
-    });
+  public async catalogue(scope: SessionScope = {}): Promise<SessionListing> {
+    const response = await this.send({ type: "list_sessions", ...scope });
     if (!response.success) {
       throw new Error(response.error ?? "list_sessions failed");
     }
@@ -218,17 +193,11 @@ export class ProbeClient {
   public async search(
     query: string,
     scope: SearchScope = {}
-  ): Promise<{
-    readonly hits: readonly SearchHitView[];
-    readonly dropped: readonly string[];
-    readonly scanned: number;
-  }> {
+  ): Promise<SessionSearch> {
     const response = await this.send({
       type: "search_sessions",
       query,
-      ...(scope.cwd === undefined ? {} : { cwd: scope.cwd }),
-      ...(scope.archived === undefined ? {} : { archived: scope.archived }),
-      ...(scope.limit === undefined ? {} : { limit: scope.limit }),
+      ...scope,
     });
     if (!response.success) {
       throw new Error(response.error ?? "search_sessions failed");

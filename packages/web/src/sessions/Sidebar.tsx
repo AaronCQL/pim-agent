@@ -12,9 +12,10 @@ import {
   untrack,
 } from "solid-js";
 
+import type { SessionScope } from "#protocol/Command";
 import type { ProjectView, SessionSummaryView } from "#protocol/ServerEvent";
 import { version } from "../../../../package.json";
-import type { SessionScope, SessionStore } from "../session/SessionStore";
+import type { SessionStore } from "../session/SessionStore";
 import { abbreviateHome, baseName, relativeTime } from "../format";
 import { DirectoryModal } from "../topbar/DirectoryModal";
 import { ACTION, FIELD_SKIN, ICON } from "../ui/classes";
@@ -700,8 +701,11 @@ function SessionRow(props: {
       said.push("working");
     } else if (props.store.isUnread(props.row.sessionId)) {
       said.push("unread");
-    } else if (age() !== undefined) {
-      said.push(age() ?? "");
+    } else {
+      const when = age();
+      if (when !== undefined) {
+        said.push(when);
+      }
     }
     return said.join(", ");
   };

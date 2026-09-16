@@ -15,4 +15,4 @@ function normalise(name: string | null | undefined): string {
 }
 
 /** The one spelling of a session name pim writes into pi's `session_info`. */
-export const SessionName = { LIMIT, normalise };
+export const SessionName = { normalise };

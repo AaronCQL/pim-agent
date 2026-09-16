@@ -3,8 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 
+import { SessionFixture } from "#core/session/fixtures/SessionFixture";
 import { SessionLease } from "#core/session/SessionLease";
 import { SessionRegistry } from "#core/session/SessionRegistry";
+import { until } from "#core/shared/fixtures/wait";
 import type { ProjectView, SessionSummaryView } from "#protocol/ServerEvent";
 import { ProbeClient } from "./ProbeClient";
 import { WsGateway } from "./WsGateway";
@@ -49,81 +51,29 @@ async function connect(
   return probe;
 }
 
-/** Polls, because a broadcast reaches another socket on its own schedule. */
-async function until(ready: () => boolean, what: string): Promise<void> {
-  const deadline = Date.now() + 20_000;
-  while (!ready()) {
-    if (Date.now() > deadline) {
-      throw new Error(`timed out waiting for ${what}`);
-    }
-    await Bun.sleep(1);
-  }
-}
-
 function pathOf(sessionId: string): string {
   return join(agentDir, "sessions", "written", `${sessionId}.jsonl`);
 }
 
-/** A whole-second ISO timestamp `n` minutes before now. */
-function minutesAgo(n: number): string {
-  return new Date(Date.now() - n * 60_000).toISOString();
-}
-
 /**
- * A session pi could have written: one question, one answer, both at
- * `repliedAt`. Complete enough to be opened, not only listed — the usage the
- * answer carries is what pi totals the moment an agent adopts the file. Its
- * file is dated `repliedAt` too, so the page's modified-time order is the
- * order these were written in and not the order the disk clock saw them.
+ * Complete enough to be opened, not only listed — the usage the answer
+ * carries is what pi totals the moment an agent adopts the file — and dated
+ * `repliedAt`, so the page's modified-time order is the order these were
+ * written in and not the order the disk clock saw them.
  */
 async function writeSession(
   id: string,
   repliedAt: string,
   cwd: string = tmp
 ): Promise<void> {
-  const line = (entry: unknown) => `${JSON.stringify(entry)}\n`;
-  const message = (message: unknown) =>
-    line({
-      type: "message",
-      id: repliedAt,
-      parentId: null,
-      timestamp: repliedAt,
-      message,
-    });
-  await mkdir(join(agentDir, "sessions", "written"), { recursive: true });
-  await Bun.write(
-    pathOf(id),
-    line({
-      type: "session",
-      version: 3,
-      id,
-      timestamp: repliedAt,
-      cwd,
-    }) +
-      message({
-        role: "user",
-        content: [{ type: "text", text: "say hello" }],
-      }) +
-      message({
-        role: "assistant",
-        content: [{ type: "text", text: "hello" }],
-        api: "openai-completions",
-        provider: "test",
-        model: "echo",
-        usage: {
-          input: 1,
-          output: 1,
-          cacheRead: 0,
-          cacheWrite: 0,
-          reasoning: 0,
-          totalTokens: 2,
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-        },
-        stopReason: "stop",
-        timestamp: Date.parse(repliedAt),
-      })
-  );
-  await touch(id, repliedAt);
+  await SessionFixture.write({
+    agentDir,
+    id,
+    cwd,
+    repliedAt,
+    usage: true,
+    dated: true,
+  });
 }
 
 /** A session nobody ever said anything in: pi's header and not one entry under it. */
@@ -154,13 +104,6 @@ function projectOf(
   cwd: string
 ): ProjectView | undefined {
   return projects.find((project) => project.cwd === cwd);
-}
-
-function rowOf(
-  rows: readonly SessionSummaryView[],
-  sessionId: string
-): SessionSummaryView | undefined {
-  return rows.find((row) => row.sessionId === sessionId);
 }
 
 /** The sidecar as it is on disk, which is the only place any of this survives. */
@@ -222,8 +165,8 @@ afterEach(async () => {
 });
 
 test("puts a session away, and hands it back on the archived scope", async () => {
-  await writeSession(ONE, minutesAgo(2));
-  await writeSession(TWO, minutesAgo(1));
+  await writeSession(ONE, SessionFixture.minutesAgo(2));
+  await writeSession(TWO, SessionFixture.minutesAgo(1));
   const probe = await connect();
 
   expect((await probe.setArchived(ONE, true)).success).toBe(true);
@@ -246,9 +189,9 @@ test("puts a session away, and hands it back on the archived scope", async () =>
 test("cuts the page after the archived are gone, not before", async () => {
   // This probe's own session is written first, so it is the oldest of the four.
   const probe = await connect();
-  await writeSession(ONE, minutesAgo(3));
-  await writeSession(TWO, minutesAgo(2));
-  await writeSession(THREE, minutesAgo(1));
+  await writeSession(ONE, SessionFixture.minutesAgo(3));
+  await writeSession(TWO, SessionFixture.minutesAgo(2));
+  await writeSession(THREE, SessionFixture.minutesAgo(1));
 
   await probe.setArchived(THREE, true);
 
@@ -258,61 +201,71 @@ test("cuts the page after the archived are gone, not before", async () => {
 });
 
 test("keeps a mark made by hand through a listing and a re-attach", async () => {
-  await writeSession(ONE, minutesAgo(1));
+  await writeSession(ONE, SessionFixture.minutesAgo(1));
   const probe = await connect({ sessionId: ONE });
   expect((await probe.markUnread(ONE, true)).success).toBe(true);
 
   // Twice: reading the catalogue is not reading the session, and a listing
   // that consumed the mark would consume it before anybody saw the dot.
-  expect(rowOf(await probe.listSessions(), ONE)?.unread).toBe(true);
-  expect(rowOf(await probe.listSessions(), ONE)?.unread).toBe(true);
+  expect(SessionFixture.rowIn(await probe.listSessions(), ONE)?.unread).toBe(
+    true
+  );
+  expect(SessionFixture.rowIn(await probe.listSessions(), ONE)?.unread).toBe(
+    true
+  );
   probe.close();
 
   // Nor is a reconnect from a tab nobody is looking at.
   const hidden = await connect({ sessionId: ONE, attentive: false });
-  expect(rowOf(await hidden.listSessions(), ONE)?.unread).toBe(true);
+  expect(SessionFixture.rowIn(await hidden.listSessions(), ONE)?.unread).toBe(
+    true
+  );
 
   // Coming back to it is: the read is the one thing that clears the mark.
   await hidden.attention(true);
-  expect(rowOf(await hidden.listSessions(), ONE)?.unread).toBeUndefined();
+  expect(
+    SessionFixture.rowIn(await hidden.listSessions(), ONE)?.unread
+  ).toBeUndefined();
   expect((await stored()).sessions[ONE]).toBeUndefined();
 });
 
 test("names a session it has never opened, and gives its opening message back", async () => {
-  await writeSession(ONE, minutesAgo(1));
+  await writeSession(ONE, SessionFixture.minutesAgo(1));
   const probe = await connect();
-  expect(rowOf(await probe.listSessions(), ONE)?.title).toBe("say hello");
+  expect(SessionFixture.rowIn(await probe.listSessions(), ONE)?.title).toBe(
+    "say hello"
+  );
 
   // Whitespace collapsed the way pi stores it, and no stream anywhere: this
   // session has only ever been a file to this server.
   expect((await probe.rename(ONE, "  Parser   work ")).success).toBe(true);
-  const named = rowOf(await probe.listSessions(), ONE);
+  const named = SessionFixture.rowIn(await probe.listSessions(), ONE);
   expect(named?.title).toBe("Parser work");
   expect(named?.named).toBe(true);
 
   expect((await probe.rename(ONE, null)).success).toBe(true);
-  const cleared = rowOf(await probe.listSessions(), ONE);
+  const cleared = SessionFixture.rowIn(await probe.listSessions(), ONE);
   expect(cleared?.title).toBe("say hello");
   expect(cleared?.named).toBeUndefined();
 });
 
 test("names the session it is attached to, through the agent holding it", async () => {
-  await writeSession(ONE, minutesAgo(1));
+  await writeSession(ONE, SessionFixture.minutesAgo(1));
   const probe = await connect({ sessionId: ONE });
 
   await probe.rename(ONE, "Live work");
-  const named = rowOf(await probe.listSessions(), ONE);
+  const named = SessionFixture.rowIn(await probe.listSessions(), ONE);
   expect(named?.title).toBe("Live work");
   expect(named?.named).toBe(true);
 
   await probe.rename(ONE, null);
-  const cleared = rowOf(await probe.listSessions(), ONE);
+  const cleared = SessionFixture.rowIn(await probe.listSessions(), ONE);
   expect(cleared?.title).toBe("say hello");
   expect(cleared?.named).toBeUndefined();
 });
 
 test("tells every other connection what one of them changed", async () => {
-  await writeSession(ONE, minutesAgo(1));
+  await writeSession(ONE, SessionFixture.minutesAgo(1));
   const one = await connect();
   const two = await connect();
   const heard = () =>
@@ -328,7 +281,7 @@ test("tells every other connection what one of them changed", async () => {
 
   // No session file moved for three of these, so no `sessions_changed` will
   // follow them: this is the only word the other window gets.
-  await until(() => heard().length === 5, "the five broadcasts");
+  await until(() => heard().length === 5, "the five broadcasts", 20_000);
   expect(heard()).toEqual([
     { type: "session_meta", sessionId: ONE, archived: true },
     { type: "session_meta", sessionId: ONE, unread: true },
@@ -342,7 +295,7 @@ test("tells every other connection what one of them changed", async () => {
 
 /** The fold is the server's, so a second window opens to the sidebar the first one arranged. */
 test("a listing carries the fold each project was left at", async () => {
-  await writeSession(ONE, minutesAgo(1));
+  await writeSession(ONE, SessionFixture.minutesAgo(1));
   const probe = await connect();
 
   const folded = await probe.catalogue();
@@ -357,7 +310,7 @@ test("a listing carries the fold each project was left at", async () => {
 });
 
 test("refuses a name it cannot write, and changes nothing", async () => {
-  await writeSession(ONE, minutesAgo(1));
+  await writeSession(ONE, SessionFixture.minutesAgo(1));
   const probe = await connect();
   const mark = probe.events.length;
 
@@ -378,14 +331,16 @@ test("refuses a name it cannot write, and changes nothing", async () => {
   expect(busy.success).toBe(false);
   expect(busy.error).toContain("busy");
 
-  expect(rowOf(await probe.listSessions(), ONE)?.title).toBe("say hello");
+  expect(SessionFixture.rowIn(await probe.listSessions(), ONE)?.title).toBe(
+    "say hello"
+  );
   expect(
     probe.events.slice(mark).some((event) => event.type === "session_meta")
   ).toBe(false);
 });
 
 test("archives over a socket that never attached", async () => {
-  await writeSession(ONE, minutesAgo(1));
+  await writeSession(ONE, SessionFixture.minutesAgo(1));
   const socket = new WebSocket(gateway.url);
   await new Promise((resolve) => socket.addEventListener("open", resolve));
   // The broadcast reaches this socket too, and reaches it first.
@@ -419,15 +374,17 @@ test("archives over a socket that never attached", async () => {
 });
 
 test("forgets a session that is gone, and keeps the pins", async () => {
-  await writeSession(ONE, minutesAgo(1));
+  await writeSession(ONE, SessionFixture.minutesAgo(1));
   const probe = await connect();
   await probe.setArchived(ONE, true);
   await probe.setPinned(tmp, true);
 
-  // The pin is the directory's, so every row in it wears one.
-  const away = await probe.listSessions({ archived: true });
+  // The pin is the directory's, so it rides the project rather than the row.
+  const { sessions: away, projects } = await probe.catalogue({
+    archived: true,
+  });
   expect(ids(away)).toEqual([ONE]);
-  expect(away[0]?.pinned).toBe(true);
+  expect(projectOf(projects, tmp)?.pinned).toBe(true);
   expect(Object.keys((await stored()).sessions)).toEqual([ONE]);
 
   await rm(pathOf(ONE));
@@ -442,8 +399,8 @@ test("forgets a session that is gone, and keeps the pins", async () => {
 test("ranks the pinned projects, and tells every window when the order moves", async () => {
   const one = join(tmp, "one");
   const two = join(tmp, "two");
-  await writeSession(ONE, minutesAgo(2), one);
-  await writeSession(TWO, minutesAgo(1), two);
+  await writeSession(ONE, SessionFixture.minutesAgo(2), one);
+  await writeSession(TWO, SessionFixture.minutesAgo(1), two);
   const probe = await connect();
   const other = await connect();
   const orders = () =>
@@ -467,7 +424,7 @@ test("ranks the pinned projects, and tells every window when the order moves", a
   expect((await stored()).pins).toEqual([one, two]);
 
   // Three words to the other window: both pins, and the move.
-  await until(() => orders().length === 3, "the pin broadcasts");
+  await until(() => orders().length === 3, "the pin broadcasts", 20_000);
   expect(orders()).toEqual([[one], [two, one], [one, two]]);
 
   // An order is only ever where a pin sits, never whether it is one: naming a
@@ -477,7 +434,7 @@ test("ranks the pinned projects, and tells every window when the order moves", a
 });
 
 test("hands a pin back to a server that has been restarted under it", async () => {
-  await writeSession(ONE, minutesAgo(1));
+  await writeSession(ONE, SessionFixture.minutesAgo(1));
   const probe = await connect();
   await probe.setPinned(tmp, true);
   probe.close();
@@ -490,7 +447,7 @@ test("hands a pin back to a server that has been restarted under it", async () =
   // phone opening the sidebar tomorrow is the case this is for.
   const restarted = await connect();
   const { sessions, projects } = await restarted.catalogue();
-  expect(rowOf(sessions, ONE)?.pinned).toBe(true);
+  expect(SessionFixture.rowIn(sessions, ONE)).toBeDefined();
   expect(projectOf(projects, tmp)?.pinned).toBe(true);
 });
 
@@ -503,15 +460,15 @@ async function writeProject(
   const written: string[] = [];
   for (let index = 0; index < count; index++) {
     const id = idFor(from + index);
-    await writeSession(id, minutesAgo(count - index), cwd);
+    await writeSession(id, SessionFixture.minutesAgo(count - index), cwd);
     written.push(id);
   }
   return written.reverse();
 }
 
 test("a session nobody ever spoke in is not a row, and is still one of its project's files", async () => {
-  await writeSession(ONE, minutesAgo(2));
-  await writeEmptySession(TWO, minutesAgo(1));
+  await writeSession(ONE, SessionFixture.minutesAgo(2));
+  await writeEmptySession(TWO, SessionFixture.minutesAgo(1));
   const probe = await connect();
 
   // All it could be called is a truncated uuid, so it is not offered at all.
@@ -525,7 +482,7 @@ test("a session nobody ever spoke in is not a row, and is still one of its proje
 test("keeps a quiet project on the page beside a busy one", async () => {
   const busy = join(tmp, "busy");
   const quiet = join(tmp, "quiet");
-  await writeSession(idFor(10), minutesAgo(90), quiet);
+  await writeSession(idFor(10), SessionFixture.minutesAgo(90), quiet);
   const recent = await writeProject(busy, 20, 6);
   const probe = await connect();
 
@@ -545,9 +502,9 @@ test("keeps a quiet project on the page beside a busy one", async () => {
 
 test("spends a project's budget on rows a client can see, not on the ones it filtered", async () => {
   const project = join(tmp, "one-visible");
-  await writeSession(ONE, minutesAgo(3), project);
-  await writeEmptySession(TWO, minutesAgo(2), project);
-  await writeSession(THREE, minutesAgo(1), project);
+  await writeSession(ONE, SessionFixture.minutesAgo(3), project);
+  await writeEmptySession(TWO, SessionFixture.minutesAgo(2), project);
+  await writeSession(THREE, SessionFixture.minutesAgo(1), project);
   const probe = await connect();
   await probe.setArchived(THREE, true);
 

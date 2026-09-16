@@ -7,6 +7,7 @@ import { Type } from "typebox";
 
 import { makeRepo } from "#core/shared/fixtures/repo";
 import type { CommandDraft } from "#protocol/Command";
+import { SessionFixture } from "#core/session/fixtures/SessionFixture";
 import { SessionRegistry } from "#core/session/SessionRegistry";
 import { Tools, type PimToolDefinition } from "#core/shared/Tools";
 import {
@@ -307,52 +308,13 @@ function unreadIn(
   return rows.find((row) => row.sessionId === sessionId)?.unread;
 }
 
-function rowIn(
-  rows: readonly SessionSummaryView[],
-  sessionId: string
-): SessionSummaryView | undefined {
-  return rows.find((row) => row.sessionId === sessionId);
-}
-
-/** A whole-second ISO timestamp `n` minutes before now. */
-function minutesAgo(n: number): string {
-  return new Date(Date.now() - n * 60_000).toISOString();
-}
-
-/**
- * Writes a session pi could have written, to say what a listing cannot be
- * made to say through the gateway: `repliedAt` is when the agent answered and
- * `saidAt`, when given, is a message typed in afterwards — which no prompt
- * can produce, because prompting runs a turn.
- */
+/** `repliedAt` is when the agent answered, `saidAt` a message typed in afterwards. */
 async function writeSession(
   id: string,
   repliedAt: string,
   saidAt?: string
 ): Promise<void> {
-  const line = (entry: unknown) => `${JSON.stringify(entry)}\n`;
-  const message = (at: string, message: unknown) =>
-    line({ type: "message", id: at, parentId: null, timestamp: at, message });
-  const path = join(agentDir, "sessions", "written", `${id}.jsonl`);
-  await mkdir(join(agentDir, "sessions", "written"), { recursive: true });
-  await Bun.write(
-    path,
-    line({ type: "session", version: 3, id, timestamp: repliedAt, cwd: tmp }) +
-      message(repliedAt, {
-        role: "user",
-        content: [{ type: "text", text: "say hello" }],
-      }) +
-      message(repliedAt, {
-        role: "assistant",
-        content: [{ type: "text", text: "hello" }],
-      }) +
-      (saidAt === undefined
-        ? ""
-        : message(saidAt, {
-            role: "user",
-            content: [{ type: "text", text: "and again" }],
-          }))
-  );
+  await SessionFixture.write({ agentDir, id, cwd: tmp, repliedAt, saidAt });
 }
 
 beforeEach(async () => {
@@ -887,7 +849,7 @@ test("starts with nothing unread, and keeps what is across a restart", async () 
   // server's first launch reads as read.
   const before = "00000000-0000-4000-8000-00000000old1";
   const after = "00000000-0000-4000-8000-00000000new1";
-  await writeSession(before, minutesAgo(30));
+  await writeSession(before, SessionFixture.minutesAgo(30));
   await writeSession(after, new Date(Date.now() + 60_000).toISOString());
 
   const probe = await connect();
@@ -914,9 +876,9 @@ test("orders the catalogue by the last reply, not by the last keystroke", async 
   // hour ago, `fresh` was answered a minute ago and left alone since.
   const fresh = "00000000-0000-4000-8000-0000000fresh";
   const stale = "00000000-0000-4000-8000-0000000stale";
-  const answered = minutesAgo(60);
-  await writeSession(fresh, minutesAgo(1));
-  await writeSession(stale, answered, minutesAgo(0));
+  const answered = SessionFixture.minutesAgo(60);
+  await writeSession(fresh, SessionFixture.minutesAgo(1));
+  await writeSession(stale, answered, SessionFixture.minutesAgo(0));
 
   const probe = await connect();
   const listed = await probe.listSessions();
@@ -1209,7 +1171,9 @@ test("keeps a renamed row named through the turn that is writing to it", async (
 
   // Warms the digest the row is drawn from, while it still goes by its
   // opening message.
-  expect(rowIn(await probe.listSessions(), sessionId)?.title).toBe("say hello");
+  expect(
+    SessionFixture.rowIn(await probe.listSessions(), sessionId)?.title
+  ).toBe("say hello");
   expect((await probe.rename(sessionId, "Parser work")).success).toBe(true);
 
   const release = holdTurn();
@@ -1227,7 +1191,7 @@ test("keeps a renamed row named through the turn that is writing to it", async (
     // Mid-turn the file is appended to between listings, so it is not
     // re-digested for any of them: the name the row shows is the live
     // session's own, and the one it was warmed with is a turn out of date.
-    const row = rowIn(await probe.listSessions(), sessionId);
+    const row = SessionFixture.rowIn(await probe.listSessions(), sessionId);
     expect(row?.title).toBe("Parser work");
     expect(row?.named).toBe(true);
   } finally {

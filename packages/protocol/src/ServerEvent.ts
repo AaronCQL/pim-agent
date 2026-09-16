@@ -236,8 +236,6 @@ export type SessionSummaryView = {
   /** True when `title` is a name somebody wrote, rather than the first message. */
   readonly named?: true;
   readonly archived?: true;
-  /** This row's working directory is a pinned project. */
-  readonly pinned?: true;
   /** Has answered since anything last read it; absent means it has not. */
   readonly unread?: boolean;
   /** Absent when idle, and for a session this server does not hold open. */
@@ -259,8 +257,7 @@ export type ProjectView = {
 /**
  * One session a search matched. Deliberately not a `SessionSummaryView`: what
  * a ranked list needs is why the row matched, and `unread` is the sidebar's
- * triage, `pinned` is a project sort key a flat list has no use for, and
- * `status` resolves itself the moment the session opens.
+ * triage while `status` resolves itself the moment the session opens.
  */
 export type SearchHitView = {
   readonly sessionId: string;
@@ -279,6 +276,21 @@ export type SearchHitView = {
   readonly snippets: readonly SearchSnippet[];
   /** Matching messages in this session, before the snippet cut. */
   readonly total: number;
+};
+
+/** One answer to `list_sessions`: the page of rows, and every directory that had one, counted whole. */
+export type SessionListing = {
+  readonly sessions: readonly SessionSummaryView[];
+  /** Counted before the per-project cut, so a group can say what a page of it leaves out. */
+  readonly projects: readonly ProjectView[];
+};
+
+/** One answer to `search_sessions`: the ranked rows, the words no session held, and the scope it read. */
+export type SessionSearch = {
+  readonly hits: readonly SearchHitView[];
+  readonly dropped: readonly string[];
+  /** Sessions searched, whole: what the empty state and the result footer say out loud. */
+  readonly scanned: number;
 };
 
 /** One model the server can be switched to, for the composer's model menu. */
@@ -336,4 +348,55 @@ export type ServerEventType = ServerEvent["type"];
 
 export function isDurableEvent(event: ServerEvent): event is DurableEvent {
   return "seq" in event;
+}
+
+/**
+ * Whether the frame speaks for the one session a connection is attached to,
+ * and so says nothing to a client whose attach is still in flight. The rest
+ * name their own subject — another session, a directory, or nothing at all —
+ * and gating those on the attach window drops a broadcast every time a client
+ * switches session.
+ *
+ * Exhaustive by construction: a new event is a type error here until it is
+ * classified, which is the only reason this lives beside the wire types
+ * rather than in the client that gates on it.
+ */
+export function isAttachScoped(event: ServerEvent): boolean {
+  switch (event.type) {
+    case "attached":
+    case "replay":
+    case "message":
+    case "message_start":
+    case "message_retire":
+    case "text_delta":
+    case "thinking_delta":
+    case "tool_call":
+    case "tool_update":
+    case "tool_end":
+    case "tool_result":
+    case "notice":
+    case "subagent_events":
+    case "turn_end":
+    case "session_state":
+    // Names a cwd, but only ever reaches a client down the session stream it
+    // is attached to, so the old session's is the only one that can arrive
+    // mid-attach — and re-querying for it would warm the wrong cache.
+    case "picker_invalidate":
+      return true;
+    case "session_activity":
+    case "session_read":
+    case "session_meta":
+    case "project_meta":
+    case "pins_changed":
+    case "sessions_changed":
+    case "update_state":
+    // Sent for a frame the server could not read at all, which is likeliest
+    // before an attach has settled: gating it swallows the diagnostic.
+    case "error":
+    case "response":
+      return false;
+    default:
+      event satisfies never;
+      return false;
+  }
 }

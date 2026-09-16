@@ -22,7 +22,7 @@ describe("SessionMeta", () => {
     const meta = new SessionMeta(file);
 
     expect(await meta.of("s1")).toEqual({});
-    expect(await meta.projects()).toEqual(new Map());
+    expect((await meta.pinning()).projects).toEqual(new Map());
   });
 
   test("archived, unread and pinned survive a restart", async () => {
@@ -34,7 +34,7 @@ describe("SessionMeta", () => {
     const restarted = new SessionMeta(file);
     expect(await restarted.of("s1")).toEqual({ archived: true });
     expect(await restarted.of("s2")).toEqual({ unread: true });
-    expect(await restarted.projects()).toEqual(
+    expect((await restarted.pinning()).projects).toEqual(
       new Map([["/work/pim", { pinned: true }]])
     );
   });
@@ -103,7 +103,7 @@ describe("SessionMeta", () => {
     expect(await meta.sessions()).toEqual(
       new Map([["good", { archived: true }]])
     );
-    expect(await meta.projects()).toEqual(
+    expect((await meta.pinning()).projects).toEqual(
       new Map([["/good", { pinned: true }]])
     );
   });
@@ -150,12 +150,12 @@ describe("SessionMeta", () => {
     const meta = new SessionMeta(file);
     await meta.setExpanded("/work/pim", true);
 
-    expect(await new SessionMeta(file).projects()).toEqual(
+    expect((await new SessionMeta(file).pinning()).projects).toEqual(
       new Map([["/work/pim", { expanded: true }]])
     );
 
     await meta.setExpanded("/work/pim", false);
-    expect(await new SessionMeta(file).projects()).toEqual(new Map());
+    expect((await new SessionMeta(file).pinning()).projects).toEqual(new Map());
   });
 
   /** A fold and a pin are two facts about one directory; neither may clear the other. */
@@ -164,7 +164,7 @@ describe("SessionMeta", () => {
     await meta.setPinned("/work/pim", true);
     await meta.setExpanded("/work/pim", true);
 
-    expect(await new SessionMeta(file).projects()).toEqual(
+    expect((await new SessionMeta(file).pinning()).projects).toEqual(
       new Map([["/work/pim", { pinned: true, expanded: true }]])
     );
 
@@ -175,7 +175,7 @@ describe("SessionMeta", () => {
     // Unpinned, the fold it was left open at is still its own.
     await meta.setExpanded("/work/pim", true);
     await meta.setPinned("/work/pim", false);
-    expect(await new SessionMeta(file).projects()).toEqual(
+    expect((await new SessionMeta(file).pinning()).projects).toEqual(
       new Map([["/work/pim", { expanded: true }]])
     );
     expect(await meta.pins()).toEqual([]);
@@ -217,7 +217,7 @@ describe("SessionMeta", () => {
     expect(await restarted.sessions()).toEqual(
       new Map([["kept", { archived: true }]])
     );
-    expect(await restarted.projects()).toEqual(
+    expect((await restarted.pinning()).projects).toEqual(
       new Map([["/work/pim", { pinned: true }]])
     );
   });
@@ -248,7 +248,7 @@ describe("SessionMeta", () => {
         ["s2", { unread: true }],
       ])
     );
-    expect(await restarted.projects()).toEqual(
+    expect((await restarted.pinning()).projects).toEqual(
       new Map([["/work/pim", { pinned: true }]])
     );
   });

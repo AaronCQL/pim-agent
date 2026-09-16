@@ -65,11 +65,6 @@ export class SessionMeta {
     return (await this.read()).sessions;
   }
 
-  /** Keyed by absolute cwd. */
-  public async projects(): Promise<ReadonlyMap<string, ProjectEntry>> {
-    return (await this.read()).projects;
-  }
-
   /** The pinned directories in display order; a listing wants both halves, and this is one read for them. */
   public async pinning(): Promise<Pinning> {
     const loaded = await this.read();

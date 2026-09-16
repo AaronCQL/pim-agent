@@ -9,6 +9,7 @@ import {
 
 import { ROW_ACTIVE } from "./classes";
 import { Popover, type Point } from "./Popover";
+import { followActive } from "./scroll";
 
 export type ComboboxNavigation = {
   readonly activeIndex: Accessor<number>;
@@ -171,16 +172,10 @@ export function Combobox(props: {
 }) {
   let list!: HTMLUListElement;
 
-  createEffect(
-    () => ({ index: props.activeIndex, open: props.open }),
-    ({ index, open }) => {
-      if (!open) {
-        return;
-      }
-      list
-        .querySelector(`[data-index="${index}"]`)
-        ?.scrollIntoView({ block: "nearest" });
-    }
+  followActive(
+    () => list,
+    () => props.activeIndex,
+    () => props.open
   );
 
   return (

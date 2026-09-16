@@ -741,7 +741,13 @@ test("a broadcast that lands inside the attach window is not dropped", async () 
     { type: "session_meta", sessionId: "s2", archived: true },
     { type: "project_meta", cwd: "/repo", pinned: true },
     { type: "session_read", sessionId: "s2" },
-    { type: "sessions_changed" }
+    { type: "sessions_changed" },
+    { type: "pins_changed", order: ["/repo"] },
+    { type: "session_activity", sessionId: "s2", status: "thinking" },
+    { type: "update_state", phase: "step", label: "fetching" },
+    // Answered by a server that could not read the attach frame, so it has
+    // no attach to be inside of.
+    { type: "error", message: "malformed frame" }
   );
 
   await one.connect();
@@ -751,8 +757,35 @@ test("a broadcast that lands inside the attach window is not dropped", async () 
     "project_meta",
     "session_read",
     "sessions_changed",
+    "pins_changed",
+    "session_activity",
+    "update_state",
+    "error",
     "attached",
   ]);
+});
+
+test("the attached session's own frames wait for the attach to settle", async () => {
+  const server = record();
+  const seen: ServerEvent[] = [];
+  const one = client(server, (event) => {
+    seen.push(event);
+  });
+  // The session being left, still streaming: painting any of it would put the
+  // old conversation into the new one's transcript.
+  server.ahead.push(
+    { type: "message_start", role: "assistant", messageId: "m1" },
+    { type: "text_delta", messageId: "m1", delta: "stale" },
+    {
+      type: "turn_end",
+      stats: { inputTokens: 1, outputTokens: 1, costUsd: 0, durationMs: 1 },
+    },
+    { type: "picker_invalidate", scope: "files", cwd: "/elsewhere" }
+  );
+
+  await one.connect();
+
+  expect(seen.map((event) => event.type)).toEqual(["attached"]);
 });
 
 test("a hidden tab stays hidden across a reconnect", async () => {

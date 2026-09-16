@@ -5,7 +5,12 @@ import { rankCommands } from "#core/picker/commandRanker";
 import { RemoteFilePickerSuggestionEngine } from "#core/picker/RemoteFilePickerSuggestionEngine";
 import type { DirectoryListing } from "#core/shared/Directories";
 import type { GitBranch } from "#core/shared/Git";
-import type { AttachmentRef, CommandDraft } from "#protocol/Command";
+import type {
+  AttachmentRef,
+  CommandDraft,
+  SearchScope,
+  SessionScope,
+} from "#protocol/Command";
 import type {
   ChangeList,
   DiffBase,
@@ -18,11 +23,10 @@ import type {
   DurableEvent,
   EphemeralEvent,
   ModelView,
-  ProjectView,
-  SearchHitView,
+  SessionListing,
+  SessionSearch,
   ServerEvent,
   SessionStatus,
-  SessionSummaryView,
 } from "#protocol/ServerEvent";
 import { isDurableEvent } from "#protocol/ServerEvent";
 import { watchAttention } from "../ws/attention";
@@ -138,61 +142,11 @@ export type SessionStoreOptions = {
   readonly reloadPage?: () => void;
 };
 
-/** Which slice of the catalogue to read; the archived sessions are their own listing, never mixed into the live one. */
-export type SessionScope = {
-  readonly cwd?: string;
-  readonly archived?: boolean;
-  /** Keep at most this many sessions per working directory, so one busy project cannot fill the page. */
-  readonly perProject?: number;
-  /** Cap the page whole; absent, the server picks one, and a per-project ask above it would bind on it instead. */
-  readonly limit?: number;
-};
-
-/** One answer to `list_sessions`: the page of rows, and every directory that had one, counted whole. */
-export type SessionListing = {
-  readonly sessions: readonly SessionSummaryView[];
-  /** Counted before the per-project cut, so a group can say what a page of it leaves out. */
-  readonly projects: readonly ProjectView[];
-};
-
-/** Which sessions a search may reach; unscoped, it is every session on disk, the archived among them. */
-export type SearchScope = {
-  readonly cwd?: string;
-  /** Omitted, the archived are searched too and say so; `false` leaves them out, `true` searches only them. */
-  readonly archived?: boolean;
-  readonly limit?: number;
-};
-
-/** One answer to `search_sessions`: the ranked rows, the words no session held, and the scope it read. */
-export type SessionSearch = {
-  readonly hits: readonly SearchHitView[];
-  readonly dropped: readonly string[];
-  /** Sessions searched, whole: what the empty state and the result footer say out loud. */
-  readonly scanned: number;
-};
-
 /** The flags a row or a group draws from this store alone, each one a command away. */
 type FlagRecord = "archived" | "unread" | "pinned" | "expanded";
 
 const FILE_PICKER_LIMIT = 50;
 const COMMAND_PICKER_LIMIT = 20;
-
-/** One row as this client knows it: the server's, carrying everything a broadcast has moved since. */
-function folded(
-  row: SessionSummaryView,
-  state: SessionState
-): SessionSummaryView {
-  const heard = state.names[row.sessionId];
-  const name = heard === undefined && row.named === true ? row.title : heard;
-  return {
-    ...row,
-    title: name ?? row.title,
-    named: typeof name === "string" ? true : undefined,
-    archived: state.archived[row.sessionId] === true ? true : undefined,
-    pinned: state.pinned[row.cwd] === true ? true : undefined,
-    unread: state.unread[row.sessionId] ?? row.unread,
-  };
-}
 
 type LocalCommand = PickerItem & {
   readonly run: (store: SessionStore) => Promise<void>;
@@ -767,7 +721,6 @@ export class SessionStore {
       })
       .catch(() => undefined);
     const sessions = response?.sessions ?? [];
-    const rows: SessionSummaryView[] = [];
     this.setState((draft) => {
       for (const session of sessions) {
         draft.activity[session.sessionId] = session.status ?? "idle";
@@ -778,7 +731,6 @@ export class SessionStore {
           session.sessionId,
           session.archived === true
         );
-        this.seed(draft, "pinned", session.cwd, session.pinned === true);
         if (!this.guessed.has(`names:${session.sessionId}`)) {
           draft.names[session.sessionId] =
             session.named === true ? (session.title ?? null) : null;
@@ -786,10 +738,9 @@ export class SessionStore {
         if (session.title !== undefined) {
           delete draft.openings[session.sessionId];
         }
-        rows.push(folded(session, draft));
       }
-      // The page is capped, so a directory can be in the projects and in no
-      // row of it: its pin is only ever said here.
+      // A pin belongs to a directory, and every row's directory is in here:
+      // the projects are counted off the same scope the page is cut from.
       for (const project of response?.projects ?? []) {
         this.seed(draft, "pinned", project.cwd, project.pinned === true);
         this.seed(draft, "expanded", project.cwd, project.expanded === true);
@@ -811,7 +762,9 @@ export class SessionStore {
     ) {
       this.drafts.setUnwritten(undefined);
     }
-    return { sessions: rows, projects: response?.projects ?? [] };
+    // The server's rows, unfolded: every flag on one is held in this store and
+    // read back through it, so a snapshot taken here would only go stale.
+    return { sessions, projects: response?.projects ?? [] };
   }
 
   private seed(

@@ -103,6 +103,15 @@ type Read = {
   readonly body?: Durable;
 };
 
+/** One file's read, folded into its entry and with the bytes already let go. */
+type Taken = {
+  readonly entry: Entry;
+  /** Turns the entry held before this read, so only the appended ones are posted. */
+  readonly from: number;
+  /** A whole file read over an entry we already had, so every ordinal it owned is stale. */
+  readonly replaced: boolean;
+};
+
 type Plan = {
   /** Terms reached with no typos: the word itself, and prefixes of it when it is last. */
   readonly exact: readonly string[];
@@ -113,6 +122,20 @@ type Group = {
   readonly turns: Turn[];
   title: boolean;
   exact: boolean;
+};
+
+/**
+ * Everything `byRank` weighs, taken from the group alone: no message is
+ * tokenised until the sort has cut the losers, and four in five matched
+ * sessions never reach a snippet.
+ */
+type Ranked = {
+  readonly entry: Entry;
+  readonly group: Group;
+  readonly terms: ReadonlySet<string>;
+  readonly typos: boolean;
+  readonly field: number;
+  readonly settledAt: number;
 };
 
 const FILE_READS = 16;
@@ -194,39 +217,39 @@ export class SearchIndex {
     const scope = this.scope(options);
     const dropped: string[] = [];
     let kept = SearchTokens.words(query);
-    let hits = kept.length === 0 ? [] : this.run(kept, scope);
-    while (hits.length < ENOUGH && kept.length > 1) {
+    let ranked = kept.length === 0 ? [] : this.run(kept, scope);
+    while (ranked.length < ENOUGH && kept.length > 1) {
       const rarest = this.rarest(kept);
       dropped.push(kept[rarest]!);
       kept = kept.filter((_, index) => index !== rarest);
-      hits = this.run(kept, scope);
+      ranked = this.run(kept, scope);
     }
 
     return {
-      hits: hits.sort(byRank).slice(0, options.limit ?? LIMIT),
+      hits: ranked
+        .sort(byRank)
+        .slice(0, options.limit ?? LIMIT)
+        .map((one) => hitOf(one)),
       dropped,
       scanned: scope.size,
     };
   }
 
   /** Exact and prefix first; typos only widen a result set that came back thin. */
-  private run(
-    words: readonly string[],
-    scope: ReadonlySet<Entry>
-  ): SearchHit[] {
+  private run(words: readonly string[], scope: ReadonlySet<Entry>): Ranked[] {
     const reach = Math.min(MAX_TYPOS, Math.max(...words.map(gateOf)));
-    let hits: SearchHit[] = [];
+    const last = words.length - 1;
+    let ranked: Ranked[] = [];
     for (let typos = 0; typos <= reach; typos++) {
-      const last = words.length - 1;
       const plans = words.map((word, at) =>
         this.plan(word, at === last, typos)
       );
-      hits = this.collect(plans, scope);
-      if (hits.length >= ENOUGH) {
+      ranked = this.collect(plans, scope);
+      if (ranked.length >= ENOUGH) {
         break;
       }
     }
-    return hits;
+    return ranked;
   }
 
   private plan(word: string, last: boolean, typos: number): Plan {
@@ -262,15 +285,16 @@ export class SearchIndex {
     };
   }
 
-  private collect(
-    plans: readonly Plan[],
-    scope: ReadonlySet<Entry>
-  ): SearchHit[] {
-    const turnsExact = plans.map((plan) => this.turnsOf(plan.exact));
-    const titlesExact = plans.map((plan) => this.titlesOf(plan.exact));
+  private collect(plans: readonly Plan[], scope: ReadonlySet<Entry>): Ranked[] {
+    const turnsExact = plans.map((plan) =>
+      this.union(this.postings, plan.exact)
+    );
+    const titlesExact = plans.map((plan) =>
+      this.union(this.titles, plan.exact)
+    );
     const everything = plans.map((plan) => [...plan.exact, ...plan.typo]);
-    const turns = everything.map((terms) => this.turnsOf(terms));
-    const titles = everything.map((terms) => this.titlesOf(terms));
+    const turns = everything.map((terms) => this.union(this.postings, terms));
+    const titles = everything.map((terms) => this.union(this.titles, terms));
     const terms = new Set(everything.flat());
 
     const groups = new Map<Entry, Group>();
@@ -292,7 +316,7 @@ export class SearchIndex {
       group.exact ||= titlesExact.every((found) => found.has(entry));
     }
 
-    return [...groups].map(([entry, group]) => hitOf(entry, group, terms));
+    return [...groups].map(([entry, group]) => rankedOf(entry, group, terms));
   }
 
   private scope(options: SearchOptions): ReadonlySet<Entry> {
@@ -339,21 +363,14 @@ export class SearchIndex {
       .slice(0, MAX_CANDIDATES);
   }
 
-  private turnsOf(terms: readonly string[]): ReadonlySet<number> {
-    const found = new Set<number>();
+  private union<T>(
+    index: ReadonlyMap<string, T[]>,
+    terms: readonly string[]
+  ): ReadonlySet<T> {
+    const found = new Set<T>();
     for (const term of terms) {
-      for (const ordinal of this.postings.get(term) ?? []) {
-        found.add(ordinal);
-      }
-    }
-    return found;
-  }
-
-  private titlesOf(terms: readonly string[]): ReadonlySet<Entry> {
-    const found = new Set<Entry>();
-    for (const term of terms) {
-      for (const entry of this.titles.get(term) ?? []) {
-        found.add(entry);
+      for (const value of index.get(term) ?? []) {
+        found.add(value);
       }
     }
     return found;
@@ -381,28 +398,20 @@ export class SearchIndex {
 
   private async sync(): Promise<void> {
     const summaries = await this.list();
-    const reads = await Pool.mapPooled(summaries, FILE_READS, (summary) =>
-      this.read(summary)
+    const taken = await Pool.mapPooled(summaries, FILE_READS, (summary) =>
+      this.take(summary)
     );
 
     const alive = new Set(summaries.map((summary) => summary.sessionId));
     const appended: { readonly entry: Entry; readonly from: number }[] = [];
     let replaced = false;
-    for (const [at, read] of reads.entries()) {
-      const summary = summaries[at]!;
-      if (read === undefined) {
+    for (const one of taken) {
+      if (one === undefined) {
         continue;
       }
-      const known = this.entries.get(summary.sessionId);
-      const entry = read.full ? blank(summary) : known!;
-      replaced ||= read.full && known !== undefined;
-      const from = entry.turns.length;
-      entry.modifiedAt = summary.modifiedAt;
-      if (read.body !== undefined) {
-        absorb(entry, read.body);
-      }
-      this.entries.set(entry.sessionId, entry);
-      appended.push({ entry, from });
+      replaced ||= one.replaced;
+      this.entries.set(one.entry.sessionId, one.entry);
+      appended.push({ entry: one.entry, from: one.from });
     }
 
     for (const sessionId of this.entries.keys()) {
@@ -425,6 +434,26 @@ export class SearchIndex {
     this.retitle();
     this.vocabularyStale = true;
     this.syncedAt = this.now();
+  }
+
+  /**
+   * One file's bytes end here, with the turns and parts taken out of them:
+   * held until the pool drained instead, a whole session tree would be
+   * resident at once. The entry lands in `entries` in the caller's order.
+   */
+  private async take(summary: SessionSummary): Promise<Taken | undefined> {
+    const read = await this.read(summary);
+    if (read === undefined) {
+      return undefined;
+    }
+    const known = this.entries.get(summary.sessionId);
+    const entry = read.full ? blank(summary) : known!;
+    const from = entry.turns.length;
+    entry.modifiedAt = summary.modifiedAt;
+    if (read.body !== undefined) {
+      absorb(entry, read.body);
+    }
+    return { entry, from, replaced: read.full && known !== undefined };
   }
 
   /**
@@ -551,12 +580,25 @@ function turnOf(line: string, seq: number): Turn | undefined {
   return text === "" ? undefined : { seq, role: message.role, text };
 }
 
-function hitOf(
+function rankedOf(
   entry: Entry,
   group: Group,
   terms: ReadonlySet<string>
-): SearchHit {
-  const { title, named, settledAt } = entry.digest;
+): Ranked {
+  const { title, settledAt } = entry.digest;
+  return {
+    entry,
+    group,
+    terms,
+    typos: !group.exact,
+    field: fieldOf(group, title),
+    settledAt: settledAt ?? entry.createdAt,
+  };
+}
+
+function hitOf(ranked: Ranked): SearchHit {
+  const { entry, group, terms } = ranked;
+  const { title, named } = entry.digest;
   const spoken = [...group.turns].sort(byRecognition);
   const opening = entry.parts.opening;
   return {
@@ -568,12 +610,12 @@ function hitOf(
     ...(named === true && opening !== undefined
       ? { opening: opening.slice(0, PREVIEW) }
       : {}),
-    settledAt: settledAt ?? entry.createdAt,
+    settledAt: ranked.settledAt,
     titleRanges:
       group.title && title !== undefined ? rangesOf(title, terms) : [],
     snippets: spoken.slice(0, SNIPPETS).map((turn) => snippetOf(turn, terms)),
     total: group.turns.length,
-    typos: !group.exact,
+    typos: ranked.typos,
   };
 }
 
@@ -638,18 +680,34 @@ function byRecognition(a: Turn, b: Turn): number {
   return a.role === b.role ? a.seq - b.seq : a.role === "user" ? -1 : 1;
 }
 
-function byRank(a: SearchHit, b: SearchHit): number {
+/** The turn a hit will lead with, without sorting the ones it will never show. */
+function leadOf(turns: readonly Turn[]): Turn | undefined {
+  let lead: Turn | undefined;
+  for (const turn of turns) {
+    if (lead === undefined || byRecognition(turn, lead) < 0) {
+      lead = turn;
+    }
+  }
+  return lead;
+}
+
+function byRank(a: Ranked, b: Ranked): number {
   if (a.typos !== b.typos) {
     return a.typos ? 1 : -1;
   }
-  return fieldOf(a) - fieldOf(b) || b.settledAt - a.settledAt;
+  return a.field - b.field || b.settledAt - a.settledAt;
 }
 
-function fieldOf(hit: SearchHit): number {
-  if (hit.titleRanges.length > 0) {
+/**
+ * A title match outranks a spoken one. The title index is built from the very
+ * tokens `rangesOf` marks, so a titled group always has a range to show, and
+ * the field is settled without cutting a single snippet.
+ */
+function fieldOf(group: Group, title: string | undefined): number {
+  if (group.title && title !== undefined) {
     return 0;
   }
-  return hit.snippets[0]?.role === "user" ? 1 : 2;
+  return leadOf(group.turns)?.role === "user" ? 1 : 2;
 }
 
 /** Typesense's `min_len_1typo` and `min_len_2typo`. */

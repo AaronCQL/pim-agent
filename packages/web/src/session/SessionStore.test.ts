@@ -868,8 +868,9 @@ describe("archive, names and pins", () => {
     flush();
     expect(target.sessionName("s1")).toBe("Strings");
 
-    const { sessions: listed } = await target.listSessions();
-    expect(listed[0]?.title).toBe("Strings");
+    // The listing answers with the server's row, which still carries the old
+    // name; the guess is the store's, and a row is drawn through the store.
+    await target.listSessions();
     expect(target.sessionName("s1")).toBe("Strings");
 
     answer?.();
@@ -962,9 +963,8 @@ describe("archive, names and pins", () => {
 
     const archiving = target.setArchived("s1", true);
     // Read off the disk before the command got there, so it still says live.
-    const { sessions: listed } = await target.listSessions();
+    await target.listSessions();
 
-    expect(listed[0]?.archived).toBe(true);
     expect(target.isArchived("s1")).toBe(true);
     answer?.();
     await archiving;

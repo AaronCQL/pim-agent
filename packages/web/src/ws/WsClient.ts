@@ -1,5 +1,6 @@
 import type { CommandDraft } from "#protocol/Command";
 import {
+  isAttachScoped,
   isDurableEvent,
   type ResponseEvent,
   type ServerEvent,
@@ -33,20 +34,6 @@ type Pending = {
 };
 
 const MAX_BACKOFF_MS = 10_000;
-
-/**
- * Frames that name their own subject — a session, a directory, or nothing at
- * all — and so belong to no attach. Gating one on the attach window drops a
- * broadcast every time this client switches session.
- */
-const UNGATED = new Set<ServerEvent["type"]>([
-  "session_activity",
-  "session_read",
-  "session_meta",
-  "project_meta",
-  "sessions_changed",
-  "update_state",
-]);
 
 function defaultBackoff(attempt: number): number {
   return Math.min(MAX_BACKOFF_MS, 250 * 2 ** (attempt - 1));
@@ -282,14 +269,10 @@ export class WsClient {
       waiter?.resolve(event);
       return;
     }
-    if (UNGATED.has(event.type)) {
-      this.options.onEvent(event);
-      return;
-    }
     if (event.type === "attached") {
       this.settled = true;
       this.target = { sessionId: event.sessionId, cwd: event.cwd };
-    } else if (!this.settled) {
+    } else if (!this.settled && isAttachScoped(event)) {
       return;
     }
     if (isDurableEvent(event)) {

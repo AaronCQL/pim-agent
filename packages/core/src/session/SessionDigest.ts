@@ -140,8 +140,9 @@ function clamp(text: string): string {
     : text;
 }
 
+/** Over the head window the caller has already cut, not the whole file. */
 function firstUserMessage(lines: readonly string[]): string | undefined {
-  for (const line of lines.slice(0, PROBE_LINES)) {
+  for (const line of lines) {
     const entry = parseSessionEntries(line)[0];
     if (entry?.type !== "message" || entry.message.role !== "user") {
       continue;
