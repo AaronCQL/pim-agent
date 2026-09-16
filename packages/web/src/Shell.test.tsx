@@ -920,15 +920,19 @@ describe("the composer, against a real gateway", () => {
       "the durable user message"
     );
 
-    const list = () => host.querySelector("ul")!;
+    const list = () => host.querySelector('nav[aria-label="Sessions"]')!;
     await until(
       // A session is named by its opening message, not by its id.
       () => list().textContent.includes("say hello"),
       "the catalogue"
     );
 
-    // Flat, most recent first, the directory on every row — no grouping by it.
-    expect(list().textContent).toContain(baseName(harness.tmp));
+    // Folded by directory, and this server has the one: a single group, named
+    // for the working directory, with the session under it.
+    expect(list().querySelectorAll("h3 > button")).toHaveLength(1);
+    expect(list().querySelector("h3 > button")?.textContent).toContain(
+      baseName(harness.tmp)
+    );
     expect(list().querySelectorAll("li").length).toBeGreaterThan(0);
     const scroller = scrollerOf(host);
     scroller.scrollTop = -500;

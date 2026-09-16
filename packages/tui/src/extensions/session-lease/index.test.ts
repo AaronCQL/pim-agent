@@ -53,6 +53,14 @@ async function appendEntries(path: string, count: number): Promise<void> {
   }
 }
 
+/** The one line a rename from another surface leaves behind. */
+async function appendName(path: string, name: string): Promise<void> {
+  await appendFile(
+    path,
+    `${JSON.stringify({ type: "session_info", id: "renamed", name })}\n`
+  );
+}
+
 async function holdForeignLease(path: string): Promise<void> {
   await Bun.write(SessionLease.pathFor(path), `${JSON.stringify(FOREIGN)}\n`);
 }
@@ -214,6 +222,31 @@ test("an out-of-turn write from this terminal is not staleness", async () => {
 
   await expect(harness.input("hello")).resolves.toEqual({ action: "continue" });
   expect(harness.notifications).toEqual([]);
+});
+
+// The browser renames a session the terminal is sitting in. Nothing it holds has
+// moved, so tearing the session down to catch up would cost more than it saves.
+test("a rename from another surface is not staleness", async () => {
+  const { harness, path } = await started("renamed", 2);
+
+  await appendName(path, "named from the browser");
+
+  await expect(harness.input("hello")).resolves.toEqual({ action: "continue" });
+  expect(harness.notifications).toEqual([]);
+
+  // Re-anchored on the rename, so the next foreign line is still caught.
+  await appendEntries(path, 1);
+  await expect(harness.input("hello")).resolves.toEqual({ action: "handled" });
+});
+
+test("a message beside the rename is still staleness", async () => {
+  const { harness, path } = await started("renamed-and-said", 2);
+
+  await appendName(path, "named from the browser");
+  await appendEntries(path, 1);
+
+  await expect(harness.input("hello")).resolves.toEqual({ action: "handled" });
+  expect(harness.notifications[0]?.message).toContain("continued elsewhere");
 });
 
 // pi names the file at session_start and buffers entries until the first assistant reply,

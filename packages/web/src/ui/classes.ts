@@ -1,8 +1,11 @@
 export const ICON =
   "flex size-8 shrink-0 items-center justify-center rounded-lg text-neutral-350 hover:bg-neutral-850 hover:text-neutral-50";
 
-export const FIELD =
-  "h-8 min-w-0 flex-1 rounded-lg bg-neutral-850 px-2 text-sm outline-none ring-1 ring-transparent focus:ring-neutral-600";
+/** How a text field is painted, less the box it takes: for one written over something that sets its own. */
+export const FIELD_SKIN =
+  "bg-neutral-850 outline-none ring-1 ring-transparent focus:ring-neutral-600";
+
+export const FIELD = `h-8 min-w-0 flex-1 rounded-lg px-3 text-sm ${FIELD_SKIN}`;
 
 export const ACTION =
   "h-8 shrink-0 rounded-lg bg-indigo-500 px-3 text-sm font-semibold text-white hover:bg-indigo-400 disabled:bg-neutral-850 disabled:text-neutral-500";

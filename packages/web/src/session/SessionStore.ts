@@ -18,11 +18,13 @@ import type {
   DurableEvent,
   EphemeralEvent,
   ModelView,
+  ProjectView,
   ServerEvent,
   SessionStatus,
   SessionSummaryView,
 } from "#protocol/ServerEvent";
 import { isDurableEvent } from "#protocol/ServerEvent";
+import { watchAttention } from "../ws/attention";
 import {
   WsClient,
   type AttachTarget,
@@ -98,6 +100,8 @@ export type SessionState = {
   dirtyCount: number;
   ahead: number;
   behind: number;
+  /** Changes whenever the working copy does; what the change list re-reads on. */
+  repoRevision: string;
   durable: DurableEvent[];
   live: LiveMessage[];
   optimistic: OptimisticMessage[];
@@ -107,6 +111,12 @@ export type SessionState = {
   loading: boolean;
   error: string | undefined;
   unread: Record<string, boolean>;
+  /** Out of the default listing until it is brought back; keyed by session. */
+  archived: Record<string, boolean>;
+  /** The name somebody wrote for a session, `null` once cleared; absent where this client has heard nothing. */
+  names: Record<string, string | null>;
+  /** Pinned projects, keyed by absolute working directory rather than by session. */
+  pinned: Record<string, boolean>;
   drafts: Record<string, string>;
   attachments: Record<string, readonly UploadedAttachment[]>;
   openings: Record<string, string>;
@@ -123,8 +133,45 @@ export type SessionStoreOptions = {
   readonly reloadPage?: () => void;
 };
 
+/** Which slice of the catalogue to read; the archived sessions are their own listing, never mixed into the live one. */
+export type SessionScope = {
+  readonly cwd?: string;
+  readonly archived?: boolean;
+  /** Keep at most this many sessions per working directory, so one busy project cannot fill the page. */
+  readonly perProject?: number;
+  /** Cap the page whole; absent, the server picks one, and a per-project ask above it would bind on it instead. */
+  readonly limit?: number;
+};
+
+/** One answer to `list_sessions`: the page of rows, and every directory that had one, counted whole. */
+export type SessionListing = {
+  readonly sessions: readonly SessionSummaryView[];
+  /** Counted before the per-project cut, so a group can say what a page of it leaves out. */
+  readonly projects: readonly ProjectView[];
+};
+
+/** The flags a row draws from this store alone, each one a command away. */
+type FlagRecord = "archived" | "unread" | "pinned";
+
 const FILE_PICKER_LIMIT = 50;
 const COMMAND_PICKER_LIMIT = 20;
+
+/** One row as this client knows it: the server's, carrying everything a broadcast has moved since. */
+function folded(
+  row: SessionSummaryView,
+  state: SessionState
+): SessionSummaryView {
+  const heard = state.names[row.sessionId];
+  const name = heard === undefined && row.named === true ? row.title : heard;
+  return {
+    ...row,
+    title: name ?? row.title,
+    named: typeof name === "string" ? true : undefined,
+    archived: state.archived[row.sessionId] === true ? true : undefined,
+    pinned: state.pinned[row.cwd] === true ? true : undefined,
+    unread: state.unread[row.sessionId] ?? row.unread,
+  };
+}
 
 type LocalCommand = PickerItem & {
   readonly run: (store: SessionStore) => Promise<void>;
@@ -152,6 +199,14 @@ export class SessionStore {
   private optimisticId = 0;
   private catalogue: Promise<ModelCatalogue> | undefined;
   private readonly drafts: Drafts;
+  private readonly detachAttention: () => void;
+  /**
+   * Keys a command of this client's still has a guess standing in for, as
+   * `record:key`. A listing the server computed before the command reached it
+   * would otherwise paint the row back the way it was, one frame before the
+   * broadcast puts it right again.
+   */
+  private readonly guessed = new Set<string>();
 
   public constructor(options: SessionStoreOptions) {
     this.update = new Reload(options.url, options.reloadPage);
@@ -183,6 +238,7 @@ export class SessionStore {
       dirtyCount: 0,
       ahead: 0,
       behind: 0,
+      repoRevision: "",
       durable: [],
       live: [],
       optimistic: [],
@@ -191,6 +247,9 @@ export class SessionStore {
       loading: false,
       error: undefined,
       unread: {},
+      archived: {},
+      names: {},
+      pinned: {},
       drafts: { ...drafts },
       attachments: {},
       openings: {},
@@ -222,6 +281,9 @@ export class SessionStore {
       (query, limit) => this.pickFiles(query, limit ?? FILE_PICKER_LIMIT),
       options.pickerDebounceMs
     );
+    this.detachAttention = watchAttention((value) => {
+      this.client.setAttention(value);
+    });
   }
 
   public async connect(): Promise<void> {
@@ -237,6 +299,7 @@ export class SessionStore {
   }
 
   public dispose(): void {
+    this.detachAttention();
     this.client.close();
     this.update.dispose();
   }
@@ -625,42 +688,87 @@ export class SessionStore {
     return untrack(() => this.state.sessionId);
   }
 
-  private async runGit(draft: CommandDraft): Promise<void> {
+  private runGit(draft: CommandDraft): Promise<void> {
+    return this.demand(draft, "git refused the operation");
+  }
+
+  /** Sends, and raises what the server refused with, so a caller can say so. */
+  private async demand(draft: CommandDraft, refusal: string): Promise<void> {
     const response = await this.client.send(draft);
     if (!response.success) {
-      throw new Error(response.error ?? "git refused the operation");
+      throw new Error(response.error ?? refusal);
     }
   }
 
-  /** Directories this machine has sessions in, recent first, current one left out. */
+  /**
+   * Directories this machine has sessions in, recent first, current one left
+   * out. Asked for one session per project: a flat page is all one directory
+   * on any real corpus, and every other project is invisible in it.
+   * Pinned projects come first: a pin is what a reader said about a directory,
+   * and it outranks what the clock says about it.
+   */
   public async recentDirectories(limit = 5): Promise<readonly string[]> {
-    const sessions = await this.listSessions();
+    const listing = await this.listSessions({ perProject: 1 });
     const recent: string[] = [];
-    for (const session of sessions) {
-      if (session.cwd !== this.state.cwd && !recent.includes(session.cwd)) {
-        recent.push(session.cwd);
-        if (recent.length === limit) {
-          break;
-        }
+    const here = this.state.cwd;
+    // The rows carry the recency; the projects carry whatever the page cut.
+    for (const cwd of [
+      ...listing.sessions.map((session) => session.cwd),
+      ...listing.projects.map((project) => project.cwd),
+    ]) {
+      if (cwd !== here && !recent.includes(cwd)) {
+        recent.push(cwd);
       }
     }
-    return recent;
+    const pinned = new Set(
+      listing.projects
+        .filter((project) => project.pinned === true)
+        .map((project) => project.cwd)
+    );
+    return [
+      ...recent.filter((cwd) => pinned.has(cwd)),
+      ...recent.filter((cwd) => !pinned.has(cwd)),
+    ].slice(0, limit);
   }
 
-  public async listSessions(
-    cwd?: string
-  ): Promise<readonly SessionSummaryView[]> {
+  public async listSessions(scope: SessionScope = {}): Promise<SessionListing> {
     const response = await this.client
-      .send({ type: "list_sessions", ...(cwd === undefined ? {} : { cwd }) })
+      .send({
+        type: "list_sessions",
+        ...(scope.cwd === undefined ? {} : { cwd: scope.cwd }),
+        ...(scope.perProject === undefined
+          ? {}
+          : { perProject: scope.perProject }),
+        ...(scope.limit === undefined ? {} : { limit: scope.limit }),
+        ...(scope.archived === true ? { archived: true } : {}),
+      })
       .catch(() => undefined);
     const sessions = response?.sessions ?? [];
+    const rows: SessionSummaryView[] = [];
     this.setState((draft) => {
       for (const session of sessions) {
         draft.activity[session.sessionId] = session.status ?? "idle";
-        draft.unread[session.sessionId] = session.unread ?? false;
+        this.seed(draft, "unread", session.sessionId, session.unread ?? false);
+        this.seed(
+          draft,
+          "archived",
+          session.sessionId,
+          session.archived === true
+        );
+        this.seed(draft, "pinned", session.cwd, session.pinned === true);
+        if (!this.guessed.has(`names:${session.sessionId}`)) {
+          draft.names[session.sessionId] =
+            session.named === true ? (session.title ?? null) : null;
+        }
         if (session.title !== undefined) {
           delete draft.openings[session.sessionId];
         }
+        rows.push(folded(session, draft));
+      }
+      // The page is capped, so a directory can be in the projects and in no
+      // row of it: its pin is only ever said here.
+      for (const project of response?.projects ?? []) {
+        this.seed(draft, "pinned", project.cwd, project.pinned === true);
       }
     });
     const unwritten = this.state.unwritten;
@@ -670,7 +778,18 @@ export class SessionStore {
     ) {
       this.drafts.setUnwritten(undefined);
     }
-    return sessions;
+    return { sessions: rows, projects: response?.projects ?? [] };
+  }
+
+  private seed(
+    state: SessionState,
+    record: FlagRecord,
+    key: string,
+    value: boolean
+  ): void {
+    if (!this.guessed.has(`${record}:${key}`)) {
+      state[record][key] = value;
+    }
   }
 
   public unwrittenSummary(): UnwrittenSummary | undefined {
@@ -779,6 +898,131 @@ export class SessionStore {
   /** True when the session has answered since anything last read it. */
   public isUnread(sessionId: string): boolean {
     return this.state.unread[sessionId] ?? false;
+  }
+
+  /** True when the session has been put away, so the live listing leaves it out. */
+  public isArchived(sessionId: string): boolean {
+    return this.state.archived[sessionId] ?? false;
+  }
+
+  /** True when that working directory is a pinned project. */
+  public isPinned(cwd: string): boolean {
+    return this.state.pinned[cwd] ?? false;
+  }
+
+  /** The name somebody wrote for the session, absent when it goes by its opening message. */
+  public sessionName(sessionId: string): string | undefined {
+    return this.state.names[sessionId] ?? undefined;
+  }
+
+  /**
+   * Names the session through pi's own name, so the terminal's picker shows
+   * it too; `null` clears it back to its opening message. Guessed at once, so
+   * a rename queued behind a running turn shows on the row it was typed on
+   * rather than nowhere; taken back when the server refuses. Only the name
+   * itself is guessed — a cleared one falls back to a digest of the opening
+   * message, which the server holds and this client does not.
+   */
+  public async rename(sessionId: string, name: string | null): Promise<void> {
+    const before = untrack(() => this.state.names[sessionId]);
+    await this.guess(
+      `names:${sessionId}`,
+      (state) => {
+        state.names[sessionId] = name;
+      },
+      (state) => {
+        if (before === undefined) {
+          delete state.names[sessionId];
+        } else {
+          state.names[sessionId] = before;
+        }
+      },
+      { type: "set_session_name", sessionId, value: name },
+      "the server refused the name"
+    );
+  }
+
+  /** Puts the session away, out of the live listing, or brings it back. */
+  public setArchived(sessionId: string, value: boolean): Promise<void> {
+    return this.flag(
+      { type: "set_session_archived", sessionId, value },
+      "archived",
+      sessionId,
+      value,
+      "the server refused the change"
+    );
+  }
+
+  /** Holds the session unread until it is answered; survives reading it. */
+  public markUnread(sessionId: string, value: boolean): Promise<void> {
+    return this.flag(
+      { type: "set_session_unread", sessionId, value },
+      "unread",
+      sessionId,
+      value,
+      "the server refused the mark"
+    );
+  }
+
+  /** Pins a working directory, not a session: every session in it sorts first. */
+  public setPinned(cwd: string, value: boolean): Promise<void> {
+    return this.flag(
+      { type: "set_project_pinned", cwd, value },
+      "pinned",
+      cwd,
+      value,
+      "the server refused the pin"
+    );
+  }
+
+  /**
+   * A flag the row draws from this store alone: guessed at once so the row
+   * answers the click, taken back when the server refuses, and confirmed by
+   * the broadcast that follows the command.
+   */
+  private async flag(
+    draft: CommandDraft,
+    record: FlagRecord,
+    key: string,
+    value: boolean,
+    refusal: string
+  ): Promise<void> {
+    const before = untrack(() => this.state[record][key]);
+    await this.guess(
+      `${record}:${key}`,
+      (state) => {
+        state[record][key] = value;
+      },
+      (state) => {
+        state[record][key] = before ?? false;
+      },
+      draft,
+      refusal
+    );
+  }
+
+  /**
+   * Paints `apply` before the command goes out and `restore` if it is refused,
+   * holding `key` for as long as the answer is outstanding so a listing the
+   * server computed before the command reached it leaves the guess standing.
+   */
+  private async guess(
+    key: string,
+    apply: (state: SessionState) => void,
+    restore: (state: SessionState) => void,
+    draft: CommandDraft,
+    refusal: string
+  ): Promise<void> {
+    this.guessed.add(key);
+    this.setState(apply);
+    try {
+      await this.demand(draft, refusal);
+    } catch (error) {
+      this.setState(restore);
+      throw error;
+    } finally {
+      this.guessed.delete(key);
+    }
   }
 
   private async set(
@@ -959,6 +1203,26 @@ export class SessionStore {
           draft.unread[event.sessionId] = false;
         });
         return;
+      // A sidecar write moves no session file, so no listing is invalidated
+      // by it: these are the only word a held row gets.
+      case "session_meta":
+        this.setState((draft) => {
+          if (event.name !== undefined) {
+            draft.names[event.sessionId] = event.name;
+          }
+          if (event.archived !== undefined) {
+            draft.archived[event.sessionId] = event.archived;
+          }
+          if (event.unread !== undefined) {
+            draft.unread[event.sessionId] = event.unread;
+          }
+        });
+        return;
+      case "project_meta":
+        this.setState((draft) => {
+          draft.pinned[event.cwd] = event.pinned;
+        });
+        return;
       case "sessions_changed":
         this.setState((draft) => {
           draft.catalogue += 1;
@@ -985,6 +1249,7 @@ export class SessionStore {
           draft.dirtyCount = event.dirtyCount ?? 0;
           draft.ahead = event.ahead ?? 0;
           draft.behind = event.behind ?? 0;
+          draft.repoRevision = event.repoRevision ?? "";
           // The server says idle only after flushing the turn's entries; live is superseded.
           if (event.status === "idle") {
             draft.live = [];

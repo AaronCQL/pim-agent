@@ -58,7 +58,11 @@ afterEach(async () => {
   mock.restore();
 });
 
-/** Two tracked files, both committed and then edited. */
+/**
+ * Two tracked files, both committed and then edited, and then the server's own
+ * reading of them: a frame still on its way would re-read the list under a
+ * test that counts reads.
+ */
 async function seed(): Promise<void> {
   await Bun.write(join(repo, "alpha.ts"), "one\ntwo\nthree\n");
   await Bun.write(join(repo, "src/beta.ts"), "alpha\nbeta\n");
@@ -66,6 +70,7 @@ async function seed(): Promise<void> {
   await git(repo, ["commit", "-m", "seed"]);
   await Bun.write(join(repo, "alpha.ts"), "one\ntwo\nTHREE\n");
   await Bun.write(join(repo, "src/beta.ts"), "alpha\nBETA\n");
+  await store.refreshGit();
 }
 
 /** Every command the overlay asks for, with an optional stand-in answer. */
@@ -87,7 +92,7 @@ function paint(): HTMLElement {
   dispose = render(
     () => (
       <DiffView
-        diff={new DiffStore(store)}
+        diff={new DiffStore(store, 0)}
         settings={new Settings()}
         inset={0}
         onClose={() => {}}
@@ -101,7 +106,9 @@ function paint(): HTMLElement {
 
 function rows(host: HTMLElement): readonly HTMLButtonElement[] {
   return [
-    ...host.querySelectorAll<HTMLButtonElement>("button[aria-expanded]"),
+    ...(changesPane(host) ?? host).querySelectorAll<HTMLButtonElement>(
+      "button[aria-expanded]"
+    ),
   ].filter((button) => button.getAttribute("aria-haspopup") === null);
 }
 
@@ -195,7 +202,7 @@ function clickText(host: HTMLElement, label: string): void {
 }
 
 /** The state frame the server sends whenever the repository moves. */
-function dirty(count: number): void {
+function dirty(count: number, revision = `r${count}`): void {
   store.ingest({
     type: "session_state",
     writable: true,
@@ -208,6 +215,7 @@ function dirty(count: number): void {
     dirtyCount: count,
     ahead: 0,
     behind: 0,
+    repoRevision: revision,
   });
 }
 
@@ -355,6 +363,7 @@ test("two files expanded at once both arrive", async () => {
 test("changing the base reads the list again and forgets the hunks", async () => {
   await seed();
   await git(repo, ["add", "alpha.ts"]);
+  await store.refreshGit();
   const host = await open();
   await settle(() => rows(host).length === 2, "both rows");
 
@@ -538,23 +547,60 @@ test("the list paints five hundred rows, and the next five hundred on request", 
   expect(host.textContent).toContain("1000 of 1200");
 });
 
-test("a repository that moves marks the list stale and waits to be asked", async () => {
+test("a repository that moves re-reads itself, keeping the open file open", async () => {
   await seed();
   const host = await open();
   await settle(() => rows(host).length === 2, "both rows");
+  rows(host)[0]?.click();
+  await settle(() => host.textContent?.includes("THREE") === true, "the hunks");
+  dirty(2, "before");
 
-  dirty(99);
-  flush();
+  await Bun.write(join(repo, "alpha.ts"), "one\ntwo\nFOUR\n");
+  dirty(2, "after");
 
-  expect(host.textContent).toContain("The repository has changed");
-  expect(asked("list_changes").length).toBe(1);
+  await settle(
+    () => host.textContent?.includes("FOUR") === true,
+    "the re-read hunks"
+  );
+  expect(host.textContent).not.toContain("THREE");
+  expect(rows(host)[0]?.getAttribute("aria-expanded")).toBe("true");
+  expect(host.querySelector("[title='Read the change list again']")).toBeNull();
+});
+
+/** A file the repository has lost is a row the list drops of its own accord. */
+test("a repository that loses a change drops its row", async () => {
+  await seed();
+  const host = await open();
+  await settle(() => rows(host).length === 2, "both rows");
+  dirty(2, "before");
+
+  await Bun.write(join(repo, "src/beta.ts"), "alpha\nbeta\n");
+  dirty(1, "after");
+
+  await settle(() => rows(host).length === 1, "the row that is left");
+  expect(labels(host)).toEqual(["alpha.ts"]);
+});
+
+/** Nothing is read for a pane nobody is on; coming back reads it once. */
+test("a repository that moves while the change set is closed is read on return", async () => {
+  await seed();
+  watch();
+  const host = shell();
+  openDiff(host);
+  await settle(() => rows(host).length === 2, "the change set's rows");
+  dirty(2, "before");
+  const reads = asked("list_changes").length;
 
   host
-    .querySelector<HTMLButtonElement>("[title='Read the change list again']")
+    .querySelector<HTMLButtonElement>("[aria-label='Back to the conversation']")
     ?.click();
+  flush();
+  await Bun.write(join(repo, "gamma.ts"), "new\n");
+  dirty(3, "after");
+  expect(asked("list_changes").length).toBe(reads);
 
-  await settle(() => asked("list_changes").length === 2, "the re-read");
-  expect(host.querySelector("[title='Read the change list again']")).toBeNull();
+  openDiff(host);
+  await settle(() => rows(host).length === 3, "the row the edit added");
 });
 
 test("a diff too large to paint says so, and offers no way past it", async () => {
@@ -798,11 +844,7 @@ test("a refused commit keeps the picks and the message that was refused", async 
   expect(await gitOut(["log", "-1", "--pretty=%s"])).toBe("seed");
 });
 
-/*
- * The write we just made is reported back to us as the repository moving, and
- * a list already re-read against it is not stale — it is the newest there is.
- */
-test("a commit of our own re-reads the list rather than calling it stale", async () => {
+test("a commit of our own re-reads the list it emptied", async () => {
   await seed();
   watch((command) =>
     command.type === "commit"
@@ -825,14 +867,11 @@ test("a commit of our own re-reads the list rather than calling it stale", async
     () => asked("list_changes").length === 2,
     "the re-read the commit asks for"
   );
-  dirty(7);
 
   await settle(
-    () => asked("list_changes").length === 3,
-    "the re-read the state frame asks for"
+    () => host.textContent?.includes("committed a1b2c3d") === true,
+    "the receipt"
   );
-  expect(host.textContent).not.toContain("The repository has changed");
-  expect(host.textContent).toContain("committed a1b2c3d");
 });
 
 test("a half-written message survives leaving the review and coming back", async () => {

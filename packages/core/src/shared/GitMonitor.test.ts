@@ -1,10 +1,17 @@
 import { describe, expect, test } from "bun:test";
 
+import { until } from "./fixtures/wait";
 import { Git, type GitState } from "./Git";
 import { GitMonitor } from "./GitMonitor";
 
 function state(branch: string | null, dirtyCount = 0): GitState {
-  return { branch, dirtyCount, ahead: 0, behind: 0 };
+  return {
+    branch,
+    dirtyCount,
+    ahead: 0,
+    behind: 0,
+    revision: `${branch}:${dirtyCount}`,
+  };
 }
 
 async function flushPromises(): Promise<void> {
@@ -137,5 +144,29 @@ describe("GitMonitor", () => {
     fail = true;
 
     expect(await monitor.refresh("/repo")).toEqual(state("main"));
+  });
+
+  test("polls a watched directory, which is all a worktree edit is heard through", async () => {
+    let next = state("main");
+    const monitor = new GitMonitor({
+      status: () => Promise.resolve(next),
+      pollMs: 1,
+    });
+    const heard: GitState[] = [];
+
+    const stop = monitor.watch("/repo", (seen) => {
+      heard.push(seen);
+    });
+    await flushPromises();
+    expect(heard).toEqual([state("main")]);
+
+    next = state("main", 4);
+    await until(() => heard.length === 2, "the poll's own reading");
+    expect(heard.at(-1)).toEqual(state("main", 4));
+
+    stop();
+    next = state("main", 9);
+    await flushPromises();
+    expect(heard).toHaveLength(2);
   });
 });

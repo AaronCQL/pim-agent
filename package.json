@@ -52,7 +52,7 @@
     "check": "bun scripts/check.ts",
     "gen:brand": "bun scripts/brand/generate.ts",
     "gen:hero": "bun scripts/hero/generate.ts",
-    "web:build": "cd packages/web && vite build",
+    "web:build": "cd packages/web && NODE_ENV=production vite build",
     "web:dev": "cd packages/web && vite"
   },
   "devDependencies": {

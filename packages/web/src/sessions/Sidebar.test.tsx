@@ -11,8 +11,9 @@ import {
 } from "bun:test";
 import { flush, untrack } from "solid-js";
 
+import type { CommandDraft } from "#protocol/Command";
 import { PROTOCOL_VERSION } from "#protocol/Protocol";
-import type { SessionSummaryView } from "#protocol/ServerEvent";
+import type { ProjectView, SessionSummaryView } from "#protocol/ServerEvent";
 import { SessionStore } from "../session/SessionStore";
 import { mountPoint } from "../test/dom";
 import { Sidebar } from "./Sidebar";
@@ -33,41 +34,113 @@ const SESSIONS: readonly SessionSummaryView[] = [
   },
 ];
 
+/** Out of the live listing: only the archived scope answers with it. */
+const PUT_AWAY: SessionSummaryView = {
+  sessionId: "cccccccc-3333",
+  cwd: "/home/ada/dev/pim",
+  createdAt: 0,
+  settledAt: 0,
+  title: "Put away last week",
+  archived: true,
+};
+
+type Painted = {
+  readonly host: HTMLElement;
+  readonly switched: string[];
+  readonly sent: CommandDraft[];
+  readonly store: SessionStore;
+};
+
+/** What the server counts behind a page of rows: every session each directory holds. */
+function counted(
+  sessions: readonly SessionSummaryView[]
+): readonly ProjectView[] {
+  const tally = new Map<string, number>();
+  for (const session of sessions) {
+    tally.set(session.cwd, (tally.get(session.cwd) ?? 0) + 1);
+  }
+  return [...tally].map(([cwd, count]) => ({ cwd, count }));
+}
+
 /**
  * Offline: the listing is the only thing this reads, so it is the only thing
  * answered. Answered rather than stubbed away, because the marks it carries
- * are the server's and this is where the store takes them from.
+ * are the server's and this is where the store takes them from. Every other
+ * command is taken down, so a row's verbs can be read off the wire.
  */
 function paint(
-  onNavigate?: () => void,
-  unread: readonly string[] = [],
-  onOpenSettings?: () => void
-): {
-  readonly host: HTMLElement;
-  readonly switched: string[];
-  readonly store: SessionStore;
-} {
+  options: {
+    readonly onNavigate?: () => void;
+    readonly onOpenSettings?: () => void;
+    readonly unread?: readonly string[];
+    readonly sessions?: readonly SessionSummaryView[];
+    /** Overrides the count behind the page, for a project the cut trimmed. */
+    readonly projects?: readonly ProjectView[];
+    readonly archived?: readonly SessionSummaryView[];
+    /** Directories the server already holds a pin for. */
+    readonly pinned?: readonly string[];
+    /** What the server refuses every mutating command with. */
+    readonly refuse?: string;
+  } = {}
+): Painted {
   const store = new SessionStore({ url: "ws://127.0.0.1:1" });
   const switched: string[] = [];
-  store.client.send = async () => ({
-    type: "response",
-    id: "1",
-    success: true,
-    sessions: SESSIONS.map((session) => {
-      // A real listing says what each session is doing, so this one does
-      // too: the spinner is read off the status, and a row answered for as
-      // idle would stop one mid-turn on the next re-list.
-      // Untracked: the server this stands in for is answering a request,
-      // not deriving a value, and this runs from inside the effect that
-      // asked.
-      const status = untrack(() => store.state.activity[session.sessionId]);
+  const sent: CommandDraft[] = [];
+  const live = options.sessions ?? SESSIONS;
+  // Kept, not merely answered: a pin is the server's to remember, and the
+  // listing that follows one is where a client learns it stuck.
+  const pins = new Set(options.pinned ?? []);
+  store.client.send = async (draft) => {
+    sent.push(draft);
+    if (draft.type === "set_project_pinned" && options.refuse === undefined) {
+      if (draft.value) {
+        pins.add(draft.cwd);
+      } else {
+        pins.delete(draft.cwd);
+      }
+    }
+    if (draft.type === "list_sessions") {
+      const scope = draft.archived === true ? (options.archived ?? []) : live;
+      const answered =
+        draft.cwd === undefined
+          ? scope
+          : scope.filter((session) => session.cwd === draft.cwd);
       return {
-        ...session,
-        ...(unread.includes(session.sessionId) ? { unread: true } : {}),
-        ...(status === undefined || status === "idle" ? {} : { status }),
+        type: "response",
+        id: "1",
+        success: true,
+        projects: (options.projects ?? counted(scope)).map((project) =>
+          pins.has(project.cwd)
+            ? { ...project, pinned: true as const }
+            : project
+        ),
+        sessions: (draft.perProject === undefined
+          ? answered
+          : cut(answered, draft.perProject)
+        ).map((session) => {
+          // A real listing says what each session is doing, so this one
+          // does too: the spinner is read off the status, and a row
+          // answered for as idle would stop one mid-turn on the next
+          // re-list.
+          // Untracked: the server this stands in for is answering a
+          // request, not deriving a value, and this runs from inside the
+          // effect that asked.
+          const status = untrack(() => store.state.activity[session.sessionId]);
+          return {
+            ...session,
+            ...((options.unread ?? []).includes(session.sessionId)
+              ? { unread: true }
+              : {}),
+            ...(pins.has(session.cwd) ? { pinned: true as const } : {}),
+            ...(status === undefined || status === "idle" ? {} : { status }),
+          };
+        }),
       };
-    }),
-  });
+    }
+    return options.refuse === undefined
+      ? { type: "response", id: "1", success: true }
+      : { type: "response", id: "1", success: false, error: options.refuse };
+  };
   store.switchTo = async (sessionId) => {
     switched.push(sessionId);
   };
@@ -76,14 +149,29 @@ function paint(
     () => (
       <Sidebar
         store={store}
-        {...(onNavigate ? { onNavigate } : {})}
-        {...(onOpenSettings ? { onOpenSettings } : {})}
+        {...(options.onNavigate ? { onNavigate: options.onNavigate } : {})}
+        {...(options.onOpenSettings
+          ? { onOpenSettings: options.onOpenSettings }
+          : {})}
       />
     ),
     host
   );
   flush();
-  return { host, switched, store };
+  return { host, switched, sent, store };
+}
+
+/** The server's per-project cut: the newest `perProject` of every directory. */
+function cut(
+  sessions: readonly SessionSummaryView[],
+  perProject: number
+): readonly SessionSummaryView[] {
+  const tally = new Map<string, number>();
+  return sessions.filter((session) => {
+    const held = (tally.get(session.cwd) ?? 0) + 1;
+    tally.set(session.cwd, held);
+    return held <= perProject;
+  });
 }
 
 /** Both live in the browser, so both are seeded where the browser keeps them. */
@@ -96,6 +184,140 @@ function unwritten(sessionId: string): void {
     "pim.unwritten",
     JSON.stringify({ sessionId, cwd: "/home/ada/dev/pim", sent: false })
   );
+}
+
+/**
+ * What a row is: the button that attaches to the session. The `⋯` beside it is
+ * a button too, and so is the footer, so a bare `button` is three things now.
+ */
+function bodies(host: HTMLElement): readonly HTMLButtonElement[] {
+  return [...host.querySelectorAll<HTMLButtonElement>("li > button")];
+}
+
+function menu(host: HTMLElement, index = 0): HTMLButtonElement {
+  return [
+    ...host.querySelectorAll<HTMLButtonElement>('[aria-label^="Options for"]'),
+  ][index]!;
+}
+
+/** The unread mark, which is a shape rather than a word: the row's name says it. */
+function dots(host: HTMLElement): readonly Element[] {
+  return [...host.querySelectorAll('li [class*="bg-indigo-400"]')];
+}
+
+/** The `⋯` a group header carries, as against the one on a row under it. */
+function projectMenu(host: HTMLElement, index = 0): HTMLButtonElement {
+  return [
+    ...host.querySelectorAll<HTMLButtonElement>(
+      '[aria-label^="Project options for"]'
+    ),
+  ][index]!;
+}
+
+/** One group's handle: the button that folds a directory's sessions away. */
+function headings(host: HTMLElement): readonly HTMLButtonElement[] {
+  return [...host.querySelectorAll<HTMLButtonElement>("nav h3 > button")];
+}
+
+function heading(host: HTMLElement, index = 0): HTMLButtonElement {
+  return headings(host)[index]!;
+}
+
+/** Which groups stand open, in the order they are drawn. */
+function unfolded(host: HTMLElement): readonly boolean[] {
+  return headings(host).map(
+    (group) => group.getAttribute("aria-expanded") === "true"
+  );
+}
+
+/** Every row one group holds, whatever its fold has done with them. */
+function under(host: HTMLElement, index = 0): readonly HTMLElement[] {
+  return [
+    ...heading(host, index)
+      .closest("div.group")!
+      .querySelectorAll<HTMLElement>("li"),
+  ];
+}
+
+/** The rows one group shows: what a fold has put away is not one of them. */
+function drawn(host: HTMLElement, index = 0): readonly string[] {
+  const list = heading(host, index).closest("div.group")!.querySelector("ul")!;
+  return list.className.includes("hidden")
+    ? []
+    : under(host, index)
+        .filter((row) => !row.className.includes("hidden"))
+        .map((row) => row.textContent ?? "");
+}
+
+/** Which directory a group is for, read off the header's own tooltip. */
+function where(host: HTMLElement): readonly string[] {
+  return headings(host).map(
+    (group) => group.querySelector("[title]")?.getAttribute("title") ?? ""
+  );
+}
+
+function named(host: HTMLElement, label: string): HTMLButtonElement {
+  const found = [...host.querySelectorAll("button")].find(
+    (button) => button.textContent === label
+  );
+  expect(found).toBeDefined();
+  return found as HTMLButtonElement;
+}
+
+function press(target: Element, key: string): void {
+  target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+  flush();
+}
+
+/** A finger put down on a row and kept there. */
+function hold(
+  target: Element,
+  at: { readonly x: number; readonly y: number }
+): void {
+  target.dispatchEvent(
+    new PointerEvent("pointerdown", {
+      bubbles: true,
+      pointerType: "touch",
+      clientX: at.x,
+      clientY: at.y,
+    })
+  );
+}
+
+function click(target: Element): void {
+  // Cancelable, as a real one is: a `<summary>` folds on a click nobody
+  // cancelled, and an uncancelable press cannot be refused at all.
+  target.dispatchEvent(
+    new MouseEvent("click", { bubbles: true, cancelable: true })
+  );
+  flush();
+}
+
+/** Rows the reader can reach; a closed menu keeps no panel at all. */
+function verbs(host: HTMLElement): readonly HTMLElement[] {
+  const panel = [...host.querySelectorAll("[popover]")].find(
+    (element) => !element.className.includes("hidden")
+  );
+  return panel === undefined
+    ? []
+    : [...panel.querySelectorAll<HTMLElement>('[role="option"]')];
+}
+
+/** Where the open menu put itself. */
+function placement(host: HTMLElement): string {
+  const panel = [...host.querySelectorAll("[popover]")].find(
+    (element) => !element.className.includes("hidden")
+  );
+  expect(panel).toBeDefined();
+  return panel?.getAttribute("style") ?? "";
+}
+
+/** A verb commits before the caret moves, so it answers the press rather than the click. */
+function choose(host: HTMLElement, label: string): void {
+  const row = verbs(host).find((option) => option.textContent === label);
+  expect(row).toBeDefined();
+  row!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+  flush();
 }
 
 beforeEach(() => {
@@ -115,11 +337,10 @@ afterEach(() => {
  * rows on screen. Drained a hop at a time rather than slept on, because one
  * of these tests runs on a fake clock that only it can move — and until the
  * a row is up rather than for a fixed count, so a hop added to that chain
- * does not turn into a test that sees an empty list. A row is a `li button`:
- * the empty state is an `li` too.
+ * does not turn into a test that sees an empty list.
  */
 async function listed(host: HTMLElement): Promise<void> {
-  for (let hop = 0; hop < 20 && !host.querySelector("li button"); hop += 1) {
+  for (let hop = 0; hop < 20 && bodies(host).length === 0; hop += 1) {
     await Promise.resolve();
     flush();
   }
@@ -133,41 +354,442 @@ test("the header uses the compact pixel wordmark with an accessible name", () =>
   expect(logo?.classList.contains("h-5")).toBe(true);
 });
 
-test("one flat row per session: name, directory and how long ago", async () => {
+/**
+ * What the flat list used to be. The directory is said once now, by the
+ * header the sessions hang under, and a row keeps everything else it had.
+ */
+test("a group per directory, and one row per session under it", async () => {
   const { host } = paint();
   await Bun.sleep(0);
   flush();
+
+  expect(headings(host)).toHaveLength(2);
+  expect(heading(host).textContent).toContain("pim");
+  // The whole path, on the header rather than on every row it stands over.
+  expect(heading(host).querySelector('[title="~/dev/pim"]')).not.toBeNull();
+  expect(heading(host, 1).textContent).toContain("other");
 
   const rows = [...host.querySelectorAll("li")];
   expect(rows).toHaveLength(2);
   expect(rows[0]?.textContent).toContain("Modernise the string building");
   // A session with nothing written to it yet has only its id for a name.
   expect(rows[1]?.textContent).toContain("bbbbbbbb");
-  // The directory only; the full path is the row's tooltip.
-  expect(rows[0]?.textContent).toContain("pim");
-  expect(rows[0]?.textContent).not.toContain("~/dev/pim");
-  expect(rows[0]?.querySelector('[title="~/dev/pim"]')).not.toBeNull();
-  expect(rows[1]?.textContent).toContain("other");
+  // Name and age; the directory has left the row.
+  expect(rows[0]?.textContent).toMatch(/\d+[smhd]/);
+  expect(rows[0]?.textContent).not.toContain("dev/pim");
+});
+
+/**
+ * The property that makes a flat sidebar usable, kept through the fold:
+ * what you were last doing is at the top. Alphabetical grouping would put
+ * `/srv/api` over a project answered in ten seconds ago.
+ */
+test("groups stand in the order their newest session settled", async () => {
+  const { host } = paint({
+    sessions: [
+      { sessionId: "c1", cwd: "/srv/api", createdAt: 0, settledAt: 300 },
+      {
+        sessionId: "a1",
+        cwd: "/home/ada/dev/pim",
+        createdAt: 0,
+        settledAt: 200,
+      },
+      { sessionId: "b1", cwd: "/srv/other", createdAt: 0, settledAt: 100 },
+      {
+        sessionId: "a2",
+        cwd: "/home/ada/dev/pim",
+        createdAt: 0,
+        settledAt: 50,
+      },
+    ],
+  });
+  await listed(host);
+
+  expect(where(host)).toEqual(["/srv/api", "~/dev/pim", "/srv/other"]);
+
+  // And the project's own sessions, newest first, under its header.
+  const rows = under(host, 1);
+  expect(rows).toHaveLength(2);
+  expect(rows[0]?.textContent).toContain("a1");
+  expect(rows[1]?.textContent).toContain("a2");
+});
+
+test("the group holding the session being read is the open one", async () => {
+  const { host, store } = paint();
+  await listed(host);
+
+  // Nothing attached yet: the newest project stands open, so the sidebar is
+  // never a wall of closed headers.
+  expect(unfolded(host)).toEqual([true, false]);
+
+  store.ingest({
+    type: "attached",
+    protocolVersion: PROTOCOL_VERSION,
+    sessionId: "bbbbbbbb-2222",
+    cwd: "/srv/other",
+    head: 0,
+    pimVersion: "1.2.3",
+    piVersion: "0.9.0",
+  });
+  flush();
+  await Bun.sleep(0);
+  flush();
+
+  expect(unfolded(host)).toEqual([false, true]);
+});
+
+/** One project's worth of rows, newest first, each one named so the server would draw it. */
+function many(
+  count: number,
+  cwd = "/home/ada/dev/pim"
+): readonly SessionSummaryView[] {
+  return Array.from({ length: count }, (unused, at) => ({
+    sessionId: `s${at}`,
+    cwd,
+    createdAt: 0,
+    settledAt: 1000 - at,
+    title: `Session ${at}`,
+  }));
+}
+
+test("a group header draws its name and nothing it holds", async () => {
+  const { host } = paint({
+    projects: [
+      { cwd: "/home/ada/dev/pim", count: 4 },
+      { cwd: "/srv/other", count: 9 },
+    ],
+  });
+  await listed(host);
+
+  // The count behind a page counts files, not rows, so it is a number this
+  // sidebar can ask about but never show.
+  expect(heading(host).textContent).toBe("pim");
+  expect(heading(host, 1).textContent).toBe("other");
+});
+
+test("a group with more sessions than the page holds reads ten more per press", async () => {
+  const navigated: number[] = [];
+  const { host, sent } = paint({
+    onNavigate: () => navigated.push(1),
+    sessions: many(25),
+  });
+  await listed(host);
+
+  // Ten per project, and an eleventh row under them saying what that left out.
+  expect(host.querySelectorAll("li")).toHaveLength(11);
+  click(named(host, "Load more…"));
+  await Bun.sleep(0);
+  flush();
+
+  // One directory re-read at its own depth on a press, rather than a fatter
+  // page on every listing this sidebar ever asks for.
+  expect(sent.at(-1)).toEqual({
+    type: "list_sessions",
+    cwd: "/home/ada/dev/pim",
+    perProject: 20,
+    limit: 20,
+  });
+  // Twenty rows and the button still under them: there is a third page.
+  expect(host.querySelectorAll("li")).toHaveLength(21);
+
+  click(named(host, "Load more…"));
+  await Bun.sleep(0);
+  flush();
+
+  expect(sent.at(-1)).toEqual({
+    type: "list_sessions",
+    cwd: "/home/ada/dev/pim",
+    perProject: 30,
+    limit: 30,
+  });
+  expect(host.querySelectorAll("li")).toHaveLength(25);
+  expect(host.textContent).not.toContain("Load more…");
+  // Reading more of a project is not going anywhere.
+  expect(navigated).toEqual([]);
+});
+
+/**
+ * A session with nothing to call itself is counted on disk and never drawn,
+ * so the count alone would leave a button that loads nothing forever. The
+ * answer that comes up short is what retires it.
+ */
+test("a directory that answers short retires the button", async () => {
+  const { host } = paint({
+    sessions: many(12),
+    projects: [{ cwd: "/home/ada/dev/pim", count: 14 }],
+  });
+  await listed(host);
+
+  expect(host.querySelectorAll("li")).toHaveLength(11);
+  click(named(host, "Load more…"));
+  await Bun.sleep(0);
+  flush();
+
+  expect(host.querySelectorAll("li")).toHaveLength(12);
+  expect(host.textContent).not.toContain("Load more…");
+});
+
+/**
+ * The one press that starts a chat where the reader is already looking: the
+ * directory is the target, so nothing has to be chosen after it.
+ */
+test("a header's `+` starts a session in that directory and unfolds it", async () => {
+  const navigated: number[] = [];
+  const { host, store } = paint({ onNavigate: () => navigated.push(1) });
+  await listed(host);
+  const opened: string[] = [];
+  store.openDirectory = async (cwd?: string) => {
+    opened.push(cwd ?? "");
+  };
+
+  const plus = [
+    ...host.querySelectorAll<HTMLButtonElement>(
+      '[aria-label^="New session in"]'
+    ),
+  ];
+  expect(plus).toHaveLength(2);
+  expect(unfolded(host)).toEqual([true, false]);
+
+  click(plus[1]!);
+
+  expect(opened).toEqual(["/srv/other"]);
+  // The row it just made is under a header that was folded; both groups stand open.
+  expect(unfolded(host)).toEqual([true, true]);
+  expect(navigated).toEqual([1]);
+});
+
+test("opening and closing a group moves nothing but the group", async () => {
+  const navigated: number[] = [];
+  const { host, switched } = paint({ onNavigate: () => navigated.push(1) });
+  await listed(host);
+
+  click(heading(host, 1));
+  expect(unfolded(host)).toEqual([true, true]);
+
+  // And a group closed by hand stays closed, active session or not.
+  click(heading(host));
+  expect(unfolded(host)).toEqual([false, true]);
+  expect(navigated).toEqual([]);
+  expect(switched).toEqual([]);
+});
+
+/**
+ * A folded project is not silent about where you are: the session being read
+ * stays on screen under its own header, and its neighbours are what the fold
+ * puts away. The row is the same element open or closed, so unfolding the
+ * project grows the list around it rather than redrawing it.
+ */
+test("a folded group keeps the session being read, and nothing else", async () => {
+  const { host, store } = paint({ sessions: many(3) });
+  await listed(host);
+
+  store.ingest({
+    type: "attached",
+    protocolVersion: PROTOCOL_VERSION,
+    sessionId: "s1",
+    cwd: "/home/ada/dev/pim",
+    head: 0,
+    pimVersion: "1.2.3",
+    piVersion: "0.9.0",
+  });
+  flush();
+  await Bun.sleep(0);
+  flush();
+  expect(drawn(host)).toHaveLength(3);
+  const reading = bodies(host)[1]!;
+
+  click(heading(host));
+
+  expect(unfolded(host)).toEqual([false]);
+  expect(drawn(host)).toHaveLength(1);
+  expect(drawn(host)[0]).toContain("Session 1");
+  expect(bodies(host)[1]).toBe(reading);
+
+  click(heading(host));
+  expect(drawn(host)).toHaveLength(3);
+  expect(bodies(host)[1]).toBe(reading);
+});
+
+test("a folded group with nothing being read under it draws no rows at all", async () => {
+  const { host } = paint();
+  await listed(host);
+
+  expect(unfolded(host)).toEqual([true, false]);
+  expect(drawn(host, 1)).toEqual([]);
+});
+
+/**
+ * The one thing a pin is for: the project you keep coming back to stays at the
+ * top of the sidebar on the day you have not touched it. Recency still orders
+ * the pinned among themselves, and everything else below them.
+ */
+test("a pinned project stands above one answered in more recently", async () => {
+  const { host, store } = paint({
+    pinned: ["/srv/api", "/srv/other"],
+    sessions: [
+      {
+        sessionId: "a1",
+        cwd: "/home/ada/dev/pim",
+        createdAt: 0,
+        settledAt: 300,
+      },
+      { sessionId: "c1", cwd: "/srv/api", createdAt: 0, settledAt: 200 },
+      { sessionId: "b1", cwd: "/srv/other", createdAt: 0, settledAt: 100 },
+    ],
+  });
+  await listed(host);
+
+  expect(where(host)).toEqual(["/srv/api", "/srv/other", "~/dev/pim"]);
+  // A pin is worn open and folded alike: the top of the list is not the whole
+  // of the mark, or a collapsed header would say nothing about why it is there.
+  expect(unfolded(host)).toEqual([true, false, false]);
+  for (const index of [0, 1]) {
+    expect(
+      heading(host, index).querySelector('[aria-label="Pinned project"]')
+    ).not.toBeNull();
+    expect(heading(host, index).innerHTML).toContain("i-griddy-icons:pin");
+  }
+  expect(
+    heading(host, 2).querySelector('[aria-label="Pinned project"]')
+  ).toBeNull();
+  expect(heading(host, 2).innerHTML).not.toContain("i-griddy-icons:pin");
+
+  // What another window pinned: no session file moved, so this broadcast is
+  // the whole word on it and the fold follows it without a listing.
+  store.ingest({
+    type: "project_meta",
+    cwd: "/home/ada/dev/pim",
+    pinned: true,
+  });
+  flush();
+  expect(where(host)).toEqual(["~/dev/pim", "/srv/api", "/srv/other"]);
+});
+
+test("pinning a project lifts it at the press and keeps it through a re-list", async () => {
+  const navigated: number[] = [];
+  const growing: SessionSummaryView[] = [...SESSIONS];
+  const { host, sent, store, switched } = paint({
+    onNavigate: () => navigated.push(1),
+    sessions: growing,
+  });
+  await listed(host);
+  expect(where(host)).toEqual(["~/dev/pim", "/srv/other"]);
+
+  click(projectMenu(host, 1));
+  choose(host, "Pin project");
+
+  expect(sent.at(-1)).toEqual({
+    type: "set_project_pinned",
+    cwd: "/srv/other",
+    value: true,
+  });
+  // Guessed at, so the fold moves under the press rather than after a listing.
+  expect(where(host)).toEqual(["/srv/other", "~/dev/pim"]);
+  // Pinning is not navigating: the drawer this may be sitting in stays open.
+  expect(navigated).toEqual([]);
+  expect(switched).toEqual([]);
+
+  // The server kept it, so the listing it answers next says so too.
+  growing.push({
+    sessionId: "dddddddd-4444",
+    cwd: "/home/ada/dev/pim",
+    createdAt: 0,
+    settledAt: 1,
+    title: "Started in the terminal",
+  });
+  store.ingest({ type: "sessions_changed" });
+  flush();
+  for (let hop = 0; hop < 20 && host.querySelectorAll("li").length < 3; hop++) {
+    await Promise.resolve();
+    flush();
+  }
+
+  expect(where(host)).toEqual(["/srv/other", "~/dev/pim"]);
+  expect(
+    heading(host).querySelector('[aria-label="Pinned project"]')
+  ).not.toBeNull();
+  // And the verb reads back the other way.
+  click(projectMenu(host));
+  expect(verbs(host).map((option) => option.textContent)).toEqual([
+    "Unpin project",
+  ]);
+  choose(host, "Unpin project");
+  expect(sent.at(-1)).toEqual({
+    type: "set_project_pinned",
+    cwd: "/srv/other",
+    value: false,
+  });
+  expect(where(host)).toEqual(["~/dev/pim", "/srv/other"]);
+});
+
+test("a refused pin drops the project back where it was and says why", async () => {
+  const { host } = paint({ refuse: "the sidecar is read-only" });
+  await listed(host);
+
+  click(projectMenu(host, 1));
+  choose(host, "Pin project");
+  await Bun.sleep(0);
+  flush();
+
+  expect(where(host)).toEqual(["~/dev/pim", "/srv/other"]);
+  expect(
+    heading(host, 1).querySelector('[aria-label="Pinned project"]')
+  ).toBeNull();
+  expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+    "the sidecar is read-only"
+  );
+});
+
+test("the header's `⋯` and a right-click open the project's verbs, and fold nothing", async () => {
+  const { host } = paint();
+  await listed(host);
+
+  expect(unfolded(host)).toEqual([true, false]);
+
+  const trigger = projectMenu(host);
+  expect(trigger.innerHTML).toContain("i-griddy-icons:more-horizontal");
+  // Painted out until a caret lands on it, exactly as the row's is.
+  expect(trigger.className).toContain("sr-only");
+
+  click(trigger);
+  expect(verbs(host).map((option) => option.textContent)).toEqual([
+    "Pin project",
+  ]);
+  // The `⋯` stands beside the fold's handle, never inside it.
+  expect(unfolded(host)).toEqual([true, false]);
+
+  document.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+  flush();
+  expect(verbs(host)).toHaveLength(0);
+  expect(unfolded(host)).toEqual([true, false]);
+
+  heading(host)
+    .querySelector('[title="~/dev/pim"]')!
+    .dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+  flush();
+  expect(verbs(host).map((option) => option.textContent)).toEqual([
+    "Pin project",
+  ]);
+  expect(unfolded(host)).toEqual([true, false]);
 });
 
 test("the dot marks a session that has answered since anything read it", async () => {
   const { host } = paint();
   await Bun.sleep(0);
   flush();
-  expect(host.querySelectorAll('[aria-label="Unread"]')).toHaveLength(0);
+  expect(dots(host)).toHaveLength(0);
 
-  const { host: marked, store } = paint(undefined, ["aaaaaaaa-1111"]);
+  const { host: marked, store } = paint({ unread: ["aaaaaaaa-1111"] });
   await Bun.sleep(0);
   flush();
-  expect(
-    marked.querySelectorAll('li:first-child [aria-label="Unread"]')
-  ).toHaveLength(1);
+  expect(dots(marked)).toHaveLength(1);
+  expect(bodies(marked)[0]?.getAttribute("aria-label")).toContain("unread");
 
   // Read in another browser, on a cursor this one shares: the dot goes out
   // here without the list being asked for again.
   store.ingest({ type: "session_read", sessionId: "aaaaaaaa-1111" });
   flush();
-  expect(marked.querySelectorAll('[aria-label="Unread"]')).toHaveLength(0);
+  expect(dots(marked)).toHaveLength(0);
 });
 
 /**
@@ -212,13 +834,11 @@ test("a session another process started arrives without being asked for", async 
 
 test("picking a row attaches to it and tells the host to get out of the way", async () => {
   const navigated: number[] = [];
-  const { host, switched } = paint(() => navigated.push(1));
+  const { host, switched } = paint({ onNavigate: () => navigated.push(1) });
   await Bun.sleep(0);
   flush();
 
-  host
-    .querySelectorAll("li button")[1]!
-    .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  click(bodies(host)[1]!);
 
   expect(switched).toEqual(["bbbbbbbb-2222"]);
   expect(navigated).toEqual([1]);
@@ -234,8 +854,7 @@ test("a row's age follows the clock, not the next render", async () => {
   const { host } = paint();
   await listed(host);
   const age = (): string | undefined =>
-    host.querySelector("li button > div:last-child > div:last-child")
-      ?.textContent ?? undefined;
+    bodies(host)[0]?.querySelector("span:last-child")?.textContent ?? undefined;
   expect(age()).toBe("30s");
 
   setSystemTime(new Date(90_000));
@@ -252,15 +871,15 @@ test("a row's age follows the clock, not the next render", async () => {
  * dialog now — a bar that reported a healthy socket every second it was
  * healthy was chrome nobody read.
  */
-test("the header carries the app's two buttons and nothing about the socket", () => {
+test("the header carries the app's own buttons and nothing about the socket", () => {
   const opened: number[] = [];
-  const { host } = paint(undefined, [], () => opened.push(1));
+  const { host } = paint({ onOpenSettings: () => opened.push(1) });
   const header = host.querySelector("h1")!.closest("div")!.parentElement!;
   const labels = [...header.querySelectorAll("button")].map((button) =>
     button.getAttribute("aria-label")
   );
 
-  expect(labels).toEqual(["New session", "Settings"]);
+  expect(labels).toEqual(["Settings"]);
   expect(host.textContent).not.toContain("127.0.0.1:1");
 
   header.querySelector<HTMLButtonElement>('[aria-label="Settings"]')!.click();
@@ -277,6 +896,11 @@ test("a new chat is a row before it is a file, marked and ageless", async () => 
   const rows = [...host.querySelectorAll("li")];
   // Newest first, and nothing is newer than the chat being started.
   expect(rows).toHaveLength(3);
+  // Grouped by the directory it will be written in, over the sessions
+  // already there — a chat nobody has sent yet has settled at no time at all,
+  // and stands above every session that has.
+  expect(where(host)).toEqual(["~/dev/pim", "/srv/other"]);
+  expect(drawn(host)).toHaveLength(2);
   // Named by the message it is about to send, exactly as a written session is
   // named by the one it did.
   expect(rows[0]?.textContent).toContain("rework the sidebar");
@@ -284,9 +908,12 @@ test("a new chat is a row before it is a file, marked and ageless", async () => 
   // one, whose fill the old neutral pill was painted in.
   expect(rows[0]?.textContent).not.toContain("draft");
   expect(rows[0]?.innerHTML).toContain("i-griddy-icons:edit");
-  expect(rows[0]?.innerHTML).toContain("text-amber-400");
+  expect(rows[0]?.innerHTML).toContain("text-amber-300");
   // No age: nothing has been written for a clock to measure.
   expect(rows[0]?.textContent).not.toMatch(/\d+[smhd]/);
+  // And nothing to rename, archive or hold unread: there is no file yet.
+  expect(rows[0]?.querySelector('[aria-label^="Options for"]')).toBeNull();
+  expect(rows[1]?.querySelector('[aria-label^="Options for"]')).not.toBeNull();
 });
 
 test("a new chat nobody has typed into is not a row at all", async () => {
@@ -357,6 +984,25 @@ test("a listed session with no title yet is named by its first message", async (
   expect(rows[1]?.textContent).not.toContain("bbbbbbbb");
 });
 
+test("a name somebody wrote outranks the message the session opened with", async () => {
+  const { host, store } = paint();
+  await Bun.sleep(0);
+  flush();
+
+  store.ingest({
+    type: "session_meta",
+    sessionId: "aaaaaaaa-1111",
+    name: "String building",
+  });
+  flush();
+
+  // Patched in place: the listing was not asked for again.
+  expect(bodies(host)[0]?.textContent).toContain("String building");
+  expect(bodies(host)[0]?.textContent).not.toContain(
+    "Modernise the string building"
+  );
+});
+
 test("a running turn spins where the age would be", async () => {
   const { host, store } = paint();
   await Bun.sleep(0);
@@ -419,11 +1065,14 @@ test("the listing is re-read when a turn ends, so the age is since the reply", a
   store.listSessions = async () => {
     listings += 1;
     // Settled just now, which is what a finished turn leaves behind.
-    return SESSIONS.map((session) =>
-      session.sessionId === "aaaaaaaa-1111"
-        ? { ...session, settledAt: Date.now() }
-        : session
-    );
+    return {
+      sessions: SESSIONS.map((session) =>
+        session.sessionId === "aaaaaaaa-1111"
+          ? { ...session, settledAt: Date.now() }
+          : session
+      ),
+      projects: counted(SESSIONS),
+    };
   };
 
   store.ingest({
@@ -530,6 +1179,399 @@ test("switching moves the highlight without rebuilding the list", async () => {
     expect(row).toBe(before[index]!);
   }
   expect(host.querySelector(".animate-spin")).toBe(spinner!);
-  expect(after[1]?.innerHTML).toContain("bg-neutral-850");
-  expect(after[0]?.innerHTML).not.toContain("bg-neutral-850");
+  // The fill is on the row's own button: the `⋯` beside it carries the same
+  // colour as a hover, so the row is asked rather than its markup searched.
+  expect(bodies(host)[1]?.className).toContain("bg-neutral-850");
+  expect(bodies(host)[0]?.className).not.toContain("bg-neutral-850");
+});
+
+test("every row keeps its `⋯` for a caret, painted out for everything else", async () => {
+  const { host } = paint();
+  await listed(host);
+
+  const triggers = host.querySelectorAll('[aria-label^="Options for"]');
+  expect(triggers).toHaveLength(2);
+  const trigger = menu(host);
+  expect(trigger.innerHTML).toContain("i-griddy-icons:more-horizontal");
+  // Off the page, not out of it: the pointer and the finger have gestures,
+  // and the keyboard and the screen reader have only this.
+  expect(trigger.className).toContain("sr-only");
+  expect(trigger.className).toContain("focus-visible:not-sr-only");
+  expect(verbs(host)).toHaveLength(0);
+});
+
+test("the `⋯` and a right-click open the same three verbs", async () => {
+  const { host } = paint();
+  await listed(host);
+
+  click(menu(host));
+  expect(verbs(host).map((option) => option.textContent)).toEqual([
+    "Rename",
+    "Mark unread",
+    "Archive",
+  ]);
+  expect(menu(host).getAttribute("aria-expanded")).toBe("true");
+
+  // Dismissed by a pointer landing anywhere else.
+  document.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+  flush();
+  expect(verbs(host)).toHaveLength(0);
+
+  bodies(host)[0]!.dispatchEvent(
+    new MouseEvent("contextmenu", { bubbles: true })
+  );
+  flush();
+  expect(verbs(host).map((option) => option.textContent)).toEqual([
+    "Rename",
+    "Mark unread",
+    "Archive",
+  ]);
+});
+
+/**
+ * The verbs have to read as the answer to the gesture that asked for them: a
+ * panel that opens off at the row's own `⋯`, the width of the sidebar away
+ * from the finger, reads as some other row's menu going off by itself.
+ */
+test("a right-click and a hold both drop the menu from the pointer", async () => {
+  jest.useFakeTimers();
+  const { host } = paint();
+  await listed(host);
+
+  bodies(host)[0]!.dispatchEvent(
+    new MouseEvent("contextmenu", { bubbles: true, clientX: 200, clientY: 120 })
+  );
+  flush();
+  expect(placement(host)).toContain("left: 200px");
+  expect(placement(host)).toContain("top: 124px");
+
+  document.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+  flush();
+
+  hold([...host.querySelectorAll("li")][1]!, { x: 40, y: 300 });
+  jest.advanceTimersByTime(500);
+  flush();
+  expect(placement(host)).toContain("left: 40px");
+  // Clear of the finger by the slop the hold allows it, and the gap besides.
+  expect(placement(host)).toContain("top: 314px");
+
+  // The `⋯` itself has a place of its own, and goes back to using it.
+  document.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+  flush();
+  click(menu(host));
+  expect(placement(host)).not.toContain("top: 314px");
+});
+
+/**
+ * A finger has no right-click, and the `⋯` is painted out: the hold is the
+ * only way a touch screen reaches a row's verbs, so it is the one thing here
+ * that cannot be allowed to rot.
+ */
+test("a finger held on a row opens its verbs, and the tap that ends it is not one", async () => {
+  jest.useFakeTimers();
+  const { host, switched } = paint();
+  await listed(host);
+
+  const row = [...host.querySelectorAll("li")][0]!;
+  hold(row, { x: 20, y: 20 });
+  jest.advanceTimersByTime(500);
+  flush();
+  expect(verbs(host).map((option) => option.textContent)).toEqual([
+    "Rename",
+    "Mark unread",
+    "Archive",
+  ]);
+
+  // The finger comes off the row it was held on, which is not a press on it.
+  row.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+  click(bodies(host)[0]!);
+  expect(switched).toEqual([]);
+
+  // And the next tap, which nobody held, attaches as any tap does.
+  click(bodies(host)[0]!);
+  expect(switched).toEqual(["aaaaaaaa-1111"]);
+});
+
+test("a finger that travels is scrolling the list, not holding a row", async () => {
+  jest.useFakeTimers();
+  const { host } = paint();
+  await listed(host);
+
+  const row = [...host.querySelectorAll("li")][0]!;
+  hold(row, { x: 20, y: 20 });
+  jest.advanceTimersByTime(200);
+  row.dispatchEvent(
+    new PointerEvent("pointermove", {
+      bubbles: true,
+      pointerType: "touch",
+      clientX: 22,
+      clientY: 90,
+    })
+  );
+  jest.advanceTimersByTime(500);
+  flush();
+
+  expect(verbs(host)).toHaveLength(0);
+});
+
+test("marking a row unread holds the dot without navigating anywhere", async () => {
+  const navigated: number[] = [];
+  const { host, sent, switched } = paint({
+    onNavigate: () => navigated.push(1),
+  });
+  await listed(host);
+
+  click(menu(host));
+  choose(host, "Mark unread");
+
+  expect(sent.at(-1)).toEqual({
+    type: "set_session_unread",
+    sessionId: "aaaaaaaa-1111",
+    value: true,
+  });
+  expect(dots(host)).toHaveLength(1);
+  // The drawer stays where it is: nothing here moved the reader.
+  expect(navigated).toEqual([]);
+  expect(switched).toEqual([]);
+  // And the verb reads back the other way.
+  click(menu(host));
+  expect(verbs(host).map((option) => option.textContent)).toContain(
+    "Mark read"
+  );
+});
+
+test("archiving takes the row off the live list", async () => {
+  const { host, sent } = paint();
+  await listed(host);
+  expect(bodies(host)).toHaveLength(2);
+
+  click(menu(host));
+  choose(host, "Archive");
+
+  expect(sent.at(-1)).toEqual({
+    type: "set_session_archived",
+    sessionId: "aaaaaaaa-1111",
+    value: true,
+  });
+  // The menu goes with the verb it was opened for.
+  expect(verbs(host)).toHaveLength(0);
+  expect(bodies(host)).toHaveLength(1);
+  expect(host.textContent).not.toContain("Modernise the string building");
+  expect(host.querySelector('[role="alert"]')).toBeNull();
+});
+
+test("a refused archive puts the row back and says why", async () => {
+  const { host } = paint({ refuse: "the session is open in the terminal" });
+  await listed(host);
+
+  click(menu(host));
+  choose(host, "Archive");
+  await Bun.sleep(0);
+  flush();
+
+  expect(bodies(host)).toHaveLength(2);
+  expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+    "the session is open in the terminal"
+  );
+});
+
+test("the footer opens the archived listing, and a row comes back from it", async () => {
+  const { host, sent } = paint({ archived: [PUT_AWAY] });
+  await listed(host);
+  expect(host.textContent).not.toContain("Put away last week");
+
+  click(named(host, "Archived"));
+  for (let hop = 0; hop < 20 && bodies(host).length !== 1; hop += 1) {
+    await Promise.resolve();
+    flush();
+  }
+
+  // A second listing, asked for by scope.
+  expect(sent.at(-1)).toEqual({
+    type: "list_sessions",
+    archived: true,
+    perProject: 10,
+  });
+  expect(host.textContent).toContain("Put away last week");
+  expect(host.textContent).not.toContain("Modernise the string building");
+  expect(named(host, "Back to sessions").getAttribute("aria-pressed")).toBe(
+    "true"
+  );
+
+  click(menu(host));
+  expect(verbs(host).map((option) => option.textContent)).toEqual([
+    "Rename",
+    "Mark unread",
+    "Unarchive",
+  ]);
+  choose(host, "Unarchive");
+
+  expect(sent.at(-1)).toEqual({
+    type: "set_session_archived",
+    sessionId: "cccccccc-3333",
+    value: false,
+  });
+  expect(host.textContent).not.toContain("Put away last week");
+  expect(host.textContent).toContain("Nothing archived.");
+});
+
+/**
+ * With nothing listed there is no header to press, so the only way to start
+ * anything is the one the empty list offers: a directory to start it in.
+ */
+test("an empty list offers a directory to start the first session in", async () => {
+  const { host } = paint({ sessions: [] });
+  await Bun.sleep(0);
+  flush();
+
+  expect(host.querySelectorAll('[aria-label^="New session in"]')).toHaveLength(
+    0
+  );
+  expect(host.querySelector("dialog")?.open).not.toBe(true);
+
+  click(named(host, "New session"));
+  expect(host.querySelector("dialog")?.open).toBe(true);
+});
+
+test("the keyboard walks the menu and commits the row it stands on", async () => {
+  const { host, sent } = paint();
+  await listed(host);
+
+  const trigger = menu(host);
+  click(trigger);
+  press(trigger, "ArrowDown");
+  expect(verbs(host)[1]?.getAttribute("aria-selected")).toBe("true");
+  press(trigger, "End");
+  expect(verbs(host)[2]?.getAttribute("aria-selected")).toBe("true");
+  press(trigger, "Enter");
+
+  expect(sent.at(-1)).toEqual({
+    type: "set_session_archived",
+    sessionId: "aaaaaaaa-1111",
+    value: true,
+  });
+
+  click(menu(host));
+  expect(verbs(host)).toHaveLength(3);
+  press(menu(host), "Escape");
+  expect(verbs(host)).toHaveLength(0);
+});
+
+test("Rename writes over the row, commits on Enter and gives up on Escape", async () => {
+  const { host, sent } = paint();
+  await listed(host);
+
+  click(menu(host));
+  choose(host, "Rename");
+  const box = (): HTMLInputElement | null =>
+    host.querySelector<HTMLInputElement>(
+      '[aria-label="Rename Modernise the string building"]'
+    );
+  expect(box()?.value).toBe("Modernise the string building");
+  // It arrives with the caret in it, and with what is there already picked out.
+  expect(document.activeElement).toBe(box());
+  // The row it stands in for is gone while it is being named.
+  expect(bodies(host)).toHaveLength(1);
+
+  box()!.value = "Strings";
+  press(box()!, "Escape");
+  expect(box()).toBeNull();
+  expect(bodies(host)).toHaveLength(2);
+  expect(sent.some((command) => command.type === "set_session_name")).toBe(
+    false
+  );
+
+  click(menu(host));
+  choose(host, "Rename");
+  box()!.value = "Strings";
+  press(box()!, "Enter");
+
+  expect(sent.at(-1)).toEqual({
+    type: "set_session_name",
+    sessionId: "aaaaaaaa-1111",
+    value: "Strings",
+  });
+  expect(box()).toBeNull();
+});
+
+test("a name cleared to nothing goes back to the message the session opened with", async () => {
+  const { host, sent } = paint();
+  await listed(host);
+
+  click(menu(host));
+  choose(host, "Rename");
+  const box = host.querySelector<HTMLInputElement>('[aria-label^="Rename "]')!;
+  box.value = "   ";
+  press(box, "Enter");
+
+  expect(sent.at(-1)).toEqual({
+    type: "set_session_name",
+    sessionId: "aaaaaaaa-1111",
+    value: null,
+  });
+});
+
+test("a rename is on the row before the server answers, and is taken back when it refuses", async () => {
+  const { host } = paint({ refuse: "the session is mid-turn" });
+  await listed(host);
+
+  click(menu(host));
+  choose(host, "Rename");
+  const box = host.querySelector<HTMLInputElement>('[aria-label^="Rename "]')!;
+  box.value = "Strings";
+  press(box, "Enter");
+
+  expect(bodies(host)[0]?.textContent).toContain("Strings");
+
+  await Bun.sleep(0);
+  flush();
+
+  expect(bodies(host)[0]?.textContent).toContain(
+    "Modernise the string building"
+  );
+  expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+    "the session is mid-turn"
+  );
+});
+
+test("a name being typed survives the listing a running session keeps provoking", async () => {
+  const { host, store, sent } = paint();
+  await listed(host);
+
+  click(menu(host));
+  choose(host, "Rename");
+  const box = (): HTMLInputElement =>
+    host.querySelector<HTMLInputElement>('[aria-label^="Rename "]')!;
+  box().value = "Strings";
+
+  store.ingest({ type: "sessions_changed" });
+  flush();
+  for (let hop = 0; hop < 20; hop += 1) {
+    await Promise.resolve();
+    flush();
+  }
+
+  expect(box().value).toBe("Strings");
+  expect(document.activeElement).toBe(box());
+
+  press(box(), "Enter");
+  expect(sent.at(-1)).toEqual({
+    type: "set_session_name",
+    sessionId: "aaaaaaaa-1111",
+    value: "Strings",
+  });
+});
+
+test("a name left as it was says nothing to the server", async () => {
+  const { host, sent } = paint();
+  await listed(host);
+
+  click(menu(host));
+  choose(host, "Rename");
+  const box = host.querySelector<HTMLInputElement>('[aria-label^="Rename "]')!;
+  press(box, "Enter");
+
+  expect(sent.some((command) => command.type === "set_session_name")).toBe(
+    false
+  );
 });

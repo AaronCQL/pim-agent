@@ -1,7 +1,11 @@
 import { parseArgs } from "node:util";
 
 import type { AttachmentRef } from "#protocol/Command";
-import { isDurableEvent, type ServerEvent } from "#protocol/ServerEvent";
+import {
+  isDurableEvent,
+  type ResponseEvent,
+  type ServerEvent,
+} from "#protocol/ServerEvent";
 import { ProbeClient } from "./ProbeClient";
 
 const USAGE = `pim probe — CLI client for pim-server, dumps every frame as JSONL
@@ -17,6 +21,17 @@ const USAGE = `pim probe — CLI client for pim-server, dumps every frame as JSO
   --pick-files <query>     ask the server to complete an @ path, print the rows
   --pick-commands <query>  ask the server for matching skills and commands
   --list-sessions          print pi's session catalogue and exit
+  --archived               with --list-sessions, print the archived sessions
+                           instead of the live ones
+  --per-project <n>        with --list-sessions, keep at most n sessions per
+                           working directory
+  --archive                put --session out of the live listing
+  --unarchive              bring --session back into it
+  --mark-unread            hold --session unread until something reads it
+  --rename <text>          name --session through pi's own session name;
+                           an empty string clears it
+  --pin <path>             pin a working directory, so its sessions sort first
+  --unpin <path>           unpin it again
   --list-models            print the models this server can switch to
   --upload <path>          transfer a local file to the server, attach it to
                            --prompt (repeatable)
@@ -38,6 +53,14 @@ const { values } = parseArgs({
     "pick-files": { type: "string" },
     "pick-commands": { type: "string" },
     "list-sessions": { type: "boolean", default: false },
+    archived: { type: "boolean", default: false },
+    "per-project": { type: "string" },
+    archive: { type: "boolean", default: false },
+    unarchive: { type: "boolean", default: false },
+    "mark-unread": { type: "boolean", default: false },
+    rename: { type: "string" },
+    pin: { type: "string" },
+    unpin: { type: "string" },
     "list-models": { type: "boolean", default: false },
     upload: { type: "string", multiple: true },
     cancel: { type: "boolean", default: false },
@@ -92,9 +115,21 @@ if (values["pick-files"] !== undefined) {
   }
 }
 if (values["list-sessions"]) {
-  for (const summary of await probe.listSessions(values.cwd)) {
+  const started = Bun.nanoseconds();
+  const { sessions, projects } = await probe.catalogue({
+    ...(values.cwd === undefined ? {} : { cwd: values.cwd }),
+    ...(values.archived ? { archived: true } : {}),
+    ...(values["per-project"] === undefined
+      ? {}
+      : { perProject: Number(values["per-project"]) }),
+  });
+  const ms = (Bun.nanoseconds() - started) / 1e6;
+  for (const summary of sessions) {
     process.stdout.write(`${JSON.stringify(summary)}\n`);
   }
+  process.stderr.write(
+    `list-sessions: ${sessions.length} rows from ${projects.length} projects in ${ms.toFixed(1)}ms\n`
+  );
 }
 if (values["list-models"]) {
   process.stdout.write(`${JSON.stringify(await probe.listModels())}\n`);
@@ -128,6 +163,30 @@ if (values.dequeue) {
   });
   process.stderr.write(`dequeue: ${JSON.stringify(response)}\n`);
 }
+
+const sessionId = probe.sessionId ?? "";
+const report = (what: string, response: ResponseEvent): void => {
+  process.stderr.write(`${what}: ${JSON.stringify(response)}\n`);
+};
+if (values.rename !== undefined) {
+  report("rename", await probe.rename(sessionId, values.rename || null));
+}
+if (values.archive) {
+  report("archive", await probe.setArchived(sessionId, true));
+}
+if (values.unarchive) {
+  report("unarchive", await probe.setArchived(sessionId, false));
+}
+if (values["mark-unread"]) {
+  report("mark-unread", await probe.markUnread(sessionId, true));
+}
+if (values.pin !== undefined) {
+  report("pin", await probe.setPinned(values.pin, true));
+}
+if (values.unpin !== undefined) {
+  report("unpin", await probe.setPinned(values.unpin, false));
+}
+
 if (values.prompt !== undefined) {
   await probe.promptWith(values.prompt, uploaded);
 }

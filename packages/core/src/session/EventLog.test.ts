@@ -275,6 +275,105 @@ describe("EventLog digest", () => {
   });
 });
 
+describe("EventLog session name", () => {
+  const named = (n: number, name: string) =>
+    line({
+      type: "session_info",
+      id: `n${n}`,
+      parentId: null,
+      timestamp: "2026-08-01T10:00:00.000Z",
+      name,
+    });
+  const said = (n: number, text: string) =>
+    line({
+      type: "message",
+      id: `m${n}`,
+      parentId: null,
+      timestamp: "2026-08-01T10:00:00.000Z",
+      message: { role: "user", content: [{ type: "text", text }] },
+    });
+  const header = line({
+    type: "session",
+    id: "s1",
+    timestamp: "2026-08-01T10:00:00.000Z",
+    cwd: "/tmp",
+  });
+
+  async function write(...lines: string[]): Promise<EventLog> {
+    const path = join(tmp, "named.jsonl");
+    await Bun.write(path, header + lines.join(""));
+    return new EventLog(path);
+  }
+
+  test("prefers the name somebody wrote over the opening message", async () => {
+    const log = await write(
+      said(1, "the first thing I asked"),
+      named(1, "Sidebar rename")
+    );
+
+    expect(await log.name()).toBe("Sidebar rename");
+    expect(await log.digest()).toEqual({
+      title: "Sidebar rename",
+      named: true,
+    });
+  });
+
+  test("finds a name buried behind every turn that followed it", async () => {
+    const turns = Array.from({ length: 400 }, (_, n) =>
+      said(n + 2, `turn ${n} ${"padding ".repeat(40)}`)
+    );
+    const log = await write(
+      said(1, "the first thing I asked"),
+      named(1, "Buried alive"),
+      ...turns
+    );
+
+    expect((await log.digest()).title).toBe("Buried alive");
+  });
+
+  test("a cleared name falls back to the opening message", async () => {
+    const log = await write(
+      said(1, "the first thing I asked"),
+      named(1, "Sidebar rename"),
+      named(2, "")
+    );
+
+    expect(await log.name()).toBeUndefined();
+    expect(await log.digest()).toEqual({ title: "the first thing I asked" });
+  });
+
+  test("the last name wins, and pi's padding around it is not part of it", async () => {
+    const log = await write(named(1, "first"), named(2, "  second  "));
+
+    expect(await log.name()).toBe("second");
+  });
+
+  test("trims an over-long name rather than widening the sidebar", async () => {
+    const log = await write(named(1, "n".repeat(500)));
+
+    expect((await log.digest()).title).toBe(`${"n".repeat(120)}…`);
+  });
+
+  test("a name still being written is not a name", async () => {
+    const log = await write(
+      said(1, "the first thing I asked"),
+      named(1, "half a rename").trimEnd()
+    );
+
+    expect(await log.name()).toBeUndefined();
+    expect((await log.digest()).title).toBe("the first thing I asked");
+  });
+
+  test("a message that merely mentions the entry type is not one", async () => {
+    const log = await write(
+      said(1, 'I renamed it with {"type":"session_info"}')
+    );
+
+    expect(await log.name()).toBeUndefined();
+    expect((await log.digest()).named).toBeUndefined();
+  });
+});
+
 describe("EventLog settle time", () => {
   const at = (n: number) =>
     `2026-08-01T10:00:${String(n).padStart(2, "0")}.000Z`;

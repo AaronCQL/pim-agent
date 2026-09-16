@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 
 import type { SessionHost } from "#core/session/SessionHost";
+import type { GitState } from "#core/shared/Git";
+import { GitMonitor } from "#core/shared/GitMonitor";
 import type { EphemeralEvent, ServerEvent } from "#protocol/ServerEvent";
 import { SessionStream } from "./SessionStream";
 
@@ -170,6 +172,14 @@ function durableThinking(): readonly string[] {
       ? [event.thinking]
       : []
   );
+}
+
+/** Every state frame a client was handed, in the order it was sent. */
+function states(): readonly Extract<
+  EphemeralEvent,
+  { type: "session_state" }
+>[] {
+  return received().filter((event) => event.type === "session_state");
 }
 
 /** Every durable message a client was handed, whole, so a second copy of one shows up. */
@@ -446,4 +456,49 @@ test("carries a foreign turn to a client on the poll alone, with no agent event"
   } finally {
     watching.mockRestore();
   }
+});
+
+/** A worktree edit touches nothing under `.git`, so a tool that writes has to say so itself. */
+test("re-reads the repository as soon as a tool has written to it", async () => {
+  let next: GitState = {
+    branch: "main",
+    dirtyCount: 0,
+    ahead: 0,
+    behind: 0,
+    revision: "r0",
+  };
+  let reads = 0;
+  const git = new GitMonitor({
+    status: () => {
+      reads += 1;
+      return Promise.resolve(next);
+    },
+    pollMs: 60_000,
+  });
+  stream.dispose();
+  seen = [];
+  stream = new SessionStream("s1", host(), path, { git });
+  stream.subscribe((event) => {
+    seen.push(event);
+  });
+  stream.start();
+  stream.watchFiles(true);
+  await until(() => reads === 1, "the reading the watch asks for");
+
+  next = { ...next, dirtyCount: 3, revision: "r1" };
+  emit(
+    agentEvent({
+      type: "tool_execution_end",
+      toolCallId: "call_write",
+      toolName: TOOL,
+      result: { content: [] },
+      isError: false,
+    })
+  );
+
+  await until(
+    () => states().some((state) => state.repoRevision === "r1"),
+    "the frame the write produced"
+  );
+  expect(states().at(-1)?.dirtyCount).toBe(3);
 });

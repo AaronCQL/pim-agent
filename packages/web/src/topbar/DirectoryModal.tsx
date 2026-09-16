@@ -54,14 +54,14 @@ export function DirectoryModal(props: {
   };
 
   createEffect(
-    () => props.open,
-    (open) => {
+    () => ({ open: props.open, store: props.store }),
+    ({ open, store }) => {
       if (!open) {
         return;
       }
       setInput(`${untrack(here)}/`);
       setFailure("");
-      void props.store
+      void store
         .recentDirectories()
         .then(setRecents)
         .catch(() => undefined);
@@ -73,14 +73,14 @@ export function DirectoryModal(props: {
   );
 
   createEffect(
-    () => ({ open: props.open, path: anchor() }),
-    ({ open, path }) => {
+    () => ({ open: props.open, path: anchor(), store: props.store }),
+    ({ open, path, store }) => {
       // Bump before the early return, or an answer in flight when the modal closes seeds the next open.
       const mine = ++generation;
       if (!open) {
         return;
       }
-      void props.store.listDirectory(path).then(
+      void store.listDirectory(path).then(
         (found) => {
           if (mine === generation) {
             setAnswer({ asked: path, listing: found });

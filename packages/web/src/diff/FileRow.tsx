@@ -1,5 +1,5 @@
 import { Dynamic } from "@solidjs/web";
-import { createMemo, createSignal, Show, useContext } from "solid-js";
+import { createMemo, Show, useContext } from "solid-js";
 
 import type { ToolDiffHunk } from "#core/shared/DiffLines";
 import { DiffExpand, type DiffGap } from "#core/view/DiffExpand";
@@ -31,13 +31,14 @@ function bytes(count: number): string {
 export function FileRow(props: {
   readonly file: ChangeSummary;
   readonly state: FileState | undefined;
-  readonly onExpand: () => void;
+  /** Held by the list, so a re-read of it can keep this file unfolded or shut it. */
+  readonly open: boolean;
+  readonly onToggle: () => void;
   /** Reads the file's own lines behind one gap and shows them. */
   readonly onOpen: (gap: DiffGap) => void;
   /** Old beside new rather than one column of both, as the pane's width allows. */
   readonly split: boolean;
 }) {
-  const [open, setOpen] = createSignal(false);
   const comments = useContext(ReviewComments)();
 
   /** The file's own state once its diff has landed, which is all that paints hunks. */
@@ -78,14 +79,6 @@ export function FileRow(props: {
     return sizes === "" ? "binary file" : `binary file ${sizes}`;
   });
 
-  const toggle = (): void => {
-    const next = !open();
-    setOpen(next);
-    if (next) {
-      props.onExpand();
-    }
-  };
-
   const badge = createMemo(() => comments?.count(props.file.path) ?? 0);
 
   return (
@@ -109,17 +102,17 @@ export function FileRow(props: {
       {/* The button stretches the full height of the bar, so the whole row
           answers a click rather than the line of text in the middle of it. */}
       <div
-        class={`sticky top-0 z-1 flex w-full items-center gap-2 px-3 text-sm ${open() ? "bg-neutral-850" : "bg-neutral-925 hover:bg-neutral-900"}`}
+        class={`sticky top-0 z-1 flex w-full items-center gap-2 px-3 text-sm ${props.open ? "bg-neutral-850" : "bg-neutral-925 hover:bg-neutral-900"}`}
       >
         <button
           type="button"
-          aria-expanded={open() ? "true" : "false"}
+          aria-expanded={props.open ? "true" : "false"}
           aria-label={props.file.path}
           class="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left"
-          onClick={toggle}
+          onClick={props.onToggle}
         >
           <span
-            class={`i-griddy-icons:chevron-right-small-filled size-4 shrink-0 text-neutral-400 transition-transform ${open() ? "rotate-90" : ""}`}
+            class={`i-griddy-icons:chevron-right-small-filled size-4 shrink-0 text-neutral-400 transition-transform ${props.open ? "rotate-90" : ""}`}
             aria-hidden="true"
           />
           <FileLabel file={props.file} />
@@ -143,7 +136,7 @@ export function FileRow(props: {
         </button>
       </div>
 
-      <Show when={open()}>
+      <Show when={props.open}>
         {/* The hunks run the full width of the pane, flush with the title bar
             over them: a diff is a column of its own numbering and its own
             code, and an inset would only narrow the code without lining it up
