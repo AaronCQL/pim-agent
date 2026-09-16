@@ -7,6 +7,7 @@ import { join } from "node:path";
 
 import { Directories } from "../shared/Directories";
 import { Pool } from "../shared/Pool";
+import type { Surface } from "../shared/Surface";
 import { AgentRuntime, type ModelChoice } from "./AgentRuntime";
 import { EventLog } from "./EventLog";
 import { SessionCache } from "./SessionCache";
@@ -39,6 +40,8 @@ export type SessionRegistryDeps = {
   ) => readonly ToolDefinition[];
   /** Appended to every session's system prompt. */
   readonly systemInstruction?: () => Promise<string | undefined>;
+  /** Where this frontend's human is reading. */
+  readonly surface?: Surface;
 };
 
 export type SessionCreateOptions = {
@@ -219,6 +222,9 @@ export class SessionRegistry {
       ...(this.deps.systemInstruction === undefined
         ? {}
         : { systemInstruction: this.deps.systemInstruction }),
+      ...(this.deps.surface === undefined
+        ? {}
+        : { surface: this.deps.surface }),
     });
   }
 }

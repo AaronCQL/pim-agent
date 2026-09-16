@@ -7,6 +7,7 @@ import {
   ExtensionToggles,
   type PimExtensionName,
 } from "../shared/ExtensionToggles";
+import type { Surface } from "../shared/Surface";
 import applyPatch from "./apply-patch/index";
 import bash from "./bash/index";
 import edit from "./edit/index";
@@ -26,23 +27,25 @@ export type PimInlineExtension = {
 };
 
 // Enumerated, never globbed: the published tarball must not depend on a directory scan.
-const list: readonly PimInlineExtension[] = [
-  { name: "apply-patch", factory: applyPatch },
-  { name: "bash", factory: bash },
-  { name: "edit", factory: edit },
-  { name: "glob", factory: glob },
-  { name: "grep", factory: grep },
-  { name: "read", factory: read },
-  { name: "subagent", factory: subagent },
-  { name: "system-prompt", factory: systemPrompt },
-  { name: "todo", factory: todo },
-  { name: "web-fetch", factory: webFetch },
-  { name: "web-search", factory: webSearch },
-  { name: "write", factory: write },
-];
+function list(surface?: Surface): readonly PimInlineExtension[] {
+  return [
+    { name: "apply-patch", factory: applyPatch },
+    { name: "bash", factory: bash },
+    { name: "edit", factory: edit },
+    { name: "glob", factory: glob },
+    { name: "grep", factory: grep },
+    { name: "read", factory: read },
+    { name: "subagent", factory: subagent },
+    { name: "system-prompt", factory: systemPrompt(surface) },
+    { name: "todo", factory: todo },
+    { name: "web-fetch", factory: webFetch },
+    { name: "web-search", factory: webSearch },
+    { name: "write", factory: write },
+  ];
+}
 
-function gated(): InlineExtension[] {
-  return list.map(({ name, factory }) => ({
+function gated(surface?: Surface): InlineExtension[] {
+  return list(surface).map(({ name, factory }) => ({
     name,
     factory: ExtensionToggles.gate(name, factory),
   }));
