@@ -14,6 +14,8 @@ export type ProjectEntry = {
   readonly pinned?: boolean;
   /** The sidebar group stands unfolded; absent is folded, which is where a project starts. */
   readonly expanded?: boolean;
+  /** What to call the directory instead of its base name; the directory itself is never touched. */
+  readonly label?: string;
 };
 
 /** The pin flags and the order they are shown in, from one read of the file. */
@@ -108,6 +110,13 @@ export class SessionMeta {
     return this.mutate((loaded) => put(loaded.projects, cwd, { expanded }));
   }
 
+  /** Names the project for the sidebar; `null` puts it back to its base name. */
+  public setLabel(cwd: string, label: string | null): Promise<void> {
+    return this.mutate((loaded) =>
+      put(loaded.projects, cwd, { label: label ?? "" })
+    );
+  }
+
   /** Takes the whole order rather than a move, so two surfaces settle on the last one written. */
   public setPinOrder(order: readonly string[]): Promise<void> {
     return this.mutate((loaded) => {
@@ -200,10 +209,13 @@ function put<T extends object>(
   return true;
 }
 
-/** Every field is an opt-in flag, so a false one is the same as an absent one. */
+/** Every field is opt-in, so a false flag or an empty name is the same as an absent one. */
 function onlySet<T extends object>(entry: T): T {
   return Object.fromEntries(
-    Object.entries(entry).filter(([, value]) => value === true)
+    Object.entries(entry).filter(
+      ([, value]) =>
+        value === true || (typeof value === "string" && value !== "")
+    )
   ) as T;
 }
 
@@ -231,12 +243,25 @@ function parseSession(value: unknown): SessionEntry | undefined {
 
 function parseProject(value: unknown): ProjectEntry | undefined {
   const raw = Json.asRecord(value);
-  if (raw === undefined || !isFlag(raw.pinned) || !isFlag(raw.expanded)) {
+  if (
+    raw === undefined ||
+    !isFlag(raw.pinned) ||
+    !isFlag(raw.expanded) ||
+    !isName(raw.label)
+  ) {
     return undefined;
   }
-  return onlySet({ pinned: raw.pinned, expanded: raw.expanded });
+  return onlySet({
+    pinned: raw.pinned,
+    expanded: raw.expanded,
+    label: raw.label,
+  });
 }
 
 function isFlag(value: unknown): value is boolean | undefined {
   return value === undefined || typeof value === "boolean";
+}
+
+function isName(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === "string";
 }

@@ -450,6 +450,7 @@ function projectsOf(
         ? { pinned: true as const, pinRank: ranks.get(cwd) ?? 0 }
         : {}),
       ...(entry?.expanded === true ? { expanded: true as const } : {}),
+      ...(entry?.label === undefined ? {} : { label: entry.label }),
     };
   });
 }

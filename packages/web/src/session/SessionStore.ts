@@ -126,6 +126,8 @@ export type SessionState = {
   pinRank: Record<string, number>;
   /** Projects whose sidebar group stands unfolded, keyed by absolute working directory. */
   expanded: Record<string, boolean>;
+  /** What a project is called instead of its base name, `null` once cleared; keyed by absolute working directory. */
+  labels: Record<string, string | null>;
   drafts: Record<string, string>;
   attachments: Record<string, readonly UploadedAttachment[]>;
   openings: Record<string, string>;
@@ -227,6 +229,7 @@ export class SessionStore {
       pinned: {},
       pinRank: {},
       expanded: {},
+      labels: {},
       drafts: { ...drafts },
       attachments: {},
       openings: {},
@@ -744,6 +747,9 @@ export class SessionStore {
       for (const project of response?.projects ?? []) {
         this.seed(draft, "pinned", project.cwd, project.pinned === true);
         this.seed(draft, "expanded", project.cwd, project.expanded === true);
+        if (!this.guessed.has(`labels:${project.cwd}`)) {
+          draft.labels[project.cwd] = project.label ?? null;
+        }
         // Under the pin's own key: a rank is half of the same guess, and a
         // listing computed before the pin reached the server carries neither.
         if (!this.guessed.has(`pinned:${project.cwd}`)) {
@@ -946,6 +952,35 @@ export class SessionStore {
   /** True when that project's sidebar group stands unfolded. Folded is where one starts. */
   public isExpanded(cwd: string): boolean {
     return this.state.expanded[cwd] ?? false;
+  }
+
+  /** What somebody called the project, absent when it goes by its directory's base name. */
+  public projectLabel(cwd: string): string | undefined {
+    return this.state.labels[cwd] ?? undefined;
+  }
+
+  /**
+   * Names the project a listing groups under, leaving the directory itself
+   * alone; `null` puts it back to its base name. Guessed at once and taken
+   * back when the server refuses, as a session's own name is.
+   */
+  public async renameProject(cwd: string, name: string | null): Promise<void> {
+    const before = untrack(() => this.state.labels[cwd]);
+    await this.guess(
+      `labels:${cwd}`,
+      (state) => {
+        state.labels[cwd] = name;
+      },
+      (state) => {
+        if (before === undefined) {
+          delete state.labels[cwd];
+        } else {
+          state.labels[cwd] = before;
+        }
+      },
+      { type: "set_project_label", cwd, value: name },
+      "the server refused the name"
+    );
   }
 
   /**
@@ -1314,6 +1349,9 @@ export class SessionStore {
           }
           if (event.expanded !== undefined) {
             draft.expanded[event.cwd] = event.expanded;
+          }
+          if (event.label !== undefined) {
+            draft.labels[event.cwd] = event.label;
           }
         });
         return;

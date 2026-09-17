@@ -245,6 +245,11 @@ export class ProbeClient {
     return this.send({ type: "set_project_expanded", cwd, value });
   }
 
+  /** Names a working directory for the listings; `null` puts it back to its base name. */
+  public setLabel(cwd: string, value: string | null): Promise<ResponseEvent> {
+    return this.send({ type: "set_project_label", cwd, value });
+  }
+
   /** The model catalogue, plus this session's thinking levels; empty when unattached. */
   public async listModels(): Promise<{
     readonly models: readonly ModelView[];

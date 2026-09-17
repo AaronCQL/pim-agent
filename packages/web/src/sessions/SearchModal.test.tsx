@@ -163,6 +163,7 @@ type Painted = {
   readonly asked: readonly string[];
   readonly switched: readonly string[];
   readonly closes: Accessor<number>;
+  readonly store: SessionStore;
 };
 
 let dispose: (() => void) | undefined;
@@ -209,7 +210,7 @@ function paint(
     host
   );
   flush();
-  return { host, asked, switched, closes };
+  return { host, asked, switched, closes, store: target };
 }
 
 function box(host: HTMLElement): HTMLInputElement {
@@ -327,6 +328,22 @@ describe("the search modal", () => {
     expect(row.querySelectorAll("button")).toHaveLength(1);
     expect(host.textContent).toContain("1 of 214 sessions");
     expect(host.textContent).not.toContain("1 of 214 sessions, including");
+  });
+
+  test("a renamed project is named the way the sidebar names it", async () => {
+    const { host, store } = paint(() => answer([TITLE_AND_CONTENT]));
+    store.ingest({
+      type: "project_meta",
+      cwd: "/home/ada/dev/pim-agent",
+      label: "Pim",
+    });
+
+    type(host, "lease");
+    await settle(host, 1);
+
+    const row = rows(host)[0]!;
+    expect(row.textContent).toContain("Pim");
+    expect(row.textContent).not.toContain("pim-agent");
   });
 
   test("a chatty session is counted rather than given a second snippet", async () => {

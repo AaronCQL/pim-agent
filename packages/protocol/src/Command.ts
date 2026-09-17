@@ -103,6 +103,13 @@ export type Command =
       readonly cwd: string;
       readonly value: boolean;
     }
+  /** Names a working directory for the listings; `null` puts it back to its base name, and the directory is never renamed. */
+  | {
+      readonly id: string;
+      readonly type: "set_project_label";
+      readonly cwd: string;
+      readonly value: string | null;
+    }
   /** Re-orders the pinned projects. The whole order, never a move: two surfaces settle on the last one sent. */
   | {
       readonly id: string;

@@ -55,6 +55,10 @@ const PER_PROJECT = 10;
 /** The box one session row occupies, read or being named, so the swap between the two shifts nothing. */
 const ROW_BOX = "min-w-0 flex-1 rounded-lg px-3 py-2 text-sm";
 
+/** The same, for a group header: pulled left by its own padding, so its text lands where the name's was. */
+const HEAD_BOX =
+  "-ml-2 min-w-0 flex-1 rounded-lg px-2 py-0 text-sm font-bold text-neutral-50";
+
 /** How many rows a project has been asked for, keyed by its working directory. */
 type Pages = Readonly<Record<string, number>>;
 
@@ -105,6 +109,7 @@ export function Sidebar(props: {
   const [view, setView] = createSignal<View>("live");
   const [pages, setPages] = createSignal<Pages>({});
   const [editing, setEditing] = createSignal<string>();
+  const [editingProject, setEditingProject] = createSignal<string>();
   const [choosing, setChoosing] = createSignal(false);
   const [failure, setFailure] = createSignal("");
   const [now, setNow] = createSignal(Date.now());
@@ -268,6 +273,10 @@ export function Sidebar(props: {
     props.store.localTitle(row.sessionId) ??
     row.sessionId.slice(0, 8);
 
+  /** What a project is called: the name somebody wrote for it, else the directory it is. */
+  const projectTitle = (cwd: string): string =>
+    props.store.projectLabel(cwd) ?? baseName(cwd);
+
   const go = (run: () => Promise<void>): void => {
     props.onNavigate?.();
     void run().catch(() => undefined);
@@ -302,6 +311,15 @@ export function Sidebar(props: {
     });
   };
 
+  const renameProject = (cwd: string, text: string): void => {
+    setEditingProject(undefined);
+    const name = text.trim();
+    if (name === projectTitle(cwd).trim()) {
+      return;
+    }
+    attempt(() => props.store.renameProject(cwd, name === "" ? null : name));
+  };
+
   const items = (row: Row): readonly RowMenuItem[] => {
     const sessionId = row.sessionId;
     const unread = props.store.isUnread(sessionId);
@@ -334,6 +352,13 @@ export function Sidebar(props: {
     const order = props.store.pinOrder();
     const at = order.indexOf(cwd);
     return [
+      {
+        label: "Rename project",
+        onSelect: () => {
+          setFailure("");
+          setEditingProject(cwd);
+        },
+      },
       {
         label: pinned ? "Unpin project" : "Pin project",
         onSelect: () => {
@@ -450,11 +475,19 @@ export function Sidebar(props: {
               <div class="group min-w-0">
                 <GroupHeader
                   cwd={group().cwd}
+                  title={projectTitle(group().cwd)}
                   pinned={group().pinned}
                   open={shown(group().cwd)}
+                  editing={editingProject() === group().cwd}
                   items={projectItems(group().cwd)}
                   onToggle={() => {
                     fold(group().cwd);
+                  }}
+                  onRename={(text) => {
+                    renameProject(group().cwd, text);
+                  }}
+                  onCancelRename={() => {
+                    setEditingProject(undefined);
                   }}
                   onNew={() => {
                     // The row it is about to make would land under a folded
@@ -507,6 +540,7 @@ export function Sidebar(props: {
           onClick={() => {
             setFailure("");
             setEditing(undefined);
+            setEditingProject(undefined);
             // The two listings are different scopes; a depth read into one says nothing about the other.
             setPages({});
             setView((was) => (was === "archived" ? "live" : "archived"));
@@ -534,11 +568,16 @@ export function Sidebar(props: {
 /** What the directory is called, the caret that folds it, and what can be done to the project itself. */
 function GroupHeader(props: {
   readonly cwd: string;
+  /** The name it goes by, which is the directory's own until somebody writes one. */
+  readonly title: string;
   readonly pinned: boolean;
   /** The group this heads is unfolded: its name is read first, so it is lit first. */
   readonly open: boolean;
+  readonly editing: boolean;
   readonly items: readonly RowMenuItem[];
   readonly onToggle: () => void;
+  readonly onRename: (text: string) => void;
+  readonly onCancelRename: () => void;
   readonly onNew: () => void;
 }) {
   let menu: RowMenuControl | undefined;
@@ -548,48 +587,58 @@ function GroupHeader(props: {
 
   return (
     <div class="group/head ml-3 mr-3 mt-2 flex items-center gap-2.4 py-0.5 text-sm text-neutral-350">
-      <h3 class="min-w-0 flex-1">
-        <button
-          type="button"
-          aria-expanded={props.open ? "true" : "false"}
-          class="flex w-full min-w-0 select-none items-center gap-2 text-left [-webkit-touch-callout:none]"
-          onClick={() => {
-            if (!press.swallowed()) {
-              props.onToggle();
-            }
-          }}
-          {...press.handlers}
-        >
-          <span
-            class={{
-              "i-griddy-icons:chevron-right-filled size-3 shrink-0 transition-transform": true,
-              "rotate-90 bg-neutral-200": props.open,
-              "bg-neutral-500 group-hover/head:bg-neutral-200": !props.open,
-            }}
-            aria-hidden="true"
+      <Show
+        when={props.editing}
+        fallback={
+          <h3 class="min-w-0 flex-1">
+            <button
+              type="button"
+              aria-expanded={props.open ? "true" : "false"}
+              class="flex w-full min-w-0 select-none items-center gap-2 text-left [-webkit-touch-callout:none]"
+              onClick={() => {
+                if (!press.swallowed()) {
+                  props.onToggle();
+                }
+              }}
+              {...press.handlers}
+            >
+              <Caret open={props.open} />
+              <span
+                class={{
+                  "truncate font-bold": true,
+                  "text-neutral-50": props.open,
+                  "text-neutral-400 group-hover/head:text-neutral-200":
+                    !props.open,
+                }}
+                title={where()}
+              >
+                {props.title}
+              </span>
+              <Show when={props.pinned}>
+                <span
+                  class="i-griddy-icons:pin size-3.5 shrink-0 rotate-45 text-neutral-400"
+                  aria-label="Pinned project"
+                />
+              </Show>
+            </button>
+          </h3>
+        }
+      >
+        <span class="flex min-w-0 flex-1 items-center gap-2">
+          <Caret open={props.open} />
+          <RenameBox
+            value={props.title}
+            label={`Rename ${where()}`}
+            box={HEAD_BOX}
+            onCommit={props.onRename}
+            onCancel={props.onCancelRename}
           />
-          <span
-            class={{
-              "truncate font-bold": true,
-              "text-neutral-50": props.open,
-              "text-neutral-400 group-hover/head:text-neutral-200": !props.open,
-            }}
-            title={where()}
-          >
-            {baseName(props.cwd)}
-          </span>
-          <Show when={props.pinned}>
-            <span
-              class="i-griddy-icons:pin size-3.5 shrink-0 rotate-45 text-neutral-400"
-              aria-label="Pinned project"
-            />
-          </Show>
-        </button>
-      </h3>
+        </span>
+      </Show>
       <span class="flex shrink-0 items-center">
         <button
           type="button"
-          aria-label={`New session in ${baseName(props.cwd)}`}
+          aria-label={`New session in ${props.title}`}
           title={`New session in ${where()}`}
           class="flex shrink-0 items-center px-2 text-neutral-500 hover:text-neutral-100"
           onClick={props.onNew}
@@ -605,6 +654,20 @@ function GroupHeader(props: {
         />
       </span>
     </div>
+  );
+}
+
+/** The fold's handle, drawn the same whether the header is being read or named. */
+function Caret(props: { readonly open: boolean }) {
+  return (
+    <span
+      class={{
+        "i-griddy-icons:chevron-right-filled size-3 shrink-0 transition-transform": true,
+        "rotate-90 bg-neutral-200": props.open,
+        "bg-neutral-500 group-hover/head:bg-neutral-200": !props.open,
+      }}
+      aria-hidden="true"
+    />
   );
 }
 
@@ -767,6 +830,7 @@ function SessionRow(props: {
         <RenameBox
           value={props.title}
           label={`Rename ${props.title}`}
+          box={ROW_BOX}
           onCommit={props.onRename}
           onCancel={props.onCancelRename}
         />
@@ -786,10 +850,12 @@ function SessionRow(props: {
   );
 }
 
-/** The row, being named: one line that takes the caret as it arrives, commits on Enter and gives up on Escape. */
+/** A row or a header, being named: one line that takes the caret as it arrives, commits on Enter and gives up on Escape. */
 function RenameBox(props: {
   readonly value: string;
   readonly label: string;
+  /** The box it stands in, so the swap between reading and naming shifts nothing. */
+  readonly box: string;
   readonly onCommit: (text: string) => void;
   readonly onCancel: () => void;
 }) {
@@ -822,7 +888,7 @@ function RenameBox(props: {
       autocapitalize="off"
       autocomplete="off"
       aria-label={props.label}
-      class={`${ROW_BOX} ${FIELD_SKIN}`}
+      class={`${props.box} ${FIELD_SKIN}`}
       onKeyDown={(event: KeyboardEvent) => {
         if (event.key === "Enter") {
           event.preventDefault();

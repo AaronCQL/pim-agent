@@ -181,6 +181,8 @@ export type EphemeralEvent =
       readonly cwd: string;
       readonly pinned?: boolean;
       readonly expanded?: boolean;
+      /** What the project is called in a listing, `null` once it is cleared. */
+      readonly label?: string | null;
     }
   /** Sent to every connection: the pinned projects, in the order they are shown. */
   | { readonly type: "pins_changed"; readonly order: readonly string[] }
@@ -252,6 +254,8 @@ export type ProjectView = {
   readonly pinRank?: number;
   /** The sidebar group stands unfolded; absent is folded. */
   readonly expanded?: true;
+  /** What to call it instead of its base name; absent when it goes by the directory. */
+  readonly label?: string;
 };
 
 /**

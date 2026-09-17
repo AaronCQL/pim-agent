@@ -81,6 +81,8 @@ function paint(
     readonly pinned?: readonly string[];
     /** Directories the server already holds unfolded; every other group starts closed. */
     readonly expanded?: readonly string[];
+    /** What the server already calls a directory, keyed by the directory itself. */
+    readonly labels?: Readonly<Record<string, string>>;
     /** What the server refuses every mutating command with. */
     readonly refuse?: string;
   } = {}
@@ -97,6 +99,9 @@ function paint(
   // The fold is the server's too, and kept for the same reason: a test that
   // opens a group and re-lists is asking whether the fold stuck.
   const folds = new Set(options.expanded ?? []);
+  // A name is the server's to keep, like the pin and the fold: a test that
+  // writes one and re-lists is asking whether it stuck.
+  const labels = new Map(Object.entries(options.labels ?? {}));
   store.client.send = async (draft) => {
     sent.push(draft);
     if (options.refuse === undefined) {
@@ -123,6 +128,13 @@ function paint(
           ...draft.order.filter((cwd) => pins.includes(cwd))
         );
       }
+      if (draft.type === "set_project_label") {
+        if (draft.value === null) {
+          labels.delete(draft.cwd);
+        } else {
+          labels.set(draft.cwd, draft.value);
+        }
+      }
     }
     if (draft.type === "list_sessions") {
       const scope = draft.archived === true ? (options.archived ?? []) : live;
@@ -140,6 +152,9 @@ function paint(
             ...project,
             ...(rank === -1 ? {} : { pinned: true as const, pinRank: rank }),
             ...(folds.has(project.cwd) ? { expanded: true as const } : {}),
+            ...(labels.has(project.cwd)
+              ? { label: labels.get(project.cwd) }
+              : {}),
           };
         }),
         sessions: (draft.perProject === undefined
@@ -820,12 +835,13 @@ test("Move up swaps a pin with the one above it and sends the whole order", asyn
   // keeps its shape and `Move down` stays where the thumb left it.
   click(projectMenu(host, 0));
   expect(verbs(host).map((verb) => verb.textContent)).toEqual([
+    "Rename project",
     "Unpin project",
     "Move up",
     "Move down",
   ]);
   expect(verbs(host).map((verb) => verb.getAttribute("aria-disabled"))).toEqual(
-    [null, "true", null]
+    [null, null, "true", null]
   );
   // And it refuses the press it is greyed for.
   choose(host, "Move up");
@@ -896,6 +912,7 @@ test("pinning a project lifts it at the press and keeps it through a re-list", a
   // And the verb reads back the other way, beside the two that move it.
   click(projectMenu(host));
   expect(verbs(host).map((option) => option.textContent)).toEqual([
+    "Rename project",
     "Unpin project",
     "Move up",
     "Move down",
@@ -903,7 +920,7 @@ test("pinning a project lifts it at the press and keeps it through a re-list", a
   // The only pin there is, so it is both ends of the order at once.
   expect(
     verbs(host).map((option) => option.getAttribute("aria-disabled"))
-  ).toEqual([null, "true", "true"]);
+  ).toEqual([null, null, "true", "true"]);
   choose(host, "Unpin project");
   expect(sent.at(-1)).toEqual({
     type: "set_project_pinned",
@@ -931,6 +948,108 @@ test("a refused pin drops the project back where it was and says why", async () 
   );
 });
 
+test("a project takes a name of its own, and the directory keeps its own", async () => {
+  const { host, sent, store } = paint();
+  await listed(host);
+  expect(headings(host).map((group) => group.textContent)).toEqual([
+    "pim",
+    "other",
+  ]);
+
+  click(projectMenu(host));
+  choose(host, "Rename project");
+  const box = (): HTMLInputElement | null =>
+    host.querySelector<HTMLInputElement>('[aria-label="Rename ~/dev/pim"]');
+  expect(box()?.value).toBe("pim");
+  // It arrives with the caret in it, and the header it stands in for is gone.
+  expect(document.activeElement).toBe(box());
+  expect(headings(host)).toHaveLength(1);
+  // The fold's chevron stays put, so the box opens over the name alone.
+  expect(host.querySelectorAll('[class*="chevron-right-filled"]')).toHaveLength(
+    2
+  );
+
+  box()!.value = "Strings";
+  press(box()!, "Escape");
+  expect(box()).toBeNull();
+  expect(sent.some((command) => command.type === "set_project_label")).toBe(
+    false
+  );
+
+  click(projectMenu(host));
+  choose(host, "Rename project");
+  box()!.value = "Strings";
+  press(box()!, "Enter");
+
+  expect(sent.at(-1)).toEqual({
+    type: "set_project_label",
+    cwd: "/home/ada/dev/pim",
+    value: "Strings",
+  });
+  // Guessed at, so the header answers the press rather than the listing.
+  expect(headings(host).map((group) => group.textContent)).toEqual([
+    "Strings",
+    "other",
+  ]);
+  // A name for the sidebar and nothing else: the directory under it is the
+  // one it always was, and still says so.
+  expect(where(host)).toEqual(["~/dev/pim", "/srv/other"]);
+
+  store.ingest({ type: "sessions_changed" });
+  await relisted();
+  expect(headings(host).map((group) => group.textContent)).toEqual([
+    "Strings",
+    "other",
+  ]);
+  expect(store.projectLabel("/home/ada/dev/pim")).toBe("Strings");
+});
+
+test("a project name emptied goes back to the directory's own", async () => {
+  const { host, sent, store } = paint({
+    labels: { "/home/ada/dev/pim": "Strings" },
+  });
+  await listed(host);
+  expect(headings(host)[0]?.textContent).toBe("Strings");
+
+  click(projectMenu(host));
+  choose(host, "Rename project");
+  const box = host.querySelector<HTMLInputElement>('[aria-label^="Rename "]')!;
+  box.value = "   ";
+  press(box, "Enter");
+
+  expect(sent.at(-1)).toEqual({
+    type: "set_project_label",
+    cwd: "/home/ada/dev/pim",
+    value: null,
+  });
+  expect(headings(host)[0]?.textContent).toBe("pim");
+
+  store.ingest({ type: "sessions_changed" });
+  await relisted();
+  expect(headings(host)[0]?.textContent).toBe("pim");
+  expect(store.projectLabel("/home/ada/dev/pim")).toBeUndefined();
+});
+
+test("a refused project name goes back to the one on screen and says why", async () => {
+  const { host } = paint({ refuse: "the sidecar is read-only" });
+  await listed(host);
+
+  click(projectMenu(host));
+  choose(host, "Rename project");
+  const box = host.querySelector<HTMLInputElement>('[aria-label^="Rename "]')!;
+  box.value = "Strings";
+  press(box, "Enter");
+  expect(headings(host)[0]?.textContent).toBe("Strings");
+
+  await Bun.sleep(0);
+  flush();
+
+  expect(headings(host)[0]?.textContent).toBe("pim");
+  expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+    "the sidecar is read-only"
+  );
+});
+
 test("the header's `⋯` and a right-click open the project's verbs, and fold nothing", async () => {
   // One group open and one closed, so "fold nothing" has something to be
   // untrue of in either direction.
@@ -946,6 +1065,7 @@ test("the header's `⋯` and a right-click open the project's verbs, and fold no
 
   click(trigger);
   expect(verbs(host).map((option) => option.textContent)).toEqual([
+    "Rename project",
     "Pin project",
   ]);
   // The `⋯` stands beside the fold's handle, never inside it.
@@ -961,6 +1081,7 @@ test("the header's `⋯` and a right-click open the project's verbs, and fold no
     .dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
   flush();
   expect(verbs(host).map((option) => option.textContent)).toEqual([
+    "Rename project",
     "Pin project",
   ]);
   expect(unfolded(host)).toEqual([true, false]);

@@ -95,7 +95,11 @@ describe("SessionMeta", () => {
           bad: { archived: "yes" },
           torn: 7,
         },
-        projects: { "/good": { pinned: true }, "/bad": { pinned: 1 } },
+        projects: {
+          "/good": { pinned: true },
+          "/bad": { pinned: 1 },
+          "/unnamed": { label: 7 },
+        },
       })
     );
     const meta = new SessionMeta(file);
@@ -177,6 +181,39 @@ describe("SessionMeta", () => {
     await meta.setPinned("/work/pim", false);
     expect((await new SessionMeta(file).pinning()).projects).toEqual(
       new Map([["/work/pim", { expanded: true }]])
+    );
+    expect(await meta.pins()).toEqual([]);
+  });
+
+  test("a project's name survives a restart, and emptying it puts the directory back", async () => {
+    const meta = new SessionMeta(file);
+    await meta.setLabel("/work/pim", "Strings");
+
+    expect((await new SessionMeta(file).pinning()).projects).toEqual(
+      new Map([["/work/pim", { label: "Strings" }]])
+    );
+
+    await meta.setLabel("/work/pim", null);
+    expect((await new SessionMeta(file).pinning()).projects).toEqual(new Map());
+  });
+
+  /** A name is a third fact about one directory, and no more clears the others than they clear it. */
+  test("naming a project keeps its pin and its fold", async () => {
+    const meta = new SessionMeta(file);
+    await meta.setPinned("/work/pim", true);
+    await meta.setExpanded("/work/pim", true);
+    await meta.setLabel("/work/pim", "Strings");
+
+    expect((await new SessionMeta(file).pinning()).projects).toEqual(
+      new Map([
+        ["/work/pim", { pinned: true, expanded: true, label: "Strings" }],
+      ])
+    );
+
+    await meta.setPinned("/work/pim", false);
+    await meta.setExpanded("/work/pim", false);
+    expect((await new SessionMeta(file).pinning()).projects).toEqual(
+      new Map([["/work/pim", { label: "Strings" }]])
     );
     expect(await meta.pins()).toEqual([]);
   });

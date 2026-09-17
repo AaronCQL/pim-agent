@@ -277,11 +277,12 @@ test("tells every other connection what one of them changed", async () => {
   await one.markUnread(ONE, true);
   await one.setPinned(tmp, true);
   await one.setExpanded(tmp, true);
+  await one.setLabel(tmp, "Strings");
   await one.rename(ONE, "Parser work");
 
   // No session file moved for three of these, so no `sessions_changed` will
   // follow them: this is the only word the other window gets.
-  await until(() => heard().length === 5, "the five broadcasts", 20_000);
+  await until(() => heard().length === 6, "the six broadcasts", 20_000);
   expect(heard()).toEqual([
     { type: "session_meta", sessionId: ONE, archived: true },
     { type: "session_meta", sessionId: ONE, unread: true },
@@ -289,6 +290,7 @@ test("tells every other connection what one of them changed", async () => {
     // A patch, like the `session_meta` rows above it: the fold says nothing
     // about the pin it was just given, so neither can clear the other.
     { type: "project_meta", cwd: tmp, expanded: true },
+    { type: "project_meta", cwd: tmp, label: "Strings" },
     { type: "session_meta", sessionId: ONE, name: "Parser work" },
   ]);
 });
@@ -307,6 +309,27 @@ test("a listing carries the fold each project was left at", async () => {
 
   const opened = await probe.catalogue();
   expect(opened.projects.map((project) => project.expanded)).toEqual([true]);
+});
+
+/** The name is the server's too, and it is a name for the sidebar alone: the directory keeps the one it has. */
+test("a listing carries the name each project was given", async () => {
+  await writeSession(ONE, SessionFixture.minutesAgo(1));
+  const probe = await connect();
+
+  const plain = await probe.catalogue();
+  expect(plain.projects.map((project) => project.label)).toEqual([undefined]);
+  expect(plain.projects.map((project) => project.cwd)).toEqual([tmp]);
+
+  await probe.setLabel(tmp, "Strings");
+
+  const named = await probe.catalogue();
+  expect(named.projects.map((project) => project.label)).toEqual(["Strings"]);
+  expect(named.projects.map((project) => project.cwd)).toEqual([tmp]);
+
+  await probe.setLabel(tmp, null);
+  expect((await probe.catalogue()).projects.map((one) => one.label)).toEqual([
+    undefined,
+  ]);
 });
 
 test("refuses a name it cannot write, and changes nothing", async () => {

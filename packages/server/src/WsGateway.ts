@@ -344,6 +344,14 @@ export class WsGateway {
           expanded: command.value,
         });
         return {};
+      case "set_project_label":
+        await this.meta.setLabel(command.cwd, command.value);
+        this.broadcast({
+          type: "project_meta",
+          cwd: command.cwd,
+          label: command.value,
+        });
+        return {};
       case "set_pin_order":
         await this.meta.setPinOrder(command.order);
         this.broadcast({ type: "pins_changed", order: await this.meta.pins() });

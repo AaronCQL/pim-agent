@@ -383,7 +383,8 @@ export function SearchModal(props: {
                       <span class="flex min-w-0 flex-1 flex-col">
                         <span class="flex h-[--line] min-w-0 items-center gap-[1ch] text-sm text-neutral-400">
                           <span class="truncate text-neutral-350">
-                            {baseName(row.hit.cwd)}
+                            {props.store.projectLabel(row.hit.cwd) ??
+                              baseName(row.hit.cwd)}
                           </span>
                           <Show when={row.hit.archived}>
                             <span
