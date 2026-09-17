@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.10.0
+
+### Features
+
+- Add global session search (#25)
+- Rework session sidebar to group by project (#24)
+- Add commit and comment flow to diff view (#23)
+- Rename project in session sidebar (c6a1edd)
+
+### Bug Fixes
+
+- Allow all skills to be searchable on web (d0d82bd)
+- Fix issue where read is being marked from an idle webpage (#24)
+
+### Improvements
+
+- Compress the websocket frames and the static bundle (56d948d)
+
 ## v0.9.0
 
 ### Breaking Changes
