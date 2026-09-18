@@ -124,8 +124,11 @@ button {
 /* Markdown is written into the DOM by streaming-markdown, so its elements
    never carry utility classes and have to be styled by tag. Everything below
    keeps them on the --line grid: no size jumps, no fractional margins, and
-   the only vertical gap is one blank row. */
-.pim-markdown > * + * {
+   the only vertical gap is one blank row. A blockquote is the one container
+   the parser puts whole blocks inside, so its children are named too: two
+   paragraphs in a quote are siblings of each other, not of the transcript. */
+.pim-markdown > * + *,
+.pim-markdown blockquote > * + * {
   margin-top: var(--line);
 }
 
