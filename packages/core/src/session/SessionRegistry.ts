@@ -18,6 +18,7 @@ import {
 } from "./SessionHost";
 import { SessionLease } from "./SessionLease";
 import { SessionName } from "./SessionName";
+import type { SessionUi } from "./SessionUi";
 
 /** A session as pi stores it: one JSONL file under a cwd-encoded directory. */
 export type SessionSummary = {
@@ -58,11 +59,22 @@ export class SessionRegistry {
   private readonly deps: SessionRegistryDeps;
   private readonly runtime: AgentRuntime;
   private readonly hosts: SessionCache<SessionHost>;
+  private ui: ((host: SessionHost) => SessionUi | undefined) | undefined;
 
   public constructor(deps: SessionRegistryDeps) {
     this.deps = deps;
     this.runtime = deps.runtime ?? new AgentRuntime(deps.agentDir);
     this.hosts = new SessionCache(deps.capacity);
+  }
+
+  /**
+   * Where the extensions of every host built from here speak. It belongs to the
+   * registry rather than each caller because `create` binds an agent eagerly,
+   * and pi freezes a session's UI mode at that bind. Resolved per call: a
+   * host outlives the stream that speaks for it.
+   */
+  public setUi(ui: (host: SessionHost) => SessionUi | undefined): void {
+    this.ui = ui;
   }
 
   public get sessionsRoot(): string {
@@ -207,7 +219,10 @@ export class SessionRegistry {
   }
 
   private buildHost(label: string, settings: HostSettings): SessionHost {
-    return new SessionHost({
+    const ui = this.ui;
+    // Named so the sink can reach back for the host it belongs to; the closure
+    // only ever runs once construction has returned.
+    const host: SessionHost = new SessionHost({
       label: `session ${label}`,
       settings,
       defaults: this.deps.defaults,
@@ -225,7 +240,9 @@ export class SessionRegistry {
       ...(this.deps.surface === undefined
         ? {}
         : { surface: this.deps.surface }),
+      ...(ui === undefined ? {} : { ui: () => ui(host) }),
     });
+    return host;
   }
 }
 

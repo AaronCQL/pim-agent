@@ -628,6 +628,43 @@ describe("the shell, painted from events alone", () => {
     expect(host.textContent).toContain("provider said no");
   });
 
+  test("an extension speaks in a panel when it was asked, and over the shell when it was not", () => {
+    const store = offline();
+    const host = paint(store);
+
+    store.ingest(attached());
+    store.ingest({
+      type: "ui_notice",
+      id: "n1",
+      severity: "info",
+      text: "The cache finished warming.",
+    });
+    flush();
+
+    // Nothing was asked for, so nothing is taken over: the reader is still
+    // looking at the transcript.
+    expect(host.textContent).toContain("The cache finished warming.");
+    expect(
+      [...host.querySelectorAll("dialog")].some((found) => found.open)
+    ).toBe(false);
+
+    store.ingest({
+      type: "ui_notice",
+      id: "n2",
+      severity: "info",
+      text: "## Claude Quotas",
+      command: "/claude-quota",
+    });
+    flush();
+
+    const panel = [...host.querySelectorAll("dialog")].find(
+      (found) => found.open
+    );
+    // Named by the command that opened it, heading and accessible name alike.
+    expect(panel?.getAttribute("aria-label")).toBe("/claude-quota");
+    expect(panel?.querySelector("h2")?.textContent).toBe("Claude Quotas");
+  });
+
   test("the box belongs to the session, and keeps what was left in it", () => {
     const store = offline();
     const host = paint(store);

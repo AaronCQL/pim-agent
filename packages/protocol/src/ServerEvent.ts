@@ -154,6 +154,29 @@ export type EphemeralEvent =
       readonly events: readonly StreamEvent[];
     }
   | { readonly type: "turn_end"; readonly stats: TurnStats }
+  /** Something an extension said, in Markdown; shown and then forgotten, never written to the session. */
+  | {
+      readonly type: "ui_notice";
+      readonly id: string;
+      readonly severity: NoticeSeverity;
+      readonly text: string;
+      /** The command being dispatched when it was said, like `/login`; absent means nobody asked for it. */
+      readonly command?: string;
+    }
+  /** An extension is waiting on a human; the first `ui_response` wins and the rest are refused. */
+  | {
+      readonly type: "ui_request";
+      readonly requestId: string;
+      readonly method: "select" | "confirm" | "input";
+      readonly title: string;
+      readonly message?: string;
+      readonly options?: readonly string[];
+      readonly placeholder?: string;
+      /** The command that asked, like `/login`; absent where an extension asked unprompted. */
+      readonly command?: string;
+    }
+  /** The request is settled, by whoever answered it or by the server answering for them; drop its control. */
+  | { readonly type: "ui_request_done"; readonly requestId: string }
   /** Sent to every connection, not just those attached; only sessions this server holds open are reported. */
   | {
       readonly type: "session_activity";
@@ -341,6 +364,8 @@ export type ResponseEvent = {
   readonly fileLines?: FileLines;
   /** For `cancel` and `dequeue`: queued messages pi gave back, now owned by the client that asked. */
   readonly restored?: readonly string[];
+  /** For `user_message`: it named an extension command, so no turn started and no entry was written. */
+  readonly dispatched?: boolean;
 };
 
 export type ServerEvent = DurableEvent | EphemeralEvent | ResponseEvent;
@@ -382,6 +407,9 @@ export function isAttachScoped(event: ServerEvent): boolean {
     case "subagent_events":
     case "turn_end":
     case "session_state":
+    case "ui_notice":
+    case "ui_request":
+    case "ui_request_done":
     // Names a cwd, but only ever reaches a client down the session stream it
     // is attached to, so the old session's is the only one that can arrive
     // mid-attach — and re-querying for it would warm the wrong cache.

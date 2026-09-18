@@ -15,6 +15,7 @@ let tmp: string;
 let path: string;
 let stream: SessionStream;
 let seen: ServerEvent[];
+let stopListening: () => void;
 let emit: (event: AgentSessionEvent) => void;
 let reportForeign: () => void;
 
@@ -189,6 +190,26 @@ function durableMessages(): readonly string[] {
   );
 }
 
+function notices(
+  events: readonly ServerEvent[]
+): readonly Extract<ServerEvent, { type: "ui_notice" }>[] {
+  return events.filter((event) => event.type === "ui_notice");
+}
+
+function askedIn(
+  events: readonly ServerEvent[]
+): Extract<ServerEvent, { type: "ui_request" }> {
+  const asked = events.find((event) => event.type === "ui_request");
+  if (asked?.type !== "ui_request") {
+    throw new Error("no ui_request was sent");
+  }
+  return asked;
+}
+
+function requestIdOf(events: readonly ServerEvent[]): string {
+  return askedIn(events).requestId;
+}
+
 beforeEach(async () => {
   tmp = await mkdtemp(join(tmpdir(), "pim-stream-test-"));
   path = join(tmp, "session.jsonl");
@@ -204,7 +225,7 @@ beforeEach(async () => {
   );
   stream = new SessionStream("s1", host(), path);
   seen = [];
-  stream.subscribe((event) => {
+  stopListening = stream.subscribe((event) => {
     seen.push(event);
   });
   stream.start();
@@ -501,4 +522,191 @@ test("re-reads the repository as soon as a tool has written to it", async () => 
     "the frame the write produced"
   );
   expect(states().at(-1)?.dirtyCount).toBe(3);
+});
+
+/**
+ * An extension may notify from any handler it likes, so a cache that finished
+ * warming must not open the modal an answer to a typed command deserves.
+ */
+test("names the command what a dispatch said, and nothing else", async () => {
+  stream.notify("the cache warmed itself", "info");
+  await stream.dispatch("/quota", async () => {
+    stream.notify("## Quotas\n\n- plenty", "info");
+  });
+
+  expect(
+    notices(received()).map((notice) => [notice.text, notice.command])
+  ).toEqual([
+    ["the cache warmed itself", undefined],
+    ["## Quotas\n\n- plenty", "/quota"],
+  ]);
+});
+
+/** The panel is titled by whoever opened it, and a question may open it alone. */
+test("names the command a dialog it raised, innermost first", async () => {
+  const asked = stream.dispatch("/login", async () =>
+    stream.dispatch("/auth", async () => {
+      const asking = stream.confirm("Open the browser?", "it takes a moment");
+      stream.answer(requestIdOf(received()), { confirmed: true });
+      return asking;
+    })
+  );
+
+  expect(await asked).toBe(true);
+  expect(askedIn(received()).command).toBe("/auth");
+});
+
+/** A headless session cannot park an extension on a dialog nobody will ever see. */
+test("takes pi's default for a dialog raised with nobody attached", async () => {
+  stopListening();
+
+  expect(await stream.confirm("Drop the table?", "there is no undo")).toBe(
+    false
+  );
+  expect(await stream.select("Pick one", ["a", "b"])).toBeUndefined();
+  expect(received().some((event) => event.type === "ui_request")).toBe(false);
+});
+
+test("resolves one dialog once, however many clients are watching it", async () => {
+  const second: ServerEvent[] = [];
+  stream.subscribe((event) => {
+    second.push(event);
+  });
+
+  const asking = stream.select("Pick one", ["a", "b"]);
+  const requestId = requestIdOf(received());
+  expect(stream.answer(requestId, { value: "a" })).toBe(true);
+  // The second client's click raced the first's and lost; applying it too
+  // would answer whatever the extension asked next.
+  expect(stream.answer(requestId, { value: "b" })).toBe(false);
+
+  expect(await asking).toBe("a");
+  const done = (events: readonly ServerEvent[]): number =>
+    events.filter((event) => event.type === "ui_request_done").length;
+  expect(done(received())).toBe(1);
+  expect(done(second)).toBe(1);
+});
+
+/** Dismissal is cancellation, which is what pi's own dialogs answer with. */
+test("takes the default from a client that dismissed the dialog", async () => {
+  const asking = stream.confirm("Drop the table?", "there is no undo");
+
+  expect(stream.answer(requestIdOf(received()), { cancelled: true })).toBe(
+    true
+  );
+  expect(await asking).toBe(false);
+});
+
+test("answers a dialog itself once its last reader is gone", async () => {
+  const parting = new SessionStream("s6", host(), path, { detachGraceMs: 0 });
+  const stop = parting.subscribe(() => {});
+  try {
+    const asking = parting.confirm("Still there?", "answer within the grace");
+    stop();
+
+    expect(await asking).toBe(false);
+  } finally {
+    parting.dispose();
+  }
+});
+
+/** A reload, a tunnel blip and a phone unlock are all detaches, and all three come back. */
+test("calls the grace off for a client that came straight back", async () => {
+  const parting = new SessionStream("s7", host(), path, { detachGraceMs: 0 });
+  const events: ServerEvent[] = [];
+  const stop = parting.subscribe((event) => {
+    events.push(event);
+  });
+  try {
+    const asking = parting.confirm("Still there?", "answer within the grace");
+    stop();
+    const returned: ServerEvent[] = [];
+    parting.subscribe((event) => {
+      events.push(event);
+    });
+    // One macrotask: the grace timer would have fired here had it survived.
+    await Bun.sleep(0);
+    // And the client that came back is asked again: it never saw the frame
+    // the dialog was announced on, and it is the only one who can answer now.
+    returned.push(...(await parting.replay(99)));
+    expect(
+      returned.filter((event) => event.type === "ui_request")
+    ).toHaveLength(1);
+
+    expect(parting.answer(requestIdOf(events), { confirmed: true })).toBe(true);
+    expect(await asking).toBe(true);
+  } finally {
+    parting.dispose();
+  }
+});
+
+test("answers a dialog nobody got to before the ceiling, and says which", async () => {
+  const impatient = new SessionStream("s8", host(), path, {
+    requestCeilingMs: 0,
+  });
+  const events: ServerEvent[] = [];
+  impatient.subscribe((event) => {
+    events.push(event);
+  });
+  try {
+    expect(
+      await impatient.input("Name the branch", "feature/…")
+    ).toBeUndefined();
+
+    // Never silently: a dialog that answers itself in silence is the
+    // invisible mutation this whole seam exists to kill.
+    const notice = notices(events).at(-1);
+    expect(notice?.severity).toBe("warn");
+    expect(notice?.text).toContain("Name the branch");
+    expect(
+      events.filter((event) => event.type === "ui_request_done")
+    ).toHaveLength(1);
+  } finally {
+    impatient.dispose();
+  }
+});
+
+test("lets an extension's own timeout beat the ceiling", async () => {
+  const impatient = new SessionStream("s9", host(), path, {
+    requestCeilingMs: 60_000,
+  });
+  const events: ServerEvent[] = [];
+  impatient.subscribe((event) => {
+    events.push(event);
+  });
+  try {
+    // The ceiling is a minute out, so a suite that finishes in seconds can
+    // only settle this on the schedule the extension asked for.
+    expect(
+      await impatient.select("Pick one", ["a", "b"], { timeout: 0 })
+    ).toBeUndefined();
+
+    const notice = notices(events).at(-1);
+    expect(notice?.severity).toBe("warn");
+    expect(notice?.text).toContain("Pick one");
+  } finally {
+    impatient.dispose();
+  }
+});
+
+test("hands a dialog its default when the extension withdraws it", async () => {
+  const controller = new AbortController();
+
+  const asking = stream.confirm("Drop the table?", "there is no undo", {
+    signal: controller.signal,
+  });
+  controller.abort();
+
+  expect(await asking).toBe(false);
+  expect(
+    received().filter((event) => event.type === "ui_request_done")
+  ).toHaveLength(1);
+});
+
+test("settles every waiting dialog when the session stops", async () => {
+  const asking = stream.input("Name the branch");
+
+  stream.dispose();
+
+  expect(await asking).toBeUndefined();
 });

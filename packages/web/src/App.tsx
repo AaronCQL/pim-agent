@@ -12,7 +12,9 @@ import { Comments, ReviewComments } from "./diff/Comments";
 import { DiffStore } from "./diff/DiffStore";
 import { DiffView } from "./diff/DiffView";
 import { Review } from "./diff/Review";
+import { CommandModal } from "./session/CommandModal";
 import { GatewayOrigin } from "./session/Gateway";
+import { NoticeToast } from "./session/NoticeToast";
 import { SessionStore } from "./session/SessionStore";
 import { Toast } from "./session/Toast";
 import { Sidebar } from "./sessions/Sidebar";
@@ -306,9 +308,17 @@ export function Shell(props: {
               </div>
 
               <Toast update={props.store.update} desktop={desktop()} />
+              <NoticeToast
+                notices={props.store.state.toasts}
+                desktop={desktop()}
+                onDismiss={(id) => {
+                  props.store.dismissToast(id);
+                }}
+              />
             </div>
           </div>
           <SubagentModal store={props.store} />
+          <CommandModal store={props.store} />
           <SearchModal
             open={searching()}
             store={props.store}

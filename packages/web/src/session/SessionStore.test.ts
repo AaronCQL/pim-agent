@@ -1700,3 +1700,379 @@ describe("attention", () => {
     expect(target.client.attentive).toBe(false);
   });
 });
+
+/**
+ * An extension command takes no turn and writes no entry, so everything the
+ * composer painted for it has to come back off — and everything the command
+ * says has to land somewhere that is not the transcript.
+ */
+describe("extension commands", () => {
+  type Sent = Record<string, unknown> & { readonly type: string };
+
+  /** Answers every command, dispatching the ones that name one, and keeps what it was asked. */
+  function wire(target: SessionStore): readonly Sent[] {
+    const sent: Sent[] = [];
+    target.client.send = (async (command: Sent) => {
+      sent.push(command);
+      return {
+        type: "response",
+        id: "1",
+        success: true,
+        ...(typeof command.text === "string" && command.text.startsWith("/")
+          ? { dispatched: true }
+          : {}),
+      };
+    }) as typeof target.client.send;
+    return sent;
+  }
+
+  /** Holds every send open, so a test can answer them in whatever order it means to reproduce. */
+  function gate(target: SessionStore): {
+    readonly answer: (index: number, response?: Partial<ResponseEvent>) => void;
+  } {
+    const waiting: ((response: ResponseEvent) => void)[] = [];
+    target.client.send = (() =>
+      new Promise<ResponseEvent>((resolve) => {
+        waiting.push(resolve);
+      })) as typeof target.client.send;
+    return {
+      answer: (index, response) => {
+        waiting[index]?.({
+          type: "response",
+          id: `${index}`,
+          success: true,
+          ...response,
+        });
+      },
+    };
+  }
+
+  function streaming(): ServerEvent {
+    return {
+      type: "session_state",
+      writable: true,
+      cwd: "/repo",
+      model: "sonnet",
+      thinking: "off",
+      cost: 0,
+      status: "streaming",
+    };
+  }
+
+  function notice(id: string, text: string, command?: string): ServerEvent {
+    return {
+      type: "ui_notice",
+      id,
+      severity: "info",
+      text,
+      ...(command === undefined ? {} : { command }),
+    };
+  }
+
+  function ask(requestId: string, title: string): ServerEvent {
+    return { type: "ui_request", requestId, method: "confirm", title };
+  }
+
+  test("a dispatched message leaves no row, and no opening to name the session by", async () => {
+    const target = store();
+    wire(target);
+    feed(target, attached("s1"));
+
+    await target.prompt("/claude-quota");
+    flush();
+
+    expect(target.state.optimistic).toEqual([]);
+    expect(rows(target)).toEqual([]);
+    // Nothing was said into the session, so nothing may stand in for its
+    // opening message in the sidebar either.
+    expect(target.state.openings).toEqual({});
+  });
+
+  /**
+   * The §1c regression. The phantom row used to be the one `fold.ts` evicted
+   * when the next real message landed, so that message reconciled against the
+   * command and left itself behind forever.
+   */
+  test("the next real message reconciles against itself", async () => {
+    const target = store();
+    wire(target);
+    feed(target, attached("s1"));
+
+    await target.prompt("/claude-quota");
+    await target.prompt("what is the quota");
+    flush();
+
+    expect(
+      rows(target).map((row) => row.kind === "message" && row.text)
+    ).toEqual(["what is the quota"]);
+
+    feed(target, {
+      seq: 2,
+      type: "message",
+      messageId: "m1",
+      role: "user",
+      text: "what is the quota",
+      timestamp: 0,
+    });
+
+    expect(target.state.optimistic).toEqual([]);
+    expect(rows(target).map((row) => row.id)).toEqual(["m1"]);
+  });
+
+  test("a command typed into a running turn leaves the queued message whole", async () => {
+    const target = store();
+    wire(target);
+    feed(target, attached("s1"), streaming());
+
+    await target.prompt("use the other file");
+    await target.prompt("/claude-quota");
+    flush();
+
+    // The server never merges a command into the steer queue, so neither may
+    // the row standing for it.
+    expect(target.state.optimistic).toHaveLength(1);
+    expect(
+      rows(target).map((row) => row.kind === "message" && row.text)
+    ).toEqual(["use the other file"]);
+  });
+
+  /**
+   * The command goes first this time, so its row is the queued one the next
+   * message merges into — and the dispatch that follows must take back only
+   * the words it drew there.
+   */
+  test("a dispatch takes back its own words, not the message queued into them", async () => {
+    const target = store();
+    const { answer } = gate(target);
+    feed(target, attached("s1"), streaming());
+
+    const dispatched = target.prompt("/claude-quota");
+    const queued = target.prompt("use the other file");
+    answer(0, { dispatched: true });
+    await dispatched;
+    flush();
+
+    // Dropping the row would take the message with it, chip and dequeue and all.
+    expect(
+      target.state.optimistic.map((row) => [row.text, row.queued === true])
+    ).toEqual([["use the other file", true]]);
+
+    answer(1, { success: false, error: "the server refused the message" });
+    expect(await queued).toBe(false);
+    flush();
+
+    // And the message's own undo restores nothing: the command it grew was
+    // taken back already, so there is no bubble left to resurrect.
+    expect(target.state.optimistic).toEqual([]);
+  });
+
+  test("and the same two answered the other way round leave the same nothing", async () => {
+    const target = store();
+    const { answer } = gate(target);
+    feed(target, attached("s1"), streaming());
+
+    const dispatched = target.prompt("/claude-quota");
+    const queued = target.prompt("use the other file");
+    answer(1, { success: false, error: "the server refused the message" });
+    expect(await queued).toBe(false);
+    flush();
+
+    // The command is still in flight, so its own words stand.
+    expect(target.state.optimistic.map((row) => row.text)).toEqual([
+      "/claude-quota",
+    ]);
+
+    answer(0, { dispatched: true });
+    await dispatched;
+    flush();
+
+    expect(target.state.optimistic).toEqual([]);
+  });
+
+  test("what one dispatch says stacks for the modal; the rest are toasts", () => {
+    const target = store();
+    feed(
+      target,
+      attached("s1"),
+      notice("n1", "## Claude Quotas", "/claude-quota"),
+      notice("n2", "Cache enabled.", "/claude-quota"),
+      notice("n3", "The cache finished warming.")
+    );
+
+    // Each keeps the name of the command that said it: the modal is titled by it.
+    expect(
+      target.state.notices.map((held) => [held.text, held.command])
+    ).toEqual([
+      ["## Claude Quotas", "/claude-quota"],
+      ["Cache enabled.", "/claude-quota"],
+    ]);
+    expect(target.state.toasts.map((held) => held.id)).toEqual(["n3"]);
+
+    target.dismissToast("n3");
+    target.closeCommand();
+    flush();
+
+    expect(target.state.toasts).toEqual([]);
+    expect(target.state.notices).toEqual([]);
+  });
+
+  test("a dialog is answered once, and the answer names the request", () => {
+    const target = store();
+    const sent = wire(target);
+    feed(target, attached("s1"), ask("r1", "Drop the table?"));
+
+    expect(target.state.requests.map((held) => held.requestId)).toEqual(["r1"]);
+
+    target.answerRequest("r1", { confirmed: true });
+    target.answerRequest("r1", { confirmed: false });
+    flush();
+
+    expect(sent).toEqual([
+      {
+        type: "ui_response",
+        sessionId: "s1",
+        requestId: "r1",
+        confirmed: true,
+      },
+    ]);
+    expect(target.state.requests).toEqual([]);
+  });
+
+  /**
+   * The server's dispatch window is a counter because dispatches nest, and a
+   * spontaneous handler may ask over either of them. A question drawn over
+   * another would be unanswerable from here and park its extension until the
+   * ceiling, while the server went on holding both.
+   */
+  test("a second question waits behind the first, and each is answered by name", () => {
+    const target = store();
+    const sent = wire(target);
+    feed(
+      target,
+      attached("s1"),
+      ask("r1", "Drop the table?"),
+      ask("r2", "Sign out everywhere?")
+    );
+
+    expect(target.state.requests.map((held) => held.requestId)).toEqual([
+      "r1",
+      "r2",
+    ]);
+
+    target.answerRequest("r2", { confirmed: true });
+    flush();
+
+    expect(target.state.requests.map((held) => held.requestId)).toEqual(["r1"]);
+    expect(sent.map((command) => command.requestId)).toEqual(["r2"]);
+  });
+
+  test("a dialog settled out from under the modal takes its control with it", () => {
+    const target = store();
+    const sent = wire(target);
+    feed(target, attached("s1"), {
+      type: "ui_request",
+      requestId: "r1",
+      method: "input",
+      title: "Paste the code",
+    });
+
+    // Another window answered, or the server answered for everyone.
+    feed(target, { type: "ui_request_done", requestId: "r1" });
+
+    expect(target.state.requests).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+
+  test("dismissal is cancellation, and only while something is pending", () => {
+    const target = store();
+    const sent = wire(target);
+    feed(target, attached("s1"), notice("n1", "Signing in…", "/login"), {
+      type: "ui_request",
+      requestId: "r1",
+      method: "input",
+      title: "Paste the code",
+    });
+
+    target.closeCommand();
+    flush();
+
+    expect(sent).toEqual([
+      {
+        type: "ui_response",
+        sessionId: "s1",
+        requestId: "r1",
+        cancelled: true,
+      },
+    ]);
+    expect(target.state.notices).toEqual([]);
+
+    target.closeCommand();
+    expect(sent).toHaveLength(1);
+  });
+
+  /** The panel is one thing: nothing it takes off the screen is left waiting. */
+  test("closing cancels every question it was holding", () => {
+    const target = store();
+    const sent = wire(target);
+    feed(
+      target,
+      attached("s1"),
+      ask("r1", "Drop the table?"),
+      ask("r2", "Sign out everywhere?")
+    );
+
+    target.closeCommand();
+    flush();
+
+    expect(sent).toEqual([
+      {
+        type: "ui_response",
+        sessionId: "s1",
+        requestId: "r1",
+        cancelled: true,
+      },
+      {
+        type: "ui_response",
+        sessionId: "s1",
+        requestId: "r2",
+        cancelled: true,
+      },
+    ]);
+    expect(target.state.requests).toEqual([]);
+  });
+
+  test("another session's words do not follow the reader into this one", () => {
+    const target = store();
+    feed(
+      target,
+      attached("s1"),
+      notice("n1", "## Claude Quotas", "/claude-quota"),
+      ask("r1", "Drop the table?")
+    );
+
+    feed(target, attached("s2"));
+
+    expect(target.state.notices).toEqual([]);
+    expect(target.state.requests).toEqual([]);
+  });
+
+  /**
+   * The grace, the ceiling and another window's answer all settle a request
+   * over a socket this client no longer has, so a reattach is the only word
+   * it gets — and the replay behind it re-announces whatever still stands.
+   */
+  test("nor does a question the server settled while the socket was down", () => {
+    const target = store();
+    feed(
+      target,
+      attached("s1"),
+      notice("n1", "Signing in…", "/login"),
+      ask("r1", "Drop the table?")
+    );
+
+    feed(target, attached("s1"));
+
+    expect(target.state.notices).toEqual([]);
+    expect(target.state.requests).toEqual([]);
+  });
+});

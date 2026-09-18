@@ -51,6 +51,10 @@ export type WsGatewayDeps = {
   readonly sessionMetaPath?: string;
   /** How often a session file is polled where `fs.watch` says nothing; the default is a second. */
   readonly pollMs?: number;
+  /** Longest a dialog may hold an extension waiting; the default is `SessionStream`'s three minutes. */
+  readonly requestCeilingMs?: number;
+  /** How long a pending dialog outlives its last reader; the default is `SessionStream`'s fifteen seconds. */
+  readonly detachGraceMs?: number;
   /** The built web client; defaults to the bundle shipped beside this package. */
   readonly clientDir?: string;
   /** Runs the update a `reload` asks for, reporting each step as it starts. */
@@ -76,6 +80,8 @@ type Outcome = {
   readonly fileDiff?: FileDiff;
   readonly fileLines?: FileLines;
   readonly restored?: readonly string[];
+  /** The message was dispatched as an extension command: no turn started, no entry written. */
+  readonly dispatched?: boolean;
   readonly after?: () => void;
 };
 
@@ -91,6 +97,15 @@ export const DEFAULT_HOSTNAME = "127.0.0.1";
 
 // Bun 1.3.14 never frees the slot of a server-closed socket, so an unbounded `Server.stop(true)` hangs.
 const STOP_GRACE_MS = 250;
+
+/**
+ * Pi's own dispatch parse, three lines of `_tryExecuteExtensionCommand`
+ * (`agent-session.js:954`); a pi upgrade re-verifies it.
+ */
+function commandNameOf(text: string): string {
+  const spaceIndex = text.indexOf(" ");
+  return spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
+}
 
 /** The transport half of pim-server: a WebSocket endpoint over the session runtime in `core`. */
 export class WsGateway {
@@ -111,15 +126,26 @@ export class WsGateway {
   private readonly reloader: Reloader;
   private readonly git = new GitMonitor();
   private readonly pollMs: number | undefined;
+  private readonly requestCeilingMs: number | undefined;
+  private readonly detachGraceMs: number | undefined;
   private readonly busyRepos = new Set<string>();
   private versionsRead: Promise<readonly [string, string]> | undefined;
   private server: Server<undefined> | undefined;
 
   public constructor(deps: WsGatewayDeps) {
     this.registry = deps.registry;
+    // `SessionStream` is the sink, so the whole routing is a lookup: a host
+    // outlives the stream that speaks for it, and pi asks per call.
+    this.registry.setUi((host) =>
+      host.sessionId === undefined
+        ? undefined
+        : this.streams.get(host.sessionId)
+    );
     this.hostname = deps.hostname ?? DEFAULT_HOSTNAME;
     this.requestedPort = deps.port ?? DEFAULT_PORT;
     this.pollMs = deps.pollMs;
+    this.requestCeilingMs = deps.requestCeilingMs;
+    this.detachGraceMs = deps.detachGraceMs;
     this.uploads = new AttachmentEndpoint(
       deps.attachmentsRoot === undefined ? {} : { root: deps.attachmentsRoot }
     );
@@ -425,8 +451,16 @@ export class WsGateway {
       case "reload":
         return this.reload(command.force === true);
       case "user_message":
-        this.promptWithAttachments(this.requireStream(connection), command);
-        return {};
+        return await this.promptWithAttachments(
+          this.requireStream(connection),
+          command
+        );
+      case "ui_response": {
+        const stream = this.requireStream(connection);
+        return stream.answer(command.requestId, command)
+          ? {}
+          : { error: `no request ${command.requestId} is waiting` };
+      }
       case "cancel": {
         const { cancelled, restored } =
           await this.requireStream(connection).host.cancel();
@@ -732,10 +766,14 @@ export class WsGateway {
       git: this.git,
       repoBusy: () => this.repoBusy(host.cwd),
       pollMs: this.pollMs,
+      requestCeilingMs: this.requestCeilingMs,
+      detachGraceMs: this.detachGraceMs,
     });
     stream.start();
     this.catalogue.track(id, host.status);
-    stream.subscribe((event) => {
+    // Observed rather than subscribed: this never leaves, and a reader that
+    // never leaves is a session that is never detached.
+    stream.observe((event) => {
       if (event.type === "session_state") {
         this.catalogue.onStatus(id, event.status);
         this.syncRepoBusy(stream.host.cwd, id);
@@ -745,17 +783,70 @@ export class WsGateway {
     return stream;
   }
 
-  private promptWithAttachments(
+  private async promptWithAttachments(
     stream: SessionStream,
     command: Command & { readonly type: "user_message" }
-  ): void {
+  ): Promise<Outcome> {
+    // Trimmed once, here: pi dispatches on the text it is handed after the
+    // fallthrough trims it, so a client that does not trim would otherwise
+    // slip a command past this check and into pi's own.
+    const text = command.text.trim();
+    // Read before anything is rendered: what a command is, is its own text.
+    const dispatched = await this.dispatchCommand(stream, text);
     const taken = this.uploads.take(
       stream.sessionId,
       (command.attachments ?? []).map((ref) => ref.id)
     );
+    // A slash command carries no pictures; the uploads are still taken, so the
+    // endpoint stops holding their bytes for the rest of the session.
+    if (dispatched) {
+      return { dispatched: true };
+    }
     const { lines, images } = Attachments.render(taken);
-    const text = [command.text, ...lines].filter(Boolean).join("\n\n").trim();
-    this.prompt(stream, text, images);
+    this.prompt(stream, [text, ...lines].filter(Boolean).join("\n\n"), images);
+    return {};
+  }
+
+  /**
+   * Whether `text` names an extension command, having started it if it does.
+   * Only the decision is awaited: the handler runs on beyond the ack, exactly
+   * as a turn does.
+   */
+  private async dispatchCommand(
+    stream: SessionStream,
+    text: string
+  ): Promise<boolean> {
+    const host = stream.host;
+    if (!text.startsWith("/")) {
+      return false;
+    }
+    // The picker offers extension commands only once an agent exists, so this
+    // is someone typing from memory; cold is idle, so nothing is queued behind it.
+    const agent = host.agentSession ?? (await host.ensureAgent());
+    const name = commandNameOf(text);
+    if (agent.extensionRunner.getCommand(name) === undefined) {
+      return false;
+    }
+    void stream
+      .dispatch(`/${name}`, async () => {
+        // Prompted whole, never merged into the queue: a merged string starts
+        // with the earlier message, and pi reads the leading `/` before it
+        // looks at `isStreaming` — so the turn we are holding dispatches it.
+        if (host.isStreaming) {
+          await agent.prompt(text, {
+            streamingBehavior: "steer",
+            source: "rpc",
+          });
+          return;
+        }
+        await host.run(async (session) => {
+          await session.prompt(text, { source: "rpc" });
+        });
+      })
+      .catch((err: unknown) => {
+        this.failed(stream, err, "command");
+      });
+    return true;
   }
 
   // Merge into the queued message: pi holds at most one, so a second queued send would be unreachable.
@@ -767,13 +858,6 @@ export class WsGateway {
     const attached = images.length === 0 ? {} : { images: [...images] };
     const host = stream.host;
     const agent = host.agentSession;
-    const failed = (err: unknown, what: string): void => {
-      console.error(`[gateway] ${what} failed:`, err);
-      stream.push({
-        type: "error",
-        message: (err as Error).message || String(err),
-      });
-    };
     if (agent && host.isStreaming) {
       const queued = [...host.takeBack(), text].join("\n\n");
       void agent
@@ -783,7 +867,7 @@ export class WsGateway {
           ...attached,
         })
         .catch((err: unknown) => {
-          failed(err, "steer");
+          this.failed(stream, err, "steer");
         });
       return;
     }
@@ -792,7 +876,15 @@ export class WsGateway {
         await session.prompt(text, { source: "rpc", ...attached });
       })
       .catch((err: unknown) => {
-        failed(err, "turn");
+        this.failed(stream, err, "turn");
       });
+  }
+
+  private failed(stream: SessionStream, err: unknown, what: string): void {
+    console.error(`[gateway] ${what} failed:`, err);
+    stream.push({
+      type: "error",
+      message: (err as Error).message || String(err),
+    });
   }
 }

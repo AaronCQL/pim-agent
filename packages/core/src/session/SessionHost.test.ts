@@ -229,6 +229,22 @@ test("prompts, streams, and lands the turn in the event log", async () => {
   expect(entries.map((e) => e.seq)).toEqual(entries.map((_, i) => i + 1));
 });
 
+test("binds pi's no-op UI until a sink is set", async () => {
+  const silent = await buildHost();
+  expect((await silent.ensureAgent()).extensionRunner.hasUI()).toBe(false);
+
+  const heard = await buildHost({
+    mainSessionPath: () => join(tmp, "sessions", "heard.jsonl"),
+    ui: () => ({
+      notify: () => {},
+      select: async () => undefined,
+      confirm: async () => false,
+      input: async () => undefined,
+    }),
+  });
+  expect((await heard.ensureAgent()).extensionRunner.hasUI()).toBe(true);
+});
+
 test("aborts a running turn", async () => {
   const host = await buildHost();
   const release = holdTurn();

@@ -5,6 +5,7 @@ import { rankCommands } from "#core/picker/commandRanker";
 import { RemoteFilePickerSuggestionEngine } from "#core/picker/RemoteFilePickerSuggestionEngine";
 import type { DirectoryListing } from "#core/shared/Directories";
 import type { GitBranch } from "#core/shared/Git";
+import type { NoticeSeverity } from "#core/view/ViewBlock";
 import type {
   AttachmentRef,
   CommandDraft,
@@ -23,6 +24,7 @@ import type {
   DurableEvent,
   EphemeralEvent,
   ModelView,
+  ResponseEvent,
   SessionListing,
   SessionSearch,
   ServerEvent,
@@ -82,6 +84,27 @@ export type UploadedAttachment = {
   readonly name: string;
 };
 
+/** Something an extension said, in Markdown; shown and then forgotten. */
+export type UiNotice = {
+  readonly id: string;
+  readonly severity: NoticeSeverity;
+  readonly text: string;
+  /** The command that said it, like `/login`; absent means nobody asked for it. */
+  readonly command?: string;
+};
+
+/** The dialog an extension is waiting on a human for. */
+export type UiRequest = Extract<
+  EphemeralEvent,
+  { readonly type: "ui_request" }
+>;
+
+/** What goes back for a `UiRequest`; a dismissal is `cancelled`. */
+export type UiAnswer = Omit<
+  Extract<CommandDraft, { readonly type: "ui_response" }>,
+  "type" | "sessionId" | "requestId"
+>;
+
 export type SessionState = {
   connection: ConnectionStatus;
   sessionId: string;
@@ -133,6 +156,26 @@ export type SessionState = {
   openings: Record<string, string>;
   unwritten: Unwritten | undefined;
   subagent: SubagentTranscript | undefined;
+  /** What a command this reader typed said back, stacked into one modal until it is closed. */
+  notices: UiNotice[];
+  /** What an extension said with nobody waiting on it: a toast each, never the modal. */
+  toasts: UiNotice[];
+  /** The dialogs waiting on this reader, asked in the order they were raised; extensions nest them. */
+  requests: UiRequest[];
+};
+
+/**
+ * What one send drew into a row, so a send that never landed can be taken
+ * back out of it. Not the row as a whole: a send into a running turn merges
+ * into the queued row, so by the time the answer comes the row may be
+ * standing for somebody else's words too.
+ */
+type Undo = {
+  readonly id: string;
+  readonly text: string;
+  readonly attachments: readonly AttachmentView[];
+  /** The session this send guessed the opening message of. */
+  readonly opened: string | undefined;
 };
 
 export type SessionStoreOptions = {
@@ -149,6 +192,26 @@ type FlagRecord = "archived" | "unread" | "pinned" | "expanded";
 
 const FILE_PICKER_LIMIT = 50;
 const COMMAND_PICKER_LIMIT = 20;
+
+/**
+ * The inverse of the `"\n\n"` merge into a queued row: `text` without the one
+ * `segment` a send put there, or `text` itself where it is no longer in it.
+ */
+function withoutSegment(text: string, segment: string): string {
+  if (text === segment) {
+    return "";
+  }
+  if (text.startsWith(`${segment}\n\n`)) {
+    return text.slice(segment.length + 2);
+  }
+  if (text.endsWith(`\n\n${segment}`)) {
+    return text.slice(0, -segment.length - 2);
+  }
+  const inside = text.indexOf(`\n\n${segment}\n\n`);
+  return inside === -1
+    ? text
+    : text.slice(0, inside) + text.slice(inside + segment.length + 2);
+}
 
 type LocalCommand = PickerItem & {
   readonly run: (store: SessionStore) => Promise<void>;
@@ -235,6 +298,9 @@ export class SessionStore {
       openings: {},
       unwritten,
       subagent: undefined,
+      notices: [],
+      toasts: [],
+      requests: [],
     });
     this.state = state;
     this.setState = setState;
@@ -390,8 +456,8 @@ export class SessionStore {
     const busy = this.isBusy();
     // Read inside the write: state settles later, so two sends in one tick
     // must meet in the draft.
-    let id = "";
-    let previous: string | undefined;
+    let rowId = "";
+    let opened: string | undefined;
     this.setState((draft) => {
       const opens =
         openingMessage(draft.durable, draft.optimistic) === undefined;
@@ -399,14 +465,13 @@ export class SessionStore {
         ? draft.optimistic.find((pending) => pending.queued)
         : undefined;
       if (growing) {
-        id = growing.id;
-        previous = growing.text;
+        rowId = growing.id;
         growing.text = `${growing.text}\n\n${trimmed}`;
         growing.attachments = [...(growing.attachments ?? []), ...carried];
       } else {
-        id = `optimistic:${++this.optimisticId}`;
+        rowId = `optimistic:${++this.optimisticId}`;
         draft.optimistic.push({
-          id,
+          id: rowId,
           text: trimmed,
           ...(carried.length === 0 ? {} : { attachments: carried }),
           timestamp: Date.now(),
@@ -415,15 +480,23 @@ export class SessionStore {
       }
       if (opens) {
         draft.openings[draft.sessionId] = trimmed;
+        opened = draft.sessionId;
       }
       draft.error = undefined;
     });
+    const undo: Undo = {
+      id: rowId,
+      text: trimmed,
+      attachments: carried,
+      opened,
+    };
     this.drafts.spendDraft();
     const refs: readonly AttachmentRef[] = attachments.map(({ id: ref }) => ({
       id: ref,
     }));
+    let response: ResponseEvent;
     try {
-      const response = await this.client.send({
+      response = await this.client.send({
         type: "user_message",
         sessionId,
         text: trimmed,
@@ -433,11 +506,16 @@ export class SessionStore {
         throw new Error(response.error ?? "the server refused the message");
       }
     } catch (err) {
-      this.rollback(id, previous);
+      this.rollback(undo);
       this.setState((draft) => {
         draft.error = (err as Error).message;
       });
       return false;
+    }
+    // An extension command took no turn and wrote no entry, so nothing will
+    // ever arrive to reconcile the row this drew.
+    if (response.dispatched === true) {
+      this.rollback(undo);
     }
     return true;
   }
@@ -462,6 +540,62 @@ export class SessionStore {
       this.dropQueued();
     }
     return restored.join("\n\n");
+  }
+
+  /**
+   * Answers one named dialog — the one the press was aimed at, which is not
+   * always the only one waiting. The request leaves here rather than on the
+   * `ui_request_done` that follows, so the control goes with the press; a
+   * refusal only ever means another window answered first.
+   */
+  public answerRequest(requestId: string, answer: UiAnswer): void {
+    // Read inside the write: state settles later, so two presses in one tick
+    // would both find the dialog still standing.
+    let asked = false;
+    this.setState((draft) => {
+      asked = draft.requests.some((request) => request.requestId === requestId);
+      draft.requests = draft.requests.filter(
+        (request) => request.requestId !== requestId
+      );
+    });
+    if (!asked) {
+      return;
+    }
+    this.sendAnswer(requestId, answer);
+  }
+
+  /** Escape, the backdrop and the back gesture all land here, and a dialog left unanswered is a cancelled one. */
+  public closeCommand(): void {
+    // One panel, so one dismissal: a question waiting behind the one on
+    // screen goes off with it rather than being left for a ceiling to answer.
+    // One write for the lot: each would otherwise re-run the modal's memos.
+    let shown: readonly string[] = [];
+    this.setState((draft) => {
+      shown = draft.requests.map((request) => request.requestId);
+      draft.requests = [];
+      draft.notices = [];
+    });
+    for (const requestId of shown) {
+      this.sendAnswer(requestId, { cancelled: true });
+    }
+  }
+
+  /** A refusal here only ever means another window answered first, so it is dropped. */
+  private sendAnswer(requestId: string, answer: UiAnswer): void {
+    void this.client
+      .send({
+        type: "ui_response",
+        sessionId: this.attached(),
+        requestId,
+        ...answer,
+      })
+      .catch(() => undefined);
+  }
+
+  public dismissToast(id: string): void {
+    this.setState((draft) => {
+      draft.toasts = draft.toasts.filter((notice) => notice.id !== id);
+    });
   }
 
   /** Read one subagent's transcript, live if it is still running. */
@@ -1279,6 +1413,12 @@ export class SessionStore {
             draft.turnElapsedMs = undefined;
             draft.loading = event.head > 0;
           }
+          // Said before this attach, and possibly settled while the socket was
+          // down; the replay that follows re-announces every dialog still
+          // standing, this session's or the next one's.
+          draft.notices = [];
+          draft.toasts = [];
+          draft.requests = [];
           draft.sessionId = event.sessionId;
           draft.cwd = event.cwd;
           draft.pimVersion = event.pimVersion;
@@ -1315,6 +1455,40 @@ export class SessionStore {
         return;
       case "picker_invalidate":
         void this.files.refreshRelative();
+        return;
+      case "ui_notice":
+        this.setState((draft) => {
+          const notice = {
+            id: event.id,
+            severity: event.severity,
+            text: event.text,
+            ...(event.command === undefined ? {} : { command: event.command }),
+          };
+          // One modal for the whole dispatch: a login flow says something,
+          // asks, and says something else, and that is one panel.
+          if (notice.command === undefined) {
+            draft.toasts.push(notice);
+          } else {
+            draft.notices.push(notice);
+          }
+        });
+        return;
+      case "ui_request":
+        this.setState((draft) => {
+          // Two dispatches nest, and a spontaneous handler may ask over
+          // either: each question waits its turn rather than evicting the
+          // one on screen.
+          draft.requests.push(event);
+        });
+        return;
+      // Whoever answered it, the question is settled: another window, or the
+      // server answering for a reader who never arrived.
+      case "ui_request_done":
+        this.setState((draft) => {
+          draft.requests = draft.requests.filter(
+            (request) => request.requestId !== event.requestId
+          );
+        });
         return;
       case "session_activity":
         this.setState((draft) => {
@@ -1419,17 +1593,32 @@ export class SessionStore {
     void this.sendWatch(watched.callId, 0);
   }
 
-  private rollback(id: string, previous: string | undefined): void {
+  /** Takes one send's words back off the row it drew them into, and the row with them once nothing is left. */
+  private rollback(undo: Undo): void {
     this.setState((draft) => {
-      if (previous === undefined) {
+      if (undo.opened !== undefined) {
+        delete draft.openings[undo.opened];
+      }
+      const row = draft.optimistic.find((pending) => pending.id === undo.id);
+      if (row === undefined) {
+        return;
+      }
+      const left = withoutSegment(row.text, undo.text);
+      if (left === "") {
         draft.optimistic = draft.optimistic.filter(
-          (pending) => pending.id !== id
+          (pending) => pending.id !== undo.id
         );
         return;
       }
-      const grown = draft.optimistic.find((pending) => pending.id === id);
-      if (grown) {
-        grown.text = previous;
+      row.text = left;
+      const mine = new Set(undo.attachments.map((carried) => carried.url));
+      const kept = (row.attachments ?? []).filter(
+        (held) => !mine.has(held.url)
+      );
+      if (kept.length === 0) {
+        delete row.attachments;
+      } else {
+        row.attachments = kept;
       }
     });
   }

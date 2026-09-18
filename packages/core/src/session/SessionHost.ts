@@ -15,6 +15,7 @@ import {
   SettingsManager,
   type AgentSessionEvent,
   type CompactionResult,
+  type ExtensionError,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { unlink } from "node:fs/promises";
@@ -30,6 +31,7 @@ import {
   type LeaseRecord,
 } from "./SessionLease";
 import { SessionName } from "./SessionName";
+import { adaptSessionUi, type SessionUi } from "./SessionUi";
 import { WriteMark } from "./WriteMark";
 
 /** What the agent is doing right now. */
@@ -102,6 +104,13 @@ export type SessionHostDeps = {
   ) => readonly ToolDefinition[];
   /** Runs after the agent is disposed, before the session file is forgotten. */
   readonly onRetire?: (sessionPath: string) => Promise<void>;
+  /**
+   * Where this host's extensions say things, resolved per call so an agent
+   * rebuilt under the host follows its live target. Omit to leave pi's no-op
+   * UI in place: pi freezes the mode at `bindExtensions`, so this is a dep
+   * rather than something a caller can turn on once a session exists.
+   */
+  readonly ui?: () => SessionUi | undefined;
 };
 
 /** What a frontend's own tools are built against. */
@@ -770,16 +779,33 @@ export class SessionHost {
       ],
     });
 
-    // Emits session_start; without it extension tools are registered but never usable.
-    await agent.bindExtensions({
-      mode: "print",
-      onError: (err) => {
-        console.warn(
-          `[${this.label}] extension ${err.extensionPath} (${err.event}):`,
-          err.error
+    const onError = (err: ExtensionError) => {
+      console.warn(
+        `[${this.label}] extension ${err.extensionPath} (${err.event}):`,
+        err.error
+      );
+      // Pi answers a command handler that threw as if it had succeeded, so
+      // without this the user's message vanishes and only stderr says why.
+      this.deps
+        .ui?.()
+        ?.notify(
+          `${err.extensionPath} (${err.event}) failed: ${err.error}`,
+          "error"
         );
-      },
-    });
+    };
+    const ui = this.deps.ui;
+    // Emits session_start; without it extension tools are registered but never usable.
+    await agent.bindExtensions(
+      ui
+        ? // Any context at all makes pi's `hasUI()` true (`uiContext !== noOpUIContext`,
+          // runner.js:318); "rpc" is its own name for dialog-capable but not a terminal.
+          {
+            uiContext: adaptSessionUi(ui),
+            mode: "rpc",
+            onError,
+          }
+        : { mode: "print", onError }
+    );
 
     return { agent, cwd };
   }

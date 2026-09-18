@@ -5,15 +5,16 @@ const POLL_MS = 1;
  * runner. These waits are over a real gateway, a real agent and real git, any
  * of which stalls for seconds on a shared runner — so the default is a
  * diagnosis, not a guess at the machine's speed, and `check.ts` gives the
- * suite a per-test timeout above it.
+ * suite a per-test timeout above it. `test` may be async, for a condition
+ * that has to read the disk.
  */
 export async function until(
-  test: () => boolean,
+  test: () => boolean | Promise<boolean>,
   label: string,
   timeoutMs = 15_000
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (!test()) {
+  while (!(await test())) {
     if (Date.now() > deadline) {
       throw new Error(`timed out waiting for ${label}`);
     }

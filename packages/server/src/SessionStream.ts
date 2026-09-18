@@ -4,10 +4,12 @@ import { PickerService } from "#core/picker/PickerService";
 import { MessageText } from "#core/session/MessageText";
 import type { LeaseState, SessionHost } from "#core/session/SessionHost";
 import { SessionLease, type LeaseRecord } from "#core/session/SessionLease";
+import type { SessionUi, UiAsk } from "#core/session/SessionUi";
 import { FileWatch } from "#core/shared/FileWatch";
 import { GitMonitor } from "#core/shared/GitMonitor";
 import { Tools } from "#core/shared/Tools";
-import type { ToolView } from "#core/view/ViewBlock";
+import type { NoticeSeverity, ToolView } from "#core/view/ViewBlock";
+import type { Command } from "#protocol/Command";
 import type {
   EphemeralEvent,
   ServerEvent,
@@ -16,6 +18,21 @@ import type {
 import { SessionProjection } from "./SessionProjection";
 
 export type StreamListener = (event: ServerEvent) => void;
+
+/** What one client sent back for a `ui_request`; a dismissal is `cancelled`. */
+export type UiAnswer = Omit<
+  Extract<Command, { readonly type: "ui_response" }>,
+  "id" | "type" | "sessionId" | "requestId"
+>;
+
+type PendingRequest = {
+  /** Kept whole: a client that reattaches inside the grace is shown the dialog again. */
+  readonly asked: Extract<EphemeralEvent, { readonly type: "ui_request" }>;
+  /** Answers the waiting extension; only the first call of the first caller lands. */
+  readonly settle: (answer: UiAnswer | undefined, because?: string) => void;
+  readonly expiry: ReturnType<typeof setTimeout>;
+  grace: ReturnType<typeof setTimeout> | undefined;
+};
 
 type LiveTool = {
   readonly callId: string;
@@ -46,7 +63,17 @@ export type SessionStreamDeps = {
    * reports nothing rather than guessing from itself.
    */
   readonly repoBusy?: () => boolean;
+  /** Longest a dialog may hold an extension waiting; defaults to `REQUEST_CEILING_MS`. */
+  readonly requestCeilingMs?: number;
+  /** How long a pending dialog outlives its last reader; defaults to `DETACH_GRACE_MS`. */
+  readonly detachGraceMs?: number;
 };
+
+/** No extension may be parked on a human forever, whatever it asked for; `opts.timeout` still wins when shorter. */
+const REQUEST_CEILING_MS = 180_000;
+
+/** A reload, a tunnel blip and a phone unlock all read as a detach, and all three are back inside this. */
+const DETACH_GRACE_MS = 15_000;
 
 function sameLease(a: LeaseState, b: LeaseState): boolean {
   return (
@@ -57,16 +84,20 @@ function sameLease(a: LeaseState, b: LeaseState): boolean {
 }
 
 /** One session's view of the world, shared by every client attached to it and kept running when none are. */
-export class SessionStream {
+export class SessionStream implements SessionUi {
   public readonly sessionId: string;
   public readonly host: SessionHost;
   public readonly picker: PickerService;
   private readonly sessionPath: string;
   private readonly projection: SessionProjection;
   private readonly listeners = new Set<StreamListener>();
+  private readonly observers = new Set<StreamListener>();
   private readonly pollMs: number | undefined;
   private readonly git: GitMonitor;
   private readonly repoBusy: (() => boolean) | undefined;
+  private readonly requestCeilingMs: number;
+  private readonly detachGraceMs: number;
+  private readonly pending = new Map<string, PendingRequest>();
   private liveTurn: LiveMessage[] = [];
   private unsubscribe: (() => void) | undefined;
   private unsubscribeLease: (() => void) | undefined;
@@ -78,6 +109,8 @@ export class SessionStream {
   private drainQueued = false;
   private sentSeq = 0;
   private liveMessageId = 0;
+  private uiSeq = 0;
+  private readonly dispatching: string[] = [];
   private turnStartedAt = 0;
   private gitCwd: string | undefined;
   private gitStop: (() => void) | undefined;
@@ -95,6 +128,8 @@ export class SessionStream {
     this.pollMs = deps.pollMs;
     this.git = deps.git ?? new GitMonitor();
     this.repoBusy = deps.repoBusy;
+    this.requestCeilingMs = deps.requestCeilingMs ?? REQUEST_CEILING_MS;
+    this.detachGraceMs = deps.detachGraceMs ?? DETACH_GRACE_MS;
     this.projection = new SessionProjection(sessionPath, () => host.cwd);
     this.picker = new PickerService({
       cwd: () => host.cwd,
@@ -194,9 +229,185 @@ export class SessionStream {
 
   public subscribe(listener: StreamListener): () => void {
     this.listeners.add(listener);
+    this.holdRequests();
     return () => {
       this.listeners.delete(listener);
+      this.holdRequests();
     };
+  }
+
+  /**
+   * Hears everything a client hears without counting as one: the server's own
+   * bookkeeping must not make a session nobody is reading look attended, or
+   * the rules below park an extension on a dialog with no eyes on it.
+   */
+  public observe(listener: StreamListener): () => void {
+    this.observers.add(listener);
+    return () => {
+      this.observers.delete(listener);
+    };
+  }
+
+  /**
+   * Runs `run` as the answer to something the user typed, so anything it says
+   * or asks reaches the client under `command`'s name. A stack rather than a
+   * name: one command handler may prompt another, and the innermost is the
+   * one speaking.
+   */
+  public async dispatch<T>(command: string, run: () => Promise<T>): Promise<T> {
+    this.dispatching.push(command);
+    try {
+      return await run();
+    } finally {
+      this.dispatching.pop();
+    }
+  }
+
+  /** Fire-and-forget: with nobody attached the notice is dropped rather than held. */
+  public notify(text: string, severity: NoticeSeverity): void {
+    this.emit({
+      type: "ui_notice",
+      id: this.nextUiId("notice"),
+      severity,
+      text,
+      ...this.asked(),
+    });
+  }
+
+  /** Whose words these are: the command being dispatched, if any is. */
+  private asked(): { readonly command?: string } {
+    const command = this.dispatching.at(-1);
+    return command === undefined ? {} : { command };
+  }
+
+  public async select(
+    title: string,
+    options: readonly string[],
+    opts?: UiAsk
+  ): Promise<string | undefined> {
+    return (
+      await this.ask({ method: "select", title, options: [...options] }, opts)
+    )?.value;
+  }
+
+  public async confirm(
+    title: string,
+    message: string,
+    opts?: UiAsk
+  ): Promise<boolean> {
+    return (
+      (await this.ask({ method: "confirm", title, message }, opts))
+        ?.confirmed === true
+    );
+  }
+
+  public async input(
+    title: string,
+    placeholder?: string,
+    opts?: UiAsk
+  ): Promise<string | undefined> {
+    return (
+      await this.ask(
+        {
+          method: "input",
+          title,
+          ...(placeholder === undefined ? {} : { placeholder }),
+        },
+        opts
+      )
+    )?.value;
+  }
+
+  /** Whether the answer was taken; a second one for the same request is refused. */
+  public answer(requestId: string, answer: UiAnswer): boolean {
+    const request = this.pending.get(requestId);
+    if (request === undefined) {
+      return false;
+    }
+    request.settle(answer);
+    return true;
+  }
+
+  /** The answer as the client sent it, or `undefined` where it was cancelled, timed out or never asked. */
+  private ask(
+    request: Omit<
+      Extract<ServerEvent, { readonly type: "ui_request" }>,
+      "type" | "requestId" | "command"
+    >,
+    opts: UiAsk | undefined
+  ): Promise<UiAnswer | undefined> {
+    // A headless session may not park an extension on a dialog nobody can see.
+    if (this.listeners.size === 0) {
+      this.answered(request.title, "nobody was attached");
+      return Promise.resolve(undefined);
+    }
+    const requestId = this.nextUiId("request");
+    const waitMs = Math.min(this.requestCeilingMs, opts?.timeout ?? Infinity);
+    const asked = {
+      ...request,
+      ...this.asked(),
+      type: "ui_request",
+      requestId,
+    } as const;
+    return new Promise<UiAnswer | undefined>((resolve) => {
+      const settle = (answer: UiAnswer | undefined, because?: string): void => {
+        const entry = this.pending.get(requestId);
+        if (entry === undefined) {
+          return;
+        }
+        this.pending.delete(requestId);
+        clearTimeout(entry.expiry);
+        clearTimeout(entry.grace);
+        opts?.signal?.removeEventListener("abort", abort);
+        this.emit({ type: "ui_request_done", requestId });
+        if (because !== undefined) {
+          this.answered(asked.title, because);
+        }
+        resolve(answer?.cancelled === true ? undefined : answer);
+      };
+      const abort = (): void => {
+        settle(undefined, "the extension withdrew it");
+      };
+      this.pending.set(requestId, {
+        asked,
+        settle,
+        expiry: setTimeout(() => {
+          settle(undefined, "it timed out");
+        }, waitMs),
+        grace: undefined,
+      });
+      opts?.signal?.addEventListener("abort", abort, { once: true });
+      this.emit(asked);
+      // A listener is never called for a signal that was already spent.
+      if (opts?.signal?.aborted === true) {
+        abort();
+      }
+    });
+  }
+
+  /** A dialog answered by the server is never silent: the human is told what was decided for them. */
+  private answered(title: string, why: string): void {
+    this.notify(`Answered “${title}” for you: ${why}.`, "warn");
+  }
+
+  /** The last reader leaving starts the grace; one arriving inside it calls the whole thing off. */
+  private holdRequests(): void {
+    const detached = this.listeners.size === 0;
+    for (const [requestId, request] of this.pending) {
+      if (!detached) {
+        clearTimeout(request.grace);
+        request.grace = undefined;
+        continue;
+      }
+      request.grace ??= setTimeout(() => {
+        this.pending.get(requestId)?.settle(undefined, "everyone had left");
+      }, this.detachGraceMs);
+    }
+  }
+
+  private nextUiId(kind: "notice" | "request"): string {
+    this.uiSeq += 1;
+    return `${this.sessionId}:${kind}:${this.uiSeq}`;
   }
 
   /** Whether `callId` names a tool this session is still running, log written or not. */
@@ -242,6 +453,11 @@ export class SessionStream {
           });
         }
       }
+    }
+    // A dialog is only ever answered by whoever is attached now, so a client
+    // arriving mid-question is handed it rather than left waiting on a grace.
+    for (const request of this.pending.values()) {
+      events.push(request.asked);
     }
     events.push(this.sessionState());
     return events;
@@ -346,7 +562,12 @@ export class SessionStream {
     this.unsubscribeForeign?.();
     this.unsubscribeForeign = undefined;
     this.watchFiles(false);
+    // Deleting the entry each settle clears is what a Map iterator is allowed to outlive.
+    for (const request of this.pending.values()) {
+      request.settle(undefined, "the session stopped");
+    }
     this.listeners.clear();
+    this.observers.clear();
   }
 
   private onAgentEvent(event: AgentSessionEvent): void {
@@ -620,6 +841,11 @@ export class SessionStream {
   }
 
   private emit(event: ServerEvent): void {
+    // Observers first: the bookkeeping one does may broadcast server-wide, and
+    // that belongs ahead of the frame that caused it on every socket.
+    for (const observer of this.observers) {
+      observer(event);
+    }
     for (const listener of this.listeners) {
       listener(event);
     }

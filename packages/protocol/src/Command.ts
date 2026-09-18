@@ -195,7 +195,17 @@ export type Command =
       readonly callId: string;
     }
   /** Update this install and restart it unconditionally; refused while any session is mid-turn unless `force`. */
-  | { readonly id: string; readonly type: "reload"; readonly force?: boolean };
+  | { readonly id: string; readonly type: "reload"; readonly force?: boolean }
+  /** Answers one `ui_request`; dismissal is `cancelled`, and a late answer to a settled request is refused. */
+  | {
+      readonly id: string;
+      readonly type: "ui_response";
+      readonly sessionId: string;
+      readonly requestId: string;
+      readonly value?: string;
+      readonly confirmed?: boolean;
+      readonly cancelled?: boolean;
+    };
 
 export type CommandType = Command["type"];
 
