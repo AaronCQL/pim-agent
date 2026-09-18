@@ -14,7 +14,6 @@
         "ky": "^2.1.0",
       },
       "devDependencies": {
-        "@fontsource/commit-mono": "^5.3.0",
         "@happy-dom/global-registrator": "^20.14.0",
         "@iconify-json/griddy-icons": "^1.2.0",
         "@iconify-json/solar": "^1.2.10",
@@ -209,8 +208,6 @@
     "@esbuild/win32-ia32": ["@esbuild/win32-ia32@0.28.1", "", { "os": "win32", "cpu": "ia32" }, "sha512-zvb/mB2bSCoJOpoCBgYKKpX6YM6mJBlBUVUtVj41DlZJVEB6/0CKlRYxP5wWl1C1ILiCoAU5wZZ4q1P3qeS6Eg=="],
 
     "@esbuild/win32-x64": ["@esbuild/win32-x64@0.28.1", "", { "os": "win32", "cpu": "x64" }, "sha512-bm4Mowrv+GXMlpWX++EcXw/iLyd1o3+bJkC2DkWXYVvgZCqD/bSj9ctZeAMC3cIxgjRVR2Dufaiu4YPxr5gW1A=="],
-
-    "@fontsource/commit-mono": ["@fontsource/commit-mono@5.3.0", "", {}, "sha512-Bs+zlEWHDgk/cCVWEMJJaA7LbBU3Ixi5Zums+SSwMKdm2N7RJ4P7jCJTwsMHRt5WFiXYB0tu0q9HMfkn0YsLsQ=="],
 
     "@google/genai": ["@google/genai@1.52.0", "", { "dependencies": { "google-auth-library": "^10.3.0", "p-retry": "^4.6.2", "protobufjs": "^7.5.4", "ws": "^8.18.0" }, "peerDependencies": { "@modelcontextprotocol/sdk": "^1.25.2" }, "optionalPeers": ["@modelcontextprotocol/sdk"] }, "sha512-gwSvbpiN/17O9TbsqSsE/OzZcpv5Fo4RQjdngGgogtuB9RsyJ8ZHhX5KjHj1bp5N9snN2eK8LDGXSaWW2hof8Q=="],
 

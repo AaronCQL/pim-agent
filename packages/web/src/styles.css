@@ -1,25 +1,36 @@
-/* Commit Mono — self-hosted via @fontsource. Latin is the only subset the
-   family ships, and these are the only faces the UI paints: 400 body, 600 for
-   a session title, 700 for a tool label or a heading, 300 for a sidebar
-   timestamp, 300 italic for thinking and 400 italic for markdown emphasis.
-   The family's other six faces are ~650KB of woff we would ship in the
-   tarball and never fetch. */
-@import "@fontsource/commit-mono/latin-300.css";
-@import "@fontsource/commit-mono/latin-300-italic.css";
-@import "@fontsource/commit-mono/latin-400.css";
-@import "@fontsource/commit-mono/latin-400-italic.css";
-@import "@fontsource/commit-mono/latin-600.css";
-@import "@fontsource/commit-mono/latin-700.css";
+/* Commit Mono — the upstream variable font, vendored beside this file because
+   @fontsource ships only static cuts. One 85KB woff2 covers every weight the
+   UI paints (300 sidebar timestamp, 400 body, 600 session title, 700 tool
+   label) in place of six static faces totalling 287KB, and the ital axis
+   replaces the two italic faces. */
+@font-face {
+  font-family: "Commit Mono";
+  src: url("./fonts/CommitMonoV143-VF.woff2") format("woff2");
+  font-weight: 200 700;
+  font-style: normal;
+  font-display: swap;
+}
+/* Same file, fetched once. font-style alone should drive the ital axis, but
+   Chromium mishandles that (w3c/csswg-drafts#12836), so it is named. */
+@font-face {
+  font-family: "Commit Mono";
+  src: url("./fonts/CommitMonoV143-VF.woff2") format("woff2");
+  font-weight: 200 700;
+  font-style: italic;
+  font-variation-settings: "ital" 1;
+  font-display: swap;
+}
 
 :root {
   font-family: "Commit Mono", ui-monospace, monospace;
-  /* Only cv01 (single storey 'a') is ours to pick. ss03/ss04/ss05 — smart
-     case, symbol spacing, smart kerning — are baked into this build's calt
-     and are on unconditionally, so naming them here would do nothing. The
-     ligature sets ss01 (<= != ===) and ss02 (-> =>) stay off: this view is a
-     transcript of literal bytes, and an arrow in log output or ASCII art
-     should not silently become one glyph. */
-  font-feature-settings: "cv01";
+  /* cv01 is the single storey 'a'. ss03/ss04/ss05 — smart case, symbol
+     spacing, smart kerning — are what the static cuts merged into calt and
+     got for free; the variable font ships them unmerged and off, so dropping
+     one here silently unpicks Commit Mono's kerning. The ligature sets ss01
+     (<= != ===) and ss02 (-> =>) stay off: this view is a transcript of
+     literal bytes, and an arrow in log output or ASCII art should not
+     silently become one glyph. */
+  font-feature-settings: "cv01", "ss03", "ss04", "ss05";
   /* One terminal row. Message copy is laid out on a strict grid of these:
      every line is exactly --line tall and the only vertical gaps are whole
      blank rows, so prose reads like terminal output rather than typeset
