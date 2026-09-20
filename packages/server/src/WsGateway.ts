@@ -390,6 +390,9 @@ export class WsGateway {
         };
       case "list_dirs":
         return { directory: await Directories.list(command.path) };
+      case "create_dir":
+        await Directories.create(command.path);
+        return {};
       case "refresh_git": {
         const stream = this.requireStream(connection);
         await stream.refreshGit(command.fetch === true);

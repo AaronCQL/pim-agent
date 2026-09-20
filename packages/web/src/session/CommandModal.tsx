@@ -100,6 +100,7 @@ function Ask(props: {
               }}
               type="text"
               value={value()}
+              autofocus
               spellcheck={false}
               autocapitalize="off"
               autocomplete="off"

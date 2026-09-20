@@ -59,7 +59,6 @@ export function CommitModal(props: {
   readonly onCommit: (paths: readonly string[]) => void;
 }) {
   const [picks, setPicks] = createSignal<ReadonlySet<string>>(new Set());
-  let box: HTMLTextAreaElement | undefined;
 
   // Born fresh on every open, over the list as it stands then: picks that
   // outlived the modal would have to be revalidated against an edited tree.
@@ -68,7 +67,6 @@ export function CommitModal(props: {
     (open) => {
       if (open) {
         setPicks(untrack(() => pathsIn(props.files)));
-        box?.focus();
       }
     }
   );
@@ -170,10 +168,8 @@ export function CommitModal(props: {
             gives this modal goes into the field rather than between them. */}
         <div class="flex shrink-0 items-end gap-2 border-t border-neutral-700 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <textarea
-            ref={(element: HTMLTextAreaElement) => {
-              box = element;
-            }}
             rows={1}
+            autofocus
             aria-label="Commit message"
             placeholder="Message"
             value={props.message}

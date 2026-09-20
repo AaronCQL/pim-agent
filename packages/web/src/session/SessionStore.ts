@@ -687,6 +687,14 @@ export class SessionStore {
     return response.directory;
   }
 
+  /** Makes a directory on the server; throws what it refused with. */
+  public async createDirectory(path: string): Promise<void> {
+    const response = await this.client.send({ type: "create_dir", path });
+    if (!response.success) {
+      throw new Error(response.error ?? `could not create ${path}`);
+    }
+  }
+
   /** The cwd's branches, in the order the server ranks them. */
   public async listBranches(): Promise<readonly GitBranch[]> {
     const response = await this.client.send({
@@ -812,37 +820,6 @@ export class SessionStore {
     if (!response.success) {
       throw new Error(response.error ?? refusal);
     }
-  }
-
-  /**
-   * Directories this machine has sessions in, recent first, current one left
-   * out. Asked for one session per project: a flat page is all one directory
-   * on any real corpus, and every other project is invisible in it.
-   * Pinned projects come first: a pin is what a reader said about a directory,
-   * and it outranks what the clock says about it.
-   */
-  public async recentDirectories(limit = 5): Promise<readonly string[]> {
-    const listing = await this.listSessions({ perProject: 1 });
-    const recent: string[] = [];
-    const here = this.state.cwd;
-    // The rows carry the recency; the projects carry whatever the page cut.
-    for (const cwd of [
-      ...listing.sessions.map((session) => session.cwd),
-      ...listing.projects.map((project) => project.cwd),
-    ]) {
-      if (cwd !== here && !recent.includes(cwd)) {
-        recent.push(cwd);
-      }
-    }
-    const pinned = new Set(this.pinOrder());
-    return [
-      // In the pinned order, not the clock's: a pin that changed places
-      // whenever a session answered would be no order at all.
-      ...recent
-        .filter((cwd) => pinned.has(cwd))
-        .sort((one, other) => this.pinRankOf(one) - this.pinRankOf(other)),
-      ...recent.filter((cwd) => !pinned.has(cwd)),
-    ].slice(0, limit);
   }
 
   public async listSessions(scope: SessionScope = {}): Promise<SessionListing> {

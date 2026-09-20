@@ -120,6 +120,8 @@ export type Command =
   | { readonly id: string; readonly type: "list_models" }
   /** Subdirectories of `path` on the server's filesystem; errors rather than answering empty when it is not a readable directory. */
   | { readonly id: string; readonly type: "list_dirs"; readonly path: string }
+  /** Makes the directory `path` names, one level inside an existing one; answers empty, and the caller re-lists. */
+  | { readonly id: string; readonly type: "create_dir"; readonly path: string }
   /** Re-read the cwd's git state now; `fetch` asks the remote first, which is the only thing that moves ahead and behind. */
   | {
       readonly id: string;

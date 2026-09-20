@@ -7,7 +7,6 @@ import {
   onCleanup,
   Show,
   Switch,
-  untrack,
 } from "solid-js";
 
 import type { SearchRange, SearchSnippet } from "#core/session/SearchIndex";
@@ -159,7 +158,6 @@ export function SearchModal(props: {
   const [scanned, setScanned] = createSignal(0);
   const [ready, setReady] = createSignal(false);
   const [failure, setFailure] = createSignal("");
-  let box: HTMLInputElement | undefined;
   let list: HTMLUListElement | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let generation = 0;
@@ -188,9 +186,6 @@ export function SearchModal(props: {
       }
       setInput("");
       setFailure("");
-      if (untrack(typing) && box) {
-        box.focus();
-      }
       // The empty query is the warm call: it builds the index while the first
       // keystrokes are still being typed, and counts what the modal promises.
       void store.searchSessions("").then(took, refused);
@@ -301,11 +296,9 @@ export function SearchModal(props: {
             aria-hidden="true"
           />
           <input
-            ref={(element: HTMLInputElement) => {
-              box = element;
-            }}
             type="text"
             value={input()}
+            autofocus={typing()}
             spellcheck={false}
             autocapitalize="off"
             autocomplete="off"

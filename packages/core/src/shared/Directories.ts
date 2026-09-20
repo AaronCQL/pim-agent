@@ -1,5 +1,5 @@
-import { readdir, stat } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { mkdir, readdir, stat } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 import { FsErrors } from "./FsErrors";
 import { Paths } from "./Paths";
@@ -29,12 +29,16 @@ async function check(path: string): Promise<string | undefined> {
   }
 }
 
-async function list(path: string): Promise<DirectoryListing> {
+function rooted(path: string): string {
   const expanded = Paths.expandHome(path);
   if (!isAbsolute(expanded)) {
     throw new Error(`not an absolute path: ${path}`);
   }
-  const resolved = resolve(expanded);
+  return resolve(expanded);
+}
+
+async function list(path: string): Promise<DirectoryListing> {
+  const resolved = rooted(path);
   const reason = await check(resolved);
   if (reason !== undefined) {
     throw new Error(reason);
@@ -58,4 +62,34 @@ async function list(path: string): Promise<DirectoryListing> {
   };
 }
 
-export const Directories = { check, list };
+function refusal(error: unknown, path: string): string {
+  switch (FsErrors.code(error)) {
+    case "ENOENT":
+      return `path does not exist: ${dirname(path)}`;
+    case "EEXIST":
+      return `already exists: ${path}`;
+    case "ENOTDIR":
+      return `not a directory: ${dirname(path)}`;
+    case "EACCES":
+    case "EPERM":
+      return `permission denied: ${path}`;
+    default:
+      return `mkdir failed: ${(error as Error).message}`;
+  }
+}
+
+/** Makes one directory inside an existing one. Never recursive: a parent that is missing is said so, not invented. */
+async function create(path: string): Promise<void> {
+  const name = basename(Paths.expandHome(path));
+  if (name === "" || name === "." || name === "..") {
+    throw new Error(`not a directory to create: ${path}`);
+  }
+  const resolved = rooted(path);
+  try {
+    await mkdir(resolved);
+  } catch (error) {
+    throw new Error(refusal(error, resolved));
+  }
+}
+
+export const Directories = { check, list, create };

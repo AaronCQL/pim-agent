@@ -8,20 +8,21 @@ import {
 } from "solid-js";
 
 import type { DirectoryListing } from "#core/shared/Directories";
-import { abbreviateHome } from "../format";
 import type { SessionStore } from "../session/SessionStore";
 import { ACTION, FIELD, ICON, ROW_ACTIVE } from "../ui/classes";
 import { createComboboxNavigation } from "../ui/Combobox";
 import { createMediaQuery, KEYBOARD } from "../ui/media";
 import { Modal } from "../ui/Modal";
+import { followActive } from "../ui/scroll";
 
 type Row = {
   readonly path: string;
   readonly label: string;
-  readonly recent: boolean;
+  /** The row that makes what was typed, rather than walking to something that is already there. */
+  readonly create: boolean;
 };
 
-/** Where to work: the list navigates, the footer opens a new session in whatever it names. */
+/** Where to work: the rows navigate, the button opens a new session in whatever the box names. */
 export function DirectoryModal(props: {
   readonly open: boolean;
   readonly onClose: () => void;
@@ -34,8 +35,9 @@ export function DirectoryModal(props: {
     readonly listing: DirectoryListing;
   }>();
   const [failure, setFailure] = createSignal("");
-  const [recents, setRecents] = createSignal<readonly string[]>([]);
+  const [refused, setRefused] = createSignal("");
   let box: HTMLInputElement | undefined;
+  let list: HTMLUListElement | undefined;
   let generation = 0;
 
   const here = (): string => props.store.state.cwd;
@@ -54,19 +56,18 @@ export function DirectoryModal(props: {
   };
 
   createEffect(
-    () => ({ open: props.open, store: props.store }),
-    ({ open, store }) => {
+    () => props.open,
+    (open) => {
       if (!open) {
         return;
       }
       setInput(`${untrack(here)}/`);
       setFailure("");
-      void store
-        .recentDirectories()
-        .then(setRecents)
-        .catch(() => undefined);
+      setRefused("");
       if (untrack(typing) && box) {
-        box.focus();
+        // Only the selection, which is the element's and waits there for the
+        // caret `autofocus` brings: this runs while the dialog is still
+        // display:none, where a `focus()` of its own could not take.
         box.setSelectionRange(0, box.value.length);
       }
     }
@@ -97,29 +98,45 @@ export function DirectoryModal(props: {
     }
   );
 
+  /**
+   * A `/` in the box re-anchors it, so a filter never holds one: what the
+   * create row makes is a single name inside the directory being browsed, and
+   * the `mkdir` behind it is non-recursive by construction.
+   */
+  const within = (name: string): string =>
+    `${anchor().replace(/\/$/, "")}/${name}`;
+
+  const named = createMemo((): string | undefined => {
+    const name = filter();
+    return name === ""
+      ? undefined
+      : listing()?.entries.find((entry) => entry.name === name)?.path;
+  });
+
   const rows = createMemo<readonly Row[]>(() => {
     const typed = filter().toLowerCase();
-    const matches = (candidate: string): boolean =>
-      candidate.toLowerCase().includes(typed);
     const dotted = typed.startsWith(".");
     return [
-      ...(typed === ""
-        ? recents().map((path) => ({
-            path,
-            label: abbreviateHome(path),
-            recent: true,
-          }))
-        : []),
       ...(listing()?.entries ?? [])
         .filter(
           (entry) =>
-            (dotted || !entry.name.startsWith(".")) && matches(entry.name)
+            (dotted || !entry.name.startsWith(".")) &&
+            entry.name.toLowerCase().includes(typed)
         )
         .map((entry) => ({
           path: entry.path,
           label: entry.name,
-          recent: false,
+          create: false,
         })),
+      ...(filter() !== "" && named() === undefined
+        ? [
+            {
+              path: within(filter()),
+              label: `New folder “${filter()}”`,
+              create: true,
+            },
+          ]
+        : []),
     ];
   });
 
@@ -135,29 +152,69 @@ export function DirectoryModal(props: {
     onDismiss: props.onClose,
   });
 
-  const target = createMemo((): string | undefined =>
-    filter() === "" ? listing()?.path : rows()[navigation.activeIndex()]?.path
+  followActive(
+    () => list,
+    navigation.activeIndex,
+    () => props.open
   );
 
-  const settled = (): boolean => target() !== undefined;
+  /**
+   * The box's value is the whole of what the rows are: a step into a folder
+   * and a keystroke of filter both replace the list under the caret, and a
+   * caret that only clamped would land on a row nobody chose. Opening counts
+   * too: the box selects its whole path for retyping, and a caret left where
+   * the last visit parked it would be the one thing that did not start over.
+   */
+  createEffect(
+    () => ({ text: input(), open: props.open }),
+    () => {
+      navigation.setActiveIndex(0);
+    }
+  );
 
-  const footer = (): string => {
-    const path = target();
-    return path === undefined ? "Nowhere to open" : abbreviateHome(path);
-  };
+  const target = createMemo((): string | undefined =>
+    filter() === "" ? listing()?.path : named()
+  );
 
   const commit = (path: string): void => {
     props.onClose();
     void props.store.openDirectory(path).catch(() => undefined);
   };
 
+  const step = (path: string): void => {
+    setRefused("");
+    setInput(`${path}/`);
+  };
+
+  /** False at the root of the filesystem, which is its own parent. */
+  const stepOut = (): boolean => {
+    const parent = listing()?.parent;
+    if (parent === undefined) {
+      return false;
+    }
+    step(parent);
+    return true;
+  };
+
   const choose = (row: Row): void => {
-    if (row.recent) {
-      commit(row.path);
+    if (!row.create) {
+      step(row.path);
       return;
     }
-    setInput(`${row.path}/`);
+    void props.store.createDirectory(row.path).then(
+      () => {
+        step(row.path);
+      },
+      (error: Error) => {
+        setRefused(error.message);
+      }
+    );
   };
+
+  const message = (): string =>
+    refused() ||
+    failure() ||
+    (rows().length === 0 ? "Nothing to open in here." : "");
 
   const onKeyDown = (event: KeyboardEvent): void => {
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
@@ -165,6 +222,13 @@ export function DirectoryModal(props: {
       const path = target();
       if (path !== undefined) {
         commit(path);
+      }
+      return;
+    }
+    // Before the list is offered the key: bare ArrowUp is the caret's.
+    if ((event.altKey || event.metaKey) && event.key === "ArrowUp") {
+      if (stepOut()) {
+        event.preventDefault();
       }
       return;
     }
@@ -176,6 +240,8 @@ export function DirectoryModal(props: {
       open={props.open}
       onClose={props.onClose}
       label="Choose Directory"
+      size="column"
+      onKeyDown={onKeyDown}
       header={<div class="font-bold leading-[--line]">Choose Directory</div>}
     >
       <Show when={props.open}>
@@ -183,14 +249,11 @@ export function DirectoryModal(props: {
           <button
             type="button"
             aria-label="Parent directory"
-            title="Parent directory"
+            title="Parent directory (Alt+↑)"
             disabled={listing()?.parent === undefined}
             class={`${ICON} disabled:opacity-40`}
             onClick={() => {
-              const parent = listing()?.parent;
-              if (parent !== undefined) {
-                setInput(`${parent}/`);
-              }
+              stepOut();
             }}
           >
             <span class="i-griddy-icons:arrow-up size-4" aria-hidden="true" />
@@ -201,26 +264,28 @@ export function DirectoryModal(props: {
             }}
             type="text"
             value={input()}
+            autofocus={typing()}
             spellcheck={false}
             autocapitalize="off"
             autocomplete="off"
             aria-label="Directory path"
             class={FIELD}
             onInput={(event: InputEvent) => {
+              setRefused("");
               setInput((event.currentTarget as HTMLInputElement).value);
             }}
-            onKeyDown={onKeyDown}
           />
         </div>
 
         <ul
+          ref={(element: HTMLUListElement) => {
+            list = element;
+          }}
           role="listbox"
           class="min-h-0 flex-1 overflow-y-auto p-1 pr-[calc(0.25rem-var(--scrollbar))] text-sm"
         >
-          <Show when={rows().length === 0}>
-            <li class="px-2 py-1 text-neutral-500">
-              {failure() || "Nothing to open in here."}
-            </li>
+          <Show when={message()}>
+            {(text) => <li class="px-2 py-1 text-neutral-500">{text()}</li>}
           </Show>
           <For each={rows()}>
             {(row, index) => {
@@ -228,6 +293,7 @@ export function DirectoryModal(props: {
                 index() === navigation.activeIndex();
               return (
                 <li
+                  data-index={index()}
                   role="option"
                   aria-selected={active() ? "true" : "false"}
                   class={`flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 ${active() ? `${ROW_ACTIVE} text-neutral-50` : ""}`}
@@ -239,29 +305,22 @@ export function DirectoryModal(props: {
                   }}
                 >
                   <span
-                    class={`size-4 shrink-0 ${row.recent ? "i-griddy-icons:time-back" : "i-griddy-icons:folder"}`}
+                    class={`size-4 shrink-0 ${row.create ? "i-griddy-icons:plus" : "i-griddy-icons:folder"}`}
                     aria-hidden="true"
                   />
                   <span class="min-w-0 truncate">{row.label}</span>
-                  <Show when={row.recent}>
-                    <span class="ml-auto shrink-0 pl-2 text-xs text-neutral-500">
-                      recent
-                    </span>
-                  </Show>
                 </li>
               );
             }}
           </For>
         </ul>
 
-        <div class="flex shrink-0 items-center gap-3 border-t border-neutral-700 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-          <span class="min-w-0 flex-1 truncate text-sm text-neutral-400">
-            {footer()}
-          </span>
+        <div class="flex shrink-0 items-center justify-end border-t border-neutral-700 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <button
             type="button"
-            disabled={!settled()}
-            title="Start a new session in this directory"
+            disabled={target() === undefined}
+            aria-label="Start a new session in this directory"
+            title="Start a new session in this directory (Ctrl+Enter)"
             class={ACTION}
             onClick={() => {
               const path = target();

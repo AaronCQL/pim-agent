@@ -755,7 +755,10 @@ test("the toolbar offers the whole change set, and the modal arrives holding it"
   openCommit(host);
 
   expect(box(host)).not.toBeNull();
-  expect(document.activeElement).toBe(box(host));
+  // Ready to be written in: the caret is the attribute's to give, since the
+  // dialog's own focusing steps run after this body's effects and would take
+  // the first control in the header.
+  expect(box(host)?.hasAttribute("autofocus")).toBe(true);
   expect(pick(host, "alpha.ts").getAttribute("aria-checked")).toBe("true");
   expect(pick(host, "src/beta.ts").getAttribute("aria-checked")).toBe("true");
 });

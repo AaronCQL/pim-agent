@@ -164,6 +164,47 @@ test("list_dirs refuses a path that is not rooted anywhere", async () => {
   expect(response.error).toContain("absolute");
 });
 
+test("create_dir makes one directory, and the listing has it", async () => {
+  const probe = await connect();
+
+  const response = await probe.send({
+    type: "create_dir",
+    path: join(cwd, "notes"),
+  });
+
+  expect(response.success).toBe(true);
+  // Nothing to read back: the client re-lists, and the listing is the answer.
+  expect(
+    (await probe.send({ type: "list_dirs", path: cwd })).directory?.entries.map(
+      (entry) => entry.name
+    )
+  ).toContain("notes");
+});
+
+test("create_dir refuses a name already taken and a parent that is missing", async () => {
+  const probe = await connect();
+
+  const taken = await probe.send({
+    type: "create_dir",
+    path: join(cwd, "src"),
+  });
+  const orphan = await probe.send({
+    type: "create_dir",
+    path: join(cwd, "nowhere", "deep"),
+  });
+
+  expect(taken.success).toBe(false);
+  expect(taken.error).toContain("already exists");
+  // One level, never a tree: a mistyped path would otherwise be answered by
+  // building it, and the reader would work in it none the wiser.
+  expect(orphan.success).toBe(false);
+  expect(orphan.error).toContain("does not exist");
+  expect(
+    (await probe.send({ type: "list_dirs", path: join(cwd, "nowhere") }))
+      .success
+  ).toBe(false);
+});
+
 test("a new session opened `like` another runs its model in its directory", async () => {
   const probe = await connect();
   const first = probe.sessionId!;

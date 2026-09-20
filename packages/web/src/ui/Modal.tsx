@@ -10,7 +10,16 @@ const PANEL = {
   narrow: "max-h-[85dvh] w-[min(30rem,92vw)]",
 } as const;
 
-/** One thing read on top of everything else: a full-screen sheet on a phone, a centred panel otherwise. */
+/** The keys a focused control activates on, which are never the panel's to claim. */
+const ACTIVATION = new Set(["Enter", " ", "Tab"]);
+
+/**
+ * One thing read on top of everything else: a full-screen sheet on a phone, a
+ * centred panel otherwise. A dialog focuses itself as it opens — the first
+ * control it finds, which is the close button in the header — so a panel with
+ * a field to type in marks that field `autofocus`, the one thing those
+ * focusing steps read ahead of them.
+ */
 export function Modal(props: {
   readonly open: boolean;
   readonly onClose: () => void;
@@ -18,6 +27,13 @@ export function Modal(props: {
   readonly header: Element;
   /** `wide` and `column` are panels of fixed height, the second cut to what a list is read at; `narrow` ends where its content does. */
   readonly size?: keyof typeof PANEL;
+  /**
+   * The shortcuts belong to the dialog rather than to whichever field inside
+   * it holds focus, so a click that lands on a row keeps them alive. What a
+   * focused control would activate on stays that control's: Enter on a button
+   * is its own click, and claiming it here would cancel it.
+   */
+  readonly onKeyDown?: (event: KeyboardEvent) => void;
   readonly children: Element;
 }) {
   const desktop = createMediaQuery(DESKTOP);
@@ -34,6 +50,13 @@ export function Modal(props: {
       ref={dialog.ref}
       aria-label={props.label}
       onClose={dialog.onNativeClose}
+      onKeyDown={(event: KeyboardEvent) => {
+        const target = event.target as HTMLElement | null;
+        if (target?.tagName === "BUTTON" && ACTIVATION.has(event.key)) {
+          return;
+        }
+        props.onKeyDown?.(event);
+      }}
       onClick={(event: MouseEvent) => {
         if (dialog.isHost(event.target)) {
           dialog.close();
