@@ -61,7 +61,6 @@ export function buildSystemPrompt(opts: BuildOptions): string {
       `- os: ${opts.os ?? describeOs()}`,
       `- model: ${model}`,
       ...(opts.surface ? [`- surface: ${opts.surface}`] : []),
-      `- datetime: ${formatDatetime(new Date())}`,
       "</environment>",
     ].join("\n")
   );
@@ -210,7 +209,7 @@ function unquoteValue(value: string): string {
   return quote === "'" ? unquoted : unquoted.replace(/\\(["\\$`])/g, "$1");
 }
 
-function formatDatetime(d: Date): string {
+export function formatDatetime(d: Date): string {
   const pad = (n: number): string => String(n).padStart(2, "0");
   const offsetMinutes = -d.getTimezoneOffset();
   const sign = offsetMinutes >= 0 ? "+" : "-";

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildSystemPrompt, describeOs } from "./prompt";
+import { buildSystemPrompt, describeOs, formatDatetime } from "./prompt";
 
 describe("buildSystemPrompt", () => {
   test("emits a best-effort os field instead of process.platform", () => {
@@ -28,6 +28,27 @@ describe("buildSystemPrompt", () => {
       "- surface: web browser"
     );
     expect(buildSystemPrompt(options)).not.toContain("- surface:");
+  });
+
+  test("leaves the clock out, so the prompt is byte-identical each turn", () => {
+    const options = {
+      cwd: "/repo",
+      contextFiles: [],
+      skillsBlock: "",
+      toolGuidelines: [],
+      os: "Ubuntu 24.04.2 LTS",
+    } as const;
+
+    expect(buildSystemPrompt(options)).not.toContain("- datetime:");
+    expect(buildSystemPrompt(options)).toBe(buildSystemPrompt(options));
+  });
+});
+
+describe("formatDatetime", () => {
+  test("keeps second precision and names the weekday", () => {
+    expect(formatDatetime(new Date(2026, 8, 20, 9, 54, 14))).toMatch(
+      /^2026-09-20T09:54:14[+-]\d{2}:\d{2} \(Sunday\)$/
+    );
   });
 });
 

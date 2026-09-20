@@ -192,6 +192,34 @@ async function buildHost(
   return host;
 }
 
+/**
+ * The clock is the one part of the context that changes every turn, so it
+ * rides ahead of the user's message instead of inside the system prompt,
+ * where it would re-key the cached prefix on every submit. Pi appends what
+ * `before_agent_start` returns behind the user's message, so the stamp goes
+ * in on `input`; this is what catches a pi that stops honouring that order.
+ */
+test("stamps the clock ahead of the user's message", async () => {
+  const host = await buildHost();
+  await host.run((agent) => agent.prompt("say hello"));
+
+  let seen: readonly string[] = [];
+  let stamp: unknown;
+  await host.run(async (agent) => {
+    seen = agent.messages.map((message) => message.role);
+    stamp = agent.messages[0];
+  });
+
+  expect(seen).toEqual(["custom", "user", "assistant"]);
+  expect(stamp).toMatchObject({
+    customType: "pim-datetime",
+    display: false,
+  });
+  expect((stamp as { content: string }).content).toMatch(
+    /^<datetime>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2} \(\w+\)<\/datetime>$/
+  );
+});
+
 test("resolves the configured model before an agent exists", async () => {
   const host = await buildHost();
   expect(host.currentModelId).toBe(MODEL_ID);
@@ -340,14 +368,21 @@ test("a host whose file advanced rebuilds from it before its next turn", async (
   const stale = first.agentSession;
   await second.run((agent) => agent.prompt("say hello"));
 
-  let loaded = 0;
+  let loaded: readonly string[] = [];
   await first.run(async (agent) => {
-    loaded = agent.messages.length;
+    loaded = agent.messages.map((message) => message.role);
   });
 
   expect(stale).toBeDefined();
   expect(first.agentSession).not.toBe(stale);
-  expect(loaded).toBe(4);
+  expect(loaded).toEqual([
+    "custom",
+    "user",
+    "assistant",
+    "custom",
+    "user",
+    "assistant",
+  ]);
 
   // A turn that changed nothing on disk leaves the rebuilt agent alone.
   const rebuilt = first.agentSession;
