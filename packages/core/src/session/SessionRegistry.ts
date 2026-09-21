@@ -81,6 +81,10 @@ export class SessionRegistry {
     return join(this.runtime.agentDir, "sessions");
   }
 
+  public get agentDir(): string {
+    return this.runtime.agentDir;
+  }
+
   public async init(): Promise<void> {
     await this.runtime.init();
   }

@@ -1,6 +1,7 @@
 import type { DirectoryListing } from "#core/shared/Directories";
 import type { CommitResult, GitBranch } from "#core/shared/Git";
 import type { PickerItem } from "#core/picker/PickerItem";
+import type { ExtensionEntry } from "#core/shared/PiExtensions";
 import type { SearchRange, SearchSnippet } from "#core/session/SearchIndex";
 import type { LeaseFrontend } from "#core/session/SessionLease";
 import type { UpdateSkip } from "#core/shared/Updater";
@@ -211,6 +212,8 @@ export type EphemeralEvent =
   | { readonly type: "pins_changed"; readonly order: readonly string[] }
   /** Sent to every connection: the sessions on disk changed, so any listing a client holds is stale. */
   | { readonly type: "sessions_changed" }
+  /** Sent to every connection: an extension was switched, so any roster a client holds is stale. */
+  | { readonly type: "extensions_changed" }
   /** Sent to every connection; the restart it ends in drops every socket. */
   | UpdateStateEvent
   | {
@@ -350,6 +353,8 @@ export type ResponseEvent = {
   readonly models?: readonly ModelView[];
   /** What the *current* model supports, on the same answer. */
   readonly thinkingLevels?: readonly string[];
+  /** The extension roster, for `list_extensions`. */
+  readonly extensions?: readonly ExtensionEntry[];
   /** One directory's subdirectories, for `list_dirs`. */
   readonly directory?: DirectoryListing;
   /** The cwd's local branches, for `list_branches`. */
@@ -421,6 +426,7 @@ export function isAttachScoped(event: ServerEvent): boolean {
     case "project_meta":
     case "pins_changed":
     case "sessions_changed":
+    case "extensions_changed":
     case "update_state":
     // Sent for a frame the server could not read at all, which is likeliest
     // before an attach has settled: gating it swallows the diagnostic.

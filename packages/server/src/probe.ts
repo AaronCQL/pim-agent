@@ -33,6 +33,8 @@ const USAGE = `pim probe — CLI client for pim-server, dumps every frame as JSO
   --pin <path>             pin a working directory, so its sessions sort first
   --unpin <path>           unpin it again
   --list-models            print the models this server can switch to
+  --list-extensions        print the extensions this server can switch
+  --set-extension <id>     switch one extension off, or on with --on
   --upload <path>          transfer a local file to the server, attach it to
                            --prompt (repeatable)
   --cancel                 cancel the current turn
@@ -61,6 +63,9 @@ const { values } = parseArgs({
     pin: { type: "string" },
     unpin: { type: "string" },
     "list-models": { type: "boolean", default: false },
+    "list-extensions": { type: "boolean", default: false },
+    "set-extension": { type: "string" },
+    on: { type: "boolean", default: false },
     upload: { type: "string", multiple: true },
     cancel: { type: "boolean", default: false },
     dequeue: { type: "boolean", default: false },
@@ -128,6 +133,17 @@ if (values["list-sessions"]) {
 }
 if (values["list-models"]) {
   process.stdout.write(`${JSON.stringify(await probe.listModels())}\n`);
+}
+if (values["list-extensions"]) {
+  for (const entry of await probe.listExtensions()) {
+    process.stdout.write(`${JSON.stringify(entry)}\n`);
+  }
+}
+if (values["set-extension"] !== undefined) {
+  await probe.setExtension(values["set-extension"], values.on);
+  process.stderr.write(
+    `set-extension: ${values["set-extension"]} ${values.on ? "on" : "off"}\n`
+  );
 }
 if (values["pick-commands"] !== undefined) {
   const items = await probe.pickCommands(values["pick-commands"]);

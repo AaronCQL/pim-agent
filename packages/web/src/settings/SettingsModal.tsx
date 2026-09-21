@@ -8,14 +8,20 @@ import {
 
 import { Format } from "#core/shared/Format";
 import type { SessionStore } from "../session/SessionStore";
+import { Check } from "../ui/Check";
 import { ACTION, FIELD, QUIET } from "../ui/classes";
 import { Modal } from "../ui/Modal";
 import { Spinner } from "../ui/Spinner";
+import { Extensions } from "./Extensions";
 import type { Settings } from "./Settings";
 
 const TITLE = "text-xs font-bold uppercase tracking-widest text-neutral-500";
 
-/** Everything this browser decides for itself: which machine it drives, and what it draws. */
+/**
+ * What this browser decides for itself — which machine it drives and what it
+ * draws — and the one thing it decides for the whole install: which
+ * extensions load, which is the server's state and is read back from it.
+ */
 export function SettingsModal(props: {
   readonly open: boolean;
   readonly onClose: () => void;
@@ -124,24 +130,18 @@ export function SettingsModal(props: {
 
           <Section title="App">
             <label class="flex w-fit cursor-pointer items-center gap-2 text-sm">
-              <span class="relative flex size-4 shrink-0 items-center justify-center">
-                <input
-                  type="checkbox"
-                  class="peer size-4 appearance-none rounded bg-neutral-850 ring-1 ring-neutral-700 outline-none hover:ring-neutral-600 checked:bg-indigo-400 checked:ring-0 checked:hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
-                  checked={props.settings.state.hideThinking}
-                  onChange={(event: Event) => {
-                    props.settings.setHideThinking(
-                      (event.currentTarget as HTMLInputElement).checked
-                    );
-                  }}
-                />
-                <span
-                  class="i-griddy-icons:check pointer-events-none absolute size-3 text-neutral-950 opacity-0 peer-checked:opacity-100"
-                  aria-hidden="true"
-                />
-              </span>
+              <Check
+                checked={props.settings.state.hideThinking}
+                onChange={(value) => {
+                  props.settings.setHideThinking(value);
+                }}
+              />
               Hide thinking blocks
             </label>
+          </Section>
+
+          <Section title="Extensions">
+            <Extensions store={props.store} />
           </Section>
 
           <Section title="Updates">

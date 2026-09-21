@@ -2,6 +2,7 @@ import { basename } from "node:path";
 
 import type { PickerItem } from "#core/picker/PickerItem";
 import { RemoteFilePickerSuggestionEngine } from "#core/picker/RemoteFilePickerSuggestionEngine";
+import type { ExtensionEntry } from "#core/shared/PiExtensions";
 import type {
   AttachmentRef,
   CommandDraft,
@@ -263,6 +264,26 @@ export class ProbeClient {
       models: response.models ?? [],
       thinkingLevels: response.thinkingLevels ?? [],
     };
+  }
+
+  /** Every extension this server can switch, scoped to the attached session's cwd. */
+  public async listExtensions(): Promise<readonly ExtensionEntry[]> {
+    const response = await this.send({ type: "list_extensions" });
+    if (!response.success) {
+      throw new Error(response.error ?? "list_extensions failed");
+    }
+    return response.extensions ?? [];
+  }
+
+  public async setExtension(id: string, value: boolean): Promise<void> {
+    const response = await this.send({
+      type: "set_extension",
+      extensionId: id,
+      value,
+    });
+    if (!response.success) {
+      throw new Error(response.error ?? "set_extension failed");
+    }
   }
 
   /** Transfers a client-local file into the server's world; only the bytes and bare filename are sent. */

@@ -118,6 +118,15 @@ export type Command =
     }
   /** The models this server can switch to, plus the current model's thinking levels; answers without a session. */
   | { readonly id: string; readonly type: "list_models" }
+  /** The extensions this server can switch on and off, read against the connection's cwd when it has one. */
+  | { readonly id: string; readonly type: "list_extensions" }
+  /** Switch one extension on or off; the sessions built from here pick it up as each rebuilds its agent. */
+  | {
+      readonly id: string;
+      readonly type: "set_extension";
+      readonly extensionId: string;
+      readonly value: boolean;
+    }
   /** Subdirectories of `path` on the server's filesystem; errors rather than answering empty when it is not a readable directory. */
   | { readonly id: string; readonly type: "list_dirs"; readonly path: string }
   /** Makes the directory `path` names, one level inside an existing one; answers empty, and the caller re-lists. */

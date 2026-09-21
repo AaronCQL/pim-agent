@@ -9,6 +9,11 @@ import { Directories } from "#core/shared/Directories";
 import type { DirectoryListing } from "#core/shared/Directories";
 import { Git, type GitBranch } from "#core/shared/Git";
 import { GitMonitor, type GitRun } from "#core/shared/GitMonitor";
+import {
+  PiExtensions,
+  type ExtensionEntry,
+  type ExtensionScope,
+} from "#core/shared/PiExtensions";
 import { RepoDiff } from "#core/shared/RepoDiff";
 import { ReadCursors } from "#core/session/ReadCursors";
 import type { SessionHost } from "#core/session/SessionHost";
@@ -73,6 +78,7 @@ type Outcome = {
   readonly scanned?: number;
   readonly models?: readonly ModelView[];
   readonly thinkingLevels?: readonly string[];
+  readonly extensions?: readonly ExtensionEntry[];
   readonly directory?: DirectoryListing;
   readonly branches?: readonly GitBranch[];
   readonly commit?: { readonly sha: string };
@@ -388,6 +394,21 @@ export class WsGateway {
           thinkingLevels:
             this.streamFor(connection)?.host.supportedThinkingLevels ?? [],
         };
+      case "list_extensions":
+        return {
+          extensions: await PiExtensions.list(this.scopeFor(connection)),
+        };
+      case "set_extension":
+        await PiExtensions.setEnabled(
+          command.extensionId,
+          command.value,
+          this.scopeFor(connection)
+        );
+        return {
+          after: () => {
+            this.rebuildAgents();
+          },
+        };
       case "list_dirs":
         return { directory: await Directories.list(command.path) };
       case "create_dir":
@@ -527,6 +548,27 @@ export class WsGateway {
   private streamFor(connection: ClientConnection): SessionStream | undefined {
     const sessionId = connection.sessionId;
     return sessionId ? this.streams.get(sessionId) : undefined;
+  }
+
+  /** A session's directory decides which project extensions are listed; a connection without one reads this process's. */
+  private scopeFor(connection: ClientConnection): ExtensionScope {
+    return {
+      cwd: this.streamFor(connection)?.host.cwd ?? process.cwd(),
+      agentDir: this.registry.agentDir,
+    };
+  }
+
+  private rebuildAgents(): void {
+    for (const stream of this.streams.values()) {
+      const { host } = stream;
+      // Through the turn queue: detaching the agent under a running turn kills it.
+      void host
+        .serialize(() => host.invalidate())
+        .catch((err: unknown) => {
+          this.failed(stream, err, "extension reload");
+        });
+    }
+    this.broadcast({ type: "extensions_changed" });
   }
 
   private requireStream(connection: ClientConnection): SessionStream {

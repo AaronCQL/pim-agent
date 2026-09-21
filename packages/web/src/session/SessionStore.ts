@@ -5,6 +5,7 @@ import { rankCommands } from "#core/picker/commandRanker";
 import { RemoteFilePickerSuggestionEngine } from "#core/picker/RemoteFilePickerSuggestionEngine";
 import type { DirectoryListing } from "#core/shared/Directories";
 import type { GitBranch } from "#core/shared/Git";
+import type { ExtensionEntry } from "#core/shared/PiExtensions";
 import type { NoticeSeverity } from "#core/view/ViewBlock";
 import type {
   AttachmentRef,
@@ -136,6 +137,8 @@ export type SessionState = {
   activity: Record<string, SessionStatus>;
   /** Bumped whenever the server says the sessions on disk moved; a listing read before it is stale. */
   catalogue: number;
+  /** Bumped whenever any window switches an extension; a roster read before it is stale. */
+  extensions: number;
   loading: boolean;
   error: string | undefined;
   unread: Record<string, boolean>;
@@ -238,6 +241,7 @@ export class SessionStore {
   private readonly setState: StoreSetter<SessionState>;
   private optimisticId = 0;
   private catalogue: Promise<ModelCatalogue> | undefined;
+  private roster: Promise<readonly ExtensionEntry[]> | undefined;
   private readonly drafts: Drafts;
   private readonly detachAttention: () => void;
   /**
@@ -284,6 +288,7 @@ export class SessionStore {
       optimistic: [],
       activity: {},
       catalogue: 0,
+      extensions: 0,
       loading: false,
       error: undefined,
       unread: {},
@@ -1028,6 +1033,41 @@ export class SessionStore {
     }
   }
 
+  /**
+   * Every extension this server can switch, held until one of them is: the
+   * `extensions_changed` broadcast drops it in every window, and the revision
+   * it bumps is what a reader waits on for the roster that replaces it.
+   * Raises what the server refused with, so a pane can say why it drew none.
+   */
+  public listExtensions(): Promise<readonly ExtensionEntry[]> {
+    this.roster ??= this.client
+      .send({ type: "list_extensions" })
+      .then((response) => {
+        if (!response.success) {
+          throw new Error(response.error ?? "could not read the extensions");
+        }
+        return response.extensions ?? [];
+      })
+      .catch((error: Error) => {
+        this.roster = undefined;
+        throw error;
+      });
+    return this.roster;
+  }
+
+  /**
+   * Switches one extension on or off, and raises what a refusal said so the
+   * row it was guessed on can be put back. The server answers before it
+   * applies the change, so the roster is dropped on the broadcast that
+   * follows rather than here.
+   */
+  public setExtension(id: string, value: boolean): Promise<void> {
+    return this.demand(
+      { type: "set_extension", extensionId: id, value },
+      "the server refused the change"
+    );
+  }
+
   /** True when the session has answered since anything last read it. */
   public isUnread(sessionId: string): boolean {
     return this.state.unread[sessionId] ?? false;
@@ -1516,6 +1556,14 @@ export class SessionStore {
       case "sessions_changed":
         this.setState((draft) => {
           draft.catalogue += 1;
+        });
+        return;
+      // Somebody switched an extension, here or in another window: what this
+      // client holds is a roster of the settings as they were.
+      case "extensions_changed":
+        this.roster = undefined;
+        this.setState((draft) => {
+          draft.extensions += 1;
         });
         return;
       case "session_state":

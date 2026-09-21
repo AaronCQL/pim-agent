@@ -34,6 +34,13 @@ const DEFAULT_DISABLED: readonly PimExtensionName[] = ["todo", "tps"];
 
 const REQUIRED: readonly PimExtensionName[] = ["_init", "pim", "session-lease"];
 
+// Hardcoded, never derived: the browser switches these and nothing else, under
+// the label it gives them — the terminal menu names them by key, this does not.
+const WEB = [{ name: "todo", label: "Todo Tool" }] as const satisfies readonly {
+  name: PimExtensionName;
+  label: string;
+}[];
+
 function isRequired(name: string): boolean {
   return (REQUIRED as readonly string[]).includes(name);
 }
@@ -119,6 +126,7 @@ function enabled(
 export const ExtensionToggles = {
   REQUIRED,
   NAMES,
+  WEB,
   isRequired,
   isKnown,
   describe,
