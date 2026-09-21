@@ -42,7 +42,8 @@ export default function (pi: ExtensionAPI): void {
     name: "bash",
     label: "bash",
     description:
-      "Execute a bash command in the cwd. " +
+      "Execute a bash command in the cwd from <environment>. " +
+      "Never prefix `cd <cwd> &&`; pass paths relative to cwd or absolute. " +
       "Returns exit code, signal (if any), and stdout/stderr captured separately. " +
       "Stdout that is a png/jpeg/gif/webp is returned as a picture. " +
       "Prefer commands that emit only what you need; keep output as small as possible.",

@@ -101,6 +101,32 @@ describe("runBashCommand (integration)", () => {
     expect(r.stdout.text.trim()).toBe("/tmp");
   });
 
+  test("a command that kills its own target leaves the shell alive", async () => {
+    const marker = `pim-test-pkill-${Date.now()}`;
+    const victim = `bash -c ${shellQuote(`exec -a ${marker} sleep 60`)}`;
+    const r = await runBashCommand(
+      `${victim} & until pgrep -f ${marker} > /dev/null; do sleep 0.01; done; pkill -f ${marker}; echo survived`,
+      5000,
+      undefined,
+      process.cwd()
+    );
+    expect(r.signal).toBeNull();
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout.text.trim()).toBe("survived");
+    await waitForNoProcess(marker, KILL_GRACE_MS + 500);
+  });
+
+  test("the command never reaches a child's environment", async () => {
+    const r = await runBashCommand(
+      "env | grep PIM_BASH_COMMAND || echo clean",
+      5000,
+      undefined,
+      process.cwd()
+    );
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout.text.trim()).toBe("clean");
+  });
+
   test("times out and reports timedOut", async () => {
     const r = await runBashCommand("sleep 5", 25, undefined, process.cwd());
     expect(r.timedOut).toBe(true);

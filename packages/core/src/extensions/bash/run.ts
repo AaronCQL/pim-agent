@@ -14,6 +14,12 @@ type Reader = ReadableStreamDefaultReader<Uint8Array>;
 
 const activePids = new Set<number>();
 
+const COMMAND_VAR = "PIM_BASH_COMMAND";
+// argv is what `pkill -f`/`pgrep -f` match, so a command naming its own target would
+// signal this shell before its target. The env hands it over out of argv's reach, and
+// the unset keeps it out of every child's environment too.
+const RUNNER = `__pim_command=$${COMMAND_VAR}; unset ${COMMAND_VAR}; eval "$__pim_command"`;
+
 export function killAllActiveBashGroups(sig: NodeJS.Signals = "SIGTERM"): void {
   for (const pid of activePids) {
     killGroup(pid, sig);
@@ -97,11 +103,11 @@ export async function runBashCommand(
 
   // setsid gives the tree its own process group (pgid == proc.pid) so the whole tree can be signalled.
   const proc = Bun.spawn({
-    cmd: ["setsid", "bash", "-lc", command],
+    cmd: ["setsid", "bash", "-lc", RUNNER],
     cwd,
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env },
+    env: { ...process.env, [COMMAND_VAR]: command },
   });
   if (proc.pid !== undefined) {
     activePids.add(proc.pid);
