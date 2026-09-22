@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.11.0
+
+### Features
+
+- Show pi extensions' `notify`, `select`, `confirm` and `input` API as a modal (93ec168)
+- Toggle pi extensions from web settings (c03d845)
+- Make new folders within the web directory chooser (3ffb169)
+
+### Bug Fixes
+
+- Keep bash commands out of argv to fix `pkill -f`, and tell model not to prefix `cd <cwd> &&` (d764309)
+- Prevent prompt cache thrashing by placing datetime in user input instead of system prompt (fb167e4)
+- Use Commit Mono variable font (919e204)
+- Fix blockquote's paragraphs (3655204)
+
 ## v0.10.0
 
 ### Features

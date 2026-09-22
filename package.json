@@ -1,6 +1,6 @@
 {
   "name": "pim-agent",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "A batteries-included distro of Pi, accessible in your terminal, browser and Telegram.",
   "license": "MIT",
   "type": "module",
