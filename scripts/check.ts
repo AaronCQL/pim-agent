@@ -28,7 +28,9 @@
  * line, everything on screen is one of the two things worth tokens — a task
  * that failed, or a file that got rewritten.
  */
-import { resolve } from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 /** Set by every CI provider worth the name, and by GitHub Actions. */
 const CI = Bun.env.CI !== undefined && Bun.env.CI !== "false";
@@ -201,7 +203,19 @@ type Output = {
   readonly exitCode: number;
 };
 
-async function spawn(argv: readonly string[]): Promise<Output> {
+/**
+ * The test runners' `TMPDIR`, removed once they exit. A suite's `afterEach`
+ * cannot clean up after writes it has no handle on: pi's `ModelRuntime` fires
+ * credential refreshes it never awaits, and its auth backend `mkdir -p`s the
+ * agent dir and writes `auth.json` on every read — so a refresh landing after
+ * the `rm` resurrects the tree. Only the runner's exit ends those writes.
+ */
+let testTmp: string | undefined;
+
+async function spawn(
+  argv: readonly string[],
+  env: Record<string, string> = {}
+): Promise<Output> {
   const child = Bun.spawn([...argv], {
     cwd: ROOT,
     // oxlint, oxfmt and tsc are `node_modules/.bin` shims that only `bun run`
@@ -210,6 +224,7 @@ async function spawn(argv: readonly string[]): Promise<Output> {
     env: {
       ...process.env,
       PATH: `${ROOT}/node_modules/.bin:${process.env.PATH}`,
+      ...env,
     },
     stdout: "pipe",
     stderr: "pipe",
@@ -226,10 +241,10 @@ async function run(task: Task, forwarded: readonly string[]): Promise<boolean> {
   if (task.listArgv !== undefined) {
     return await runTwoPhase(task, task.listArgv);
   }
-  const { stdout, stderr, exitCode } = await spawn([
-    ...task.argv,
-    ...(task.tests ? forwarded : []),
-  ]);
+  const { stdout, stderr, exitCode } = await spawn(
+    [...task.argv, ...(task.tests ? forwarded : [])],
+    task.tests && testTmp !== undefined ? { TMPDIR: testTmp } : {}
+  );
 
   // A path filter that stops matching anything reports as a pass. Only trust
   // that on an unnarrowed run: `--changed` legitimately finds nothing.
@@ -320,6 +335,9 @@ function report(headline: string, body: string, rerun: string): void {
 const { tasks, forwarded } = select(Bun.argv.slice(2));
 
 const started = Bun.nanoseconds();
+if (tasks.some((task) => task.tests)) {
+  testTmp = await mkdtemp(join(tmpdir(), "pim-check-"));
+}
 let ok = true;
 for (const task of tasks.filter((task) => task.mutates)) {
   ok = (await run(task, forwarded)) && ok;
@@ -328,6 +346,9 @@ const readers = await Promise.all(
   tasks.filter((task) => !task.mutates).map((task) => run(task, forwarded))
 );
 ok = ok && readers.every(Boolean);
+if (testTmp !== undefined) {
+  await rm(testTmp, { recursive: true, force: true });
+}
 
 // The one line a green run is allowed. Named tasks, not a count: on a narrowed
 // run it is also the receipt for what the selector actually chose.

@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type {
   AgentSessionEvent,
   AgentToolResult,
@@ -66,6 +67,8 @@ export type SubagentSession = {
 
 export type SubagentSessionSpec = {
   readonly activeToolNames?: readonly string[];
+  /** The parent's live level; left unset, pi falls back to settings, not to the parent. */
+  readonly thinkingLevel?: ThinkingLevel;
   /** The parent's tool call id, which names the child's log on disk. */
   readonly callId?: string;
 };
@@ -111,6 +114,7 @@ export async function createSdkSubagentSession(
     cwd: parentCtx.cwd,
     agentDir: getAgentDir(),
     model: parentCtx.model,
+    thinkingLevel: spec.thinkingLevel,
     sessionManager: await childSessionManager(parentCtx, spec.callId),
     resourceLoader: loader,
     tools: spec.activeToolNames
@@ -144,6 +148,7 @@ export async function runSubagent(
     onUpdate,
     createSession = createSdkSubagentSession,
     activeToolNames,
+    thinkingLevel,
     callId,
   } = run;
 
@@ -175,7 +180,11 @@ export async function runSubagent(
     };
 
     try {
-      session = await createSession(parentCtx, { activeToolNames, callId });
+      session = await createSession(parentCtx, {
+        activeToolNames,
+        thinkingLevel,
+        callId,
+      });
       capture.noteSessionId(session.sessionId);
       session.subscribe((event) => capture.handle(event));
       signal?.addEventListener("abort", onAbort, { once: true });

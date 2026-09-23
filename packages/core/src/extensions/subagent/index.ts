@@ -12,7 +12,7 @@ export default function (pi: ExtensionAPI): void {
     label: "subagent",
     description:
       "Run a task in an isolated subagent with a fresh context. " +
-      "The subagent inherits the currently active tools, except subagent itself. " +
+      "The subagent inherits the current model, thinking level and active tools, except subagent itself. " +
       "Multiple subagent calls in one turn run in parallel. " +
       "Subagent output returned to the main agent is capped at 32KB.",
     parameters: subagentSchema,
@@ -26,6 +26,7 @@ export default function (pi: ExtensionAPI): void {
         signal,
         onUpdate,
         activeToolNames: pi.getActiveTools(),
+        thinkingLevel: pi.getThinkingLevel(),
       });
     },
     toViewModel: subagentView,

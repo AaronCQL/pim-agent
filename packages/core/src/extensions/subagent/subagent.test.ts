@@ -10,6 +10,7 @@ import {
   UPDATE_INTERVAL_MS,
   type SubagentDetails,
   type SubagentSession,
+  type SubagentSessionSpec,
 } from "./subagent";
 import { until } from "../../shared/fixtures/wait";
 
@@ -301,6 +302,21 @@ describe("runSubagent", () => {
     expect(fake.promptCalls).toBe(1);
     expect(fake.abortCalls).toBe(1);
     expect(fake.disposeCalls).toBe(1);
+  });
+
+  test("hands the parent's thinking level to the child session", async () => {
+    const fake = new FakeSession(async () => {});
+    const specs: SubagentSessionSpec[] = [];
+
+    await runSubagent("think", ctx, {
+      thinkingLevel: "high",
+      createSession: async (_ctx, spec) => {
+        specs.push(spec);
+        return fake;
+      },
+    });
+
+    expect(specs.map((spec) => spec.thinkingLevel)).toEqual(["high"]);
   });
 
   test("returns a hint, not an error, for normal empty output", async () => {
