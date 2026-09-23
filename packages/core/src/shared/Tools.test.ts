@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentToolResult, Theme } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
+import type { JsonObject } from "@earendil-works/pi-ai";
 import { Type, type TSchema } from "typebox";
 import { StringEnum, validateToolArguments } from "@earendil-works/pi-ai";
 import { type PimToolDefinition, Tools } from "./Tools";
@@ -11,7 +12,7 @@ function runValidator(parameters: TSchema, args: unknown): Error {
       type: "toolCall",
       id: "1",
       name: "t",
-      arguments: args as Record<string, unknown>,
+      arguments: args as JsonObject,
     });
   } catch (e) {
     return e as Error;

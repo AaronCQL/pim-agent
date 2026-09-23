@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { JsonObject } from "@earendil-works/pi-ai";
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import registerSubagent from "./index";
 import { subagentSchema } from "./schema";
@@ -11,7 +12,7 @@ function validate(args: unknown): void {
       type: "toolCall",
       id: "1",
       name: "subagent",
-      arguments: args as Record<string, unknown>,
+      arguments: args as JsonObject,
     }
   );
 }

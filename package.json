@@ -75,8 +75,8 @@
     "vite": "^8.2.2"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "0.85.1",
-    "@earendil-works/pi-server": "0.85.1",
+    "@earendil-works/pi-coding-agent": "0.87.1",
+    "@earendil-works/pi-server": "0.87.1",
     "diff": "^9.0.0",
     "fzf": "^0.5.2",
     "grammy": "^1.46.0",

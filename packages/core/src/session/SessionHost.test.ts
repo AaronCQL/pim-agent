@@ -3,6 +3,7 @@ import {
   ModelRuntime,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import { getSystemMessageText } from "@earendil-works/pi-ai";
 import { appendFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +21,23 @@ let tmp: string;
 let agentDir: string;
 let server: ReturnType<typeof Bun.serve> | undefined;
 let hosts: SessionHost[] = [];
+type ChatRequest = {
+  readonly messages: readonly {
+    readonly role: string;
+    readonly content: unknown;
+  }[];
+};
+let requests: ChatRequest[] = [];
+
+function wireRoles(request: ChatRequest | undefined): readonly string[] {
+  return request?.messages.map((message) => message.role) ?? [];
+}
+
+function expectPrefix(earlier: ChatRequest, later: ChatRequest): void {
+  expect(later.messages.slice(0, earlier.messages.length)).toEqual([
+    ...earlier.messages,
+  ]);
+}
 
 /** Resolves once the model server has been asked for a completion. */
 let requested: () => void;
@@ -104,6 +122,7 @@ function startModelServer(): void {
       if (!new URL(req.url).pathname.endsWith("/chat/completions")) {
         return new Response("not found", { status: 404 });
       }
+      requests.push((await req.json()) as ChatRequest);
       requested();
       const stream = new ReadableStream<Uint8Array>({
         async start(controller) {
@@ -136,6 +155,7 @@ function startModelServer(): void {
 }
 
 beforeEach(async () => {
+  requests = [];
   requestSeen = new Promise((resolve) => {
     requested = resolve;
   });
@@ -151,7 +171,14 @@ beforeEach(async () => {
           baseUrl: `http://localhost:${server?.port}/v1`,
           api: "openai-completions",
           apiKey: "test-key",
-          models: [{ id: "echo", maxTokens: 1024, contextWindow: 8192 }],
+          models: [
+            {
+              id: "echo",
+              maxTokens: 1024,
+              contextWindow: 8192,
+              compat: { supportsMidConvoSystemMessages: true },
+            },
+          ],
         },
       },
     })
@@ -197,7 +224,10 @@ async function buildHost(
  * rides ahead of the user's message instead of inside the system prompt,
  * where it would re-key the cached prefix on every submit. Pi appends what
  * `before_agent_start` returns behind the user's message, so the stamp goes
- * in on `input`; this is what catches a pi that stops honouring that order.
+ * in on `input` — which records it ahead of pi's first system message, so the
+ * request is re-led by the prompt. The model here keeps mid-conversation
+ * system messages in place, as Claude does, so a prompt that stops leading
+ * the request shows up on the wire.
  */
 test("stamps the clock ahead of the user's message", async () => {
   const host = await buildHost();
@@ -210,7 +240,7 @@ test("stamps the clock ahead of the user's message", async () => {
     stamp = agent.messages[0];
   });
 
-  expect(seen).toEqual(["custom", "user", "assistant"]);
+  expect(seen).toEqual(["custom", "system", "user", "assistant"]);
   expect(stamp).toMatchObject({
     customType: "pim-datetime",
     display: false,
@@ -218,6 +248,59 @@ test("stamps the clock ahead of the user's message", async () => {
   expect((stamp as { content: string }).content).toMatch(
     /^<datetime>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2} \(\w+\)<\/datetime>$/
   );
+  expect(wireRoles(requests[0])).toEqual(["system", "user", "user"]);
+  expect(JSON.stringify(requests[0]?.messages[1]?.content)).toContain(
+    "<datetime>"
+  );
+});
+
+test("lets pi record stable prompt sections and preserves project instructions", async () => {
+  await Bun.write(join(tmp, "AGENTS.md"), "Follow the project rules.");
+  const host = await buildHost({
+    systemInstruction: async () => "Extra session instruction.",
+  });
+  await host.run((agent) => agent.prompt("say hello"));
+
+  expect(wireRoles(requests[0])[0]).toBe("system");
+  const providerPrompt = requests[0]?.messages[0]?.content as string;
+  expect(providerPrompt).toContain("You are Pim (Pi IMproved)");
+  expect(providerPrompt).not.toContain("Updated system prompt section");
+  expect(providerPrompt).toContain("<environment>\n- os:");
+  expect(providerPrompt).toContain("- model: echo via test");
+  expect(providerPrompt).toContain("Follow the project rules.");
+  expect(providerPrompt).toContain("Extra session instruction.");
+  expect(providerPrompt).not.toContain("<datetime>");
+
+  const entries = await new EventLog(mainPath()).read();
+  const system = entries.flatMap((entry) =>
+    entry.entry.type === "message" && entry.entry.message.role === "system"
+      ? [entry.entry.message]
+      : []
+  );
+  expect(system).toHaveLength(1);
+  expect(system[0]?.sections?.preamble).toContain("You are Pim (Pi IMproved)");
+  expect(system[0]?.sections?.environment).toContain("- model: echo via test");
+  expect(system[0]?.sections?.cwd).toContain(tmp);
+  expect(system[0]?.sections?.addendum).toContain("Extra session instruction.");
+  expect(system[0]?.sections?.project_context).toContain(
+    "Follow the project rules."
+  );
+  expect(system[0] && getSystemMessageText(system[0])).toBe(providerPrompt);
+
+  await host.run((agent) => agent.prompt("say hello again"));
+  expect((await roles()).filter((role) => role === "system")).toHaveLength(1);
+  expect(wireRoles(requests[1]).filter((role) => role === "system")).toEqual([
+    "system",
+  ]);
+  expectPrefix(requests[0]!, requests[1]!);
+
+  await host.dispose();
+  const resumed = await buildHost({
+    systemInstruction: async () => "Extra session instruction.",
+  });
+  await resumed.run((agent) => agent.prompt("say hello after resume"));
+  expectPrefix(requests[1]!, requests[2]!);
+  expect((await roles()).filter((role) => role === "system")).toHaveLength(1);
 });
 
 test("resolves the configured model before an agent exists", async () => {
@@ -354,7 +437,13 @@ test("two hosts over one session file take their turns one at a time", async () 
     "second:start",
     "second:end",
   ]);
-  expect(await roles()).toEqual(["user", "assistant", "user", "assistant"]);
+  expect(await roles()).toEqual([
+    "system",
+    "user",
+    "assistant",
+    "user",
+    "assistant",
+  ]);
   expect(second.leaseState).toEqual({ writable: true });
   expect(leaseChanges).toBe(2);
   expect(await leaseExists()).toBe(false);
@@ -377,6 +466,7 @@ test("a host whose file advanced rebuilds from it before its next turn", async (
   expect(first.agentSession).not.toBe(stale);
   expect(loaded).toEqual([
     "custom",
+    "system",
     "user",
     "assistant",
     "custom",
@@ -532,6 +622,7 @@ test("warns when another process writes the session mid-turn", async () => {
     "written by another process"
   );
   expect(await roles()).toEqual([
+    "system",
     "user",
     "assistant",
     "user",

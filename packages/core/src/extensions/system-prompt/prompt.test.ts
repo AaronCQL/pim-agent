@@ -1,46 +1,93 @@
 import { describe, expect, test } from "bun:test";
-import { buildSystemPrompt, describeOs, formatDatetime } from "./prompt";
+import {
+  buildEnvironment,
+  buildInstructions,
+  describeOs,
+  formatDatetime,
+  leadWithSystemPrompt,
+} from "./prompt";
 
-describe("buildSystemPrompt", () => {
-  test("emits a best-effort os field instead of process.platform", () => {
-    const prompt = buildSystemPrompt({
-      cwd: "/repo",
-      contextFiles: [],
-      skillsBlock: "",
-      toolGuidelines: [],
-      os: "Ubuntu 24.04.2 LTS",
+describe("buildInstructions", () => {
+  test("wraps pim's identity and the guideline bullets in one tagged block", () => {
+    const instructions = buildInstructions({
+      selectedTools: [],
+      toolGuidelines: {},
+      promptGuidelines: ["Be terse", "Cite paths"],
     });
 
-    expect(prompt).toContain("- os: Ubuntu 24.04.2 LTS");
-    expect(prompt).not.toContain("- platform:");
+    expect(instructions.startsWith("<system_instructions>\n")).toBe(true);
+    expect(instructions.endsWith("\n</system_instructions>")).toBe(true);
+    expect(instructions).toContain(
+      "You are Pim (Pi IMproved), a batteries-included agent built on the Pi harness."
+    );
+    expect(instructions).toContain("- Be terse\n- Cite paths");
+  });
+
+  test("carries the active tools' guidelines once, and drops inactive ones", () => {
+    const instructions = buildInstructions({
+      selectedTools: ["lint", "read"],
+      toolGuidelines: {
+        lint: ["Lint before committing", "Be terse"],
+        deploy: ["Never deploy on Fridays"],
+      },
+      promptGuidelines: ["Be terse"],
+    });
+
+    expect(instructions).toContain("- Lint before committing\n- Be terse\n");
+    expect(instructions.match(/- Be terse/g)).toHaveLength(1);
+    expect(instructions).not.toContain("Fridays");
+  });
+});
+
+describe("leadWithSystemPrompt", () => {
+  test("moves the first system message to the front and keeps the rest in order", () => {
+    const messages = [
+      { role: "custom", id: "stamp" },
+      { role: "system", id: "prompt" },
+      { role: "user", id: "ask" },
+      { role: "system", id: "delta" },
+    ];
+
+    expect(leadWithSystemPrompt(messages)?.map((m) => m.id)).toEqual([
+      "prompt",
+      "stamp",
+      "ask",
+      "delta",
+    ]);
+  });
+
+  test("leaves a transcript that already leads with, or lacks, a prompt", () => {
+    expect(
+      leadWithSystemPrompt([{ role: "system" }, { role: "user" }])
+    ).toBeUndefined();
+    expect(leadWithSystemPrompt([{ role: "user" }])).toBeUndefined();
+  });
+});
+
+describe("buildEnvironment", () => {
+  test("emits a best-effort os field instead of process.platform", () => {
+    const environment = buildEnvironment({ os: "Ubuntu 24.04.2 LTS" });
+
+    expect(environment).toContain("- os: Ubuntu 24.04.2 LTS");
+    expect(environment).not.toContain("- platform:");
   });
 
   test("names the surface the user is on, and omits it for a subagent", () => {
-    const options = {
-      cwd: "/repo",
-      contextFiles: [],
-      skillsBlock: "",
-      toolGuidelines: [],
-      os: "Ubuntu 24.04.2 LTS",
-    } as const;
+    const os = "Ubuntu 24.04.2 LTS";
 
-    expect(buildSystemPrompt({ ...options, surface: "web browser" })).toContain(
+    expect(buildEnvironment({ os, surface: "web browser" })).toContain(
       "- surface: web browser"
     );
-    expect(buildSystemPrompt(options)).not.toContain("- surface:");
+    expect(buildEnvironment({ os })).not.toContain("- surface:");
   });
 
-  test("leaves the clock out, so the prompt is byte-identical each turn", () => {
-    const options = {
-      cwd: "/repo",
-      contextFiles: [],
-      skillsBlock: "",
-      toolGuidelines: [],
-      os: "Ubuntu 24.04.2 LTS",
-    } as const;
-
-    expect(buildSystemPrompt(options)).not.toContain("- datetime:");
-    expect(buildSystemPrompt(options)).toBe(buildSystemPrompt(options));
+  test("leaves tagging, cwd and datetime to pi", () => {
+    expect(
+      buildEnvironment({
+        os: "Ubuntu 24.04.2 LTS",
+        model: { id: "opus", provider: "anthropic" },
+      })
+    ).toBe("- os: Ubuntu 24.04.2 LTS\n- model: opus via anthropic");
   });
 });
 

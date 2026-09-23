@@ -3,7 +3,7 @@ import type {
   ExtensionAPI,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { validateToolArguments } from "@earendil-works/pi-ai";
+import { validateToolArguments, type JsonObject } from "@earendil-works/pi-ai";
 import type { Static, TSchema } from "typebox";
 import { Levenshtein } from "./Levenshtein";
 import { Renderer } from "./Renderer";
@@ -169,7 +169,7 @@ function wrap<TParams extends TSchema, TDetails = unknown, TState = unknown>(
             type: "toolCall",
             id: "",
             name: def.name,
-            arguments: cleaned as Record<string, unknown>,
+            arguments: cleaned as JsonObject,
           }
         ) as Static<TParams>;
       } catch (err) {
@@ -461,7 +461,7 @@ function revalidateBranch(branch: JsonSchema, value: unknown): Issue[] {
         type: "toolCall",
         id: "",
         name: "_branch",
-        arguments: (value ?? {}) as Record<string, unknown>,
+        arguments: (value ?? {}) as JsonObject,
       }
     );
     return [];

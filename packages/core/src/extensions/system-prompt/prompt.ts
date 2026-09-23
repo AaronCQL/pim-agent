@@ -1,18 +1,14 @@
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { NormalizedBuildSystemPromptOptions } from "@earendil-works/pi-coding-agent";
 
 import type { Surface } from "../../shared/Surface";
 
-type BuildOptions = {
-  readonly model?: ExtensionContext["model"];
-  readonly cwd: string;
-  readonly contextFiles: ReadonlyArray<{
-    readonly path: string;
-    readonly content: string;
-  }>;
-  readonly skillsBlock: string;
-  readonly toolGuidelines: ReadonlyArray<string>;
-  readonly appendSystemPrompt?: string;
-  readonly customPrompt?: string;
+type GuidelineOptions = Pick<
+  NormalizedBuildSystemPromptOptions,
+  "selectedTools" | "toolGuidelines" | "promptGuidelines"
+>;
+
+type EnvironmentOptions = {
+  readonly model?: { readonly id: string; readonly provider: string };
   readonly os?: string;
   readonly surface?: Surface;
 };
@@ -34,56 +30,45 @@ function dynamicGuidelines(): ReadonlyArray<string> {
   return guidelines;
 }
 
-export function buildSystemPrompt(opts: BuildOptions): string {
-  const sections: string[] = [];
+export function buildInstructions(options: GuidelineOptions): string {
+  const guidelines = new Set([
+    ...options.selectedTools.flatMap(
+      (name) => options.toolGuidelines[name] ?? []
+    ),
+    ...options.promptGuidelines,
+    ...dynamicGuidelines(),
+  ]);
+  return [
+    "<system_instructions>",
+    "You are Pim (Pi IMproved), a batteries-included agent built on the Pi harness.",
+    ...[...guidelines].map((g) => `- ${g}`),
+    "</system_instructions>",
+  ].join("\n");
+}
 
-  if (opts.customPrompt && opts.customPrompt.trim().length > 0) {
-    sections.push(opts.customPrompt);
-  } else {
-    sections.push(
-      [
-        "<system_instructions>",
-        "You are Pim (Pi IMproved), a batteries-included agent built on the Pi harness.",
-        ...opts.toolGuidelines.map((g) => `- ${g}`),
-        ...dynamicGuidelines().map((g) => `- ${g}`),
-        "</system_instructions>",
-      ].join("\n")
-    );
+export function leadWithSystemPrompt<T extends { readonly role: string }>(
+  messages: ReadonlyArray<T>
+): T[] | undefined {
+  const first = messages.findIndex((message) => message.role === "system");
+  if (first <= 0) {
+    return undefined;
   }
+  return [
+    messages[first]!,
+    ...messages.slice(0, first),
+    ...messages.slice(first + 1),
+  ];
+}
 
+export function buildEnvironment(opts: EnvironmentOptions): string {
   const model = opts.model
     ? `${opts.model.id} via ${opts.model.provider}`
     : "unknown";
-  sections.push(
-    [
-      "<environment>",
-      `- cwd: ${opts.cwd}`,
-      `- os: ${opts.os ?? describeOs()}`,
-      `- model: ${model}`,
-      ...(opts.surface ? [`- surface: ${opts.surface}`] : []),
-      "</environment>",
-    ].join("\n")
-  );
-
-  if (opts.contextFiles.length > 0) {
-    const files = opts.contextFiles
-      .map(
-        ({ path, content }) =>
-          `<file path="${escapeXmlAttr(path)}">\n${content}\n</file>`
-      )
-      .join("\n");
-    sections.push(`<project_instructions>\n${files}\n</project_instructions>`);
-  }
-
-  if (opts.skillsBlock) {
-    sections.push(opts.skillsBlock.trimStart());
-  }
-
-  if (opts.appendSystemPrompt && opts.appendSystemPrompt.trim().length > 0) {
-    sections.push(opts.appendSystemPrompt);
-  }
-
-  return sections.join("\n\n");
+  return [
+    `- os: ${opts.os ?? describeOs()}`,
+    `- model: ${model}`,
+    ...(opts.surface ? [`- surface: ${opts.surface}`] : []),
+  ].join("\n");
 }
 
 export function describeOs(options: OsDescriptionOptions = {}): string {
@@ -220,12 +205,4 @@ export function formatDatetime(d: Date): string {
     `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}${offset}`;
   const day = d.toLocaleDateString("en-US", { weekday: "long" });
   return `${iso} (${day})`;
-}
-
-function escapeXmlAttr(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
 }
