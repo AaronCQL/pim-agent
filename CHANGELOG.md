@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.12.0
+
+### Features
+
+- Upgrade pi to 0.87 and build the system prompt from its named sections (29dba38)
+
+### Improvements
+
+- Subagents inherit the parent's thinking level (b83a05c)
+- Give Claude models the string-replace `edit` tool again instead of `apply_patch` (3a94aca)
+
 ## v0.11.0
 
 ### Features
