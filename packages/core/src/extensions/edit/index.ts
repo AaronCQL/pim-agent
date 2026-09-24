@@ -10,7 +10,7 @@ export default function (pi: ExtensionAPI): void {
     name: "edit",
     label: "edit",
     description:
-      "Replace strings in a UTF-8 text file. " +
+      "Replace strings in a UTF-8 text file; batch several replacements in one call via `edits`. " +
       "Prefer edit over write for changes to existing files.",
     parameters: editSchema,
     renderShell: "self",
