@@ -44,7 +44,7 @@ function connect(sessionId?: string): Promise<SessionStore> {
     url: harness.url,
     cwd: harness.tmp,
     pickerDebounceMs: 0,
-    backoffMs: () => 0,
+    retryMs: 0,
     ...(sessionId === undefined ? {} : { sessionId }),
   });
   return opened.connect().then(() => opened);

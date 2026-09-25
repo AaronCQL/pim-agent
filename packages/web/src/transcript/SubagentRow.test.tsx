@@ -35,7 +35,7 @@ beforeEach(async () => {
     url: harness.url,
     cwd: harness.tmp,
     pickerDebounceMs: 0,
-    backoffMs: () => 0,
+    retryMs: 0,
   });
   await store.connect();
 });

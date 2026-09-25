@@ -33,6 +33,7 @@ import type {
 } from "#protocol/ServerEvent";
 import { isDurableEvent } from "#protocol/ServerEvent";
 import { watchAttention } from "../ws/attention";
+import { watchWake } from "../ws/wake";
 import {
   WsClient,
   type AttachTarget,
@@ -185,7 +186,7 @@ export type SessionStoreOptions = {
   readonly url: string;
   readonly sessionId?: string;
   readonly cwd?: string;
-  readonly backoffMs?: (attempt: number) => number;
+  readonly retryMs?: number;
   readonly pickerDebounceMs?: number;
   readonly reloadPage?: () => void;
 };
@@ -244,6 +245,7 @@ export class SessionStore {
   private roster: Promise<readonly ExtensionEntry[]> | undefined;
   private readonly drafts: Drafts;
   private readonly detachAttention: () => void;
+  private readonly detachWake: () => void;
   /**
    * Keys a command of this client's still has a guess standing in for, as
    * `record:key`. A listing the server computed before the command reached it
@@ -315,9 +317,7 @@ export class SessionStore {
       url: options.url,
       ...(sessionId === undefined ? {} : { sessionId }),
       ...(cwd === undefined ? {} : { cwd }),
-      ...(options.backoffMs === undefined
-        ? {}
-        : { backoffMs: options.backoffMs }),
+      ...(options.retryMs === undefined ? {} : { retryMs: options.retryMs }),
       onEvent: (event) => {
         this.ingest(event);
       },
@@ -335,6 +335,9 @@ export class SessionStore {
     this.detachAttention = watchAttention((value) => {
       this.client.setAttention(value);
     });
+    this.detachWake = watchWake(() => {
+      this.client.wake();
+    });
   }
 
   public async connect(): Promise<void> {
@@ -351,6 +354,7 @@ export class SessionStore {
 
   public dispose(): void {
     this.detachAttention();
+    this.detachWake();
     this.client.close();
     this.update.dispose();
   }

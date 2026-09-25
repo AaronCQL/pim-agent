@@ -25,7 +25,8 @@ export type WsClientOptions = {
   readonly cwd?: string;
   readonly onEvent: (event: ServerEvent) => void;
   readonly onStatus?: (status: ConnectionStatus) => void;
-  readonly backoffMs?: (attempt: number) => number;
+  readonly retryMs?: number;
+  readonly connectTimeoutMs?: number;
 };
 
 type Pending = {
@@ -33,11 +34,8 @@ type Pending = {
   readonly reject: (error: Error) => void;
 };
 
-const MAX_BACKOFF_MS = 10_000;
-
-function defaultBackoff(attempt: number): number {
-  return Math.min(MAX_BACKOFF_MS, 250 * 2 ** (attempt - 1));
-}
+const RETRY_MS = 1000;
+const CONNECT_TIMEOUT_MS = 5000;
 
 /**
  * The transport half of pim-web: one socket, one attached session, and a seq
@@ -50,7 +48,7 @@ export class WsClient {
   private target: AttachTarget;
   private cursor = 0;
   private nextId = 0;
-  private attempt = 0;
+  private retrying = false;
   private retry: ReturnType<typeof setTimeout> | undefined;
   private disposed = false;
   /** Declared on every attach: an inattentive client never consumes a turn as read. */
@@ -148,6 +146,19 @@ export class WsClient {
     void this.send({ type: "attention", value }).catch(() => undefined);
   }
 
+  /**
+   * Retries now instead of waiting out the backoff: the page is back, and the
+   * timer may have been frozen with it. An attempt already in flight is left
+   * to its connect timeout.
+   */
+  public wake(): void {
+    if (this.state !== "reconnecting" || this.socket !== undefined) {
+      return;
+    }
+    this.cancelRetry();
+    void this.reconnect();
+  }
+
   public close(): void {
     this.disposed = true;
     this.cancelRetry();
@@ -159,7 +170,7 @@ export class WsClient {
   }
 
   private openSocket(): Promise<void> {
-    this.setStatus(this.attempt === 0 ? "connecting" : "reconnecting");
+    this.setStatus(this.retrying ? "reconnecting" : "connecting");
     const socket = new WebSocket(this.options.url);
     this.socket = socket;
     this.settled = false;
@@ -170,14 +181,24 @@ export class WsClient {
       this.onClose(socket);
     });
     return new Promise<void>((resolve, reject) => {
+      const fail = (): void => {
+        clearTimeout(timeout);
+        reject(new Error(`could not connect to ${this.options.url}`));
+      };
+      // A socket stuck connecting fires nothing, and nothing would retry it.
+      const timeout = setTimeout(() => {
+        fail();
+        this.onClose(socket);
+        socket.close();
+      }, this.options.connectTimeoutMs ?? CONNECT_TIMEOUT_MS);
+      (timeout as { unref?: () => void }).unref?.();
       socket.addEventListener("open", () => {
-        this.attempt = 0;
+        clearTimeout(timeout);
+        this.retrying = false;
         this.setStatus("open");
         resolve();
       });
-      socket.addEventListener("error", () => {
-        reject(new Error(`could not connect to ${this.options.url}`));
-      });
+      socket.addEventListener("error", fail);
     });
   }
 
@@ -220,12 +241,11 @@ export class WsClient {
     if (this.retry !== undefined) {
       return;
     }
-    const attempt = ++this.attempt;
-    const delay = (this.options.backoffMs ?? defaultBackoff)(attempt);
+    this.retrying = true;
     this.retry = setTimeout(() => {
       this.retry = undefined;
       void this.reconnect();
-    }, delay);
+    }, this.options.retryMs ?? RETRY_MS);
     // A pending retry must never hold a Bun test process open.
     (this.retry as { unref?: () => void }).unref?.();
   }

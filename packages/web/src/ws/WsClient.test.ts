@@ -30,7 +30,7 @@ function open(
     ...(options.sessionId === undefined
       ? {}
       : { sessionId: options.sessionId }),
-    backoffMs: () => 20,
+    retryMs: 20,
     pickerDebounceMs: 0,
   });
   stores.push(store);
@@ -723,7 +723,7 @@ function client(
     url: server.url,
     sessionId: "s1",
     onEvent,
-    backoffMs: () => 1,
+    retryMs: 1,
   });
   clients.push(one);
   return one;
@@ -834,4 +834,63 @@ test("attention declared while the socket is down rides the next attach", async 
   expect(server.of("attach").at(-1)?.attentive).toBe(false);
   // Nothing was queued behind the socket: the attach frame said it instead.
   expect(server.of("attention")).toEqual([]);
+});
+
+test("a connect that never answers is abandoned and retried", async () => {
+  let dials = 0;
+  const silent = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open: () => {
+        dials++;
+      },
+      data: () => undefined,
+    },
+  });
+  const one = new WsClient({
+    url: `ws://127.0.0.1:${String(silent.port)}`,
+    onEvent: () => undefined,
+    retryMs: 1,
+    connectTimeoutMs: 20,
+  });
+  clients.push(one);
+  try {
+    await expect(one.connect()).rejects.toThrow("could not connect");
+    await until(() => dials >= 2, "a second dial");
+    expect(one.status).toBe("reconnecting");
+  } finally {
+    silent.stop(true);
+  }
+});
+
+test("waking skips the wait for the next retry", async () => {
+  const server = record();
+  const one = new WsClient({
+    url: server.url,
+    sessionId: "s1",
+    onEvent: () => undefined,
+    retryMs: 60_000,
+  });
+  clients.push(one);
+  await one.connect();
+
+  server.drop();
+  await until(() => one.status === "reconnecting", "the drop");
+  one.wake();
+
+  await until(() => server.of("attach").length === 2, "the reconnect");
+  expect(one.status).toBe("open");
+});
+
+test("waking an open client does nothing", async () => {
+  const server = record();
+  const one = client(server);
+  await one.connect();
+
+  one.wake();
+  one.setAttention(false);
+  await until(() => server.of("attention").length === 1, "a later frame");
+
+  expect(server.of("attach")).toHaveLength(1);
 });
