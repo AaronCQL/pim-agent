@@ -3,6 +3,7 @@ import { SpillCache } from "../../shared/SpillCache";
 import { StreamCapture } from "./capture";
 import { isErrorResult } from "./format";
 import { normaliseStdoutImage } from "./image";
+import { MemoryCap } from "./MemoryCap";
 import {
   type BashCommandResult,
   type CapturedStream,
@@ -18,7 +19,8 @@ const COMMAND_VAR = "PIM_BASH_COMMAND";
 // argv is what `pkill -f`/`pgrep -f` match, so a command naming its own target would
 // signal this shell before its target. The env hands it over out of argv's reach, and
 // the unset keeps it out of every child's environment too.
-const RUNNER = `__pim_command=$${COMMAND_VAR}; unset ${COMMAND_VAR}; eval "$__pim_command"`;
+// The raised oom_score_adj makes the command, not the agent or the desktop, the kernel's first victim.
+const RUNNER = `{ echo 500 > /proc/self/oom_score_adj; } 2>/dev/null; __pim_command=$${COMMAND_VAR}; unset ${COMMAND_VAR}; eval "$__pim_command"`;
 
 export function killAllActiveBashGroups(sig: NodeJS.Signals = "SIGTERM"): void {
   for (const pid of activePids) {
@@ -100,10 +102,11 @@ export async function runBashCommand(
   const startedAt = Date.now();
   const stdoutCap = new StreamCapture();
   const stderrCap = new StreamCapture();
+  const scope = await MemoryCap.scope();
 
   // setsid gives the tree its own process group (pgid == proc.pid) so the whole tree can be signalled.
   const proc = Bun.spawn({
-    cmd: ["setsid", "bash", "-lc", RUNNER],
+    cmd: [...(scope?.argv ?? []), "setsid", "bash", "-lc", RUNNER],
     cwd,
     stdout: "pipe",
     stderr: "pipe",
@@ -170,6 +173,9 @@ export async function runBashCommand(
       } finally {
         clearTimeout(sigkillTimer);
       }
+      if (scope) {
+        await MemoryCap.stop(scope.unit);
+      }
     }
 
     exitCode = proc.exitCode ?? null;
@@ -207,6 +213,12 @@ export async function runBashCommand(
   const stdout = stdoutCap.snapshot(sniffed !== null);
   const stderr = stderrCap.snapshot();
 
+  // Under OOMPolicy=kill a limit hit is a SIGKILL of the whole scope; systemd's own Result for it is racy.
+  const memoryLimitHit =
+    scope !== null && signalCode === "SIGKILL" && !timedOut && !aborted
+      ? scope.limitBytes
+      : null;
+
   const [stdoutPath, stderrPath, stdoutImage] = await Promise.all([
     spillIfTruncated(stdout, stdoutCap, "out"),
     spillIfTruncated(stderr, stderrCap, "err"),
@@ -222,6 +234,7 @@ export async function runBashCommand(
     stdoutImage,
     timedOut,
     aborted,
+    memoryLimitHit,
     durationMs: Date.now() - startedAt,
   };
 }

@@ -379,6 +379,7 @@ function systemdUnit(unit: Unit, at: Install): string {
     `ExecStart=${at.bunPath} ${at.pimEntry} ${modeArgs(unit).join(" ")}`,
     "Restart=always",
     "RestartSec=2",
+    "OOMPolicy=continue",
     "",
     "[Install]",
     "WantedBy=default.target",

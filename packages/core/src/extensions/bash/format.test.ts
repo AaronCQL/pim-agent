@@ -48,6 +48,7 @@ function makeResult(
     stdoutImage: null,
     timedOut: false,
     aborted: false,
+    memoryLimitHit: null,
     durationMs: 1,
     ...overrides,
   };
@@ -137,6 +138,18 @@ describe("formatResult", () => {
   test("timed out adds duration message", () => {
     const out = formatResult(makeResult({ timedOut: true }), 5000);
     expect(out).toContain("Timed out after 5000 ms.");
+  });
+
+  test("a command killed at the memory limit names the limit", () => {
+    const out = formatResult(
+      makeResult({
+        exitCode: null,
+        signal: "SIGKILL",
+        memoryLimitHit: 8 * 1024 ** 3,
+      }),
+      5000
+    );
+    expect(out).toContain("exceeded the 8192 MB memory limit");
   });
 
   test("includes both stdout and stderr when both have bytes", () => {

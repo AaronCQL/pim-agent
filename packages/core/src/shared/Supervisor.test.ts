@@ -60,6 +60,12 @@ describe("systemdUnit", () => {
     );
   });
 
+  test("a tool command killed for memory does not stop the unit", () => {
+    expect(Supervisor.systemdUnit(telegram, at)).toContain(
+      "OOMPolicy=continue\n"
+    );
+  });
+
   test("appends the unit's extra arguments after the mode", () => {
     expect(Supervisor.systemdUnit(web, at)).toContain(
       "ExecStart=/opt/bun/bin/bun /opt/pim/bin/pim.ts --mode web --port 8080\n"

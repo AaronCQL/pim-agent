@@ -37,6 +37,11 @@ export function formatResult(
     lines.push("Aborted.");
   } else if (result.timedOut) {
     lines.push(`Timed out after ${timeoutMs} ms.`);
+  } else if (result.memoryLimitHit !== null) {
+    lines.push(
+      `Killed: most likely it exceeded the ${Format.bytes(result.memoryLimitHit)} memory limit for one command. ` +
+        "Retrying it unchanged will fail the same way; reduce its memory use (stream or batch the data, run fewer parallel workers)."
+    );
   }
   for (const label of STREAMS) {
     const stream = result[label];

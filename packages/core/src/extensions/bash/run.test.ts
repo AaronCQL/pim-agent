@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { Images } from "../../shared/Images";
 import { SpillCache } from "../../shared/SpillCache";
 import { StreamCapture } from "./capture";
+import { MEMORY_LIMIT_VAR, MemoryCap } from "./MemoryCap";
 import {
   killAllActiveBashGroups,
   runBashCommand,
@@ -36,6 +37,25 @@ afterAll(async () => {
     await rm(testPimHomeDir, { recursive: true, force: true });
   }
 });
+
+const capped = (await MemoryCap.scope()) !== null;
+
+async function withMemoryLimit<T>(
+  limit: string,
+  run: () => Promise<T>
+): Promise<T> {
+  const previous = process.env[MEMORY_LIMIT_VAR];
+  process.env[MEMORY_LIMIT_VAR] = limit;
+  try {
+    return await run();
+  } finally {
+    if (previous === undefined) {
+      delete process.env[MEMORY_LIMIT_VAR];
+    } else {
+      process.env[MEMORY_LIMIT_VAR] = previous;
+    }
+  }
+}
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
@@ -125,6 +145,49 @@ describe("runBashCommand (integration)", () => {
     );
     expect(r.exitCode).toBe(0);
     expect(r.stdout.text.trim()).toBe("clean");
+  });
+
+  test("dollar signs reach bash untouched", async () => {
+    const r = await runBashCommand(
+      "printf '%s' '$$ $HOME'",
+      5000,
+      undefined,
+      process.cwd()
+    );
+    expect(r.stdout.text).toBe("$$ $HOME");
+  });
+
+  test.skipIf(!capped)(
+    "a command over the memory limit is killed and says so",
+    async () => {
+      const r = await withMemoryLimit("128M", () =>
+        runBashCommand(
+          `${shellQuote(process.execPath)} -e 'Buffer.alloc(512 * 2 ** 20, 1)'; echo survived`,
+          10_000,
+          undefined,
+          process.cwd()
+        )
+      );
+      expect({
+        memoryLimitHit: r.memoryLimitHit,
+        signal: r.signal,
+        stdout: r.stdout.text,
+        stderr: r.stderr.text,
+      }).toEqual({
+        memoryLimitHit: 128 * 1024 ** 2,
+        signal: "SIGKILL",
+        stdout: "",
+        stderr: "",
+      });
+    }
+  );
+
+  test("a command under the memory limit is not blamed on it", async () => {
+    const r = await withMemoryLimit("128M", () =>
+      runBashCommand("exit 3", 5000, undefined, process.cwd())
+    );
+    expect(r.exitCode).toBe(3);
+    expect(r.memoryLimitHit).toBeNull();
   });
 
   test("times out and reports timedOut", async () => {

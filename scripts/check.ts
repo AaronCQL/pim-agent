@@ -317,7 +317,10 @@ async function runTwoPhase(
 }
 
 function report(headline: string, body: string, rerun: string): void {
-  const lines = body.replace(/\n+$/, "").split("\n");
+  const lines = body
+    .replace(/\n+$/, "")
+    .split("\n")
+    .filter((line) => !/^(::(end)?group::|\(pass\) |\s*$)/.test(line));
   // Everything broken at once is not worth 2000 lines. Keep the first
   // failures and the tail, which is where the runner says how many there
   // were, and point at the command that prints the rest.

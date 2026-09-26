@@ -43,6 +43,8 @@ export type BashCommandResult = {
   readonly stdoutImage: NormalisedImage | null;
   readonly timedOut: boolean;
   readonly aborted: boolean;
+  /** The limit in bytes, set when the capped command was SIGKILLed without pim sending it. */
+  readonly memoryLimitHit: number | null;
   readonly durationMs: number;
 };
 
