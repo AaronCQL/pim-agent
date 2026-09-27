@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.12.1
+
+### Bug Fixes
+
+- Cap each bash command's memory in its own systemd scope, so an out-of-memory command is killed instead of taking down the daemon (`PIM_BASH_MEMORY_MAX` overrides the 25%-of-RAM default, or `off` disables it) (818d6a5)
+- Reconnect the web client on wake, time out stuck connections, and retry every second (4b4516d)
+
 ## v0.12.0
 
 ### Features
