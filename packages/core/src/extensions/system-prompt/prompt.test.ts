@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildEnvironment,
+  buildFormatting,
   buildInstructions,
   describeOs,
   formatDatetime,
@@ -143,5 +144,14 @@ describe("describeOs", () => {
     });
 
     expect(os).toBe("Fedora 40 (Workstation Edition)");
+  });
+});
+
+describe("buildFormatting", () => {
+  test("tells only the browser that mermaid fences render", () => {
+    expect(buildFormatting("web browser")).toContain("```mermaid");
+    expect(buildFormatting("terminal")).toBe("");
+    expect(buildFormatting("Telegram")).toBe("");
+    expect(buildFormatting(undefined)).toBe("");
   });
 });

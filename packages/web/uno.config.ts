@@ -5,6 +5,7 @@ export default defineConfig({
   content: {
     pipeline: {
       include: [/\.[jt]sx?($|\?)/],
+      exclude: [/[\\/]node_modules[\\/]/],
     },
   },
   presets: [

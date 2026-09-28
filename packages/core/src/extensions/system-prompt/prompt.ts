@@ -13,6 +13,13 @@ type EnvironmentOptions = {
   readonly surface?: Surface;
 };
 
+const FORMATTING: Readonly<Record<Surface, string>> = {
+  "web browser":
+    "Replies render as Markdown, and ```mermaid fences render as diagrams. Prefer a diagram over ASCII art for flows, sequences, state machines and structure.",
+  terminal: "",
+  Telegram: "",
+};
+
 type RunCommand = (cmd: ReadonlyArray<string>) => string | undefined;
 
 type OsDescriptionOptions = {
@@ -69,6 +76,11 @@ export function buildEnvironment(opts: EnvironmentOptions): string {
     `- model: ${model}`,
     ...(opts.surface ? [`- surface: ${opts.surface}`] : []),
   ].join("\n");
+}
+
+/** What the surface renders beyond plain text; empty, so pi omits the section, where that is nothing. */
+export function buildFormatting(surface: Surface | undefined): string {
+  return surface === undefined ? "" : FORMATTING[surface];
 }
 
 export function describeOs(options: OsDescriptionOptions = {}): string {

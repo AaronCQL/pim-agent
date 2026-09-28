@@ -1,13 +1,32 @@
 import "../test/dom";
 
 import { render } from "@solidjs/web";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { createSignal, flush } from "solid-js";
 
 import { mountPoint } from "../test/dom";
 import { until } from "#core/shared/fixtures/wait";
 import { SYNTAX_CLASSES } from "../view/tokens";
 import { Markdown } from "./Markdown";
+
+// happy-dom lays out no text, which mermaid measures every label with.
+void mock.module("mermaid", () => ({
+  default: {
+    initialize: () => {},
+    render: async (id: string, source: string) => {
+      if (source.includes("oops")) {
+        throw new Error("Parse error on line 2:\n...oops\n---^");
+      }
+      return {
+        svg: `<svg id="${id}" viewBox="0 0 120 50" style="max-width: 120px;"><text>${source.length}</text></svg>`,
+      };
+    },
+  },
+}));
+Object.defineProperty(document, "fonts", {
+  value: { ready: Promise.resolve() },
+  configurable: true,
+});
 
 // A selection outlives the test that made it, and a click inside one copies
 // nothing: left standing, it decides what every later test here does.
@@ -23,7 +42,8 @@ function mount(initial: string, complete = true) {
   return {
     html: () => host.querySelector(".pim-markdown")?.innerHTML ?? "",
     text: () => host.textContent ?? "",
-    find: (selector: string) => host.querySelector(selector),
+    find: <T extends Element = Element>(selector: string) =>
+      host.querySelector<T>(selector),
     write: (next: string) => {
       setText(next);
       flush();
@@ -199,5 +219,88 @@ describe("Markdown", () => {
 
     expect(await navigator.clipboard.readText()).toBe("untouched");
     expect(code?.hasAttribute("data-copied")).toBe(false);
+  });
+  describe("mermaid", () => {
+    const FENCE = "```mermaid\ngraph LR\n  a --> b\n```\n";
+
+    async function drawn(view: ReturnType<typeof mount>): Promise<void> {
+      await until(() => {
+        flush();
+        return view.find(".pim-diagram svg") !== null;
+      }, "the diagram");
+    }
+
+    test("a finished fence is drawn in place of its source", async () => {
+      const view = mount(FENCE);
+      await drawn(view);
+      expect(view.find("pre")?.hasAttribute("hidden")).toBe(true);
+      const svg = view.find<SVGSVGElement>(".pim-diagram svg");
+      expect(svg?.style.width).toBe("90px");
+      expect(svg?.style.maxWidth).toBe("100%");
+      expect(view.html()).toContain('aria-label="Copy code"');
+    });
+
+    test("the toggle swaps between the diagram and its source", async () => {
+      const view = mount(FENCE);
+      await drawn(view);
+      click(view.find('[aria-label="Show source"]'));
+      flush();
+      expect(view.find("pre")?.hasAttribute("hidden")).toBe(false);
+      expect(view.find(".pim-diagram")?.hasAttribute("hidden")).toBe(true);
+      click(view.find('[aria-label="Show diagram"]'));
+      flush();
+      expect(view.find("pre")?.hasAttribute("hidden")).toBe(true);
+    });
+
+    test("zooming sizes the diagram off its own width, within bounds", async () => {
+      const view = mount(FENCE);
+      await drawn(view);
+      const svg = view.find<SVGSVGElement>(".pim-diagram svg")!;
+      click(view.find('[aria-label="Zoom in"]'));
+      flush();
+      expect(svg.style.width).toBe(`${120 * 0.75 * 1.25}px`);
+      for (let press = 0; press < 20; press += 1) {
+        click(view.find('[aria-label="Zoom out"]'));
+        flush();
+      }
+      expect(svg.style.width).toBe(`${120 * 0.25}px`);
+      expect(
+        view.find('[aria-label="Zoom out"]')?.hasAttribute("disabled")
+      ).toBe(true);
+    });
+
+    test("the zoom buttons step aside while the source shows", async () => {
+      const view = mount(FENCE);
+      await drawn(view);
+      click(view.find('[aria-label="Show source"]'));
+      flush();
+      expect(view.find('[aria-label="Zoom in"]')).toBeNull();
+    });
+
+    test("a fence still being written stays source", async () => {
+      const view = mount("```mermaid\ngraph LR\n  a --> b", false);
+      await settle();
+      flush();
+      expect(view.find(".pim-diagram")).toBeNull();
+      expect(view.find("pre")?.hasAttribute("hidden")).toBe(false);
+    });
+
+    test("a diagram that will not parse keeps its source and says why", async () => {
+      const view = mount("```mermaid\ngraph LR\n  oops\n```\n");
+      await until(
+        () => view.text().includes("mermaid: Parse error"),
+        "the note"
+      );
+      expect(view.find(".pim-diagram")).toBeNull();
+      expect(view.find("pre")?.hasAttribute("hidden")).toBe(false);
+      expect(view.text()).not.toContain("---^");
+    });
+
+    test("other fences are left to the highlighter", async () => {
+      const view = mount("```ts\nconst a = 1;\n```\n");
+      await settle();
+      flush();
+      expect(view.find(".pim-diagram")).toBeNull();
+    });
   });
 });

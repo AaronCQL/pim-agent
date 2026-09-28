@@ -66,6 +66,7 @@
     "@types/bun": "latest",
     "happy-dom": "^20.14.0",
     "highlight.js": "^11.12.0",
+    "mermaid": "^12.0.0",
     "oxfmt": "0.67.0",
     "oxlint": "^1.82.0",
     "solid-js": "^2.0.0-rc.7",

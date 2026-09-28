@@ -7,6 +7,7 @@ import { copyText } from "../ui/clipboard";
 import { CopyButton } from "../ui/CopyButton";
 import { Highlight } from "../view/highlight";
 import { syntaxClass } from "../view/tokens";
+import { Diagrams } from "./Diagrams";
 
 // The `<pre>` the parser may still append to: markdown only grows at its tail.
 function openBlock(host: HTMLElement): Element | undefined {
@@ -153,8 +154,13 @@ export function Markdown(props: {
     disposers.length = 0;
   };
   let painted = untrack(Highlight.version);
+  let alive = true;
+  const live = (pre: HTMLElement): boolean => alive && host.contains(pre);
 
-  onCleanup(disposeButtons);
+  onCleanup(() => {
+    alive = false;
+    disposeButtons();
+  });
 
   createEffect(
     () => ({
@@ -185,6 +191,7 @@ export function Markdown(props: {
       const open = complete ? undefined : openBlock(host);
       highlightFences(host, open);
       mountCopyButtons(host, open, disposers);
+      Diagrams.draw(host, open, disposers, live);
     }
   );
 

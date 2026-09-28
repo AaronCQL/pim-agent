@@ -230,14 +230,21 @@ button {
   color: inherit;
 }
 .pim-markdown pre > code::before,
-.pim-markdown pre > code::after {
+.pim-markdown pre > code::after,
+.pim-markdown .pim-diagram::before,
+.pim-markdown .pim-diagram::after {
   display: block;
+  line-height: var(--line);
   color: rgb(115 115 115);
 }
 .pim-markdown pre > code::before {
   content: "```" attr(class);
 }
-.pim-markdown pre > code::after {
+.pim-markdown .pim-diagram::before {
+  content: "```mermaid";
+}
+.pim-markdown pre > code::after,
+.pim-markdown .pim-diagram::after {
   content: "```";
 }
 

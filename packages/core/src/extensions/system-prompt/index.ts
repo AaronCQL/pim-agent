@@ -5,6 +5,7 @@ import type {
 import type { Surface } from "../../shared/Surface";
 import {
   buildEnvironment,
+  buildFormatting,
   buildInstructions,
   formatDatetime,
   leadWithSystemPrompt,
@@ -36,6 +37,7 @@ export default function (surface?: Surface): ExtensionFactory {
         model: ctx.model,
         surface,
       });
+      options.sections.formatting = buildFormatting(surface);
     });
     pi.on("context_with_system", (event) => {
       const messages = leadWithSystemPrompt(event.messages);
