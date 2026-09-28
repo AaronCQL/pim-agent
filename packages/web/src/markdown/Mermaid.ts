@@ -1,10 +1,12 @@
 import type { Mermaid as MermaidApi } from "mermaid";
 
+const FONT_PX = 14;
+
 const THEME = {
   darkMode: true,
   background: "#101010",
   fontFamily: '"Commit Mono", ui-monospace, monospace',
-  fontSize: "14px",
+  fontSize: `${FONT_PX}px`,
   primaryColor: "#262626",
   primaryTextColor: "#e5e5e5",
   primaryBorderColor: "#525252",
@@ -79,4 +81,4 @@ async function render(source: string): Promise<Drawing> {
   return { svg: element, width, height };
 }
 
-export const Mermaid = { render };
+export const Mermaid = { render, FONT_PX };

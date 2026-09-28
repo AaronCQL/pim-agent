@@ -9,7 +9,7 @@ import { fakeViewport } from "../test/viewport";
 import { Combobox, createComboboxNavigation } from "./Combobox";
 import { Collapsible } from "./Collapsible";
 import { Drawer } from "./Drawer";
-import { Lightbox } from "./Lightbox";
+import { ImageLightbox } from "./Lightbox";
 import { Modal } from "./Modal";
 import { Menu } from "./Menu";
 import { Popover } from "./Popover";
@@ -821,7 +821,7 @@ describe("platform wrappers", () => {
             <p>body</p>
           </Modal>
           <Show when={zoomed()}>
-            <Lightbox
+            <ImageLightbox
               src="/files/shot.png"
               alt="shot.png"
               onClose={() => setZoomed(false)}
@@ -852,7 +852,7 @@ describe("platform wrappers", () => {
     const closed: number[] = [];
     render(
       () => (
-        <Lightbox
+        <ImageLightbox
           src="/files/shot.png"
           alt="shot.png"
           onClose={() => closed.push(1)}
@@ -864,30 +864,82 @@ describe("platform wrappers", () => {
     return { dialog: host.querySelector("dialog")!, closed };
   }
 
-  // The regression this guards: the CSS reset zeroes `margin` on everything,
-  // including the `margin: auto` the UA sheet centres a modal dialog with, so
-  // a lightbox that does not name its own margin opens in the top-left corner.
-  test("the picture is centred and legible over its own controls", () => {
-    const { dialog } = lightbox();
+  function stage(dialog: HTMLDialogElement): HTMLElement {
+    return dialog.querySelector<HTMLElement>("[data-stage]")!;
+  }
 
+  function pointer(
+    target: Element,
+    type: string,
+    at: { readonly x: number; readonly y: number }
+  ): void {
+    target.dispatchEvent(
+      new PointerEvent(type, {
+        bubbles: true,
+        pointerId: 1,
+        button: 0,
+        clientX: at.x,
+        clientY: at.y,
+      })
+    );
+  }
+
+  test("the backdrop closes it, the picture does not", () => {
+    const { dialog, closed } = lightbox();
     expect(dialog.open).toBe(true);
-    expect(dialog.className).toContain("m-auto");
-    // Inline, the line box under it would leave a strip of dialog below the
-    // picture — backdrop to the eye, and to the click that closes it.
-    expect(dialog.querySelector("img")!.className).toContain("block");
+
+    dialog.querySelector("img")!.click();
+    flush();
+    expect(dialog.open).toBe(true);
+
+    stage(dialog).click();
+    flush();
+    expect(dialog.open).toBe(false);
+    expect(closed).toEqual([1]);
   });
 
-  // There is no zoom of our own, so the way to see the pixels is the file
-  // itself, in the viewer the browser already has.
-  test("the original is one control away, and closing is the other", () => {
+  test("a click on the picture stays open once capture retargets it to the backdrop", () => {
+    const { dialog, closed } = lightbox();
+    const backdrop = stage(dialog);
+
+    pointer(dialog.querySelector("img")!, "pointerdown", { x: 50, y: 50 });
+    pointer(backdrop, "pointerup", { x: 50, y: 50 });
+    backdrop.click();
+    flush();
+
+    expect(dialog.open).toBe(true);
+    expect(closed).toEqual([]);
+  });
+
+  test("the picture opts out of the browser's own image drag", () => {
+    const { dialog } = lightbox();
+
+    expect(dialog.querySelector("img")!.getAttribute("draggable")).toBe(
+      "false"
+    );
+  });
+
+  test("a drag that ends on the backdrop pans rather than closing", () => {
+    const { dialog, closed } = lightbox();
+    const backdrop = stage(dialog);
+
+    pointer(backdrop, "pointerdown", { x: 10, y: 10 });
+    pointer(backdrop, "pointermove", { x: 80, y: 40 });
+    pointer(backdrop, "pointerup", { x: 80, y: 40 });
+    backdrop.click();
+    flush();
+
+    expect(dialog.open).toBe(true);
+    expect(closed).toEqual([]);
+  });
+
+  test("the file is one control away, and closing is the other", () => {
     const { dialog, closed } = lightbox();
 
-    const original = dialog.querySelector("a")!;
-    expect(original.getAttribute("href")).toBe("/files/shot.png");
-    expect(original.getAttribute("target")).toBe("_blank");
-    expect(original.getAttribute("aria-label")).toBe(
-      "Open shot.png at full size"
-    );
+    const download = dialog.querySelector("a")!;
+    expect(download.getAttribute("href")).toBe("/files/shot.png");
+    expect(download.hasAttribute("download")).toBe(true);
+    expect(download.getAttribute("aria-label")).toBe("Download shot.png");
 
     dialog.querySelector("button")!.click();
     flush();

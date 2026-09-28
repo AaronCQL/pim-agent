@@ -51,6 +51,7 @@ function Tile(props: {
         <ImageTile
           src={props.file.url}
           alt={props.file.name}
+          filename={props.file.name}
           class={`${IMAGE_CLASSES[props.variant]} ${
             props.file.uploading ? "opacity-50" : ""
           }`}

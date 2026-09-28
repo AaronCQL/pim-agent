@@ -1,12 +1,13 @@
 import { createSignal, Show } from "solid-js";
 
-import { Lightbox } from "./Lightbox";
+import { ImageLightbox } from "./Lightbox";
 
 /** One picture at the size its caller allots it, opening full size when clicked. */
 export function ImageTile(props: {
   readonly src: string;
   readonly alt: string;
   readonly class?: string;
+  readonly filename?: string;
   /** Intrinsic size, so the row holds its height before the bytes land. */
   readonly width?: number;
   readonly height?: number;
@@ -36,9 +37,12 @@ export function ImageTile(props: {
       </button>
 
       <Show when={viewing()}>
-        <Lightbox
+        <ImageLightbox
           src={props.src}
           alt={props.alt}
+          {...(props.filename === undefined
+            ? {}
+            : { filename: props.filename })}
           onClose={() => {
             setViewing(false);
           }}

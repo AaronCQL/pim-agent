@@ -235,8 +235,9 @@ describe("Markdown", () => {
       await drawn(view);
       expect(view.find("pre")?.hasAttribute("hidden")).toBe(true);
       const svg = view.find<SVGSVGElement>(".pim-diagram svg");
-      expect(svg?.style.width).toBe("90px");
-      expect(svg?.style.maxWidth).toBe("100%");
+      expect(Number.parseFloat(svg?.style.width ?? "")).toBeCloseTo(
+        (120 * 11) / 14
+      );
       expect(view.html()).toContain('aria-label="Copy code"');
     });
 
@@ -252,29 +253,50 @@ describe("Markdown", () => {
       expect(view.find("pre")?.hasAttribute("hidden")).toBe(true);
     });
 
-    test("zooming sizes the diagram off its own width, within bounds", async () => {
+    async function expanded(
+      view: ReturnType<typeof mount>
+    ): Promise<HTMLDialogElement> {
+      await until(() => {
+        flush();
+        return view.find("dialog svg") !== null;
+      }, "the full-screen diagram");
+      return view.find<HTMLDialogElement>("dialog")!;
+    }
+
+    test("tapping the diagram opens it full screen, drawn afresh", async () => {
       const view = mount(FENCE);
       await drawn(view);
-      const svg = view.find<SVGSVGElement>(".pim-diagram svg")!;
-      click(view.find('[aria-label="Zoom in"]'));
-      flush();
-      expect(svg.style.width).toBe(`${120 * 0.75 * 1.25}px`);
-      for (let press = 0; press < 20; press += 1) {
-        click(view.find('[aria-label="Zoom out"]'));
-        flush();
-      }
-      expect(svg.style.width).toBe(`${120 * 0.25}px`);
-      expect(
-        view.find('[aria-label="Zoom out"]')?.hasAttribute("disabled")
-      ).toBe(true);
+      const inline = view.find<SVGSVGElement>(".pim-diagram svg")!;
+
+      click(inline);
+      const dialog = await expanded(view);
+
+      expect(dialog.open).toBe(true);
+      expect(dialog.getAttribute("aria-label")).toBe("Diagram");
+      const enlarged = dialog.querySelector("svg")!;
+      expect(enlarged.id).not.toBe(inline.id);
+      expect(inline.isConnected).toBe(true);
+      expect(dialog.querySelector("a[download]")).toBeNull();
     });
 
-    test("the zoom buttons step aside while the source shows", async () => {
+    test("the expand button opens it too, and closing puts it away", async () => {
+      const view = mount(FENCE);
+      await drawn(view);
+
+      click(view.find('[aria-label="Expand diagram"]'));
+      const dialog = await expanded(view);
+      click(dialog.querySelector('[aria-label="Close"]'));
+      flush();
+
+      expect(view.find("dialog")).toBeNull();
+    });
+
+    test("the expand button steps aside while the source shows", async () => {
       const view = mount(FENCE);
       await drawn(view);
       click(view.find('[aria-label="Show source"]'));
       flush();
-      expect(view.find('[aria-label="Zoom in"]')).toBeNull();
+      expect(view.find('[aria-label="Expand diagram"]')).toBeNull();
     });
 
     test("a fence still being written stays source", async () => {

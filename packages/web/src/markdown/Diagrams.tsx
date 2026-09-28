@@ -1,21 +1,17 @@
 import { render } from "@solidjs/web";
-import { createEffect, createSignal, onCleanup, Show } from "solid-js";
+import { createSignal, onCleanup, Show } from "solid-js";
 
+import { Lightbox } from "../ui/Lightbox";
 import { Mermaid, type Drawing } from "./Mermaid";
 
-/** Fitted diagrams open below mermaid's own size, which is laid out for a page rather than a transcript. */
-const FIT_SCALE = 0.75;
-const ZOOM_STEP = 1.25;
-const MIN_SCALE = 0.25;
-const MAX_SCALE = 3;
+const INLINE_LABEL_PX = 11;
 
 const BUTTON_CLASS =
-  "flex size-7 shrink-0 items-center justify-center rounded-lg bg-neutral-850 text-neutral-350 hover:bg-neutral-800 hover:text-neutral-50 disabled:opacity-40 disabled:pointer-events-none";
+  "flex size-7 shrink-0 items-center justify-center rounded-lg bg-neutral-850 text-neutral-350 hover:bg-neutral-800 hover:text-neutral-50";
 
 function ControlButton(props: {
   readonly label: string;
   readonly icon: string;
-  readonly disabled?: boolean;
   readonly onPress: () => void;
 }) {
   return (
@@ -24,7 +20,6 @@ function ControlButton(props: {
       title={props.label}
       aria-label={props.label}
       class={BUTTON_CLASS}
-      disabled={props.disabled}
       onClick={(event: MouseEvent) => {
         event.stopPropagation();
         props.onPress();
@@ -33,10 +28,6 @@ function ControlButton(props: {
       <span class={`${props.icon} size-4`} aria-hidden="true" />
     </button>
   );
-}
-
-function clamp(scale: number): number {
-  return Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
 }
 
 // Sized up to whole rows, so the prose below it stays on the --line grid.
@@ -52,31 +43,51 @@ function fitToGrid(canvas: HTMLElement, svg: SVGSVGElement): () => void {
   };
 }
 
+function fill(svg: SVGSVGElement): SVGSVGElement {
+  svg.style.width = "100%";
+  svg.style.height = "100%";
+  return svg;
+}
+
+/** The diagram full screen, drawn afresh: mermaid scopes its styles and markers by id, which a copy would share. */
+function DiagramLightbox(props: {
+  readonly source: string;
+  readonly onClose: () => void;
+}) {
+  const [drawing, setDrawing] = createSignal<Drawing>();
+  Mermaid.render(props.source).then(setDrawing, props.onClose);
+
+  return (
+    <Lightbox label="Diagram" size={drawing()} onClose={props.onClose}>
+      <div class="size-full rounded-lg bg-neutral-925">
+        {drawing() === undefined ? undefined : fill(drawing()!.svg)}
+      </div>
+    </Lightbox>
+  );
+}
+
 function DiagramControls(props: {
   readonly pre: HTMLElement;
   readonly figure: HTMLElement;
   readonly canvas: HTMLElement;
   readonly drawing: Drawing;
+  readonly source: string;
 }) {
   const { svg, width } = props.drawing;
   const [source, setSource] = createSignal(false);
-  // Undefined while fitted to the pane; a scale once zoomed.
-  const [scale, setScale] = createSignal<number | undefined>();
+  const [expanded, setExpanded] = createSignal(false);
 
-  const current = (): number => {
-    const shown = svg.getBoundingClientRect().width;
-    return scale() ?? (shown > 0 ? shown / width : FIT_SCALE);
-  };
-  const zoom = (factor: number): void => {
-    setScale(clamp(current() * factor));
-  };
-
-  createEffect(scale, (zoomed) => {
-    svg.style.width = `${width * (zoomed ?? FIT_SCALE)}px`;
-    svg.style.maxWidth = zoomed === undefined ? "100%" : "none";
-    svg.style.height = "auto";
-  });
+  svg.style.width = `${(width * INLINE_LABEL_PX) / Mermaid.FONT_PX}px`;
+  svg.style.height = "auto";
   onCleanup(fitToGrid(props.canvas, svg));
+
+  const expand = (): void => {
+    setExpanded(true);
+  };
+  props.canvas.addEventListener("click", expand);
+  onCleanup(() => {
+    props.canvas.removeEventListener("click", expand);
+  });
 
   const flip = (): void => {
     const next = !source();
@@ -89,20 +100,9 @@ function DiagramControls(props: {
     <div class="absolute right-8 top-0 flex gap-1">
       <Show when={!source()}>
         <ControlButton
-          label="Zoom out"
-          icon="i-griddy-icons:search-minus"
-          disabled={scale() !== undefined && scale()! <= MIN_SCALE}
-          onPress={() => {
-            zoom(1 / ZOOM_STEP);
-          }}
-        />
-        <ControlButton
-          label="Zoom in"
-          icon="i-griddy-icons:search-plus"
-          disabled={scale() !== undefined && scale()! >= MAX_SCALE}
-          onPress={() => {
-            zoom(ZOOM_STEP);
-          }}
+          label="Expand diagram"
+          icon="i-griddy-icons:maximize-alt-03"
+          onPress={expand}
         />
       </Show>
       <ControlButton
@@ -110,13 +110,21 @@ function DiagramControls(props: {
         icon={source() ? "i-griddy-icons:image" : "i-griddy-icons:code"}
         onPress={flip}
       />
+      <Show when={expanded()}>
+        <DiagramLightbox
+          source={props.source}
+          onClose={() => {
+            setExpanded(false);
+          }}
+        />
+      </Show>
     </div>
   );
 }
 
-function mount(pre: HTMLElement, drawing: Drawing): () => void {
+function mount(pre: HTMLElement, drawing: Drawing, source: string): () => void {
   const canvas = document.createElement("div");
-  canvas.className = "overflow-x-auto";
+  canvas.className = "cursor-zoom-in overflow-x-auto";
   canvas.append(drawing.svg);
   const figure = document.createElement("div");
   figure.className = "pim-diagram";
@@ -130,6 +138,7 @@ function mount(pre: HTMLElement, drawing: Drawing): () => void {
         figure={figure}
         canvas={canvas}
         drawing={drawing}
+        source={source}
       />
     ),
     pre.parentElement!
@@ -157,10 +166,11 @@ function draw(
       continue;
     }
     pre.setAttribute("data-diagram", "");
-    Mermaid.render(code.textContent ?? "").then(
+    const source = code.textContent ?? "";
+    Mermaid.render(source).then(
       (drawing) => {
         if (live(pre)) {
-          disposers.push(mount(pre, drawing));
+          disposers.push(mount(pre, drawing, source));
         }
       },
       (error: unknown) => {
