@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.13.0
+
+### Features
+
+- Render `mermaid` code fences as diagrams in the web client, with a diagram/source toggle, and tell the model it can use them instead of ASCII art (7d7ffed)
+- Open diagrams and images in a full-screen pan-and-zoom lightbox (wheel, pinch, drag, double tap, keyboard) with a download button (b872ece)
+
 ## v0.12.1
 
 ### Bug Fixes
