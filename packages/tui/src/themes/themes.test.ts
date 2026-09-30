@@ -37,6 +37,7 @@ test("a session run is themed and a pi subcommand is left alone", () => {
   expect(themeCliArgs(["auth", "login"])).toBeEmpty();
   expect(themeCliArgs(["list"])).toBeEmpty();
   expect(themeCliArgs(["config"])).toBeEmpty();
+  expect(themeCliArgs(["mcp", "list"])).toBeEmpty();
 });
 
 test("the theme args point pi at a themes directory that exists on disk", () => {

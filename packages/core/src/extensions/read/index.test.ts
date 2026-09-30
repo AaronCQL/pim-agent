@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test";
 import type {
   AgentToolResult,
   ExtensionAPI,
-  ExtensionContext,
+  ExtensionToolContext,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { usePimHome } from "../../shared/fixtures/home";
@@ -47,7 +47,9 @@ function session(): (
     tool.execute("read-1", { path }, undefined, undefined, {
       cwd: home.path,
       model,
-    } as unknown as ExtensionContext) as Promise<AgentToolResult<ReadDetails>>;
+    } as unknown as ExtensionToolContext) as Promise<
+      AgentToolResult<ReadDetails>
+    >;
 }
 
 function call(
@@ -91,7 +93,7 @@ describe("read tool on text", () => {
       { path, start: 1, end: 1 },
       undefined,
       undefined,
-      { cwd: home.path, model: visionModel } as unknown as ExtensionContext
+      { cwd: home.path, model: visionModel } as unknown as ExtensionToolContext
     );
     expect(result.content).toEqual([
       { type: "text", text: "1:alpha" },

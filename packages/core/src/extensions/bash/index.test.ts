@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type {
   AgentToolResult,
   ExtensionAPI,
-  ExtensionContext,
+  ExtensionToolContext,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { writeFile } from "node:fs/promises";
@@ -38,7 +38,9 @@ function run(
   return registeredTool().execute("bash-1", { command }, undefined, undefined, {
     cwd: home.path,
     model,
-  } as unknown as ExtensionContext) as Promise<AgentToolResult<BashDetails>>;
+  } as unknown as ExtensionToolContext) as Promise<
+    AgentToolResult<BashDetails>
+  >;
 }
 
 function textOf(result: AgentToolResult<BashDetails>): string[] {

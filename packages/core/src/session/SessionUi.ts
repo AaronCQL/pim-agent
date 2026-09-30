@@ -40,6 +40,8 @@ const IDENTITY = (text: string): string => text;
  * skips the private fields the cast is for — so a method pi adds is a type
  * error here rather than a throw inside somebody's event handler.
  */
+const DEFAULT_COLOR = { kind: "indexed", index: 7 } as const;
+
 const PLAIN_THEME = {
   fg: (_color: string, text: string) => text,
   bg: (_color: string, text: string) => text,
@@ -53,6 +55,10 @@ const PLAIN_THEME = {
   getColorMode: () => "truecolor",
   getThinkingBorderColor: () => IDENTITY,
   getBashModeBorderColor: () => IDENTITY,
+  appearance: "dark",
+  // No terminal to report a palette; every token reads as the default foreground.
+  colors: new Proxy({}, { get: () => DEFAULT_COLOR }) as Theme["colors"],
+  style: IDENTITY,
 } satisfies { [K in keyof Theme]: Theme[K] } as unknown as Theme;
 
 function severityOf(

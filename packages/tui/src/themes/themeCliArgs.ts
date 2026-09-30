@@ -5,6 +5,7 @@ const PI_COMMANDS: ReadonlySet<string> = new Set([
   "config",
   "install",
   "list",
+  "mcp",
   "remove",
   "server",
   "uninstall",
