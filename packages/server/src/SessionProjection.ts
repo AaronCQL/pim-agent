@@ -15,17 +15,13 @@ import type {
 } from "#protocol/ServerEvent";
 import { attachmentUrl } from "./AttachmentEndpoint";
 
-type PendingCall = {
-  readonly name: string;
-  readonly args: unknown;
-};
-
-/** Projects pi's session file into durable events: one line in, at most one `DurableEvent` out, tagged with that line's ordinal. */
+/** Projects pi's session file into durable events: at most one per line, tagged with the line ordinal. */
 export class SessionProjection {
   private readonly log: EventLog;
   private readonly cwd: () => string;
   private readonly events: DurableEvent[] = [];
-  private readonly calls = new Map<string, PendingCall>();
+  /** Tool call args by call id. */
+  private readonly callArgs = new Map<string, unknown>();
   private draining: Promise<void> = Promise.resolve();
   private highest = 0;
 
@@ -53,7 +49,7 @@ export class SessionProjection {
     return this.events.slice(low);
   }
 
-  /** Read whatever pi has appended since the last drain; serialized, as overlapping reads double-project lines. */
+  /** Reads what pi appended since the last drain. Serialized: overlapping reads would double-project lines. */
   public async drain(): Promise<readonly DurableEvent[]> {
     const before = this.events.length;
     const done = this.draining.then(async () => {
@@ -111,7 +107,7 @@ export class SessionProjection {
           if (part.type !== "toolCall") {
             continue;
           }
-          this.calls.set(part.id, { name: part.name, args: part.arguments });
+          this.callArgs.set(part.id, part.arguments);
           toolCalls.push({
             callId: part.id,
             name: part.name,
@@ -141,7 +137,6 @@ export class SessionProjection {
         };
       }
       case "toolResult": {
-        const call = this.calls.get(message.toolCallId);
         return {
           seq,
           type: "tool_result",
@@ -150,7 +145,7 @@ export class SessionProjection {
           isError: message.isError,
           view: Tools.viewOf({
             name: message.toolName,
-            args: call?.args ?? {},
+            args: this.callArgs.get(message.toolCallId) ?? {},
             isError: message.isError,
             result: {
               content: withoutImages(message.content),
@@ -178,7 +173,7 @@ type ToolResultContent = Extract<
   { role: "toolResult" }
 >["content"];
 
-/** No base64 crosses the websocket: a view reaches its picture through `details.sha256` instead. */
+/** Keeps base64 off the websocket; views load images via `details.sha256`. */
 function withoutImages(content: ToolResultContent): ToolResultContent {
   return content.some((part) => part.type === "image")
     ? content.map((part) =>

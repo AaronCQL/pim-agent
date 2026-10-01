@@ -78,7 +78,7 @@ export function buildEnvironment(opts: EnvironmentOptions): string {
   ].join("\n");
 }
 
-/** What the surface renders beyond plain text; empty, so pi omits the section, where that is nothing. */
+/** Empty makes pi omit the section. */
 export function buildFormatting(surface: Surface | undefined): string {
   return surface === undefined ? "" : FORMATTING[surface];
 }
@@ -110,8 +110,6 @@ function computeOs(options: OsDescriptionOptions): string {
         return undefined;
       }
     });
-  const unixName = (): string | undefined => runCommand(["uname", "-sr"]);
-
   if (platform === "linux") {
     const osRelease = runCommand(["cat", "/etc/os-release"]);
     if (osRelease) {
@@ -147,7 +145,7 @@ function computeOs(options: OsDescriptionOptions): string {
     return ver?.replace(/\s+/g, " ").trim() || platform;
   }
 
-  return unixName() ?? platform;
+  return runCommand(["uname", "-sr"]) ?? platform;
 }
 
 type FieldParser = (line: string) => readonly [string, string] | undefined;

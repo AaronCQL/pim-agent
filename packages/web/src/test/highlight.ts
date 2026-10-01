@@ -1,11 +1,7 @@
 import { until } from "#core/shared/fixtures/wait";
 import { Highlight, type Token } from "../view/highlight";
 
-/**
- * Grammars load on demand, so the first ask for a language is always plain
- * text and the answer arrives an `import()` later. Waiting that out is the
- * behaviour, not a workaround for it.
- */
+/** Waits for the lazily loaded grammar to produce highlighted tokens. */
 export async function tokenized(
   code: string,
   lang: string

@@ -132,7 +132,7 @@ export class Renderer {
       if (this.logsMode === "off") {
         return;
       }
-      // A failed call's result is pi's synthetic empty error; repainting drops the row's details.
+      // A failed call's result has empty details; repainting would drop the row's.
       if (!event.isError) {
         this.refreshTool(event.toolCallId, event.result, false);
       }

@@ -22,7 +22,7 @@ export class StreamCapture {
     return this.totalBytesAccum;
   }
 
-  /** The first `n` bytes, read across however many chunks the kernel split them into. */
+  /** The first `n` bytes, across chunk boundaries. */
   lead(n: number): Uint8Array {
     if (this.fullBytes) {
       return this.fullBytes.subarray(0, n);
@@ -48,36 +48,29 @@ export class StreamCapture {
     return this.fullBytes;
   }
 
-  /** Opaque bytes are not text: a half-image is worthless, so they are neither cut nor decoded. */
+  /** Opaque streams (images) are neither cut nor decoded. */
   snapshot(opaque = false): CapturedStream {
-    if (this.totalBytesAccum === 0 || opaque) {
-      return {
-        text: "",
-        totalBytes: this.totalBytesAccum,
-        truncated: false,
-        path: null,
-        nextStart: null,
-      };
+    const totalBytes = this.totalBytesAccum;
+    const untruncated = {
+      totalBytes,
+      truncated: false,
+      path: null,
+      nextStart: null,
+    };
+    if (totalBytes === 0 || opaque) {
+      return { text: "", ...untruncated };
     }
     const dec = new TextDecoder();
     const all = this.full();
-    if (this.totalBytesAccum <= STREAM_HEAD_BYTES + STREAM_TAIL_BYTES) {
-      return {
-        text: dec.decode(all),
-        totalBytes: this.totalBytesAccum,
-        truncated: false,
-        path: null,
-        nextStart: null,
-      };
+    if (totalBytes <= STREAM_HEAD_BYTES + STREAM_TAIL_BYTES) {
+      return { text: dec.decode(all), ...untruncated };
     }
     const headText = dec.decode(all.subarray(0, STREAM_HEAD_BYTES));
-    const tailText = dec.decode(
-      all.subarray(all.byteLength - STREAM_TAIL_BYTES)
-    );
-    const middle = this.totalBytesAccum - STREAM_HEAD_BYTES - STREAM_TAIL_BYTES;
+    const tailText = dec.decode(all.subarray(totalBytes - STREAM_TAIL_BYTES));
+    const middle = totalBytes - STREAM_HEAD_BYTES - STREAM_TAIL_BYTES;
     return {
       text: `${headText}\n... ${middle} bytes truncated ...\n${tailText}`,
-      totalBytes: this.totalBytesAccum,
+      totalBytes,
       truncated: true,
       path: null,
       nextStart: Lines.continuationLine(headText),

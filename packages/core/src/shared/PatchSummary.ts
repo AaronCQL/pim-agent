@@ -36,5 +36,5 @@ export function cleanPath(raw: string): string {
   return path;
 }
 
-/** Fault-tolerant scan of V4A patch text for renderers; unrecognized lines are ignored. */
+/** Lenient scan of V4A patch text for renderers; unknown lines are ignored. */
 export const PatchSummary = { firstPath };

@@ -8,8 +8,6 @@ import type { ChangeSummary } from "#protocol/Diff";
 import { mountPoint } from "../test/dom";
 import { CommitModal } from "./CommitModal";
 
-/** The modal alone: what it arrives holding, and what it hands back. */
-
 let dispose: (() => void) | undefined;
 
 afterEach(() => {
@@ -35,7 +33,6 @@ function file(
 
 type Opened = {
   readonly host: HTMLElement;
-  /** Every pathspec the modal handed back, one entry per commit. */
   readonly committed: readonly (readonly string[])[];
   readonly closes: () => number;
 };
@@ -84,7 +81,6 @@ function all(host: HTMLElement): HTMLButtonElement {
   )!;
 }
 
-/** The row that heads the list, which is the one the select-all sits on. */
 function summary(host: HTMLElement): HTMLElement {
   return all(host).parentElement as HTMLElement;
 }
@@ -114,14 +110,9 @@ test("opening picks every file", () => {
   expect(all(host).getAttribute("aria-label")).toBe("Clear every pick");
   expect(summary(host).textContent).toContain("2 files");
   expect(summary(host).textContent).toContain("+432/−3");
-  // With the caret in the message, which is the attribute's to give: the
-  // dialog runs its own focusing steps as it is shown, and they would land
-  // on the first control in the header instead.
   expect(field(host).hasAttribute("autofocus")).toBe(true);
 });
 
-/** A row dropped from the commit dims rather than vanishing, so the stat over
-    the list reads as a subtraction from what is still there. */
 test("unpicking a file leaves the list and takes the stat with it", () => {
   const { host } = paint([file("alpha.ts", 420, 0), file("beta.ts", 12, 3)]);
 

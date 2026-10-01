@@ -8,11 +8,11 @@ import type { Size } from "./Zoom";
 const CONTROL =
   "flex items-center justify-center rounded-full bg-neutral-950/80 p-2 text-neutral-350 ring-1 ring-neutral-700 hover:text-neutral-50";
 
-/** Content to zoom and pan over, laid out at `size`; the caller mounts it only while it is open. */
+/** Always open while mounted. */
 export function Lightbox(props: {
   readonly label: string;
   readonly size: Size | undefined;
-  /** Moves the content on the GPU; a raster gains nothing by being redrawn, a vector blurs if it is not. */
+  /** Composites on the GPU; leave off for vectors, which would blur. */
   readonly raster?: boolean;
   readonly actions?: JSX.Element;
   readonly children: JSX.Element;
@@ -96,11 +96,10 @@ export function Lightbox(props: {
   );
 }
 
-/** One picture, sized by its own pixels once they load, with a download beside the close. */
 export function ImageLightbox(props: {
   readonly src: string;
   readonly alt: string;
-  /** What a download saves it as; the address's own name when absent. */
+  /** Download name; defaults to the URL's. */
   readonly filename?: string;
   readonly onClose: () => void;
 }) {

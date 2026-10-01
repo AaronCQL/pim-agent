@@ -27,7 +27,7 @@ const DAY_MS = 86_400_000;
 
 const defaultProbeIntervalMs = 1_800_000;
 
-/** Which providers are quota-exhausted, on disk; quota is per-IP-per-day, so trips expire at UTC midnight. */
+/** Persists quota-exhausted providers. Trips expire at UTC midnight unless a retry-after is given. */
 export class SearchBreaker {
   private readonly filePath: string;
   private readonly now: () => number;

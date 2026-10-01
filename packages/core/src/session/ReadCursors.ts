@@ -22,7 +22,6 @@ export class ReadCursors {
     this.ready = this.load();
   }
 
-  /** Whether a session has been answered since anything last read it. */
   public async isUnread(
     sessionId: string,
     answeredAt: number | undefined
@@ -34,7 +33,7 @@ export class ReadCursors {
     );
   }
 
-  /** Moves a session's cursor forward; the write behind it is not waited on. */
+  /** Only moves forward. Does not wait for the write. */
   public async mark(sessionId: string, at: number = Date.now()): Promise<void> {
     await this.ready;
     if ((this.cursors.get(sessionId) ?? this.baseline) >= at) {
@@ -58,7 +57,7 @@ export class ReadCursors {
     }
   }
 
-  /** Settles the writes behind the marks taken so far, for a clean stop. */
+  /** Waits for pending writes. */
   public async flush(): Promise<void> {
     await this.ready;
     await this.writes.run(async () => undefined);
@@ -69,7 +68,7 @@ export class ReadCursors {
       .json()
       .catch(() => undefined)) as Partial<Stored> | undefined;
     if (typeof stored?.baseline !== "number") {
-      // Persist the baseline now: recomputing it on each start clears every unread session.
+      // Persist it, or every restart would mark everything read.
       this.baseline = Date.now();
       this.persist();
       return;

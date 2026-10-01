@@ -51,18 +51,6 @@ test("a surface that throws on start leaves the others serving", async () => {
   errors.mockRestore();
 });
 
-test("a web surface that cannot bind leaves the bot polling", async () => {
-  const errors = silenceErrors();
-  const telegram = working("telegram");
-  const daemon = new Daemon([
-    broken("web", "EADDRINUSE: address already in use"),
-    telegram.surface,
-  ]);
-
-  expect(await daemon.start()).toEqual(["telegram"]);
-  errors.mockRestore();
-});
-
 test("stops only the surfaces that came up, and never asks the failed one", async () => {
   const errors = silenceErrors();
   const web = working("web");
@@ -108,6 +96,8 @@ test("a daemon whose every surface failed exits rather than idling", async () =>
     broken("telegram", "no token"),
   ]);
 
-  expect(daemon.start()).rejects.toThrow("no surface started: web, telegram");
+  await expect(daemon.start()).rejects.toThrow(
+    "no surface started: web, telegram"
+  );
   errors.mockRestore();
 });

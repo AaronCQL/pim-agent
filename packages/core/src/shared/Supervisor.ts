@@ -5,29 +5,28 @@ import { basename, dirname, join } from "node:path";
 import { Fs } from "./Fs";
 import { Proc } from "./Proc";
 
-// Set by the units this file writes and by nothing else: it tells a daemon an exit is a restart.
+// Set only by the units written here: tells a daemon that exiting means restarting.
 const SUPERVISED_ENV = "PIM_SUPERVISED";
 
-/** One daemon the supervisor manages, named by the `--mode` it is started with. */
+/** A supervised daemon, named by its `--mode`. */
 export type Unit = {
   readonly mode: string;
   readonly description: string;
   readonly args?: ReadonlyArray<string>;
 };
 
-/** One reversible act of an install: everything a unit's removal is made of. */
-export type UnitStep =
+type UnitStep =
   | { readonly kind: "run"; readonly cmd: ReadonlyArray<string> }
   | { readonly kind: "remove"; readonly path: string };
 
-/** Which init system, and whose home — named so a test can ask about the other platform. */
-export type UnitPlace = {
+/** Overridable so tests can target the other platform. */
+type UnitPlace = {
   readonly platform: NodeJS.Platform;
   readonly home: string;
 };
 
-export type InstallOptions = {
-  /** Units this one replaces: stopped and removed before it is written. */
+type InstallOptions = {
+  /** Stopped and removed before the new unit is written. */
   readonly replaces?: ReadonlyArray<Unit>;
 };
 
@@ -44,7 +43,7 @@ async function install(
 ): Promise<void> {
   const at = await detectInstall();
   console.log(`[install] ${at.kind} mode, root=${at.packageRoot}`);
-  // Strictly before the new unit exists: two daemons must never share a token or a port.
+  // First, so two daemons never share a token or port.
   await supersede(options.replaces ?? []);
   if (process.platform === "linux") {
     const path = systemdUnitPath(unit);
@@ -79,7 +78,7 @@ async function install(
         `gui/${uid}/${launchdLabel(unit)}`,
       ]);
     } catch {
-      // bootout fails when the service isn't loaded; ignore before bootstrap.
+      // Fails when not loaded.
     }
     await runOrThrow(["launchctl", "bootstrap", `gui/${uid}`, path]);
     console.log(`[install] bootstrapped ${launchdLabel(unit)}`);
@@ -95,10 +94,7 @@ async function uninstall(unit: Unit): Promise<void> {
   await runSteps(uninstallSteps(unit), "uninstall");
 }
 
-/**
- * Stop and remove every one of `units` that is installed, saying so. Idempotent:
- * a unit that was never installed, or is already stopped, costs a stat and a line.
- */
+/** Stops and removes whichever of `units` are installed. Idempotent. */
 async function supersede(
   units: ReadonlyArray<Unit>,
   where: Partial<UnitPlace> = {}
@@ -111,7 +107,7 @@ async function supersede(
   }
 }
 
-/** Which of `units` this machine currently has a unit file for. */
+/** The `units` that have a unit file on this machine. */
 async function installedAmong(
   units: ReadonlyArray<Unit>,
   where: Partial<UnitPlace> = {}
@@ -122,10 +118,7 @@ async function installedAmong(
   return units.filter((_, index) => present[index]);
 }
 
-/**
- * The argv the installed unit starts the daemon with, empty when it is not
- * installed: what a re-install has to preserve rather than quietly drop.
- */
+/** The installed unit's argv from `--mode` on; empty when not installed. */
 async function installedArgs(
   unit: Unit,
   where: Partial<UnitPlace> = {}
@@ -135,7 +128,6 @@ async function installedArgs(
     .text()
     .catch(() => "");
   const words = unitWords(text, at.platform);
-  // Everything before `--mode` is the interpreter and the entry point.
   const mode = words.indexOf("--mode");
   return mode < 0 ? [] : words.slice(mode);
 }
@@ -155,7 +147,7 @@ function unitWords(
     .filter((word) => word.length > 0);
 }
 
-/** Everything removing `unit` is made of, in the order it has to happen. */
+/** Ordered steps to remove `unit`. */
 function uninstallSteps(
   unit: Unit,
   where: Partial<UnitPlace> = {}
@@ -179,8 +171,7 @@ function uninstallSteps(
   ];
 }
 
-// A step that fails is reported, never fatal: an already-stopped unit still has
-// to lose its file, and a file already gone still has to trigger a reload.
+// Failed commands only warn, so later steps still run.
 async function runSteps(
   steps: ReadonlyArray<UnitStep>,
   label: string
@@ -208,7 +199,7 @@ async function runSteps(
   }
 }
 
-/** Only a supervisor turns an exit into a restart; unsupervised it is a stop. */
+/** Unsupervised, an exit is a stop rather than a restart. */
 function isSupervised(): boolean {
   const flag = Bun.env[SUPERVISED_ENV];
   return flag !== undefined && flag !== "" && flag !== "0";
@@ -218,7 +209,7 @@ function restart(): never {
   process.exit(0);
 }
 
-// A global install replaces every daemon's tree: restart the siblings or they run old code.
+// After a global update, other daemons must restart or they keep running old code.
 async function restartSiblings(self: Unit): Promise<void> {
   if (process.platform === "linux") {
     for (const name of await installedUnits(
@@ -277,7 +268,7 @@ async function restartOrWarn(
 
 async function detectInstall(): Promise<Install> {
   const here = await realpath(Bun.fileURLToPath(import.meta.url));
-  // Start above the workspace packages so the walk lands on the published root.
+  // Start above `packages/` so the walk finds the published root.
   const packageRoot = await findPackageRoot(
     join(dirname(here), "..", "..", "..", "..")
   );
@@ -349,7 +340,6 @@ function launchdPlistPath(unit: Unit, at: UnitPlace = place()): string {
   return join(launchAgentsDir(at), `${launchdLabel(unit)}.plist`);
 }
 
-/** Where this platform keeps `unit`'s definition, installed or not. */
 function unitFile(unit: Unit, where: Partial<UnitPlace> = {}): string {
   const at = place(where);
   return at.platform === "darwin"
@@ -432,11 +422,8 @@ async function lingerEnabled(): Promise<boolean> {
   return code === 0 && stdout.includes("Linger=yes");
 }
 
-async function runOrThrow(
-  cmd: ReadonlyArray<string>,
-  cwd?: string
-): Promise<void> {
-  const { code, stderr } = await Proc.run(cmd, { cwd, stdout: "inherit" });
+async function runOrThrow(cmd: ReadonlyArray<string>): Promise<void> {
+  const { code, stderr } = await Proc.run(cmd, { stdout: "inherit" });
   if (code !== 0) {
     throw new Error(
       `${cmd.join(" ")} exit ${code}: ${stderr.trim() || "(no stderr)"}`

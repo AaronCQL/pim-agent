@@ -12,25 +12,18 @@ const END_PATCH_MARKER = "*** End Patch";
 const EOF_MARKER = "*** End of File";
 const CHANGE_CONTEXT_MARKER = "@@ ";
 const EMPTY_CHANGE_CONTEXT_MARKER = "@@";
+const EMPTY_CHUNK =
+  "Update hunk does not contain any context, added, or removed lines. Include at least one line starting with ' ', '+', or '-'.";
 const MOVE_DESTINATION_REQUIRED =
   "Invalid *** Move to directive: destination path is required.";
 
-type ParseErrorDetails =
-  | { readonly type: "patch"; readonly message: string }
-  | {
-      readonly type: "hunk";
-      readonly message: string;
-      readonly lineNumber: number;
-    };
+// Matches Codex's ParseError text byte for byte; GPT models recover from it.
+function patchError(message: string): Error {
+  return new Error(`invalid patch: ${message}`);
+}
 
-// Keep these formats byte-identical to Codex's ParseError Display; GPT models recover from them.
-function formatParseError(error: ParseErrorDetails): string {
-  switch (error.type) {
-    case "patch":
-      return `invalid patch: ${error.message}`;
-    case "hunk":
-      return `invalid hunk at line ${error.lineNumber}, ${error.message}`;
-  }
+function hunkError(lineNumber: number, message: string): Error {
+  return new Error(`invalid hunk at line ${lineNumber}, ${message}`);
 }
 
 export function parsePatch(text: string): Patch {
@@ -53,26 +46,15 @@ export function parsePatch(text: string): Patch {
 }
 
 function checkBoundaries(lines: readonly string[]): void {
-  const first = lines[0]?.trim();
-  const last = lines.at(-1)?.trim();
-
-  if (first === undefined || !lines[0]!.trim().startsWith(BEGIN_PATCH_MARKER)) {
-    throw new Error(
-      formatParseError({
-        type: "patch",
-        message:
-          "The first line of the patch must be '*** Begin Patch'. Do not include Markdown fences, prose, or shell heredoc text before it.",
-      })
+  if (!lines[0]!.trim().startsWith(BEGIN_PATCH_MARKER)) {
+    throw patchError(
+      "The first line of the patch must be '*** Begin Patch'. Do not include Markdown fences, prose, or shell heredoc text before it."
     );
   }
 
-  if (last !== END_PATCH_MARKER) {
-    throw new Error(
-      formatParseError({
-        type: "patch",
-        message:
-          "The last line of the patch must be '*** End Patch'. Do not include Markdown fences or trailing prose after it.",
-      })
+  if (lines.at(-1)!.trim() !== END_PATCH_MARKER) {
+    throw patchError(
+      "The last line of the patch must be '*** End Patch'. Do not include Markdown fences or trailing prose after it."
     );
   }
 }
@@ -98,15 +80,11 @@ function parseOneHunk(
     return parseUpdateHunk(lines, lineNumber, updatePath);
   }
 
-  throw new Error(
-    formatParseError({
-      type: "hunk",
-      lineNumber,
-      message:
-        `'${firstLine}' is not a valid hunk header. ` +
-        "Valid hunk headers: '*** Add File: {path}', '*** Delete File: {path}', '*** Update File: {path}'. " +
-        "Do not use unified-diff file headers like '---' or '+++' as hunk headers.",
-    })
+  throw hunkError(
+    lineNumber,
+    `'${firstLine}' is not a valid hunk header. ` +
+      "Valid hunk headers: '*** Add File: {path}', '*** Delete File: {path}', '*** Update File: {path}'. " +
+      "Do not use unified-diff file headers like '---' or '+++' as hunk headers."
   );
 }
 
@@ -126,17 +104,10 @@ function parseAddHunk(
     }
   }
   const nextLine = lines[consumed];
-  if (
-    nextLine !== undefined &&
-    !isHunkHeader(nextLine) &&
-    !nextLine.trim().startsWith("*")
-  ) {
-    throw new Error(
-      formatParseError({
-        type: "hunk",
-        lineNumber: lineNumber + consumed,
-        message: `Invalid Add File body: '${nextLine}' must start with '+'. Added file content lines must start with '+'.`,
-      })
+  if (nextLine !== undefined && !nextLine.trim().startsWith("*")) {
+    throw hunkError(
+      lineNumber + consumed,
+      `Invalid Add File body: '${nextLine}' must start with '+'. Added file content lines must start with '+'.`
     );
   }
   return {
@@ -151,17 +122,10 @@ function parseDeleteHunk(
   deletePath: string
 ): { readonly hunk: Hunk; readonly consumed: number } {
   const nextLine = lines[1];
-  if (
-    nextLine !== undefined &&
-    !isHunkHeader(nextLine) &&
-    !nextLine.trim().startsWith("*")
-  ) {
-    throw new Error(
-      formatParseError({
-        type: "hunk",
-        lineNumber: lineNumber + 1,
-        message: `Delete File hunks must not contain content lines, got: '${nextLine}'.`,
-      })
+  if (nextLine !== undefined && !nextLine.trim().startsWith("*")) {
+    throw hunkError(
+      lineNumber + 1,
+      `Delete File hunks must not contain content lines, got: '${nextLine}'.`
     );
   }
   return {
@@ -182,46 +146,23 @@ function parseUpdateHunk(
   const moveLine = remaining[0]?.trim();
   if (moveLine?.startsWith(MOVE_TO_MARKER)) {
     const rawMovePath = moveLine.slice(MOVE_TO_MARKER.length);
-    if (rawMovePath.length === 0) {
-      throw new Error(
-        formatParseError({
-          type: "hunk",
-          lineNumber: lineNumber + consumed,
-          message: MOVE_DESTINATION_REQUIRED,
-        })
-      );
-    }
-    if (!rawMovePath.startsWith(" ")) {
-      throw new Error(
-        formatParseError({
-          type: "hunk",
-          lineNumber: lineNumber + consumed,
-          message: `Invalid *** Move to directive: use '*** Move to: {path}'.`,
-        })
+    if (rawMovePath.length > 0 && !rawMovePath.startsWith(" ")) {
+      throw hunkError(
+        lineNumber + consumed,
+        "Invalid *** Move to directive: use '*** Move to: {path}'."
       );
     }
     if (cleanPath(rawMovePath).length === 0) {
-      throw new Error(
-        formatParseError({
-          type: "hunk",
-          lineNumber: lineNumber + consumed,
-          message: MOVE_DESTINATION_REQUIRED,
-        })
-      );
+      throw hunkError(lineNumber + consumed, MOVE_DESTINATION_REQUIRED);
     }
-    movePath = rawMovePath;
-  } else if (moveLine?.startsWith("*** Move")) {
-    throw new Error(
-      formatParseError({
-        type: "hunk",
-        lineNumber: lineNumber + consumed,
-        message: `Invalid move directive '${moveLine}'. Use '*** Move to: {path}'.`,
-      })
-    );
-  }
-  if (movePath !== undefined) {
+    movePath = cleanPath(rawMovePath);
     remaining = remaining.slice(1);
     consumed += 1;
+  } else if (moveLine?.startsWith("*** Move")) {
+    throw hunkError(
+      lineNumber + consumed,
+      `Invalid move directive '${moveLine}'. Use '*** Move to: {path}'.`
+    );
   }
 
   const chunks: UpdateChunk[] = [];
@@ -246,12 +187,9 @@ function parseUpdateHunk(
   }
 
   if (chunks.length === 0 && movePath === undefined) {
-    throw new Error(
-      formatParseError({
-        type: "hunk",
-        lineNumber,
-        message: `Update file hunk for path '${cleanPath(updatePath)}' is empty. Include @@ plus at least one context, added, or removed line, or add *** Move to for a pure rename.`,
-      })
+    throw hunkError(
+      lineNumber,
+      `Update file hunk for path '${cleanPath(updatePath)}' is empty. Include @@ plus at least one context, added, or removed line, or add *** Move to for a pure rename.`
     );
   }
 
@@ -259,7 +197,7 @@ function parseUpdateHunk(
     hunk: {
       kind: "update",
       path: cleanPath(updatePath),
-      movePath: movePath === undefined ? undefined : cleanPath(movePath),
+      movePath,
       chunks,
     },
     consumed,
@@ -271,41 +209,21 @@ function parseUpdateChunk(
   lineNumber: number,
   allowMissingContext: boolean
 ): { readonly chunk: UpdateChunk; readonly consumed: number } {
-  let changeContext: string | undefined;
-  let startIndex: number;
-
-  if (lines[0] === EMPTY_CHANGE_CONTEXT_MARKER) {
-    changeContext = undefined;
-    startIndex = 1;
-  } else {
-    const ctx = stripPrefix(lines[0]!, CHANGE_CONTEXT_MARKER);
-    if (ctx !== undefined) {
-      changeContext = ctx;
-      startIndex = 1;
-    } else {
-      if (!allowMissingContext) {
-        throw new Error(
-          formatParseError({
-            type: "hunk",
-            lineNumber,
-            message: `Expected update hunk to start with a @@ context marker, got: '${lines[0]}'. Start each additional edit chunk with @@ or @@ followed by nearby context.`,
-          })
-        );
-      }
-      changeContext = undefined;
-      startIndex = 0;
-    }
+  const first = lines[0]!;
+  const hasMarker =
+    first === EMPTY_CHANGE_CONTEXT_MARKER ||
+    first.startsWith(CHANGE_CONTEXT_MARKER);
+  if (!hasMarker && !allowMissingContext) {
+    throw hunkError(
+      lineNumber,
+      `Expected update hunk to start with a @@ context marker, got: '${first}'. Start each additional edit chunk with @@ or @@ followed by nearby context.`
+    );
   }
+  const changeContext = stripPrefix(first, CHANGE_CONTEXT_MARKER);
+  const startIndex = hasMarker ? 1 : 0;
 
   if (startIndex >= lines.length) {
-    throw new Error(
-      formatParseError({
-        type: "hunk",
-        lineNumber,
-        message:
-          "Update hunk does not contain any context, added, or removed lines. Include at least one line starting with ' ', '+', or '-'.",
-      })
-    );
+    throw hunkError(lineNumber, EMPTY_CHUNK);
   }
 
   const oldLines: string[] = [];
@@ -316,14 +234,7 @@ function parseUpdateChunk(
   for (const line of lines.slice(startIndex)) {
     if (line === EOF_MARKER) {
       if (parsed === 0) {
-        throw new Error(
-          formatParseError({
-            type: "hunk",
-            lineNumber,
-            message:
-              "Update hunk does not contain any context, added, or removed lines. Include at least one line starting with ' ', '+', or '-'.",
-          })
-        );
+        throw hunkError(lineNumber, EMPTY_CHUNK);
       }
       isEndOfFile = true;
       parsed += 1;
@@ -343,15 +254,11 @@ function parseUpdateChunk(
       oldLines.push(line.slice(1));
     } else {
       if (parsed === 0) {
-        throw new Error(
-          formatParseError({
-            type: "hunk",
-            lineNumber,
-            message:
-              `Unexpected line found in update hunk: '${line}'. ` +
-              "Every line should start with ' ' (context line), '+' (added line), or '-' (removed line). " +
-              "Unchanged context lines must be prefixed with a single space.",
-          })
+        throw hunkError(
+          lineNumber,
+          `Unexpected line found in update hunk: '${line}'. ` +
+            "Every line should start with ' ' (context line), '+' (added line), or '-' (removed line). " +
+            "Unchanged context lines must be prefixed with a single space."
         );
       }
       break;
@@ -367,13 +274,4 @@ function parseUpdateChunk(
 
 function stripPrefix(value: string, prefix: string): string | undefined {
   return value.startsWith(prefix) ? value.slice(prefix.length) : undefined;
-}
-
-function isHunkHeader(line: string): boolean {
-  const trimmed = line.trim();
-  return (
-    trimmed.startsWith(ADD_FILE_MARKER) ||
-    trimmed.startsWith(DELETE_FILE_MARKER) ||
-    trimmed.startsWith(UPDATE_FILE_MARKER)
-  );
 }

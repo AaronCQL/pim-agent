@@ -7,20 +7,18 @@ import { Collapsible, Marker, Spine } from "../ui/Collapsible";
 import { Blocks, Body } from "./Blocks";
 import { caretClass, spineClass, toneClass } from "./tokens";
 
-/** One tool row: a mark, the label and its subject, and an expand-only body. */
 export function ToolCard(props: {
   readonly view: ToolView;
   readonly name?: string;
   readonly isError?: boolean;
   readonly isPartial?: boolean;
 }) {
-  // Memoised: a partial call re-renders on every delta.
   const body = createMemo(() => (props.view.body ?? []).filter(isDrawn));
   const error = () => props.isError === true;
   const partial = () => props.isPartial === true;
   const caret = () => caretClass(partial(), error());
   const spine = () => spineClass(partial(), error());
-  // A body holding the tool's own result keeps its colour; chrome alone is quoted down.
+  // Dim bodies that hold no payload block.
   const dimmed = () =>
     !body().some((block) => Painting.WEIGHT[block.kind] === "payload");
 
@@ -84,14 +82,14 @@ export function ToolCard(props: {
   );
 }
 
-/** One `apply_patch` call as peer rows, one per file, so paths stay visible collapsed. */
+/** Splits an `apply_patch` call into one row per file. */
 export function ToolCards(props: {
   readonly view: ToolView;
   readonly name?: string;
   readonly isError?: boolean;
   readonly isPartial?: boolean;
 }) {
-  // Unkeyed: a keyed list rebuilds the card on every delta and shuts an open row.
+  // Unkeyed: keyed would rebuild the card on every delta and close an open row.
   return (
     <For each={splitPatchView(props.name, props.view)} keyed={false}>
       {(view) => <ToolCard {...props} view={view()} />}
@@ -99,10 +97,6 @@ export function ToolCards(props: {
   );
 }
 
-/**
- * A row's name and the muted colon before its subject, floated so wrapped
- * lines keep the row's own left edge.
- */
 export function RowLabel(props: {
   readonly label: string;
   readonly tone?: Tone;

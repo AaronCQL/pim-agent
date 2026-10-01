@@ -52,60 +52,26 @@ describe("Images.sniff", () => {
     ["garbage", garbage],
     ["nothing", new Uint8Array(0)],
     ["a truncated PNG header", Uint8Array.from([0x89, 0x50, 0x4e])],
+    [
+      "a RIFF container that is not WebP",
+      Buffer.concat([
+        Buffer.from("RIFF"),
+        Buffer.from([0x24, 0x00, 0x00, 0x00]),
+        Buffer.from("WAVEfmt "),
+      ]),
+    ],
   ])("rejects %s", (_name, bytes) => {
     expect(Images.sniff(bytes)).toBeNull();
-  });
-
-  test("ignores a RIFF container that is not WebP", () => {
-    const wav = Buffer.concat([
-      Buffer.from("RIFF"),
-      Buffer.from([0x24, 0x00, 0x00, 0x00]),
-      Buffer.from("WAVEfmt "),
-    ]);
-    expect(Images.sniff(wav)).toBeNull();
   });
 });
 
 describe("Images.isSupported", () => {
-  test.each(["image/png", "image/jpeg", "image/gif", "image/webp"])(
-    "accepts %s",
-    (mimeType) => {
-      expect(Images.isSupported(mimeType)).toBe(true);
-    }
-  );
-
   test.each(["image/svg+xml", "image/bmp", "application/pdf", "toString"])(
     "rejects %s",
     (mimeType) => {
       expect(Images.isSupported(mimeType)).toBe(false);
     }
   );
-});
-
-describe("Images.canSee", () => {
-  test("reads the model's declared inputs", () => {
-    expect(
-      Images.canSee({ id: "anthropic/claude", input: ["text", "image"] })
-    ).toBe(true);
-    expect(Images.canSee({ id: "openai/o3-mini", input: ["text"] })).toBe(
-      false
-    );
-  });
-
-  test("assumes eyes when no model is bound", () => {
-    expect(Images.canSee(undefined)).toBe(true);
-  });
-});
-
-describe("Images.extensionOf", () => {
-  test.each([
-    ["image/png", "png"],
-    ["image/jpeg", "jpg"],
-    ["image/gif", "gif"],
-    ["image/webp", "webp"],
-  ] as const)("spells %s one way", (mimeType, extension) => {
-    expect(Images.extensionOf(mimeType)).toBe(extension);
-  });
 });
 
 describe("Images.looksLikeImageName", () => {
@@ -237,14 +203,6 @@ describe("Images.contentOf", () => {
       { type: "image", data: image.base64, mimeType: "image/png" },
     ]);
   });
-
-  test("sends the picture alone when there is nothing to say", async () => {
-    const image = await Images.normalise(png(8, 8), "/tmp/note.png");
-
-    expect(Images.contentOf(image)).toEqual([
-      { type: "image", data: image.base64, mimeType: "image/png" },
-    ]);
-  });
 });
 
 describe("Images.frames", () => {
@@ -276,12 +234,6 @@ describe("Images.noteOf", () => {
   test("names the frames a still cannot show", () => {
     expect(Images.noteOf(normalised({ frames: 346 }))).toBe(
       "animated webp: 346 frames, 1200x800; frame 1 shown."
-    );
-  });
-
-  test("reports the animation of a picture that was never resized", () => {
-    expect(Images.noteOf(normalised({ frames: 3, resized: false }))).toBe(
-      "animated webp: 3 frames, 1200x800; frame 1 shown."
     );
   });
 

@@ -24,7 +24,7 @@ function installLifecycleHandlers(): void {
   }
   lifecycleHandlersInstalled = true;
 
-  // Sweep escaped bash subtrees, then re-raise so the default handler still runs.
+  // Kill running commands, then re-raise so the default handler still runs.
   for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
     process.once(sig, () => {
       try {

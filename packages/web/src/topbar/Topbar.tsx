@@ -21,7 +21,6 @@ function changesLabel(count: number, reviewing: boolean): string {
   return `Review changes, ${Format.count(count, "changed file")}`;
 }
 
-/** The row above the transcript: where the session is, and what its repository is doing. */
 export function Topbar(props: {
   readonly store: SessionStore;
   readonly compact: boolean;
@@ -126,6 +125,7 @@ export function Topbar(props: {
   );
 }
 
+/** True once (re)connecting has lasted `graceMs`. */
 function createOffline(
   status: () => ConnectionStatus,
   graceMs: () => number

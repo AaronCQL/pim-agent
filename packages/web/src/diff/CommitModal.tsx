@@ -15,7 +15,7 @@ import { Spinner } from "../ui/Spinner";
 import { FileLabel } from "./FileLabel";
 import { Stat } from "./Stat";
 
-/** A rename goes on the pathspec by both of its names, or its old one is left behind. */
+/** Renames need both paths in the pathspec, or the old one is left behind. */
 function pathsOf(files: readonly ChangeSummary[]): readonly string[] {
   return files.flatMap((file) =>
     file.oldPath === undefined ? [file.path] : [file.path, file.oldPath]
@@ -46,11 +46,9 @@ function Tick(props: { readonly on: boolean }) {
   );
 }
 
-/** The end of a review: which of the changed files go in, and the message over them. */
 export function CommitModal(props: {
   readonly open: boolean;
   readonly onClose: () => void;
-  /** Every changed file, in the list's own order. */
   readonly files: readonly ChangeSummary[];
   readonly message: string;
   readonly committing: boolean;
@@ -60,8 +58,7 @@ export function CommitModal(props: {
 }) {
   const [picks, setPicks] = createSignal<ReadonlySet<string>>(new Set());
 
-  // Born fresh on every open, over the list as it stands then: picks that
-  // outlived the modal would have to be revalidated against an edited tree.
+  // Every open starts with all files picked.
   createEffect(
     () => props.open,
     (open) => {
@@ -163,9 +160,6 @@ export function CommitModal(props: {
           )}
         </Show>
 
-        {/* The message and the button it arms are one row: what is typed and
-            what it does belong to each other, and the width a wide screen
-            gives this modal goes into the field rather than between them. */}
         <div class="flex shrink-0 items-end gap-2 border-t border-neutral-700 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <textarea
             rows={1}

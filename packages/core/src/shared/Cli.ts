@@ -1,4 +1,4 @@
-// Never throw on an unknown flag or positional: the same argv reaches every mode.
+// Ignores unknown flags and positionals: the same argv reaches every mode.
 function scan(
   args: ReadonlyArray<string>,
   visit: (key: string, take: () => string | undefined) => void

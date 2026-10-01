@@ -20,33 +20,26 @@ import {
 import { CommentEditor, CommentSheet } from "./CommentEditor";
 import type { CommentAnchor, Comments, CommentSide } from "./Comments";
 
-/** One file's review: what its gutters offer, and what hangs off them. */
 export type Anchoring = DiffAnchors & {
-  /** The comments made against the file itself, which name no line of it. */
+  /** Comments on the file as a whole. */
   readonly fileCards: () => Element;
-  /** Anchors a comment to a file that has no lines to point at. */
+  /** Starts a file-level comment, for files with no lines to pick. */
   readonly pickFile: () => void;
   readonly sheet: () => Element;
 };
 
-/**
- * What a reader has picked out, which is plain UI state: a comment of it is
- * made by the first keystroke, and never by the click that selected it.
- */
+/** The current selection; it becomes a comment only on the first keystroke. */
 type Picked = {
   readonly side?: CommentSide;
-  /** Where the pointer went down, and the line it last reached. */
   readonly from?: number;
   readonly to?: number;
   readonly quote?: string;
-  /** The comment the first keystroke made of it; absent until then. */
+  /** Set once the first keystroke creates the comment. */
   readonly id?: string;
 };
 
-/** The run of lines a comment is against, either way the selection was drawn. */
 type Span = { readonly start: number; readonly end: number };
 
-/** A comment against the file rather than any line of it. */
 const FILE = "file";
 
 const NO_LINES: readonly ToolDiffLine[] = [];
@@ -55,7 +48,6 @@ function spotOf(side?: CommentSide, line?: number): string {
   return side === undefined || line === undefined ? FILE : `${side}:${line}`;
 }
 
-/** A selection runs from the line it started on to the one it reached, either way round. */
 function spanOf(picked: Picked): Span | undefined {
   if (picked.from === undefined) {
     return undefined;
@@ -74,9 +66,9 @@ export function createAnchoring(options: {
 }): Anchoring {
   const comments = options.comments;
   const [picked, setPicked] = createSignal<Picked>();
-  /** A press is still down, so the selection is still being drawn. */
+  /** True while the pointer is down. */
   const [sweeping, setSweeping] = createSignal(false);
-  /** A saved comment tapped where there is no pointer, which the sheet answers. */
+  /** A saved comment tapped on touch, shown in the sheet. */
   const [tapped, setTapped] = createSignal<string>();
   const keyboard = createMediaQuery(KEYBOARD);
   const path = createMemo(() => options.file().path);
@@ -86,11 +78,8 @@ export function createAnchoring(options: {
     setSweeping(false);
   };
 
-  // A press is released wherever the reader lets go — over another gutter, off
-  // the diff, outside the window — so the lift is heard on the window rather
-  // than on the gutter that heard the press. Attached by the first press and
-  // left in place: one pair of listeners for a file that is being commented
-  // on, none for the files merely being read.
+  // The pointer may be released anywhere, so listen on the window.
+  // Attached lazily on first press and kept until cleanup.
   let listening = false;
   const watch = (): void => {
     setSweeping(true);
@@ -106,10 +95,8 @@ export function createAnchoring(options: {
     window.removeEventListener("pointercancel", lift);
   });
 
-  // Where the live editor hangs, as a key rather than the selection itself: the
-  // first keystroke fills in an id, and the box being typed into must not be
-  // rebuilt under the typist. Nothing hangs anywhere while the pointer is still
-  // down: a reader sweeping out a range is owed the lines, not a box over them.
+  // A key, not the selection, so setting the id on first keystroke doesn't rebuild the editor.
+  // Hidden while the pointer is still down.
   const spot = createMemo(() => {
     const held = picked();
     if (held === undefined || sweeping() || !keyboard()) {
@@ -154,12 +141,7 @@ export function createAnchoring(options: {
     }
   };
 
-  /**
-   * The caret left the live editor with nothing in it. A comment made of
-   * blanks says nothing, so it is dropped — while the lines it was written
-   * against stay picked, and the box stays open over them: the reader who
-   * cleared it is still standing there, and may yet say something else.
-   */
+  // An emptied comment is deleted, but the selection and editor stay open.
   const forget = (): void => {
     const held = untrack(picked);
     if (held?.id === undefined) {
@@ -259,7 +241,6 @@ export function createAnchoring(options: {
     );
   };
 
-  /** What a card or the sheet shows: the comment's words, or none where it has no comment yet. */
   const textOf = (id: string | undefined): string =>
     id === undefined ? "" : (comments.one(id)?.text ?? "");
 
@@ -285,8 +266,7 @@ export function createAnchoring(options: {
     />
   );
 
-  // The live editor is rendered from the selection and left out of the saved
-  // list, so the comment its first keystroke makes does not replace the box.
+  // The live editor's own comment is excluded from the saved list so it isn't rendered twice.
   const stack = (key: string, ids: () => readonly string[]): Element => (
     <>
       <For each={ids().filter((id) => id !== pickedId())}>
@@ -301,11 +281,7 @@ export function createAnchoring(options: {
       ? undefined
       : stack(spotOf(side, line), () => comments.ids(path(), side, line));
 
-  /**
-   * The diff's own rows for a span, so the sheet quotes a file the way the file
-   * reads. A comment whose lines have since moved has only the text it was
-   * written against, which is quoted as plain context.
-   */
+  /** The diff rows in `span`, falling back to the saved quote when they have moved. */
   const quoted = (
     side: CommentSide | undefined,
     span: Span | undefined,

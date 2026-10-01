@@ -12,8 +12,7 @@ const touchIcon = Logo.render(style, {
   mark: true,
   background: iconBackground,
 });
-// An Android launcher masks the icon to its own shape, so the maskable copy
-// spends a second cell of padding keeping the P inside the safe circle.
+// Extra padding keeps the P inside Android's mask safe zone.
 const maskableIcon = Logo.render(
   { ...style, padding: 2 },
   { mark: true, background: iconBackground }

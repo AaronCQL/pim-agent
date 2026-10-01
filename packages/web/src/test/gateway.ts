@@ -15,7 +15,7 @@ export const REPLY = "hello from the gateway";
 export const REASONING = "a ping is what was asked for";
 export const TOOL_PROSE = "Pinging now.";
 
-// Load-bearing: shrinking it makes the mid-turn reconnect test project an empty session.
+// The mid-turn reconnect test needs the turn to last this long.
 const TOKEN_DELAY_MS = 15;
 
 const pingSchema = Type.Object({ text: Type.String() });
@@ -293,7 +293,7 @@ export class GatewayHarness {
     return this.gateway.url;
   }
 
-  /** How many messages pi holds behind the turn; the `user_message` ack does not say. */
+  /** Messages pi has queued behind the turn. */
   public pending(sessionId: string): number {
     return (
       this.registry.peek(sessionId)?.agentSession?.pendingMessageCount ?? 0
@@ -306,7 +306,7 @@ export class GatewayHarness {
     await mkdir(join(this.agentDir, "extensions"), { recursive: true });
     this.previousAgentDir = process.env.PI_CODING_AGENT_DIR;
     process.env.PI_CODING_AGENT_DIR = this.agentDir;
-    // A subagent's log derives under this root; never the developer's ~/.pim.
+    // Keep subagent logs out of the developer's ~/.pim.
     this.previousPimHome = process.env.PIM_HOME_DIR;
     process.env.PIM_HOME_DIR = join(this.tmp, "pim");
     this.startModelServer();
@@ -439,14 +439,7 @@ export class GatewayHarness {
   }
 }
 
-/**
- * Cuts a client's socket and leaves the server standing, which is what a client
- * reconnects from — unlike `dropGateway`, which takes every in-flight turn with
- * it, so a client re-attaching mid-turn waits on tokens that are not coming.
- *
- * The socket has no accessor, so this reaches past the type rather than opening
- * one for a test; it throws instead of quietly cutting nothing.
- */
+/** Closes the client's socket but keeps the server and its turns running, unlike `dropGateway`. */
 export function cutSocket(client: WsClient): void {
   const { socket } = client as unknown as { socket?: WebSocket };
   if (socket === undefined) {

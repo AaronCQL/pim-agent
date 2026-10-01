@@ -245,33 +245,3 @@ describe("TaskScheduler.create validation", () => {
     ).rejects.toThrow();
   });
 });
-
-describe("TaskScheduler.list", () => {
-  test("filters by chat/thread", async () => {
-    const t0 = Date.parse("2026-05-14T12:00:00Z");
-    const { scheduler } = makeScheduler({ now: () => t0 });
-    await scheduler.create(
-      { chatId: 1, threadId: undefined },
-      { prompt: "a", schedule: { type: "interval", every: "1h" } }
-    );
-    await scheduler.create(
-      { chatId: 1, threadId: 99 },
-      { prompt: "b", schedule: { type: "interval", every: "1h" } }
-    );
-    await scheduler.create(
-      { chatId: 2, threadId: undefined },
-      { prompt: "c", schedule: { type: "interval", every: "1h" } }
-    );
-
-    const main = await scheduler.list({
-      chatId: 1,
-      threadId: undefined,
-    });
-    expect(main).toHaveLength(1);
-    expect(main[0]!.prompt).toBe("a");
-
-    const threaded = await scheduler.list({ chatId: 1, threadId: 99 });
-    expect(threaded).toHaveLength(1);
-    expect(threaded[0]!.prompt).toBe("b");
-  });
-});

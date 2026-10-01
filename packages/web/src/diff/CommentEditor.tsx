@@ -7,24 +7,21 @@ import { ACTION, QUIET } from "../ui/classes";
 import { Modal } from "../ui/Modal";
 import { UnifiedLines } from "../view/Blocks";
 
-/** One comment: the same card saved or being written into, so it never changes shape. */
+/** Used for both saved and in-progress comments. */
 export function CommentEditor(props: {
   readonly path: string;
   readonly text: string;
-  /** The file has changed since this was written; it still reads, and still sends. */
+  /** The file changed since this was written. */
   readonly stale: boolean;
-  /** Takes the caret as it mounts, which is what a fresh selection is for. */
+  /** Focus on mount. */
   readonly focus?: boolean;
-  /** False where a tap opens the sheet instead, and the caret would raise a keyboard over the card. */
+  /** False on touch devices, where a tap opens the sheet instead. */
   readonly editable: boolean;
   readonly onWrite: (text: string) => void;
-  /** A tap where there is no caret, which is the sheet's way in. */
+  /** Tap on a non-editable card. */
   readonly onOpen?: () => void;
   readonly onClose?: () => void;
-  /**
-   * The caret left a card holding nothing but blanks. Blank is not a remark,
-   * so what it held goes; unlike `onRemove`, the card itself may stay open.
-   */
+  /** Blurred while blank; unlike `onRemove`, the card may stay open. */
   readonly onDiscard?: () => void;
   readonly onRemove: () => void;
 }) {
@@ -37,11 +34,7 @@ export function CommentEditor(props: {
   });
 
   return (
-    <div
-      class={
-        "relative ml-[var(--gutter,0px)] max-w-[calc(100vw-3rem)] bg-indigo-500/10 inset-ring inset-ring-indigo-400/40 focus-within:inset-ring-indigo-400/70 text-indigo-200"
-      }
-    >
+    <div class="relative ml-[var(--gutter,0px)] max-w-[calc(100vw-3rem)] bg-indigo-500/10 inset-ring inset-ring-indigo-400/40 focus-within:inset-ring-indigo-400/70 text-indigo-200">
       <Margin
         path={props.path}
         stale={props.stale}
@@ -87,10 +80,7 @@ function Margin(props: {
   readonly stale: boolean;
   readonly onRemove: () => void;
 }) {
-  // The cross hangs in the gutter it deletes a comment from, centred on the
-  // column the numbers end in: a gutter reads ` 20 − `, so the middle of its
-  // last digit is three and a half characters left of where the card starts,
-  // and half the button's width back from that is the margin that puts it there.
+  // Centres the button on the gutter's last digit, 3.5ch left of the card.
   return (
     <div class="absolute top-[calc(var(--line)-0.75rem)] right-full mr-[calc(3.5ch-0.75rem)] flex flex-col items-end gap-0.5">
       <button
@@ -113,19 +103,12 @@ function Margin(props: {
   );
 }
 
-/**
- * The editor a device with no real pointer gets: over the file rather than in
- * it, so the soft keyboard has the screen and the composer is out of the way.
- * It keeps the buttons the desktop card does without — a sheet dismissed by
- * accident with unsaved thought in it is a different kind of loss from a card
- * that saves every keystroke.
- */
+/** Touch-device editor in a modal, with explicit save/cancel. */
 export function CommentSheet(props: {
   readonly open: boolean;
   readonly path: string;
-  /** The rows being spoken about, so the writer can see them past the keyboard. */
   readonly quote: readonly ToolDiffLine[];
-  /** How wide this file numbers its lines, so the quote's gutter is the diff's. */
+  /** Gutter width of the file's diff, in characters. */
   readonly width: number;
   readonly text: string;
   readonly onCancel: () => void;
@@ -143,8 +126,6 @@ export function CommentSheet(props: {
         </div>
       }
     >
-      {/* Built by the opening and torn down by the closing: the draft starts
-          from what was saved, and the box is new enough to be given the caret. */}
       <Show when={props.open}>
         <SheetBody
           path={props.path}
@@ -171,9 +152,7 @@ function SheetBody(props: {
   const lang = createMemo(() => Languages.fromPath(props.path));
   let box: HTMLTextAreaElement | undefined;
 
-  // The sheet exists to be written in, so it opens with the caret in it and
-  // the soft keyboard up. `autofocus` is what the dialog's own focusing steps
-  // read; the call is for the opening that has already passed them by.
+  // `autofocus` covers the dialog's own focusing; this covers an already-open dialog.
   onSettled(() => {
     box?.focus();
   });

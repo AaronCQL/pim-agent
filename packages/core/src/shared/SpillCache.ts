@@ -5,7 +5,7 @@ import { FsErrors } from "./FsErrors";
 import { Paths } from "./Paths";
 import { Sweeper } from "./Sweeper";
 
-// UUIDv7-named spills and content-addressed ones, which share the TTL.
+// Matches UUIDv7-named and SHA-256-named spills.
 const SPILL_FILE_RE =
   /^[a-z0-9]+-(?:[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[0-9a-f]{64})\.[a-z0-9]+$/;
 
@@ -16,7 +16,7 @@ function dir(): string {
   return join(Paths.pimHomeDir(), "cache");
 }
 
-/** Writes under a caller-chosen name; an existing file of that name is kept, so content-addressed names re-write for free. */
+/** Keeps an existing file of the same name; returns its path either way. Null on failure. */
 async function writeNamed(
   name: string,
   data: string | Uint8Array
@@ -69,7 +69,6 @@ function installSweeper(): void {
 
 export const SpillCache = {
   TTL_MS,
-  SWEEP_INTERVAL_MS,
   dir,
   write,
   writeNamed,

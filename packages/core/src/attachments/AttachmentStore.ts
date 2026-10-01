@@ -3,36 +3,32 @@ import { basename, extname } from "node:path";
 
 import { SafePath } from "../shared/SafePath";
 
-/** A file the store has taken a copy of, under a name it chose. */
 export type StoredFile = {
-  /** Names the file within its scope; what a client sends back on a prompt. */
+  /** Unique within its scope. */
   readonly id: string;
-  /** Absolute path on the server. The only path the agent is ever told. */
+  /** Absolute path on the server. */
   readonly path: string;
   readonly mimeType: string;
 };
 
-/** A file that now lives on the machine the agent runs on. */
 export type StoredAttachment = StoredFile & {
-  /** Present only for images small enough to inline into the prompt. */
+  /** Set only for images up to IMAGE_BYTES_LIMIT. */
   readonly imageBase64: string | undefined;
 };
 
 export type AttachmentInput = {
   readonly bytes: ArrayBuffer;
   readonly mimeType: string;
-  /** Client-supplied filename. Only its basename is ever used. */
+  /** Client-supplied filename; only its extension is used. */
   readonly name?: string;
-  /** Stem of the stored filename; a random one when omitted. */
+  /** Defaults to a random UUID. */
   readonly stem?: string;
-  /** Extension to fall back on when `name` carries none. */
+  /** Used when `name` has no extension. */
   readonly ext?: string;
 };
 
-/** Above this, an image is referenced by path instead of inlined. */
 const IMAGE_BYTES_LIMIT = 4 * 1024 * 1024;
 
-/** Materialises client bytes onto the server's filesystem; the agent is only ever told a server path. */
 export class AttachmentStore {
   public constructor(private readonly root: string) {}
 
@@ -59,12 +55,11 @@ export class AttachmentStore {
     };
   }
 
-  /** Copies a file already on the agent's disk into the store so it can be served. */
   public async storeFile(scope: string, source: string): Promise<StoredFile> {
     const file = Bun.file(source);
     const name = basename(source);
     const ext = extname(name);
-    // Keep `basename(name, ext)`: a regex strip leaves a dotfile like `.bashrc` with no name.
+    // `basename(name, ext)` keeps dotfiles like `.bashrc` named.
     const { id, path } = await this.place(scope, basename(name, ext), ext);
     await Bun.write(path, file);
     return { id, path, mimeType: file.type || "application/octet-stream" };
@@ -87,7 +82,7 @@ export class AttachmentStore {
     return SafePath.contain(this.root, SafePath.safeName(scope));
   }
 
-  /** Where `store` put this id; the id is re-sanitised, so it can never name a file outside its scope. */
+  /** The id is re-sanitised, so it cannot escape its scope. */
   public locate(scope: string, id: string): string {
     return SafePath.contain(this.scopeDir(scope), SafePath.safeName(id));
   }

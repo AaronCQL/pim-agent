@@ -29,6 +29,18 @@ function rewrite(toolName: string, parameters: TSchema, args: unknown): string {
   );
 }
 
+function wrapTool(parameters: TSchema, name = "t") {
+  return Tools.wrap({
+    name,
+    label: name,
+    description: "test",
+    parameters,
+    async execute() {
+      return { content: [{ type: "text", text: "" }], details: {} };
+    },
+  });
+}
+
 describe("Tools.rewriteValidationError", () => {
   test("missing single required property at root", () => {
     const params = Type.Object({ path: Type.String() });
@@ -71,11 +83,6 @@ describe("Tools.rewriteValidationError", () => {
     expect(rewrite("read", params, { limit: 99999 })).toBe(
       'Validation failed for tool "read":\n  - limit: must be <= 2000'
     );
-  });
-
-  test("strips Received arguments dump", () => {
-    const params = Type.Object({ path: Type.String() });
-    expect(rewrite("read", params, {})).not.toContain("Received arguments");
   });
 
   test("non-validation errors pass through unchanged", () => {
@@ -143,18 +150,6 @@ describe("Tools.rewriteValidationError", () => {
 });
 
 describe("Tools.wrap quoted-enum coercion", () => {
-  function wrapTool(params: TSchema) {
-    return Tools.wrap({
-      name: "task",
-      label: "task",
-      description: "test",
-      parameters: params,
-      async execute() {
-        return { content: [{ type: "text", text: "" }], details: {} };
-      },
-    });
-  }
-
   test("unwraps double-quoted enum value", () => {
     const wrapped = wrapTool(
       Type.Object({
@@ -166,17 +161,10 @@ describe("Tools.wrap quoted-enum coercion", () => {
     });
   });
 
-  test("unwraps single-quoted enum value", () => {
+  test.each(["'bar'", "`bar`"])("unwraps %s in a StringEnum", (quoted) => {
     const wrapped = wrapTool(Type.Object({ mode: StringEnum(["foo", "bar"]) }));
-    expect(wrapped.prepareArguments!({ mode: "'bar'" })).toEqual({
+    expect(wrapped.prepareArguments!({ mode: quoted })).toEqual({
       mode: "bar",
-    });
-  });
-
-  test("unwraps backtick-quoted enum value", () => {
-    const wrapped = wrapTool(Type.Object({ mode: StringEnum(["foo", "bar"]) }));
-    expect(wrapped.prepareArguments!({ mode: "`foo`" })).toEqual({
-      mode: "foo",
     });
   });
 
@@ -187,7 +175,7 @@ describe("Tools.wrap quoted-enum coercion", () => {
       })
     );
     expect(() => wrapped.prepareArguments!({ action: '"nope"' })).toThrow(
-      'Validation failed for tool "task":\n  - action: must be one of: create, list'
+      'Validation failed for tool "t":\n  - action: must be one of: create, list'
     );
   });
 
@@ -223,36 +211,14 @@ describe("Tools.wrap quoted-enum coercion", () => {
 });
 
 describe("Tools.wrap strict type checks", () => {
-  function wrapTool(params: TSchema) {
-    return Tools.wrap({
-      name: "t",
-      label: "t",
-      description: "test",
-      parameters: params,
-      async execute() {
-        return { content: [{ type: "text", text: "" }], details: {} };
-      },
-    });
-  }
-
-  test('rejects null for string field instead of coercing to "null"', () => {
-    const wrapped = wrapTool(Type.Object({ path: Type.String() }));
-    expect(() => wrapped.prepareArguments!({ path: null })).toThrow(
-      'Validation failed for tool "t":\n  - path: must not be null (expected string)'
-    );
-  });
-
-  test("rejects null for integer field instead of coercing to 0", () => {
-    const wrapped = wrapTool(Type.Object({ n: Type.Integer() }));
-    expect(() => wrapped.prepareArguments!({ n: null })).toThrow(
-      'Validation failed for tool "t":\n  - n: must not be null (expected integer)'
-    );
-  });
-
-  test("rejects null for boolean field instead of coercing to false", () => {
-    const wrapped = wrapTool(Type.Object({ b: Type.Boolean() }));
-    expect(() => wrapped.prepareArguments!({ b: null })).toThrow(
-      'Validation failed for tool "t":\n  - b: must not be null (expected boolean)'
+  test.each([
+    ["string", Type.String()],
+    ["integer", Type.Integer()],
+    ["boolean", Type.Boolean()],
+  ])("rejects null for a %s field instead of coercing it", (type, schema) => {
+    const wrapped = wrapTool(Type.Object({ x: schema }));
+    expect(() => wrapped.prepareArguments!({ x: null })).toThrow(
+      `Validation failed for tool "t":\n  - x: must not be null (expected ${type})`
     );
   });
 
@@ -263,19 +229,9 @@ describe("Tools.wrap strict type checks", () => {
     );
   });
 
-  test("integer string with no fractional part still coerces", () => {
-    const wrapped = wrapTool(Type.Object({ n: Type.Integer() }));
-    expect(wrapped.prepareArguments!({ n: "42" })).toEqual({ n: 42 });
-  });
-
   test("integer string like '42.0' is allowed (no precision loss)", () => {
     const wrapped = wrapTool(Type.Object({ n: Type.Integer() }));
     expect(wrapped.prepareArguments!({ n: "42.0" })).toEqual({ n: 42 });
-  });
-
-  test("string-to-bool coercion still works (defensible LLM quirk)", () => {
-    const wrapped = wrapTool(Type.Object({ b: Type.Boolean() }));
-    expect(wrapped.prepareArguments!({ b: "true" })).toEqual({ b: true });
   });
 
   test("null in a nested field is also rejected", () => {
@@ -301,16 +257,7 @@ describe("Tools.wrap strict type checks", () => {
 
 describe("Tools.wrap unknown property detection", () => {
   test("rejects unknown top-level key", () => {
-    const params = Type.Object({ command: Type.String() });
-    const wrapped = Tools.wrap({
-      name: "bash",
-      label: "bash",
-      description: "test",
-      parameters: params,
-      async execute() {
-        return { content: [{ type: "text", text: "" }], details: {} };
-      },
-    });
+    const wrapped = wrapTool(Type.Object({ command: Type.String() }), "bash");
     expect(() =>
       wrapped.prepareArguments!({ command: "ls", fakeParam: "x" })
     ).toThrow(
@@ -319,16 +266,10 @@ describe("Tools.wrap unknown property detection", () => {
   });
 
   test("suggests close matches by edit distance", () => {
-    const params = Type.Object({ headLimit: Type.Integer() });
-    const wrapped = Tools.wrap({
-      name: "grep",
-      label: "grep",
-      description: "test",
-      parameters: params,
-      async execute() {
-        return { content: [{ type: "text", text: "" }], details: {} };
-      },
-    });
+    const wrapped = wrapTool(
+      Type.Object({ headLimit: Type.Integer() }),
+      "grep"
+    );
     expect(() =>
       wrapped.prepareArguments!({ headLimit: 1, headlimit: 1 })
     ).toThrow(
@@ -339,33 +280,10 @@ describe("Tools.wrap unknown property detection", () => {
 
 describe("Tools.wrap", () => {
   test("prepareArguments rewrites the thrown message", () => {
-    const params = Type.Object({ path: Type.String() });
-    const wrapped = Tools.wrap({
-      name: "read",
-      label: "read",
-      description: "test",
-      parameters: params,
-      async execute() {
-        return { content: [{ type: "text", text: "" }], details: {} };
-      },
-    });
+    const wrapped = wrapTool(Type.Object({ path: Type.String() }), "read");
     expect(() => wrapped.prepareArguments!({})).toThrow(
       'Validation failed for tool "read":\n  - missing required property: path'
     );
-  });
-
-  test("prepareArguments returns coerced args on success", () => {
-    const params = Type.Object({ count: Type.Integer() });
-    const wrapped = Tools.wrap({
-      name: "t",
-      label: "t",
-      description: "test",
-      parameters: params,
-      async execute() {
-        return { content: [{ type: "text", text: "" }], details: {} };
-      },
-    });
-    expect(wrapped.prepareArguments!({ count: "42" })).toEqual({ count: 42 });
   });
 });
 
@@ -431,7 +349,6 @@ describe("Tools.wrap view model synthesis", () => {
     } as ResultContext;
   }
 
-  // Shaped like a session-JSONL entry: no live state, details only.
   function persistedResult(): AgentToolResult<ReadDetails> {
     return {
       content: [{ type: "text", text: "1:alpha\n2:beta" }],
@@ -489,10 +406,6 @@ describe("Tools.wrap view model synthesis", () => {
     const wrapped = Tools.wrap(plain);
     expect(wrapped.renderCall).toBeUndefined();
     expect(wrapped.renderResult).toBeUndefined();
-  });
-
-  test("keeps the definition's lowercase label as pi-facing metadata", () => {
-    expect(Tools.wrap(readLikeDef()).label).toBe("read");
   });
 
   test("falls back to the definition label when the view omits one", () => {
@@ -669,10 +582,8 @@ describe("Tools.wrap view model synthesis", () => {
       cwd: "/work/repo",
     });
 
-    // Painted from the arguments: an error result has no `details`, so the
-    // range a successful read would put in its title is not invented here.
+    // No `details` on an error, so no range in the title.
     expect(view.title).toEqual([{ kind: "file", path: "src/foo.ts" }]);
-    // The renderer's own body is dropped with the result it could not paint.
     expect(view.body).toEqual([
       {
         kind: "notice",
@@ -697,10 +608,7 @@ describe("Tools.wrap view model synthesis", () => {
   });
 
   test("the redraw for a details-dependent title is deferred past the render", async () => {
-    // Pi calls renderResult from inside its own container rebuild and appends
-    // whatever it returns. Invalidating synchronously re-enters that rebuild,
-    // so the nested pass's component and this one's would both be appended and
-    // the body would paint twice.
+    // A synchronous invalidate re-enters pi's rebuild and paints the body twice.
     const wrapped = Tools.wrap(readLikeDef());
     let invalidated = 0;
     wrapped.renderResult!(

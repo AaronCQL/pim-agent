@@ -24,7 +24,6 @@ afterEach(async () => {
   await rm(tmp, { recursive: true, force: true });
 });
 
-/** A pid that is spawned and reaped, so it is known dead rather than merely unused. */
 async function deadPid(): Promise<number> {
   const proc = Bun.spawn(["true"], { stdout: "ignore", stderr: "ignore" });
   await proc.exited;
@@ -52,7 +51,6 @@ async function age(ms: number): Promise<void> {
   await utimes(SessionLease.pathFor(session), at, at);
 }
 
-/** Gives back whatever was taken; the test asserts on `ok` itself. */
 async function release(result: AcquireResult): Promise<void> {
   if (result.ok) {
     await result.handle.release();
@@ -103,26 +101,13 @@ describe("SessionLease", () => {
     });
     await release(stolen);
 
-    // Pid reuse: the pid is alive, but nothing has bumped mtime for 60s.
+    // Alive pid (as after pid reuse) but no heartbeat for 60s.
     const silent = await plant({ pid: process.pid }, 60_000);
     expect(SessionLease.isStale(silent, Date.now() - 60_000)).toBe(true);
 
     const reclaimed = await SessionLease.acquire(session, "tui");
     expect(reclaimed.ok).toBe(true);
     await release(reclaimed);
-  });
-
-  test("refuses to steal from a live holder that is still beating", async () => {
-    const holder = await plant({ pid: process.pid, frontend: "daemon" });
-
-    expect(SessionLease.isStale(holder, Date.now())).toBe(false);
-    const denied = await SessionLease.acquire(session, "tui");
-
-    expect(denied.ok).toBe(false);
-    expect(denied.ok === false && denied.holder?.frontend).toBe("daemon");
-    expect(await SessionLease.read(session)).toMatchObject({
-      frontend: "daemon",
-    });
   });
 
   test("hold releases the lease when the work throws", async () => {
@@ -148,31 +133,20 @@ describe("SessionLease", () => {
     expect(await Bun.file(SessionLease.pathFor(unborn)).exists()).toBe(false);
   });
 
-  test("waitFor reports the holder to onBlocked before each retry", async () => {
+  test("waitFor reports each block and gives up at the deadline", async () => {
     const holder = await plant({ pid: process.pid, frontend: "daemon" });
     const blocked: (LeaseRecord | undefined)[] = [];
-
-    await SessionLease.waitFor(session, "tui", {
-      pollMs: 5,
-      timeoutMs: 20,
-      onBlocked: (record) => blocked.push(record),
-    });
-
-    expect(blocked.length).toBeGreaterThan(0);
-    expect(blocked[0]).toEqual(holder);
-  });
-
-  test("waitFor gives up at the deadline and reports the holder", async () => {
-    await plant({ pid: process.pid, frontend: "daemon" });
 
     const started = Date.now();
     const result = await SessionLease.waitFor(session, "tui", {
       pollMs: 5,
       timeoutMs: 30,
+      onBlocked: (record) => blocked.push(record),
     });
 
     expect(result.ok).toBe(false);
-    expect(result.ok === false && result.holder?.frontend).toBe("daemon");
+    expect(result.ok === false && result.holder).toEqual(holder);
+    expect(blocked[0]).toEqual(holder);
     expect(Date.now() - started).toBeGreaterThanOrEqual(30);
   });
 

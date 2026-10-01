@@ -1,23 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import type { GitState } from "#core/shared/Git";
 import { GIT_DIRTY_ICON } from "./powerline";
 import { renderFooterLine } from "./segments";
 
-function stripAnsi(s: string): string {
-  let out = "";
-  for (let i = 0; i < s.length; i++) {
-    if (s.charCodeAt(i) === 27 && s[i + 1] === "[") {
-      i += 2;
-      while (i < s.length && s[i] !== "m") {
-        i++;
-      }
-    } else {
-      out += s[i]!;
-    }
-  }
-  return out;
-}
+const NO_GIT: GitState = {
+  branch: null,
+  dirtyCount: 0,
+  ahead: 0,
+  behind: 0,
+  revision: "",
+};
 
 function createCtx(
   branch: readonly unknown[] = [],
@@ -36,153 +30,100 @@ function createCtx(
       contextWindow: 200_000,
       percent: 50,
     }),
-    model: options.model ?? {
-      id: "gpt-5.5",
-      reasoning: true,
-    },
+    model: options.model ?? { id: "gpt-5.5", reasoning: true },
   } as unknown as ExtensionContext;
+}
+
+function render(
+  width: number,
+  ctx: ExtensionContext,
+  git: Partial<GitState> = {},
+  cost = 0
+): string {
+  return Bun.stripANSI(
+    renderFooterLine(width, ctx, { ...NO_GIT, ...git }, cost)
+  );
+}
+
+function level(...levels: string[]): unknown[] {
+  return levels.map((thinkingLevel) => ({
+    type: "thinking_level_change",
+    thinkingLevel,
+  }));
 }
 
 describe("renderFooterLine", () => {
   test("does not exceed narrow terminal widths", () => {
     const ctx = createCtx();
-    const widths = [0, 1, 2, 3, 4, 8, 10, 12, 16, 20, 40];
+    const git = {
+      branch: "feat/some-very-long-branch",
+      dirtyCount: 1,
+      ahead: 12,
+      behind: 3,
+    };
 
-    for (const width of widths) {
-      const line = renderFooterLine(
-        width,
-        ctx,
-        {
-          branch: "feat/some-very-long-branch",
-          dirtyCount: 1,
-          ahead: 12,
-          behind: 3,
-          revision: "",
-        },
-        12.34
-      );
-
+    for (const width of [0, 1, 2, 3, 4, 8, 10, 12, 16, 20, 40]) {
+      const line = renderFooterLine(width, ctx, { ...NO_GIT, ...git }, 12.34);
       expect(visibleWidth(line)).toBeLessThanOrEqual(width);
     }
   });
 
   test("drops lower-priority segments as width tightens", () => {
-    const ctx = createCtx(
-      [{ type: "thinking_level_change", thinkingLevel: "medium" }],
-      { cwd: "/x/proj" }
-    );
-    const git = {
-      branch: "main",
-      dirtyCount: 1,
-      ahead: 2,
-      behind: 0,
-      revision: "",
-    };
+    const ctx = createCtx(level("medium"), { cwd: "/x/proj" });
+    const git = { branch: "main", dirtyCount: 1, ahead: 2 };
+    const at = (width: number) => render(width, ctx, git, 1.23);
 
-    expect(stripAnsi(renderFooterLine(200, ctx, git, 1.23))).toContain(
-      "gpt-5.5"
-    );
-    expect(stripAnsi(renderFooterLine(200, ctx, git, 1.23))).toContain("$1.23");
-    expect(stripAnsi(renderFooterLine(200, ctx, git, 1.23))).toContain("main");
-    expect(stripAnsi(renderFooterLine(200, ctx, git, 1.23))).toContain(
-      "50.0%/200K"
-    );
+    const full = at(200);
+    for (const part of ["gpt-5.5", "$1.23", "main", "50.0%/200K"]) {
+      expect(full).toContain(part);
+    }
 
-    const withoutModel = stripAnsi(renderFooterLine(50, ctx, git, 1.23));
+    const withoutModel = at(50);
     expect(withoutModel).not.toContain("gpt-5.5");
     expect(withoutModel).toContain("$1.23");
     expect(withoutModel).toContain("main");
     expect(withoutModel).toContain("50.0%/200K");
 
-    const withoutCost = stripAnsi(renderFooterLine(40, ctx, git, 1.23));
+    const withoutCost = at(40);
     expect(withoutCost).not.toContain("$1.23");
     expect(withoutCost).toContain("main");
     expect(withoutCost).toContain("50.0%/200K");
 
-    const withoutGit = stripAnsi(renderFooterLine(35, ctx, git, 1.23));
+    const withoutGit = at(35);
     expect(withoutGit).not.toContain("main");
     expect(withoutGit).toContain("/x/proj");
     expect(withoutGit).toContain("50.0%/200K");
 
-    const cwdOnly = stripAnsi(renderFooterLine(20, ctx, git, 1.23));
+    const cwdOnly = at(20);
     expect(cwdOnly).toContain("/x/proj");
     expect(cwdOnly).not.toContain("50.0%/200K");
   });
 
   test("renders latest reasoning level for reasoning models", () => {
-    const medium = stripAnsi(
-      renderFooterLine(
-        120,
-        createCtx([{ type: "thinking_level_change", thinkingLevel: "medium" }]),
-        { branch: null, dirtyCount: 0, ahead: 0, behind: 0, revision: "" },
-        0
-      )
-    );
+    const medium = render(120, createCtx(level("medium")));
     expect(medium).toContain("gpt-5.5");
     expect(medium).toContain("med");
 
-    const latestWins = stripAnsi(
-      renderFooterLine(
-        120,
-        createCtx([
-          { type: "thinking_level_change", thinkingLevel: "minimal" },
-          { type: "thinking_level_change", thinkingLevel: "xhigh" },
-        ]),
-        { branch: null, dirtyCount: 0, ahead: 0, behind: 0, revision: "" },
-        0
-      )
-    );
+    const latestWins = render(120, createCtx(level("minimal", "xhigh")));
     expect(latestWins).toContain("xhigh");
     expect(latestWins).not.toContain("min");
 
-    const noLevel = stripAnsi(
-      renderFooterLine(
-        120,
-        createCtx(),
-        { branch: null, dirtyCount: 0, ahead: 0, behind: 0, revision: "" },
-        0
-      )
-    );
-    expect(noLevel).toContain("off");
+    expect(render(120, createCtx())).toContain("off");
   });
 
-  test("counts the dirt rather than merely flagging it", () => {
-    const dirty = stripAnsi(
-      renderFooterLine(
-        120,
-        createCtx(),
-        { branch: "main", dirtyCount: 3, ahead: 0, behind: 0, revision: "" },
-        0
-      )
-    );
+  test("shows the dirty count only when the tree is dirty", () => {
+    const dirty = render(120, createCtx(), { branch: "main", dirtyCount: 3 });
     expect(dirty).toContain(`${GIT_DIRTY_ICON}3`);
 
-    // A clean tree says nothing rather than saying zero.
-    const clean = stripAnsi(
-      renderFooterLine(
-        120,
-        createCtx(),
-        { branch: "main", dirtyCount: 0, ahead: 0, behind: 0, revision: "" },
-        0
-      )
-    );
+    const clean = render(120, createCtx(), { branch: "main" });
     expect(clean).toContain("main");
     expect(clean).not.toContain(GIT_DIRTY_ICON);
   });
 
   test("omits reasoning level for non-reasoning models", () => {
-    const line = stripAnsi(
-      renderFooterLine(
-        120,
-        createCtx(
-          [{ type: "thinking_level_change", thinkingLevel: "medium" }],
-          {
-            model: { id: "gpt-5.5" },
-          }
-        ),
-        { branch: null, dirtyCount: 0, ahead: 0, behind: 0, revision: "" },
-        0
-      )
+    const line = render(
+      120,
+      createCtx(level("medium"), { model: { id: "gpt-5.5" } })
     );
 
     expect(line).toContain("gpt-5.5");

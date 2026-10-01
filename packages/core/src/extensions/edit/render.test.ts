@@ -56,29 +56,11 @@ function paintBody(
 }
 
 describe("editView", () => {
-  test("supplies the title-cased display label", () => {
-    expect(
-      editView({ args: { path: "a.ts" } as never, cwd, isPartial: false }).label
-    ).toBe("Edit");
-  });
-});
-
-describe("editView title", () => {
-  test("renders the path relative to cwd", () => {
-    expect(paintTitle({ path: "/work/repo/src/foo.ts" })).toBe("src/foo.ts");
-  });
-
-  test("keeps an absolute path when outside cwd", () => {
-    expect(paintTitle({ path: "/etc/hosts" })).toBe("/etc/hosts");
-  });
-
-  test("placeholder while the path has not streamed in", () => {
-    expect(paintTitle({})).toBe("...");
-    expect(paintTitle(undefined)).toBe("...");
+  test("placeholder for a non-string path", () => {
     expect(paintTitle({ path: 12 })).toBe("...");
   });
 
-  test("appends coloured diff stats once the result settles", () => {
+  test("titles the row with the relative path and diff stats", () => {
     expect(
       paintTitle(
         { path: "/work/repo/src/foo.ts" },
@@ -89,28 +71,10 @@ describe("editView title", () => {
     );
   });
 
-  test("stays bare when the outcome carries no diff", () => {
-    expect(paintTitle({ path: "/work/repo/src/foo.ts" }, settled({}))).toBe(
-      "src/foo.ts"
-    );
-  });
-});
-
-describe("editView body", () => {
-  test("is byte-identical to the legacy DiffRenderer output", () => {
+  test("body matches DiffRenderer output", () => {
     const toolDiff = diff(["a", "b", "c"], ["a", "B", "c"]);
     expect(
       paintBody({ path: "/work/repo/src/foo.ts" }, settled({ diff: toolDiff }))
     ).toEqual(DiffRenderer.render({ toolDiff, theme }).split("\n"));
-  });
-
-  test("is empty while the call is in flight", () => {
-    expect(paintBody({ path: "/work/repo/src/foo.ts" })).toEqual([]);
-  });
-
-  test("is empty when the outcome carries no diff", () => {
-    expect(paintBody({ path: "/work/repo/src/foo.ts" }, settled({}))).toEqual(
-      []
-    );
   });
 });

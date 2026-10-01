@@ -25,13 +25,13 @@ export type ToolCallView = {
 
 /** A file a user message carried; `url` is server-relative. */
 export type AttachmentView = {
-  /** What to call it on screen; never a path. */
+  /** Display name; never a path. */
   readonly name: string;
   readonly url: string;
   readonly isImage: boolean;
 };
 
-/** Projected from pi's session JSONL; `seq` is the line ordinal, so one line must emit at most one durable event and a client resumes at `seq > n`. */
+/** Projected from pi's session JSONL. `seq` is the line ordinal, so each line emits at most one durable event. */
 export type DurableEvent =
   | {
       readonly seq: number;
@@ -39,13 +39,13 @@ export type DurableEvent =
       readonly messageId: string;
       readonly role: "user" | "assistant";
       readonly text: string;
-      /** When pi appended the entry, in epoch ms. */
+      /** Epoch ms. */
       readonly timestamp: number;
       readonly thinking?: string;
-      /** Only ever set on a user message, which may carry nothing else. */
+      /** User messages only. */
       readonly attachments?: readonly AttachmentView[];
       readonly toolCalls?: readonly ToolCallView[];
-      /** The model call failed, with what it said; only ever set on an assistant message. */
+      /** Model call error; assistant messages only. */
       readonly error?: string;
     }
   | {
@@ -63,7 +63,7 @@ export type DurableEvent =
       readonly text: string;
     };
 
-/** Progress of the one `reload` this server can have in flight. */
+/** Progress of a `reload`. */
 export type UpdateStateEvent =
   | {
       readonly type: "update_state";
@@ -77,7 +77,7 @@ export type UpdateStateEvent =
       readonly to: string;
       readonly skipped: readonly UpdateSkip[];
     }
-  /** New code is on disk but nothing will restart this process: no supervisor owns it. */
+  /** Updated on disk, but no supervisor will restart this process. */
   | {
       readonly type: "update_state";
       readonly phase: "stranded";
@@ -91,26 +91,26 @@ export type UpdateStateEvent =
       readonly error: string;
     };
 
-/** Unsequenced live state, never replayed by ordinal; live `tool_call`s reappear in a durable message's `toolCalls`, so dedupe on `callId`. */
+/** Unsequenced live state. Live `tool_call`s reappear in a durable message's `toolCalls`, so dedupe on `callId`. */
 export type EphemeralEvent =
   | {
       readonly type: "attached";
       readonly sessionId: string;
       readonly cwd: string;
-      /** Highest durable `seq` at attach time; replay follows immediately. */
+      /** Highest durable `seq` at attach time. */
       readonly head: number;
-      /** The server's build; a client built from another one is stale and should reload. */
+      /** A client built from another version should reload. */
       readonly pimVersion: string;
       readonly piVersion: string;
     }
-  /** Several events in one frame; apply them in order, each as if it had arrived alone. */
+  /** Apply in order, as if each arrived alone. */
   | { readonly type: "replay"; readonly events: readonly StreamEvent[] }
   | {
       readonly type: "message_start";
       readonly role: "assistant";
       readonly messageId: string;
     }
-  /** Drop the live message with this id; the durable `message` superseding it was sent immediately before. */
+  /** Drop this live message; its durable `message` was sent just before. */
   | { readonly type: "message_retire"; readonly messageId: string }
   | {
       readonly type: "text_delta";
@@ -134,37 +134,36 @@ export type EphemeralEvent =
       readonly callId: string;
       readonly view: ToolView;
     }
-  /** Settled view until pi appends the `tool_result` for the same `callId`, which supersedes it. */
+  /** Superseded by the `tool_result` with the same `callId`. */
   | {
       readonly type: "tool_end";
       readonly callId: string;
       readonly view: ToolView;
       readonly isError: boolean;
     }
-  /** Every picker answer a client holds for this cwd is stale; drop the cache and re-query. */
+  /** Cached picker answers for this cwd are stale. */
   | {
       readonly type: "picker_invalidate";
       readonly scope: "files" | "commands" | "all";
       readonly cwd: string;
     }
-  /** A child's events, applied against the child's transcript; sent only to the connection that asked, and never resumed. */
+  /** Sent only to the watching connection; never resumed. */
   | {
       readonly type: "subagent_events";
-      /** The parent tool call the watch was opened on. */
       readonly callId: string;
       readonly events: readonly StreamEvent[];
     }
   | { readonly type: "turn_end"; readonly stats: TurnStats }
-  /** Something an extension said, in Markdown; shown and then forgotten, never written to the session. */
+  /** Markdown from an extension; not written to the session. */
   | {
       readonly type: "ui_notice";
       readonly id: string;
       readonly severity: NoticeSeverity;
       readonly text: string;
-      /** The command being dispatched when it was said, like `/login`; absent means nobody asked for it. */
+      /** The command being dispatched, like `/login`. */
       readonly command?: string;
     }
-  /** An extension is waiting on a human; the first `ui_response` wins and the rest are refused. */
+  /** The first `ui_response` wins. */
   | {
       readonly type: "ui_request";
       readonly requestId: string;
@@ -173,48 +172,43 @@ export type EphemeralEvent =
       readonly message?: string;
       readonly options?: readonly string[];
       readonly placeholder?: string;
-      /** The command that asked, like `/login`; absent where an extension asked unprompted. */
+      /** The command that asked, like `/login`. */
       readonly command?: string;
     }
-  /** The request is settled, by whoever answered it or by the server answering for them; drop its control. */
   | { readonly type: "ui_request_done"; readonly requestId: string }
-  /** Sent to every connection, not just those attached; only sessions this server holds open are reported. */
+  /** Broadcast; only for sessions this server holds open. */
   | {
       readonly type: "session_activity";
       readonly sessionId: string;
       readonly status: SessionStatus;
     }
-  /** Sent to every connection; the read cursor is one per session, not one per client. */
+  /** Broadcast; the read cursor is per session, not per client. */
   | { readonly type: "session_read"; readonly sessionId: string }
-  /** Sent to every connection: one session's name or overrides changed, so a listing a client holds can be patched in place. */
+  /** Broadcast patch: only changed fields are set. */
   | {
       readonly type: "session_meta";
       readonly sessionId: string;
-      /** The session's own name, `null` once it is cleared. */
+      /** `null` once cleared. */
       readonly name?: string | null;
       readonly archived?: boolean;
       readonly unread?: boolean;
     }
-  /**
-   * Sent to every connection; keyed by absolute working directory, not by
-   * session. A patch like `session_meta`: only what changed is said, so a
-   * fold carries no claim about the pin beside it.
-   */
+  /** Broadcast patch: only changed fields are set. */
   | {
       readonly type: "project_meta";
       readonly cwd: string;
       readonly pinned?: boolean;
       readonly expanded?: boolean;
-      /** What the project is called in a listing, `null` once it is cleared. */
+      /** `null` once cleared. */
       readonly label?: string | null;
     }
-  /** Sent to every connection: the pinned projects, in the order they are shown. */
+  /** Broadcast. */
   | { readonly type: "pins_changed"; readonly order: readonly string[] }
-  /** Sent to every connection: the sessions on disk changed, so any listing a client holds is stale. */
+  /** Broadcast. */
   | { readonly type: "sessions_changed" }
-  /** Sent to every connection: an extension was switched, so any roster a client holds is stale. */
+  /** Broadcast. */
   | { readonly type: "extensions_changed" }
-  /** Sent to every connection; the restart it ends in drops every socket. */
+  /** Broadcast. */
   | UpdateStateEvent
   | {
       readonly type: "session_state";
@@ -227,155 +221,138 @@ export type EphemeralEvent =
       readonly status: SessionStatus;
       /** False while another process holds this session's turn lease. */
       readonly writable: boolean;
-      /** A session in the same working directory is mid-turn, so nothing may move the repository under it. */
+      /** A session in the same cwd is mid-turn, so git actions are refused. */
       readonly repoBusy?: boolean;
-      /** Who holds it; absent when nothing does, or when their record is torn. */
+      /** Absent when unheld or the lease record is corrupt. */
       readonly heldBy?: {
         readonly frontend: LeaseFrontend;
         readonly pid: number;
       };
       readonly tps?: number;
-      /** Elapsed run time of the turn in flight, by the server's clock; absent when idle. */
+      /** Absent when idle. */
       readonly turnElapsedMs?: number;
       /** Context filled, 0–100. Absent until a turn has reported usage. */
       readonly contextPercent?: number;
       readonly contextWindow?: number;
-      /** The cwd's git branch, absent outside a repository. */
+      /** Absent outside a git repository. */
       readonly branch?: string;
-      /** Paths git reports as changed; zero is a clean tree. */
       readonly dirtyCount?: number;
       readonly ahead?: number;
       readonly behind?: number;
-      /** Changes whenever the working copy does, content of a dirty file included. */
+      /** Changes whenever the working copy does, including dirty file content. */
       readonly repoRevision?: string;
     }
   /** A frame the server could not attribute to any command. */
   | { readonly type: "error"; readonly message: string };
 
-/** One row of the session catalogue. */
 export type SessionSummaryView = {
   readonly sessionId: string;
   readonly cwd: string;
   readonly createdAt: number;
-  /** End of the last completed turn and the catalogue's sort key, never the file mtime; falls back to `createdAt`. */
+  /** End of the last completed turn (not file mtime); falls back to `createdAt`. Sort key. */
   readonly settledAt: number;
-  /** The session's first user message, trimmed; absent when it has none. */
+  /** The first user message, trimmed. */
   readonly title?: string;
-  /** True when `title` is a name somebody wrote, rather than the first message. */
+  /** `title` is a user-set name, not the first message. */
   readonly named?: true;
   readonly archived?: true;
-  /** Has answered since anything last read it; absent means it has not. */
   readonly unread?: boolean;
-  /** Absent when idle, and for a session this server does not hold open. */
+  /** Absent when idle or not held open by this server. */
   readonly status?: SessionStatus;
 };
 
-/** One working directory the catalogue holds sessions for, counted before any per-project cut. */
 export type ProjectView = {
   readonly cwd: string;
-  /** Every session in it the listing's scope allows, including the ones the cut dropped. */
+  /** Counted before the per-project cut. */
   readonly count: number;
   readonly pinned?: true;
-  /** Where it sorts among the pinned, 0 first; absent unless it is pinned. */
+  /** 0 first; only set when pinned. */
   readonly pinRank?: number;
-  /** The sidebar group stands unfolded; absent is folded. */
   readonly expanded?: true;
-  /** What to call it instead of its base name; absent when it goes by the directory. */
+  /** Overrides the directory's base name. */
   readonly label?: string;
 };
 
-/**
- * One session a search matched. Deliberately not a `SessionSummaryView`: what
- * a ranked list needs is why the row matched, and `unread` is the sidebar's
- * triage while `status` resolves itself the moment the session opens.
- */
 export type SearchHitView = {
   readonly sessionId: string;
   readonly cwd: string;
-  /** Its name if it has one, else the clamped opening message; the digest's, so it agrees with the sidebar's. */
+  /** The session name, else the clamped first message. */
   readonly title?: string;
-  /** Offsets into the clamped `title`, empty when the title did not match. */
+  /** Offsets into `title`. */
   readonly titleRanges: readonly SearchRange[];
-  /** The session's opening ask, for a row whose name is all that matched and so has no snippet to show. */
+  /** The first message, for rows where only the name matched. */
   readonly opening?: string;
-  /** End of the last completed turn and the row's clock, never the file mtime; falls back to when the session started, as the sidebar's does. */
+  /** As in `SessionSummaryView`. */
   readonly settledAt: number;
-  /** Searched and found anyway: the badge that makes "archived are in scope" honest. */
   readonly archived?: true;
-  /** What matched, in the words it was said in, each with its own ranges. */
   readonly snippets: readonly SearchSnippet[];
-  /** Matching messages in this session, before the snippet cut. */
+  /** Matching messages, before the snippet cut. */
   readonly total: number;
 };
 
-/** One answer to `list_sessions`: the page of rows, and every directory that had one, counted whole. */
 export type SessionListing = {
   readonly sessions: readonly SessionSummaryView[];
-  /** Counted before the per-project cut, so a group can say what a page of it leaves out. */
   readonly projects: readonly ProjectView[];
 };
 
-/** One answer to `search_sessions`: the ranked rows, the words no session held, and the scope it read. */
 export type SessionSearch = {
   readonly hits: readonly SearchHitView[];
   readonly dropped: readonly string[];
-  /** Sessions searched, whole: what the empty state and the result footer say out loud. */
+  /** Sessions searched. */
   readonly scanned: number;
 };
 
-/** One model the server can be switched to, for the composer's model menu. */
 export type ModelView = {
   readonly id: string;
   readonly label: string;
-  /** The provider half of `id`, so a client can tag a row without parsing it. */
+  /** The provider half of `id`. */
   readonly provider: string;
 };
 
-/** Answer to one `Command`, correlated by its `id`. Never sequenced. */
+/** Answer to one `Command`, correlated by `id`. */
 export type ResponseEvent = {
   readonly type: "response";
   readonly id: string;
   readonly success: boolean;
   readonly error?: string;
-  /** Ranked rows, for the commands that answer with data (`pick_*`). */
+  /** For `pick_*`. */
   readonly items?: readonly PickerItem[];
-  /** The catalogue, for `list_sessions`. */
+  /** For `list_sessions`. */
   readonly sessions?: readonly SessionSummaryView[];
-  /** The directories those sessions came from, for `list_sessions`. */
+  /** For `list_sessions`. */
   readonly projects?: readonly ProjectView[];
-  /** The ranked sessions, for `search_sessions`. */
+  /** For `search_sessions`. */
   readonly hits?: readonly SearchHitView[];
-  /** Query words no session held, dropped so the rest could match, for `search_sessions`. */
+  /** Query words no session held, for `search_sessions`. */
   readonly dropped?: readonly string[];
-  /** Sessions the query actually searched, for `search_sessions`. */
+  /** For `search_sessions`. */
   readonly scanned?: number;
-  /** The model catalogue, for `list_models`. */
+  /** For `list_models`. */
   readonly models?: readonly ModelView[];
-  /** What the *current* model supports, on the same answer. */
+  /** The current model's levels, for `list_models`. */
   readonly thinkingLevels?: readonly string[];
-  /** The extension roster, for `list_extensions`. */
+  /** For `list_extensions`. */
   readonly extensions?: readonly ExtensionEntry[];
-  /** One directory's subdirectories, for `list_dirs`. */
+  /** For `list_dirs`. */
   readonly directory?: DirectoryListing;
-  /** The cwd's local branches, for `list_branches`. */
+  /** For `list_branches`. */
   readonly branches?: readonly GitBranch[];
-  /** The commit that landed, for `commit`. */
+  /** For `commit`. */
   readonly commit?: Pick<Extract<CommitResult, { readonly ok: true }>, "sha">;
-  /** The change list, for `list_changes`. */
+  /** For `list_changes`. */
   readonly changes?: ChangeList;
-  /** One file's hunks, for `file_diff`. */
+  /** For `file_diff`. */
   readonly fileDiff?: FileDiff;
-  /** The lines behind one gap, for `read_lines`. */
+  /** For `read_lines`. */
   readonly fileLines?: FileLines;
-  /** For `cancel` and `dequeue`: queued messages pi gave back, now owned by the client that asked. */
+  /** For `cancel` and `dequeue`: queued messages handed back to the client. */
   readonly restored?: readonly string[];
-  /** For `user_message`: it named an extension command, so no turn started and no entry was written. */
+  /** For `user_message`: an extension command ran, so no turn started. */
   readonly dispatched?: boolean;
 };
 
 export type ServerEvent = DurableEvent | EphemeralEvent | ResponseEvent;
 
-/** Anything a session emits: everything on the wire but an answer to a command. */
 export type StreamEvent = DurableEvent | EphemeralEvent;
 
 export type ServerEventType = ServerEvent["type"];
@@ -384,17 +361,7 @@ export function isDurableEvent(event: ServerEvent): event is DurableEvent {
   return "seq" in event;
 }
 
-/**
- * Whether the frame speaks for the one session a connection is attached to,
- * and so says nothing to a client whose attach is still in flight. The rest
- * name their own subject — another session, a directory, or nothing at all —
- * and gating those on the attach window drops a broadcast every time a client
- * switches session.
- *
- * Exhaustive by construction: a new event is a type error here until it is
- * classified, which is the only reason this lives beside the wire types
- * rather than in the client that gates on it.
- */
+/** Whether the event belongs to the attached session, so a client mid-attach should drop it. */
 export function isAttachScoped(event: ServerEvent): boolean {
   switch (event.type) {
     case "attached":
@@ -415,9 +382,7 @@ export function isAttachScoped(event: ServerEvent): boolean {
     case "ui_notice":
     case "ui_request":
     case "ui_request_done":
-    // Names a cwd, but only ever reaches a client down the session stream it
-    // is attached to, so the old session's is the only one that can arrive
-    // mid-attach — and re-querying for it would warm the wrong cache.
+    // Only sent down the attached session's stream.
     case "picker_invalidate":
       return true;
     case "session_activity":
@@ -428,8 +393,6 @@ export function isAttachScoped(event: ServerEvent): boolean {
     case "sessions_changed":
     case "extensions_changed":
     case "update_state":
-    // Sent for a frame the server could not read at all, which is likeliest
-    // before an attach has settled: gating it swallows the diagnostic.
     case "error":
     case "response":
       return false;

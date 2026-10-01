@@ -1,21 +1,16 @@
 import type { SurfaceName } from "./Surfaces";
 
-/** A running surface, and the only thing the daemon asks of one. */
 export type SurfaceHandle = {
   readonly stop: () => Promise<void>;
 };
 
 export type Surface = {
   readonly name: SurfaceName;
-  /** Brings the surface up, resolving once it is serving rather than when it stops. */
+  /** Resolves once the surface is serving. */
   readonly start: () => Promise<SurfaceHandle>;
 };
 
-/**
- * Every surface in one process, and none of them able to take another down: a
- * bot that cannot reach Telegram leaves the browser served, and a port already
- * bound leaves the bot polling.
- */
+/** Runs every surface in one process; one failing never stops the others. */
 export class Daemon {
   private readonly surfaces: ReadonlyArray<Surface>;
   private readonly live = new Map<SurfaceName, SurfaceHandle>();

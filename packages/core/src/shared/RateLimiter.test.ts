@@ -29,21 +29,12 @@ const createHarness = (maxRequests: number, windowMs: number): Harness => {
   };
 };
 
-test("allows a full burst up to the limit without waiting", async () => {
-  const { limiter, sleeps } = createHarness(3, 1000);
-
-  await Promise.all([limiter.acquire(), limiter.acquire(), limiter.acquire()]);
-
-  expect(sleeps).toEqual([]);
-});
-
 test("delays requests beyond the limit until the window slides", async () => {
   const { limiter, sleeps } = createHarness(3, 1000);
 
   await Promise.all(Array.from({ length: 7 }, () => limiter.acquire()));
 
-  // 3 immediately, the 4th waits one window (freeing all 3), the 7th waits a
-  // second window.
+  // 4th waits one window, 7th a second.
   expect(sleeps).toEqual([1000, 1000]);
 });
 

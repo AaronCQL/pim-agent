@@ -81,7 +81,9 @@ function resolve(
 
     if (replaceAll) {
       return {
-        ranges: sortRanges(candidates.map((candidate) => candidate.range)),
+        ranges: candidates
+          .map((candidate) => candidate.range)
+          .sort((left, right) => left[0] - right[0]),
         strategy: strategy.name,
         matchCount: candidates.length,
       };
@@ -441,25 +443,10 @@ function unicodeNormalized({
   content,
   oldString,
 }: MatchInput): readonly Candidate[] {
-  // normalizeUnicode substitutions must stay 1:1 by UTF-16 code unit, or offsets desync.
-  const normalizedContent = normalizeUnicode(content);
-  const normalizedOld = normalizeUnicode(oldString);
-  const candidates: Candidate[] = [];
-  let index = 0;
-
-  while (true) {
-    const start = normalizedContent.indexOf(normalizedOld, index);
-
-    if (start === -1) {
-      break;
-    }
-
-    const end = start + oldString.length;
-    candidates.push({ range: [start, end], text: content.slice(start, end) });
-    index = Math.max(start + 1, end);
-  }
-
-  return candidates;
+  // normalizeUnicode must map 1:1 by UTF-16 code unit, or offsets desync.
+  return findAll(normalizeUnicode(content), normalizeUnicode(oldString)).map(
+    ({ range }) => ({ range, text: content.slice(...range) })
+  );
 }
 
 function blockAnchor(input: MatchInput): readonly Candidate[] {
@@ -477,7 +464,7 @@ function blockAnchor(input: MatchInput): readonly Candidate[] {
         ) / middleCount;
     }
 
-    // 0.3 floor filters anchor coincidence on unrelated blocks sharing first/last line text.
+    // Rejects unrelated blocks that merely share first and last lines.
     return similarity >= 0.3;
   });
 }
@@ -598,10 +585,6 @@ function dedupeCandidates(
   return deduped;
 }
 
-function sortRanges(ranges: readonly EditRange[]): readonly EditRange[] {
-  return [...ranges].sort((left, right) => left[0] - right[0]);
-}
-
 function logicalLines(content: string): readonly string[] {
   if (content.length === 0) {
     return [];
@@ -653,31 +636,17 @@ function offsetLines(content: string): readonly OffsetLine[] {
   return lines;
 }
 
+const CONTROL_ESCAPES: Readonly<Record<string, string>> = {
+  n: "\n",
+  t: "\t",
+  r: "\r",
+};
+
 function unescapeString(text: string): string {
-  return text.replace(/\\(n|t|r|'|"|`|\\|\n|\$)/gu, (match, value) => {
-    switch (value) {
-      case "n":
-        return "\n";
-      case "t":
-        return "\t";
-      case "r":
-        return "\r";
-      case "'":
-        return "'";
-      case '"':
-        return '"';
-      case "`":
-        return "`";
-      case "\\":
-        return "\\";
-      case "\n":
-        return "\n";
-      case "$":
-        return "$";
-      default:
-        return match;
-    }
-  });
+  return text.replace(
+    /\\(n|t|r|'|"|`|\\|\n|\$)/gu,
+    (_, value: string) => CONTROL_ESCAPES[value] ?? value
+  );
 }
 
 function escapeSequences(text: string): readonly string[] {
@@ -763,5 +732,4 @@ export const EditMatcher = {
   renderNotFound,
   lineRangeFor,
   NotFoundError,
-  MultipleMatchesError,
 };

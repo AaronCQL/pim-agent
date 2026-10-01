@@ -16,24 +16,23 @@ export type LiveTool = {
   readonly isPartial: boolean;
 };
 
-/** One assistant message of the turn in flight; a turn holds one per step. */
+/** One assistant message of the in-flight turn. */
 export type LiveMessage = {
   readonly messageId: string;
   text: string;
   thinking: string;
   tools: LiveTool[];
-  /** Durable copy landed; the shell stays for calls whose results are unwritten. */
+  /** The durable copy landed; kept only while its tool calls lack results. */
   retired: boolean;
 };
 
-/** The one subagent this browser is reading: its log so far, and its turn in flight. */
 export type SubagentTranscript = {
   readonly callId: string;
   durable: DurableEvent[];
   live: LiveMessage[];
 };
 
-/** A message this client has said and the server has not echoed back yet. */
+/** A sent message not yet echoed back by the server. */
 export type PendingMessage = {
   readonly id: string;
   readonly text: string;
@@ -68,7 +67,6 @@ type DurableHolder = LiveHolder & { durable: DurableEvent[] };
 
 type SessionHolder = DurableHolder & { optimistic: OptimisticMessage[] };
 
-/** One event of a turn in flight, folded into the bucket holding it. */
 export function applyLive(target: LiveHolder, event: EphemeralEvent): void {
   switch (event.type) {
     case "message_start":
@@ -104,8 +102,7 @@ export function applyLive(target: LiveHolder, event: EphemeralEvent): void {
       });
       return;
     case "message_retire":
-      // Keep the shell for its calls: each leaves on the durable result that
-      // answers for it.
+      // Keep messages with tools until their results arrive.
       target.live = target.live.flatMap((message) => {
         if (message.messageId !== event.messageId) {
           return [message];
@@ -135,8 +132,7 @@ function patchLiveTool(
   }
 }
 
-// A new bucket, not an edit in place: an earlier event of the same batch may
-// have already replaced the message holding the call.
+// Rebuilt rather than edited in place: an earlier event in the batch may have replaced the message.
 function settleLiveTool(target: LiveHolder, callId: string): void {
   target.live = target.live
     .map((message) => ({
@@ -146,7 +142,6 @@ function settleLiveTool(target: LiveHolder, callId: string): void {
     .filter((message) => !message.retired || message.tools.length > 0);
 }
 
-/** One event of a child's log, folded into the modal reading it. */
 export function applyChild(
   target: SubagentTranscript,
   event: StreamEvent
@@ -155,8 +150,7 @@ export function applyChild(
     applyLive(target, event);
     return;
   }
-  // A re-opened watch replays from the child's first entry; its ordinals say
-  // what this modal has already painted.
+  // A re-opened watch replays from the start; skip what we already have.
   if (event.seq <= (target.durable.at(-1)?.seq ?? 0)) {
     return;
   }
@@ -170,15 +164,14 @@ function applyDurable(target: DurableHolder, event: DurableEvent): void {
   }
 }
 
-/** One written line of the session's own log, plus the optimistic row it supersedes. */
+/** Also drops the optimistic row a user message supersedes. */
 export function ingestDurable(
   target: SessionHolder,
   event: DurableEvent
 ): void {
   applyDurable(target, event);
   if (event.type === "message" && event.role === "user") {
-    // Filter, not splice: a store patch can be applied against a later array
-    // than the index was read from.
+    // Filter, not splice: a store patch may apply to a newer array.
     const at = target.optimistic.findIndex((pending) =>
       event.text.startsWith(pending.text)
     );
@@ -188,7 +181,7 @@ export function ingestDurable(
   }
 }
 
-/** The message a session opens with: the first one written, or the first said. */
+/** The first durable user message, else the first optimistic one. */
 export function openingMessage(
   durable: readonly DurableEvent[],
   optimistic: readonly OptimisticMessage[]
@@ -206,7 +199,6 @@ function namesOf(attachments: readonly AttachmentView[] | undefined): string {
   return (attachments ?? []).map((file) => file.name).join(", ");
 }
 
-/** A frame's files, as URLs this browser can fetch. */
 export function resolveUrls<TEvent extends ServerEvent>(
   event: TEvent,
   absolute: (url: string) => string

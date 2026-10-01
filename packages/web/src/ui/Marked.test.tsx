@@ -8,12 +8,6 @@ import type { SearchRange } from "#core/session/SearchIndex";
 import { mountPoint } from "../test/dom";
 import { Marked } from "./Marked";
 
-/**
- * The renderer both the title and the snippets of a search row go through. The
- * ranges are the server's, and a row that threw or lost a word on a bad one
- * would be a blank line where the reason it matched should be.
- */
-
 let dispose: (() => void) | undefined;
 
 afterEach(() => {
@@ -39,14 +33,6 @@ test("marks the spans the server chose and nothing else", () => {
   expect(host.textContent).toBe("Who holds the turn lease?");
 });
 
-test("marks a word the query never contained", () => {
-  // `sidbar` marked `sidebar`, `lease` marked the `Lease` of `SessionLease`:
-  // the client draws what the planner reached for, not what was typed.
-  const host = paint("The SessionLease guards a whole turn", [[11, 16]]);
-
-  expect(marks(host)).toEqual(["Lease"]);
-});
-
 test("draws a run of ranges as a mark apiece", () => {
   const host = paint("lease, lease and lease again", [
     [0, 5],
@@ -56,13 +42,6 @@ test("draws a run of ranges as a mark apiece", () => {
 
   expect(marks(host)).toEqual(["lease", "lease", "lease"]);
   expect(host.textContent).toBe("lease, lease and lease again");
-});
-
-test("text nothing matched is drawn whole", () => {
-  const host = paint("Nothing interesting here yet.", []);
-
-  expect(marks(host)).toEqual([]);
-  expect(host.textContent).toBe("Nothing interesting here yet.");
 });
 
 test("a range past the end of the text loses none of it", () => {

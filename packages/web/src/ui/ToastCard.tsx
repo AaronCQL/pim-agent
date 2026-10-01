@@ -1,14 +1,9 @@
 import type { JSX } from "@solidjs/web/jsx-runtime";
 
-/**
- * Where a notice sits over the transcript: the same corner on a desktop, the
- * full width of a phone. Shared so the two things that toast cannot drift.
- */
 export function toastAnchor(desktop: boolean): string {
   return desktop ? "right-3 max-w-sm" : "inset-x-3";
 }
 
-/** The chrome every over-the-transcript notice wears: one card, one dismiss. */
 export function ToastCard(props: {
   readonly class?: string;
   readonly dismissLabel: string;

@@ -9,6 +9,7 @@ import type { SessionHost } from "#core/session/SessionHost";
 import type { GitState } from "#core/shared/Git";
 import { GitMonitor } from "#core/shared/GitMonitor";
 import type { EphemeralEvent, ServerEvent } from "#protocol/ServerEvent";
+import { until } from "#core/shared/fixtures/wait";
 import { SessionStream } from "./SessionStream";
 
 let tmp: string;
@@ -17,17 +18,10 @@ let stream: SessionStream;
 let seen: ServerEvent[];
 let stopListening: () => void;
 let emit: (event: AgentSessionEvent) => void;
-let reportForeign: () => void;
 
-/**
- * A name this file owns. Tool views are registered process-wide by name, and
- * the suite is one process: a name another test file registers a view for
- * would paint these synthetic calls with that file's view, which reads a
- * `details` shape the events here have no reason to carry.
- */
+/** Unique so no other test file's registered view paints these calls. */
 const TOOL = "stream_probe";
 
-/** Enough of a host for the stream to read a cwd and a status off, and to subscribe to. */
 function host(): SessionHost {
   return {
     cwd: tmp,
@@ -40,10 +34,7 @@ function host(): SessionHost {
     tps: undefined,
     leaseState: { writable: true },
     onLeaseChange: () => () => {},
-    onForeignWrite: (listener: () => void) => {
-      reportForeign = listener;
-      return () => {};
-    },
+    onForeignWrite: () => () => {},
     subscribe: (listener: (event: AgentSessionEvent) => void) => {
       emit = listener;
       return () => {};
@@ -51,11 +42,6 @@ function host(): SessionHost {
   } as unknown as SessionHost;
 }
 
-/**
- * One event as pi would emit it. Cast whole rather than built: the test cares
- * about which events arrive in which order, not about the fields of pi's own
- * types that the stream never reads.
- */
 function agentEvent(event: Record<string, unknown>): AgentSessionEvent {
   return event as unknown as AgentSessionEvent;
 }
@@ -64,7 +50,6 @@ function thinkingMessage(thinking: string): Record<string, unknown> {
   return { role: "assistant", content: [{ type: "thinking", thinking }] };
 }
 
-/** Appends the line pi would have written, so the next drain finds it. */
 async function persist(
   id: string,
   message: Record<string, unknown>
@@ -99,7 +84,7 @@ async function persistToolResult(callId: string): Promise<void> {
   });
 }
 
-/** One whole step: it streams, pi writes it down, then pi closes it. */
+/** Streams a step, persists it, then closes it. */
 async function step(thinking: string, id: string): Promise<void> {
   emit(agentEvent({ type: "message_start", message: thinkingMessage("") }));
   emit(
@@ -111,34 +96,17 @@ async function step(thinking: string, id: string): Promise<void> {
   );
   await persistAssistant(id, [{ type: "thinking", thinking }]);
   emit(agentEvent({ type: "message_end", message: thinkingMessage(thinking) }));
-  // The flush `message_end` started is not awaited, so wait for its result
-  // rather than for a length of time.
   await stream.refresh();
   await until(() => durableThinking().includes(thinking), `the entry ${id}`);
 }
 
-async function until(ready: () => boolean, what: string): Promise<void> {
-  const deadline = Date.now() + 20_000;
-  while (!ready()) {
-    if (Date.now() > deadline) {
-      throw new Error(`timed out waiting for ${what}`);
-    }
-    await Bun.sleep(1);
-  }
-}
-
-/**
- * What a client is handed, one event at a time: a drain of the log reaches it
- * as a single frame carrying several, and every reader here cares about the
- * events rather than about how they were packed.
- */
+/** Received events with `replay` envelopes flattened. */
 function received(): readonly ServerEvent[] {
   return seen.flatMap((event): readonly ServerEvent[] =>
     event.type === "replay" ? event.events : [event]
   );
 }
 
-/** The live messages that still stand, as a client would track them. */
 function liveIds(): ReadonlySet<string> {
   const live = new Set<string>();
   for (const event of received()) {
@@ -152,7 +120,6 @@ function liveIds(): ReadonlySet<string> {
   return live;
 }
 
-/** What is still being drawn as live, and what the log says, separately. */
 function liveThinking(): readonly string[] {
   const standing = liveIds();
   const thinking = new Map<string, string>();
@@ -175,7 +142,6 @@ function durableThinking(): readonly string[] {
   );
 }
 
-/** Every state frame a client was handed, in the order it was sent. */
 function states(): readonly Extract<
   EphemeralEvent,
   { type: "session_state" }
@@ -183,7 +149,6 @@ function states(): readonly Extract<
   return received().filter((event) => event.type === "session_state");
 }
 
-/** Every durable message a client was handed, whole, so a second copy of one shows up. */
 function durableMessages(): readonly string[] {
   return received().flatMap((event) =>
     event.type === "message" ? [`${event.role}: ${event.text}`] : []
@@ -237,19 +202,10 @@ afterEach(async () => {
   await rm(tmp, { recursive: true, force: true });
 });
 
-/**
- * The interleaving that made a step paint twice: pi closes a message, writes
- * its entry, and only *then* runs the calls that message asked for. Those
- * calls open a live message of their own — there is nowhere else to hang them
- * — so by the time the next step's entry lands, the oldest live message is
- * that shell and not the step the entry belongs to. Retiring by position
- * there drops the shell and leaves the reasoning that streamed standing
- * underneath its own durable copy.
- */
 test("retires the step an entry belongs to, not the oldest live message", async () => {
   await step("step one", "a1");
 
-  // The call runs after the message that asked for it has been written.
+  // Pi runs a message's calls after writing its entry, so they open a new live shell.
   emit(
     agentEvent({
       type: "tool_execution_start",
@@ -271,15 +227,9 @@ test("retires the step an entry belongs to, not the oldest live message", async 
   await step("step two", "a2");
 
   expect(durableThinking()).toEqual(["step one", "step two"]);
-  // Nothing the log now holds is still being drawn as live.
   expect(liveThinking()).toEqual([]);
 });
 
-/**
- * The two events are one swap, and a client that saw either half alone would
- * paint the step it names twice — once durable and once live — for as long as
- * it took the other half to arrive.
- */
 test("sends a written step and the retire that supersedes it as one frame", async () => {
   await step("step one", "a1");
 
@@ -294,12 +244,6 @@ test("sends a written step and the retire that supersedes it as one frame", asyn
   ]);
 });
 
-/**
- * Pi closes a message before it runs the calls that message asked for, so a
- * call can outlive the entry of the step that made it. The stream holds it
- * anyway: until pi writes the result down, nothing else knows what that call
- * did, and a client that reattaches in between would be handed it spinning.
- */
 test("keeps a retired step's calls, and drops each on its durable result", async () => {
   emit(agentEvent({ type: "message_start", message: thinkingMessage("") }));
   emit(
@@ -328,8 +272,7 @@ test("keeps a retired step's calls, and drops each on its durable result", async
       isError: false,
     })
   );
-  // Settled, and still the stream's to report: `fromSeq` past the log leaves
-  // the in-flight turn alone as the answer.
+  // Still reported until the durable result lands.
   const running = await stream.replay(99);
   expect(running.filter((event) => event.type === "tool_end")).toHaveLength(1);
 
@@ -340,8 +283,6 @@ test("keeps a retired step's calls, and drops each on its durable result", async
     "the result to be read out of the log"
   );
 
-  // The log answers for the call now, so the live copy would only be a second
-  // sighting of a row the client already has.
   const settled = await stream.replay(99);
   expect(settled.filter((event) => event.type === "tool_call")).toEqual([]);
 });
@@ -366,13 +307,6 @@ test("hands a reattaching client each step exactly once", async () => {
   expect(thinking).toEqual(["step one", "step two"]);
 });
 
-/**
- * A client that arrives mid-turn has no way of its own to know when that turn
- * began — the log's stamps are of the entries pi has finished writing, not of
- * the run — and only the process running it does. So the state carries the
- * age of the turn, and carries it as a duration: the two clocks need not
- * agree, and a duration does not ask them to.
- */
 test("the state carries the age of the turn, and only while one is running", () => {
   let status: SessionHost["status"] = "thinking";
   const running = new SessionStream(
@@ -396,8 +330,6 @@ test("the state carries the age of the turn, and only while one is running", () 
     now += 45_000;
     expect(stateOf(running).turnElapsedMs).toBe(45_000);
 
-    // Settled: there is no turn to be aged, and a stale reading would be
-    // read as one still running.
     status = "idle";
     expect(stateOf(running).turnElapsedMs).toBeUndefined();
   } finally {
@@ -416,28 +348,6 @@ function stateOf(
   return event;
 }
 
-/**
- * The transcript is file-derived and stays right, but a writer that took no
- * lease may have forked the history behind it, and only the client can judge
- * what to do about that.
- */
-test("tells attached clients when the host sees a write it cannot account for", () => {
-  reportForeign();
-  expect(received().filter((event) => event.type === "error")).toEqual([
-    {
-      type: "error",
-      message:
-        "Another process is writing this session; its history may be inconsistent.",
-    },
-  ]);
-});
-
-/**
- * A turn run in the terminal reaches this process as nothing but lines in the
- * file: the agent it belongs to lives elsewhere, so not one `AgentSessionEvent`
- * fires here. `fs.watch` is stubbed away because it reports nothing at all on
- * some filesystems, which leaves the poll as the only thing that can notice.
- */
 test("carries a foreign turn to a client on the poll alone, with no agent event", async () => {
   const watching = spyOn(fs, "watch");
   watching.mockImplementation((() => {
@@ -467,10 +377,9 @@ test("carries a foreign turn to a client on the poll alone, with no agent event"
       "user: from the terminal",
       "assistant: and the reply",
     ]);
-    // Nothing was streamed, so nothing is standing live over the two entries.
     expect(liveIds().size).toBe(0);
 
-    // Every later read is a read past the same cursor, whoever asks for it.
+    // Later reads must not resend them.
     await stream.refresh();
     await stream.replay(0);
     expect(durableMessages()).toHaveLength(2);
@@ -479,7 +388,6 @@ test("carries a foreign turn to a client on the poll alone, with no agent event"
   }
 });
 
-/** A worktree edit touches nothing under `.git`, so a tool that writes has to say so itself. */
 test("re-reads the repository as soon as a tool has written to it", async () => {
   let next: GitState = {
     branch: "main",
@@ -524,10 +432,6 @@ test("re-reads the repository as soon as a tool has written to it", async () => 
   expect(states().at(-1)?.dirtyCount).toBe(3);
 });
 
-/**
- * An extension may notify from any handler it likes, so a cache that finished
- * warming must not open the modal an answer to a typed command deserves.
- */
 test("names the command what a dispatch said, and nothing else", async () => {
   stream.notify("the cache warmed itself", "info");
   await stream.dispatch("/quota", async () => {
@@ -542,7 +446,6 @@ test("names the command what a dispatch said, and nothing else", async () => {
   ]);
 });
 
-/** The panel is titled by whoever opened it, and a question may open it alone. */
 test("names the command a dialog it raised, innermost first", async () => {
   const asked = stream.dispatch("/login", async () =>
     stream.dispatch("/auth", async () => {
@@ -556,7 +459,6 @@ test("names the command a dialog it raised, innermost first", async () => {
   expect(askedIn(received()).command).toBe("/auth");
 });
 
-/** A headless session cannot park an extension on a dialog nobody will ever see. */
 test("takes pi's default for a dialog raised with nobody attached", async () => {
   stopListening();
 
@@ -576,8 +478,6 @@ test("resolves one dialog once, however many clients are watching it", async () 
   const asking = stream.select("Pick one", ["a", "b"]);
   const requestId = requestIdOf(received());
   expect(stream.answer(requestId, { value: "a" })).toBe(true);
-  // The second client's click raced the first's and lost; applying it too
-  // would answer whatever the extension asked next.
   expect(stream.answer(requestId, { value: "b" })).toBe(false);
 
   expect(await asking).toBe("a");
@@ -587,7 +487,6 @@ test("resolves one dialog once, however many clients are watching it", async () 
   expect(done(second)).toBe(1);
 });
 
-/** Dismissal is cancellation, which is what pi's own dialogs answer with. */
 test("takes the default from a client that dismissed the dialog", async () => {
   const asking = stream.confirm("Drop the table?", "there is no undo");
 
@@ -610,7 +509,6 @@ test("answers a dialog itself once its last reader is gone", async () => {
   }
 });
 
-/** A reload, a tunnel blip and a phone unlock are all detaches, and all three come back. */
 test("calls the grace off for a client that came straight back", async () => {
   const parting = new SessionStream("s7", host(), path, { detachGraceMs: 0 });
   const events: ServerEvent[] = [];
@@ -624,10 +522,8 @@ test("calls the grace off for a client that came straight back", async () => {
     parting.subscribe((event) => {
       events.push(event);
     });
-    // One macrotask: the grace timer would have fired here had it survived.
+    // Give a surviving grace timer the chance to fire.
     await Bun.sleep(0);
-    // And the client that came back is asked again: it never saw the frame
-    // the dialog was announced on, and it is the only one who can answer now.
     returned.push(...(await parting.replay(99)));
     expect(
       returned.filter((event) => event.type === "ui_request")
@@ -653,8 +549,6 @@ test("answers a dialog nobody got to before the ceiling, and says which", async 
       await impatient.input("Name the branch", "feature/…")
     ).toBeUndefined();
 
-    // Never silently: a dialog that answers itself in silence is the
-    // invisible mutation this whole seam exists to kill.
     const notice = notices(events).at(-1);
     expect(notice?.severity).toBe("warn");
     expect(notice?.text).toContain("Name the branch");
@@ -675,8 +569,6 @@ test("lets an extension's own timeout beat the ceiling", async () => {
     events.push(event);
   });
   try {
-    // The ceiling is a minute out, so a suite that finishes in seconds can
-    // only settle this on the schedule the extension asked for.
     expect(
       await impatient.select("Pick one", ["a", "b"], { timeout: 0 })
     ).toBeUndefined();

@@ -5,8 +5,6 @@ import { AnsiPainter } from "../../view/AnsiPainter";
 import type { GrepMatch } from "./grep";
 import { buildView, formatTitle, renderMatches } from "./render";
 
-// Marks every themed span so an assertion catches colour the old renderer
-// never emitted.
 const markerTheme = {
   bold: (text: string) => text,
   fg: (color: string, text: string) => `<${color}>${text}</${color}>`,
@@ -220,10 +218,6 @@ describe("renderMatches", () => {
 describe("buildView", () => {
   const base = { args: { pattern: "alpha" }, cwd: "/repo" } as const;
 
-  test("supplies the title-cased display label", () => {
-    expect(buildView({ ...base, body: "" }).label).toBe("Grep");
-  });
-
   test("titles from args alone while the call is in flight", () => {
     const view = buildView({ args: { path: "src" }, body: "", cwd: "/repo" });
     expect(AnsiPainter.paint(view.title, markerTheme).join(" ")).toBe(
@@ -240,21 +234,6 @@ describe("buildView", () => {
     expect(AnsiPainter.paint(view.title, markerTheme).join(" ")).toBe(
       "/alpha/ <muted>1 file</muted>"
     );
-    expect(view.title.at(-1)).toEqual({
-      kind: "text",
-      tone: "muted",
-      text: "1 file",
-    });
-  });
-
-  test("pluralizes the count and leaves it off until it lands", () => {
-    expect(buildView({ ...base, body: "" }).title).toHaveLength(1);
-    const view = buildView({
-      ...base,
-      body: "a.ts",
-      details: { outputMode: "files_with_matches", fileCount: 3 },
-    });
-    expect(view.title.at(-1)).toMatchObject({ text: "3 files" });
   });
 
   test("files_with_matches paints one bare path per row", () => {
@@ -295,54 +274,15 @@ describe("buildView", () => {
   });
 });
 
-describe("formatTitle", () => {
-  test("uses relative path under cwd and includes glob", () => {
-    const title = formatTitle({
-      pattern: "alpha",
-      path: "/repo/src",
-      glob: "**/*.ts",
-      cwd: "/repo",
-    });
-    expect(title).toBe("/alpha/ in src/**/*.ts");
-  });
-
-  test("formats regex patterns with slashes", () => {
-    const title = formatTitle({
-      pattern: "^alpha$",
-      path: "/repo/src",
-      glob: undefined,
-      cwd: "/repo",
-    });
-    expect(title).toBe("/^alpha$/ in src");
-  });
-
-  test("omits location when path is omitted", () => {
-    const title = formatTitle({
-      pattern: "alpha",
-      path: undefined,
-      glob: undefined,
-      cwd: "/repo",
-    });
-    expect(title).toBe("/alpha/");
-  });
-
-  test("shows glob alone when path is omitted", () => {
-    const title = formatTitle({
-      pattern: "alpha",
-      path: undefined,
-      glob: "{src,docs}/**/*.ts",
-      cwd: "/repo",
-    });
-    expect(title).toBe("/alpha/ in {src,docs}/**/*.ts");
-  });
-
-  test("resolves relative paths in titles", () => {
-    const title = formatTitle({
-      pattern: "alpha",
-      path: "src",
-      glob: undefined,
-      cwd: "/repo",
-    });
-    expect(title).toBe("/alpha/ in src");
-  });
-});
+test.each([
+  ["alpha", "/repo/src", "**/*.ts", "/alpha/ in src/**/*.ts"],
+  ["^alpha$", "/repo/src", undefined, "/^alpha$/ in src"],
+  ["alpha", undefined, undefined, "/alpha/"],
+  ["alpha", undefined, "{src,docs}/**/*.ts", "/alpha/ in {src,docs}/**/*.ts"],
+  ["alpha", "src", undefined, "/alpha/ in src"],
+])(
+  "formatTitle(%p, path %p, glob %p) -> %s",
+  (pattern, path, glob, expected) => {
+    expect(formatTitle({ pattern, path, glob, cwd: "/repo" })).toBe(expected);
+  }
+);

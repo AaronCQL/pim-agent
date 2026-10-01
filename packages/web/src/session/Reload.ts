@@ -22,7 +22,7 @@ type State = {
   label: string;
   notice: ReloadNotice | undefined;
   dismissed: boolean;
-  /** Whether the server answers from a different build than this page was made from. */
+  /** The server runs a different pim version than this page. */
   stale: boolean;
 };
 
@@ -33,11 +33,7 @@ const TIMEOUT_NOTICE: ReloadNotice = {
   text: "Restart timed out. The server may still be updating; check it before trying again.",
 };
 
-/**
- * Says which half is behind rather than assuming the page is: the server is a
- * process that stays old until it restarts, while the bundle it serves is new
- * the moment it is built, so either one can be the stale one.
- */
+/** Either the page or the server may be the stale one. */
 function staleNotice(server: string): ReloadNotice {
   return {
     tone: "warning",
@@ -121,30 +117,25 @@ export class Reload {
       if (this.intent?.phase === "restarting") {
         this.refresh();
       } else if (!this.intent && this.timer !== undefined) {
-        // A bystander watched someone else's restart land: stop waiting on it.
-        // Whether this page is now behind is the attach's answer, not this one's.
+        // Another tab's restart finished; staleness is decided on attach.
         this.finish();
       }
     }
   }
 
   public ingest(event: ServerEvent): void {
-    // Navigation is async: the unloading page must not eat the next page's toast.
+    // The unloading page must not consume the next page's toast.
     if (this.navigating) {
       return;
     }
     if (event.type === "attached") {
-      // The versions decide this, not the socket: a mismatched page still works,
-      // it is only painting a build the server no longer runs.
       const stale = event.pimVersion !== version;
-      // Only the crossing is news: a dropped socket coming back must not
-      // re-raise a nudge the reader already dismissed.
+      // Only notify on change, so a reconnect does not re-raise a dismissed notice.
       const crossed = stale !== this.state.stale;
       this.setState((state) => {
         state.stale = stale;
       });
       if (stale) {
-        // Mid-restart the page is simply behind the server it just updated.
         if (this.intent && this.intent.phase !== "loaded") {
           this.refresh();
         } else if (crossed) {
@@ -265,7 +256,7 @@ export class Reload {
         sessionStorage.removeItem(this.key);
       }
     } catch {
-      // Storage can be denied; the live restart still works.
+      // Storage unavailable; the restart still works.
     }
   }
 }
@@ -285,11 +276,11 @@ function readIntent(key: string): Intent | undefined {
         typeof saved.target.sessionId === "string") &&
       (saved.target.cwd === undefined || typeof saved.target.cwd === "string")
     ) {
-      // An older bundle wrote no `blocking`, so an absent flag reads as a note.
+      // Older bundles did not write `blocking`.
       return { ...saved, blocking: saved.blocking === true };
     }
   } catch {
-    // A stale or unavailable storage entry must not prevent opening a chat.
+    // Ignore bad or unavailable storage.
   }
   return undefined;
 }

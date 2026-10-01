@@ -20,23 +20,21 @@ import {
 
 export type ProbeOptions = {
   readonly url: string;
-  /** Omit to have the server create a session; the id comes back on attach. */
+  /** Omit to have the server create one. */
   readonly sessionId?: string;
   readonly cwd?: string;
   readonly fromSeq?: number;
-  /** Sent on the attach frame; false is a client that is connected but not looking. */
   readonly attentive?: boolean;
-  /** Called for every frame, in arrival order. */
   readonly onEvent?: (event: ServerEvent) => void;
   /** Keystroke debounce for `files`; 0 makes tests deterministic. */
   readonly debounceMs?: number;
 };
 
-/** What `POST /upload` answers with, all of it server-side. */
+/** The `POST /upload` response. */
 export type UploadedFile = {
   readonly id: string;
   readonly path: string;
-  /** Where the bytes can be read back, relative to the server's origin. */
+  /** Server-relative. */
   readonly url: string;
   readonly mimeType: string;
   readonly isImage: boolean;
@@ -47,12 +45,11 @@ type Pending = {
   readonly reject: (err: Error) => void;
 };
 
-/** The reference client: speaks the whole protocol, renders nothing. */
+/** Headless protocol client for tests and the probe CLI. */
 export class ProbeClient {
   public sessionId: string | undefined;
   public seq: number;
   public readonly events: ServerEvent[] = [];
-  /** The `@` picker, answered by the server one query at a time. */
   public readonly files: RemoteFilePickerSuggestionEngine;
   private readonly options: ProbeOptions;
   private readonly pending = new Map<string, Pending>();
@@ -105,7 +102,6 @@ export class ProbeClient {
     });
   }
 
-  /** Says whether this client's reader is present; regaining it reads the session. */
   public attention(value: boolean): Promise<ResponseEvent> {
     return this.send({ type: "attention", value });
   }
@@ -141,7 +137,7 @@ export class ProbeClient {
       query,
       limit,
     });
-    return itemsOf(response);
+    return ok(response).items ?? [];
   }
 
   public async pickCommands(
@@ -154,10 +150,10 @@ export class ProbeClient {
       query,
       ...(limit === undefined ? {} : { limit }),
     });
-    return itemsOf(response);
+    return ok(response).items ?? [];
   }
 
-  /** Reads one subagent's transcript; its events stay enveloped in `events`. */
+  /** Child events stay enveloped in `events`. */
   public watchSubagent(callId: string, fromSeq = 0): Promise<ResponseEvent> {
     return this.send({
       type: "watch_subagent",
@@ -171,38 +167,27 @@ export class ProbeClient {
     return this.send({ type: "unwatch_subagent", callId });
   }
 
-  /** Pi's session catalogue; answers whether or not this probe is attached. */
   public async listSessions(
     scope: SessionScope = {}
   ): Promise<SessionListing["sessions"]> {
     return (await this.catalogue(scope)).sessions;
   }
 
-  /** The listing whole: the rows the page kept and the projects they came from. */
   public async catalogue(scope: SessionScope = {}): Promise<SessionListing> {
-    const response = await this.send({ type: "list_sessions", ...scope });
-    if (!response.success) {
-      throw new Error(response.error ?? "list_sessions failed");
-    }
+    const response = ok(await this.send({ type: "list_sessions", ...scope }));
     return {
       sessions: response.sessions ?? [],
       projects: response.projects ?? [],
     };
   }
 
-  /** Searches every session on disk; an empty query warms the index and answers with no hits. */
   public async search(
     query: string,
     scope: SearchScope = {}
   ): Promise<SessionSearch> {
-    const response = await this.send({
-      type: "search_sessions",
-      query,
-      ...scope,
-    });
-    if (!response.success) {
-      throw new Error(response.error ?? "search_sessions failed");
-    }
+    const response = ok(
+      await this.send({ type: "search_sessions", query, ...scope })
+    );
     return {
       hits: response.hits ?? [],
       dropped: response.dropped ?? [],
@@ -210,7 +195,6 @@ export class ProbeClient {
     };
   }
 
-  /** Names a session through pi's own name; `null` clears it back to its opening message. */
   public rename(
     sessionId: string,
     value: string | null
@@ -218,7 +202,6 @@ export class ProbeClient {
     return this.send({ type: "set_session_name", sessionId, value });
   }
 
-  /** Puts a session out of the live listing, or brings it back. */
   public setArchived(
     sessionId: string,
     value: boolean
@@ -226,67 +209,45 @@ export class ProbeClient {
     return this.send({ type: "set_session_archived", sessionId, value });
   }
 
-  /** Holds a session unread until something reads it; survives a listing and a re-attach. */
   public markUnread(sessionId: string, value: boolean): Promise<ResponseEvent> {
     return this.send({ type: "set_session_unread", sessionId, value });
   }
 
-  /** Pins a working directory, not a session. */
   public setPinned(cwd: string, value: boolean): Promise<ResponseEvent> {
     return this.send({ type: "set_project_pinned", cwd, value });
   }
 
-  /** Re-orders the pinned directories; the whole order, pinned ones only. */
   public setPinOrder(order: readonly string[]): Promise<ResponseEvent> {
     return this.send({ type: "set_pin_order", order });
   }
 
-  /** Unfolds a working directory's sidebar group, or folds it. */
   public setExpanded(cwd: string, value: boolean): Promise<ResponseEvent> {
     return this.send({ type: "set_project_expanded", cwd, value });
   }
 
-  /** Names a working directory for the listings; `null` puts it back to its base name. */
   public setLabel(cwd: string, value: string | null): Promise<ResponseEvent> {
     return this.send({ type: "set_project_label", cwd, value });
   }
 
-  /** The model catalogue, plus this session's thinking levels; empty when unattached. */
   public async listModels(): Promise<{
     readonly models: readonly ModelView[];
     readonly thinkingLevels: readonly string[];
   }> {
-    const response = await this.send({ type: "list_models" });
-    if (!response.success) {
-      throw new Error(response.error ?? "list_models failed");
-    }
+    const response = ok(await this.send({ type: "list_models" }));
     return {
       models: response.models ?? [],
       thinkingLevels: response.thinkingLevels ?? [],
     };
   }
 
-  /** Every extension this server can switch, scoped to the attached session's cwd. */
   public async listExtensions(): Promise<readonly ExtensionEntry[]> {
-    const response = await this.send({ type: "list_extensions" });
-    if (!response.success) {
-      throw new Error(response.error ?? "list_extensions failed");
-    }
-    return response.extensions ?? [];
+    return ok(await this.send({ type: "list_extensions" })).extensions ?? [];
   }
 
   public async setExtension(id: string, value: boolean): Promise<void> {
-    const response = await this.send({
-      type: "set_extension",
-      extensionId: id,
-      value,
-    });
-    if (!response.success) {
-      throw new Error(response.error ?? "set_extension failed");
-    }
+    ok(await this.send({ type: "set_extension", extensionId: id, value }));
   }
 
-  /** Transfers a client-local file into the server's world; only the bytes and bare filename are sent. */
   public async upload(localPath: string): Promise<UploadedFile> {
     const file = Bun.file(localPath);
     const form = new FormData();
@@ -343,7 +304,7 @@ export class ProbeClient {
     });
   }
 
-  /** Drops the socket without a close frame, the way a killed client would. */
+  /** Closes with an abnormal code, like a killed client. */
   public kill(): void {
     this.socket?.close(4000, "probe killed");
     this.socket = undefined;
@@ -387,9 +348,9 @@ export class ProbeClient {
   }
 }
 
-function itemsOf(response: ResponseEvent): readonly PickerItem[] {
+function ok(response: ResponseEvent): ResponseEvent {
   if (!response.success) {
-    throw new Error(response.error ?? "picker query failed");
+    throw new Error(response.error ?? "command failed");
   }
-  return response.items ?? [];
+  return response;
 }

@@ -1,4 +1,3 @@
-import type { Stats } from "node:fs";
 import { realpath, stat } from "node:fs/promises";
 import {
   EditMatcher,
@@ -11,12 +10,12 @@ import { FsErrors } from "../../shared/FsErrors";
 import { Lines } from "../../shared/Lines";
 import type { RawEdit } from "./schema";
 
-export type NoopEdit = {
+type NoopEdit = {
   readonly index: number;
   readonly range: string;
 };
 
-export type ResolvedEditMetadata = {
+type ResolvedEditMetadata = {
   readonly index: number;
   readonly ranges: readonly string[];
   readonly strategy: EditMatchStrategy;
@@ -162,10 +161,10 @@ async function performEdit(
 
   const nextContent = EditMatcher.applyAll(originalContent, effectiveMutations);
 
-  await writeFileAtomic(
+  await Fs.writeKeepingLinks(
     canonicalPath,
     hadBom ? `${Lines.utf8Bom}${nextContent}` : nextContent,
-    metadata
+    { mode: Number(metadata.mode), nlink: metadata.nlink }
   );
 
   const original = Lines.splitWithTrailingNewline(originalContent);
@@ -256,7 +255,11 @@ function assertNoDuplicateEdits(edits: readonly ParsedEdit[]): void {
   const seen = new Map<string, number>();
 
   for (const [index, edit] of edits.entries()) {
-    const key = duplicateKey(edit);
+    const key = JSON.stringify([
+      edit.oldString,
+      edit.newString,
+      edit.replaceAll,
+    ]);
     const previous = seen.get(key);
 
     if (previous !== undefined) {
@@ -269,22 +272,11 @@ function assertNoDuplicateEdits(edits: readonly ParsedEdit[]): void {
   }
 }
 
-function duplicateKey(edit: ParsedEdit): string {
-  return JSON.stringify({
-    oldString: edit.oldString,
-    newString: edit.newString,
-    replaceAll: edit.replaceAll,
-  });
-}
-
 function sortMutations(mutations: readonly Mutation[]): readonly Mutation[] {
-  return [...mutations].sort((left, right) => {
-    if (left.range[0] !== right.range[0]) {
-      return left.range[0] - right.range[0];
-    }
-
-    return left.range[1] - right.range[1];
-  });
+  return [...mutations].sort(
+    (left, right) =>
+      left.range[0] - right.range[0] || left.range[1] - right.range[1]
+  );
 }
 
 function assertNoOverlaps(sorted: readonly Mutation[]): void {
@@ -320,17 +312,6 @@ function renderAllNoopError(noops: readonly NoopEdit[]): string {
   ].join("\n");
 }
 
-async function writeFileAtomic(
-  canonicalPath: string,
-  content: string,
-  metadata: Stats
-): Promise<void> {
-  await Fs.writeKeepingLinks(canonicalPath, content, {
-    mode: Number(metadata.mode),
-    nlink: metadata.nlink,
-  });
-}
-
 async function enqueue<T>(key: string, task: () => Promise<T>): Promise<T> {
   const previous = editQueues.get(key) ?? Promise.resolve();
   const queued = previous.then(task, task);
@@ -359,7 +340,7 @@ function joinHuman(items: readonly string[]): string {
   }
 
   if (items.length === 1) {
-    return items[0] ?? "unknown";
+    return items[0]!;
   }
 
   return `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;

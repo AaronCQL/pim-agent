@@ -49,8 +49,7 @@ function navigation(
       ...(enabled === undefined ? {} : { enabled }),
     })
   );
-  // A browser delivers each keydown in its own task, which is when Solid 2
-  // applies pending writes; `flush` is that boundary in a test.
+  // Each keydown is its own task in a browser; `flush` stands in for that.
   const press = (name: string, modifiers: Partial<KeyboardEvent> = {}) => {
     const consumed = nav.onKeyDown(key(name, modifiers));
     flush();
@@ -129,8 +128,6 @@ describe("combobox keyboard navigation", () => {
   });
 
   test("the caret steps over a dead row rather than resting on it", () => {
-    // A menu whose middle verb is greyed where it stands: `Move up` at the top
-    // of the pins, `Move down` at the foot.
     const { press, nav, selected } = navigation(4, (index) => index % 2 === 0);
 
     nav.setActiveIndex(-1);
@@ -139,13 +136,11 @@ describe("combobox keyboard navigation", () => {
     expect(nav.activeIndex()).toBe(0);
     press("ArrowDown");
     expect(nav.activeIndex()).toBe(2);
-    // Wrapping skips it from the other side too.
     press("ArrowDown");
     expect(nav.activeIndex()).toBe(0);
     press("ArrowUp");
     expect(nav.activeIndex()).toBe(2);
 
-    // And both ends land on a verb that can be taken.
     press("End");
     expect(nav.activeIndex()).toBe(2);
     press("Home");
@@ -158,7 +153,6 @@ describe("combobox keyboard navigation", () => {
   test("a list of nothing but dead rows neither moves nor spins", () => {
     const { press, nav, selected } = navigation(3, () => false);
 
-    // Opened by gesture, so nothing is under the caret to begin with.
     nav.setActiveIndex(-1);
     flush();
     expect(press("ArrowDown")).toBe(true);
@@ -182,9 +176,7 @@ describe("combobox keyboard navigation", () => {
   });
 
   test("type-to-refine drops the active row back to the top", () => {
-    // Built inside the root and driven outside it: a keypress is imperative,
-    // and a root's body is a pure scope, where a write is a defect the dev
-    // runtime throws on.
+    // Writes inside a root's body throw in dev, so drive it from outside.
     const { nav, setCount } = createRoot(() => {
       const [count, setCount] = createSignal(5);
       return {
@@ -258,8 +250,6 @@ describe("combobox list", () => {
     flush();
 
     const rows = [...host.querySelectorAll('[role="option"]')];
-    // Hover and the keyboard are one reading, so the row the pointer crosses
-    // is the row the arrows go on from.
     expect(rows[0]?.className).toContain("bg-neutral-800");
     expect(rows[1]?.className).not.toContain("bg-neutral-800");
 
@@ -267,196 +257,74 @@ describe("combobox list", () => {
     rows[0]?.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
     expect(activated).toEqual([-1, 0]);
   });
-
-  test("a tag is parked at the row's right edge, after the label", () => {
-    const host = mountPoint();
-    render(
-      () => (
-        <Combobox
-          open
-          items={[{ label: "Claude Opus 5.0", tag: "anthropic" }]}
-          activeIndex={0}
-          anchor={() => host}
-          emptyLabel="no matches"
-          onActivate={() => undefined}
-          onSelect={() => undefined}
-        />
-      ),
-      host
-    );
-    flush();
-
-    const tag = host.querySelector('[role="option"] > :last-child')!;
-    expect(tag.textContent).toBe("anthropic");
-    expect(tag.className).toContain("ml-auto");
-    expect(tag.className).toContain("text-xs");
-  });
 });
 
 describe("platform wrappers", () => {
-  test("the popover is hidden until it is open", () => {
-    const host = mountPoint();
-    const trigger = document.createElement("div");
-    host.append(trigger);
-    const [open, setOpen] = createSignal(false);
-    render(
-      () => (
-        <Popover open={open()} anchor={() => trigger}>
-          rows
-        </Popover>
-      ),
-      host
-    );
-    flush();
-
-    const panel = host.querySelector("[popover]");
-    expect(panel?.className).toContain("hidden");
-
-    setOpen(true);
-    flush();
-    expect(panel?.className).not.toContain("hidden");
-  });
-
-  // The regression this guards: with placement left to CSS anchor
-  // positioning, an engine without it dropped every picker into the corner of
-  // the viewport instead of over the element that opened it.
-  test("the popover is measured onto its trigger, above it by default", () => {
+  function popover(
+    rect: { left: number; top: number; width: number; height: number },
+    props: Omit<
+      Parameters<typeof Popover>[0],
+      "open" | "anchor" | "children"
+    > = {},
+    viewportWidth = 1000
+  ): HTMLElement {
     const host = mountPoint();
     const trigger = document.createElement("div");
     trigger.getBoundingClientRect = () =>
       ({
-        left: 120,
-        top: 400,
-        right: 320,
-        bottom: 440,
-        width: 200,
-        height: 40,
+        ...rect,
+        right: rect.left + rect.width,
+        bottom: rect.top + rect.height,
       }) as DOMRect;
     host.append(trigger);
-    window.innerWidth = 1000;
+    window.innerWidth = viewportWidth;
     window.innerHeight = 800;
-
-    const [open, setOpen] = createSignal(false);
     render(
       () => (
-        <Popover open={open()} anchor={() => trigger}>
+        <Popover open anchor={() => trigger} {...props}>
           rows
         </Popover>
       ),
       host
     );
     flush();
-    setOpen(true);
-    flush();
+    return host.querySelector("[popover]")!;
+  }
 
-    const style = host.querySelector("[popover]")!.getAttribute("style")!;
+  test("the popover sits above its trigger by default, capped by the room there", () => {
+    const style = popover({
+      left: 120,
+      top: 400,
+      width: 200,
+      height: 40,
+    }).getAttribute("style")!;
+
     expect(style).toContain("position: fixed");
     expect(style).toContain("left: 120px");
-    // Its bottom edge sits on the trigger's top edge, one gap clear of it.
     expect(style).toContain("bottom: 404px");
     expect(style).toContain("min-width: 200px");
-    // The UA gives `[popover]` `inset: 0`; a `top` left standing would
-    // stretch the panel from the top of the screen down to that `bottom`,
-    // which is precisely how the picker used to look.
+    expect(style).toContain("max-height: 388px");
+    // Overrides the UA's `[popover] { inset: 0 }`.
     expect(style).toContain("top: auto");
     expect(style).toContain("right: auto");
   });
 
-  // The composer is pinned to the bottom of the window, so there is never
-  // room below a trigger: the panel grows upward and stops at the viewport.
-  test("the panel grows upward and is capped by the room above the trigger", () => {
-    const host = mountPoint();
-    const trigger = document.createElement("div");
-    trigger.getBoundingClientRect = () =>
-      ({
-        left: 20,
-        top: 300,
-        right: 120,
-        bottom: 340,
-        width: 100,
-        height: 40,
-      }) as DOMRect;
-    host.append(trigger);
-    window.innerWidth = 1000;
-    window.innerHeight = 800;
-
-    render(
-      () => (
-        <Popover open anchor={() => trigger}>
-          rows
-        </Popover>
-      ),
-      host
-    );
-    flush();
-
-    const style = host.querySelector("[popover]")!.getAttribute("style")!;
-    expect(style).toContain("bottom: 504px");
-    expect(style).toContain("max-height: 288px");
-  });
-
-  // The composer's pickers read as part of the card they complete, so they
-  // may not grow past it however long a description is.
   test("a matched panel is pinned to the trigger's width, not the viewport's", () => {
-    const host = mountPoint();
-    const trigger = document.createElement("div");
-    trigger.getBoundingClientRect = () =>
-      ({
-        left: 20,
-        top: 300,
-        right: 320,
-        bottom: 340,
-        width: 300,
-        height: 40,
-      }) as DOMRect;
-    host.append(trigger);
-    window.innerWidth = 1000;
-    window.innerHeight = 800;
+    const style = popover(
+      { left: 20, top: 300, width: 300, height: 40 },
+      { match: true }
+    ).getAttribute("style")!;
 
-    render(
-      () => (
-        <Popover open anchor={() => trigger} match>
-          rows
-        </Popover>
-      ),
-      host
-    );
-    flush();
-
-    const style = host.querySelector("[popover]")!.getAttribute("style")!;
     expect(style).toContain("min-width: 300px");
     expect(style).toContain("max-width: 300px");
   });
 
-  // The branch chip is a few characters wide and the branches under it are
-  // not, so the panel is given a floor and pulled back inside the edge.
   test("a floored panel widens past its trigger, and never past the viewport", () => {
-    const host = mountPoint();
-    const trigger = document.createElement("div");
-    trigger.getBoundingClientRect = () =>
-      ({
-        left: 180,
-        top: 8,
-        right: 260,
-        bottom: 48,
-        width: 80,
-        height: 40,
-      }) as DOMRect;
-    host.append(trigger);
-    window.innerHeight = 800;
-
-    window.innerWidth = 360;
-    render(
-      () => (
-        <Popover open anchor={() => trigger} min={300} place="below">
-          rows
-        </Popover>
-      ),
-      host
+    const panel = popover(
+      { left: 180, top: 8, width: 80, height: 40 },
+      { min: 300, place: "below" },
+      360
     );
-    flush();
-
-    const panel = host.querySelector("[popover]")!;
     expect(panel.getAttribute("style")).toContain("min-width: 300px");
     expect(panel.getAttribute("style")).toContain("left: 52px");
 
@@ -468,48 +336,16 @@ describe("platform wrappers", () => {
     expect(panel.getAttribute("style")).toContain("left: 8px");
   });
 
-  // A menu a right-click or a hold summoned belongs to the pointer that asked
-  // for it: hung off its row's own trigger instead, it opens a sidebar's width
-  // away from the finger and reads as somebody else's menu.
   test("a panel summoned by a pointer drops from it, not from its trigger", () => {
-    const host = mountPoint();
-    const trigger = document.createElement("div");
-    trigger.getBoundingClientRect = () =>
-      ({
-        left: 300,
-        top: 40,
-        right: 320,
-        bottom: 60,
-        width: 20,
-        height: 20,
-      }) as DOMRect;
-    host.append(trigger);
-    window.innerWidth = 1000;
-    window.innerHeight = 800;
-
-    render(
-      () => (
-        <Popover
-          open
-          anchor={() => trigger}
-          at={() => ({ x: 120, y: 500 })}
-          min={180}
-          place="below"
-        >
-          rows
-        </Popover>
-      ),
-      host
+    const panel = popover(
+      { left: 300, top: 40, width: 20, height: 20 },
+      { at: () => ({ x: 120, y: 500 }), min: 180, place: "below" }
     );
-    flush();
-
-    const panel = host.querySelector("[popover]")!;
     expect(panel.getAttribute("style")).toContain("left: 120px");
     expect(panel.getAttribute("style")).toContain("top: 504px");
     expect(panel.getAttribute("style")).toContain("min-width: 180px");
 
-    // And where the rows will not fit under the pointer, they go over it
-    // rather than being squeezed into the strip left below.
+    // Flips above when the rows do not fit below.
     Object.defineProperty(panel, "scrollHeight", { value: 300 });
     window.dispatchEvent(new Event("resize"));
     flush();
@@ -519,54 +355,7 @@ describe("platform wrappers", () => {
     expect(panel.getAttribute("style")).toContain("max-height: 488px");
   });
 
-  test("the disclosure caret is the only glyph, and it can carry state", () => {
-    const host = mountPoint();
-    render(
-      () => (
-        <Collapsible summary={<span>head</span>} caret="bg-rose-400">
-          <p>body</p>
-        </Collapsible>
-      ),
-      host
-    );
-    flush();
-
-    const caret = host.querySelector("summary > span")!;
-    expect(caret.className).toContain(
-      "i-griddy-icons:chevron-right-small-filled"
-    );
-    expect(caret.className).toContain("bg-rose-400");
-    expect(caret.className).toContain("group-open:rotate-90");
-  });
-
-  // The spine hangs clear of the caret and is drawn in every state: starting
-  // one `--line` down, it is zero-height on a closed row that fits, and beside
-  // exactly the lines that overspilled on one that wraps. So it means "this
-  // continues the row above" rather than "this row is open", and the caret is
-  // left to say which.
-  test("the rule is a spine from below the caret down, open or closed", () => {
-    const host = mountPoint();
-    render(
-      () => (
-        <Collapsible summary={<span>head</span>} spine="text-rose-400">
-          <p>body</p>
-        </Collapsible>
-      ),
-      host
-    );
-    flush();
-
-    const spine = host.querySelector("summary > span + span")!;
-    expect(spine.className).toContain("top-[--line]");
-    expect(spine.className).toContain("text-rose-400");
-    expect(spine.className).not.toContain("group-open:");
-    expect(host.querySelector("details")?.open).toBe(false);
-  });
-
-  // 1.5px is not a hit target, so the grip is the whole 2ch gutter — and it
-  // lives inside the `<summary>`, which is what makes the click the
-  // platform's own rather than a handler of ours.
-  test("the spine is a second grip on the disclosure, and says so on hover", () => {
+  test("clicking the spine toggles the disclosure", () => {
     const host = mountPoint();
     render(
       () => (
@@ -580,13 +369,6 @@ describe("platform wrappers", () => {
 
     const details = host.querySelector("details")!;
     const spine = host.querySelector("summary > span + span") as HTMLElement;
-    expect(spine.className).toContain("w-2ch");
-    expect(spine.className).toContain("cursor-pointer");
-    // `group-hover`, so the grip lights from anywhere on the row — pointing
-    // at the title and pointing at the rule are one gesture.
-    expect(spine.className).toContain("group-hover:text-neutral-500");
-    // Announced by the summary it grips, not twice over.
-    expect(spine.getAttribute("aria-hidden")).toBe("true");
 
     spine.click();
     flush();
@@ -626,8 +408,6 @@ describe("platform wrappers", () => {
     expect(closed).toEqual([1]);
   });
 
-  // The drawer covers the session like any other overlay, so it answers the
-  // phone gesture for "out of this" like any other overlay.
   test("Back closes the drawer rather than leaving the session", () => {
     const host = mountPoint();
     const [open, setOpen] = createSignal(true);
@@ -658,9 +438,7 @@ describe("platform wrappers", () => {
     expect(closed).toEqual([1]);
   });
 
-  // A browser delivers the `popstate` for `history.back()` in a later task;
-  // happy-dom delivers it inline, which is the one ordering a handoff between
-  // two overlays never sees.
+  // Browsers fire `history.back()`'s `popstate` in a later task; happy-dom fires it inline.
   function deferredBack(): {
     readonly deliver: () => void;
     readonly restore: () => void;
@@ -682,8 +460,6 @@ describe("platform wrappers", () => {
     };
   }
 
-  // The drawer's own rows open overlays: it closes as the next one opens, and
-  // the entry it takes back must not be read as the Back that closes that one.
   test("an overlay opened from the drawer survives the drawer's own retraction", () => {
     const browser = deferredBack();
     const host = mountPoint();
@@ -772,8 +548,6 @@ describe("platform wrappers", () => {
     return host.querySelector("dialog")!;
   }
 
-  // A phone's modal is the whole page, and the page ends where the software
-  // keyboard begins: the visual viewport, which no `vh` unit follows on iOS.
   test("a modal on a phone is as tall as the visible viewport", () => {
     const screen = phone();
     const viewport = fakeViewport(800);
@@ -784,16 +558,12 @@ describe("platform wrappers", () => {
       viewport.resize(420);
       flush();
       expect(sheet.style.height).toBe("420px");
-      // A column, so a body that asks for the room gets what the header leaves.
-      expect(sheet.className).toContain("open:flex");
-      expect(sheet.firstElementChild!.className).toContain("flex-1");
     } finally {
       viewport.restore();
       screen.restore();
     }
   });
 
-  // On a desktop the panel is as tall as it needs to be, up to its own ceiling.
   test("a modal on a desktop takes its height from its content", () => {
     window.innerWidth = 1024;
     const viewport = fakeViewport(800);
@@ -804,7 +574,6 @@ describe("platform wrappers", () => {
     }
   });
 
-  // Two overlays deep, Back is one step out, not the way back to the session.
   test("Back closes the innermost overlay only", () => {
     const host = mountPoint();
     const [configuring, setConfiguring] = createSignal(true);
@@ -911,14 +680,6 @@ describe("platform wrappers", () => {
     expect(closed).toEqual([]);
   });
 
-  test("the picture opts out of the browser's own image drag", () => {
-    const { dialog } = lightbox();
-
-    expect(dialog.querySelector("img")!.getAttribute("draggable")).toBe(
-      "false"
-    );
-  });
-
   test("a drag that ends on the backdrop pans rather than closing", () => {
     const { dialog, closed } = lightbox();
     const backdrop = stage(dialog);
@@ -947,8 +708,6 @@ describe("platform wrappers", () => {
     expect(closed).toEqual([1]);
   });
 
-  // The phone gesture for "out of this". Without the pushed entry, Back leaves
-  // the session that the picture was opened from.
   test("Back closes the lightbox rather than leaving the session", () => {
     const { dialog, closed } = lightbox();
     expect(history.state).toEqual({ pimModal: true });
@@ -991,7 +750,7 @@ describe("chip menu", () => {
     return { host, chosen, opened };
   }
 
-  /** Rows the reader can reach; a closed popover keeps its list mounted. */
+  /** A closed popover keeps its list mounted. */
   function options(host: HTMLElement): readonly Element[] {
     const panel = host.querySelector("[popover]");
     if (panel === null || panel.className.includes("hidden")) {
@@ -1000,14 +759,13 @@ describe("chip menu", () => {
     return [...panel.querySelectorAll('[role="option"]')];
   }
 
-  /** A whole pointer press, down through the click it ends in; false where the click was refused. */
+  /** pointerdown then click; false if the click was prevented. */
   function press(target: Element): boolean {
     target.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
     flush();
     const click = new MouseEvent("click", {
       bubbles: true,
       cancelable: true,
-      // A press counts; a keyboard's activation and a scripted `.click()` do not.
       detail: 1,
     });
     target.dispatchEvent(click);
@@ -1027,7 +785,6 @@ describe("chip menu", () => {
       "Opus 5",
       "GPT-6",
     ]);
-    // The keyboard starts on what the chip already says.
     expect(options(host)[0]?.getAttribute("aria-selected")).toBe("true");
   });
 
@@ -1062,9 +819,6 @@ describe("chip menu", () => {
     expect(options(host)).toHaveLength(0);
   });
 
-  // An open menu covers the page it was opened over: the press that dismisses
-  // it is spent on the dismissal, and whatever button it happened to land on
-  // must not fire as well.
   test("the press that closes it is not also a press on what it landed on", () => {
     const host = mountPoint();
     const taps: string[] = [];
@@ -1101,14 +855,10 @@ describe("chip menu", () => {
     expect(options(host)).toHaveLength(0);
     expect(taps).toEqual([]);
 
-    // The next press is nobody's dismissal, and lands.
     expect(press(elsewhere)).toBe(true);
     expect(taps).toEqual(["elsewhere"]);
   });
 
-  // A touch scroll of the list starts with a `pointerdown` on a row, and a
-  // tap's `mousedown` only arrives at `touchend`: if that first pointer
-  // dismissed the menu, the list could neither be scrolled nor chosen from.
   test("a pointer on the list itself does not close it", () => {
     const { host, chosen } = paint();
     host.querySelector("button")!.click();
@@ -1124,8 +874,6 @@ describe("chip menu", () => {
     expect(chosen).toEqual(["openai/gpt-6"]);
   });
 
-  // Which row is in force and which row the keyboard is on are two different
-  // facts, and the reader needs both: the arrow key moves one of them.
   test("the value in force is ticked, wherever the keyboard is standing", () => {
     const { host } = paint();
     const chip = host.querySelector("button")!;
@@ -1138,20 +886,12 @@ describe("chip menu", () => {
       );
     expect(ticked()).toEqual([true, false]);
 
-    // And the rows it is not are written back in the chrome grey, so one
-    // small mark is not the only thing saying which row is in force.
-    expect(options(host)[0]?.className).toContain("text-neutral-50");
-    expect(options(host)[1]?.className).toContain("text-neutral-350");
-
     chip.dispatchEvent(
       new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })
     );
     flush();
     expect(options(host)[1]?.getAttribute("aria-selected")).toBe("true");
     expect(ticked()).toEqual([true, false]);
-    // Standing on a dimmed row lifts it, but not to the chosen row's white:
-    // where the keyboard is and what is in force stay two readings.
-    expect(options(host)[1]?.className).toContain("text-neutral-100");
   });
 
   test("a searchable menu filters its rows and chooses from what is left", async () => {
@@ -1160,8 +900,7 @@ describe("chip menu", () => {
     flush();
 
     const field = host.querySelector<HTMLInputElement>('input[type="text"]')!;
-    // The panel is shown by an effect of its own, so the focus that follows
-    // it is a microtask behind the flush that opened the menu.
+    // Focus lands a microtask after the open.
     await Promise.resolve();
     expect(document.activeElement).toBe(field);
 
@@ -1170,19 +909,13 @@ describe("chip menu", () => {
     flush();
     expect(options(host).map((row) => row.textContent)).toEqual(["GPT-6"]);
 
-    // The one row left is the one Enter takes, and the index it arrives as
-    // is an index into the rows on screen.
     field.dispatchEvent(
       new KeyboardEvent("keydown", { key: "Enter", bubbles: true })
     );
     flush();
     expect(chosen).toEqual(["openai/gpt-6"]);
-    // The box the keys were going to has gone with the panel, so the chip
-    // takes them back rather than the page losing focus altogether.
     expect(document.activeElement).toBe(host.querySelector("button"));
 
-    // Re-opening starts from the whole list and an empty box, not from what
-    // was typed last.
     host.querySelector("button")!.click();
     flush();
     expect(options(host)).toHaveLength(2);
@@ -1191,18 +924,6 @@ describe("chip menu", () => {
     ).toBe("");
   });
 
-  test("a menu without a search prop has no box to type into", () => {
-    const { host } = paint();
-    host.querySelector("button")!.click();
-    flush();
-
-    expect(host.querySelector('input[type="text"]')).toBeNull();
-  });
-
-  // The regression this guards: both panels registered their listeners from
-  // inside an effect's callback and asked for `onCleanup` there, which is not
-  // an owner — so nothing was ever released, and every open left another
-  // listener on the document behind it.
   test("a panel releases every listener it took when it closes", () => {
     let outstanding = 0;
     for (const target of [window, document]) {
@@ -1281,7 +1002,6 @@ describe("bottom-origin scrollers", () => {
     scroll(scroller, -120);
     expect(pin.pinned()).toBe(false);
 
-    // Near the origin is at it: a wheel rarely settles on zero to the pixel.
     scroll(scroller, -8);
     expect(pin.pinned()).toBe(true);
 

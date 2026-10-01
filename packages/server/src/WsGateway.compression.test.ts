@@ -9,11 +9,7 @@ import { SessionRegistry } from "#core/session/SessionRegistry";
 import type { ResponseEvent } from "#protocol/ServerEvent";
 import { WsGateway } from "./WsGateway";
 
-/**
- * What actually leaves the socket. Bun compresses a frame only when `send`
- * asks it to, so none of this can be read off the configuration: these tests
- * read the negotiated handshake and the frame bytes themselves.
- */
+/** Reads the negotiated handshake and raw frame bytes, since Bun only compresses on request. */
 
 const RSV1 = 0x40;
 const DIRECTORIES = 200;
@@ -43,7 +39,7 @@ function maskedFrame(text: string): Uint8Array {
   return frame;
 }
 
-/** A server frame is never masked; `undefined` until every byte of one has landed. */
+/** Undefined until a whole (unmasked) server frame has arrived. */
 function unframe(bytes: Uint8Array): Uint8Array | undefined {
   if (bytes.length < 2) {
     return undefined;
@@ -62,7 +58,7 @@ function unframe(bytes: Uint8Array): Uint8Array | undefined {
     : undefined;
 }
 
-/** Sends one command over a raw socket, offering `permessage-deflate` the way a browser does. */
+/** Sends one command over a raw socket, offering `permessage-deflate` like a browser. */
 async function exchange(command: object, deflate = true): Promise<Wire> {
   const url = new URL(gateway.url);
   return await new Promise<Wire>((resolve, reject) => {

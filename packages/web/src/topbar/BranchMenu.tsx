@@ -15,13 +15,11 @@ import { Spinner } from "../ui/Spinner";
 
 const SYNC = `${PILL} h-7 flex-1 px-3 text-sm disabled:text-neutral-600 disabled:hover:text-neutral-600 disabled:hover:ring-0`;
 
-/** How far back a branch's last commit may be before it stops being live work. */
+/** Branches untouched for longer are hidden. */
 const WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
-/** Branch names are long and the chip is short; 300px still clears the narrowest phone. */
 const PANEL_WIDTH = 300;
 
-/** Said by the standing banner, and again by a press that the freeze answered. */
 const BUSY = "Git operations are disabled as an agent is still working.";
 
 type Operation = "checkout" | "pull" | "push";
@@ -60,7 +58,7 @@ function rowOf(branch: GitBranch, now: number): Row {
   };
 }
 
-/** Where the session stands and where the trunk is always belong on the list; the rest have to be live work. */
+/** Current and default branches always show; others only if recent and not merged, gone or in another worktree. */
 function live(branch: GitBranch, now: number): boolean {
   return (
     branch.current ||
@@ -77,7 +75,6 @@ function rowsOf(branches: readonly GitBranch[]): readonly Row[] {
     .map((branch) => rowOf(branch, now));
 }
 
-/** The branch segment: where the work is, and the two directions it can move. */
 export function BranchMenu(props: {
   readonly store: SessionStore;
   readonly branch: string;
@@ -106,9 +103,7 @@ export function BranchMenu(props: {
     props.store.listBranches().then(
       (found) => {
         setBranches(found);
-        // The caret lands here rather than at the open, because the list only
-        // arrives afterwards; an arrow pressed in between has already claimed
-        // it and keeps it.
+        // Select the current branch unless an arrow key already moved the selection.
         if (untrack(navigation.activeIndex) < 0) {
           navigation.setActiveIndex(
             rowsOf(found).findIndex((row) => row.branch.current)
@@ -166,7 +161,7 @@ export function BranchMenu(props: {
       setFailure("");
       navigation.setActiveIndex(-1);
       void load();
-      // The counts only mean anything once the remote has been asked; the list paints before that lands.
+      // Paint now, then again once the remote is fetched and ahead/behind are accurate.
       void props.store.refreshGit(true).then(load);
     },
   });
@@ -217,9 +212,7 @@ export function BranchMenu(props: {
         title={props.branch}
         class={`${CHIP_SEGMENT} flex-1 rounded-l-lg`}
         onClick={panel.toggle}
-        onKeyDown={(event: KeyboardEvent) => {
-          navigation.onKeyDown(event);
-        }}
+        onKeyDown={navigation.onKeyDown}
       >
         <span class="i-griddy-icons:code-branch size-4 shrink-0" />
         <Fitted texts={[props.branch]} />

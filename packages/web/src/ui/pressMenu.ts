@@ -5,7 +5,7 @@ import type { Point } from "./Popover";
 
 const HOLD_MS = 450;
 
-/** How far a finger may wander and still be holding still rather than scrolling. */
+/** Movement in px that cancels a long press. */
 const SLOP = 10;
 
 type Handlers = Pick<
@@ -18,20 +18,12 @@ type Handlers = Pick<
 >;
 
 export type PressMenu = {
-  /** Spread onto the element the verbs belong to. */
   readonly handlers: Handlers;
-  /**
-   * Whether the press that just ended was the one that opened the menu, which
-   * the element must not also read as a tap. Answering clears it.
-   */
+  /** True once if the last press opened the menu, so the caller can skip its tap. */
   readonly swallowed: () => boolean;
 };
 
-/**
- * The two ways a pointer asks a row for its verbs: a right-click, and a finger
- * held still. Both say where they landed, so the menu can open under the
- * pointer that asked for it rather than off at the row's own trigger.
- */
+/** Opens a menu at the pointer on right-click or long press. */
 export function createPressMenu(open: (at: Point) => void): PressMenu {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let origin: Point | undefined;

@@ -301,9 +301,7 @@ test("rate limits every request except cancellations", async () => {
     }),
   });
 
-  // A single cold call sends initialize + initialized + tools/call. With a
-  // budget of one request per window, the 2nd and 3rd each wait — proving the
-  // handshake requests draw tokens, not just the tool call.
+  // initialize + initialized + tools/call at one per window: the last two wait.
   await client.callTool({ name: "demo_tool", arguments: {} });
   expect(sleeps).toEqual([1000, 1000]);
 });

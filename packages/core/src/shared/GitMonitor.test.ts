@@ -114,7 +114,7 @@ describe("GitMonitor", () => {
     expect(monitor.stateOf("/repo")).toEqual(state("next"));
   });
 
-  test("fetches at most once inside the ttl, and never while an operation holds the directory", async () => {
+  test("fetches at most once inside the ttl", async () => {
     let fetches = 0;
     const monitor = new GitMonitor({
       status: () => Promise.resolve(Git.EMPTY),
@@ -146,7 +146,7 @@ describe("GitMonitor", () => {
     expect(await monitor.refresh("/repo")).toEqual(state("main"));
   });
 
-  test("polls a watched directory, which is all a worktree edit is heard through", async () => {
+  test("polls a watched directory for worktree edits", async () => {
     let next = state("main");
     const monitor = new GitMonitor({
       status: () => Promise.resolve(next),

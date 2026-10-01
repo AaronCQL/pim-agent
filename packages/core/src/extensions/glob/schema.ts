@@ -3,7 +3,7 @@ import { type Static, Type } from "typebox";
 
 export const GLOB_HEAD_LIMIT_MAX = 1000;
 
-export const GLOB_PATH_FORMATS = ["relative", "absolute"] as const;
+const GLOB_PATH_FORMATS = ["relative", "absolute"] as const;
 
 export const globSchema = Type.Object({
   pattern: Type.String({

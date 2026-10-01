@@ -44,7 +44,7 @@ function titleBlock(
   return { kind: "file", path, range: [input.start ?? 1, input.end] };
 }
 
-/** Legacy sessions predate the tag, so an untagged result is read for the range it may still carry. */
+/** Legacy details have no `kind`, so check the fields. */
 function visibleRange(
   details: ReadDetails | undefined
 ): readonly [number, number] | undefined {

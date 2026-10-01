@@ -18,7 +18,7 @@ export type SearchChainOptions = {
   readonly breaker: SearchBreaker;
 };
 
-/** Tries providers in order until one answers; an empty result set is an answer and ends the chain. */
+/** Tries providers in order; the first answer wins, even an empty one. */
 export class SearchChain {
   private readonly providers: readonly SearchProvider[];
   private readonly breaker: SearchBreaker;

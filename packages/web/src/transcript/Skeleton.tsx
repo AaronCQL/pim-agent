@@ -1,6 +1,5 @@
 import { For } from "solid-js";
 
-/** What stands in for a conversation that has been asked for and not arrived. */
 export function Skeleton() {
   const widths = ["60%", "95%", "85%", "70%"];
 

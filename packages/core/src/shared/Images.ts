@@ -10,33 +10,31 @@ import { SpillCache } from "./SpillCache";
 
 export type { ImageMimeType };
 
-/** What a tool needs off `ctx.model` to know whether a picture can be sent. */
 export type VisionModel = {
   readonly id: string;
   readonly input: readonly string[];
 };
 
-/** An image the providers will take: within their formats, dimensions and byte budget. */
 export type NormalisedImage = {
   readonly base64: string;
   readonly mimeType: ImageMimeType;
   readonly width: number;
   readonly height: number;
-  /** Encoded size after the resize, which is what the cache holds. */
+  /** Encoded size after the resize. */
   readonly bytes: number;
   readonly originalWidth: number;
   readonly originalHeight: number;
-  /** The container the frames were counted in: a resize is free to re-encode as another. */
+  /** May differ from `mimeType`: a resize can re-encode. */
   readonly originalMimeType: ImageMimeType;
   readonly resized: boolean;
-  /** Frames in the source container, 1 for a still: the encoded copy holds only the first. */
+  /** Frames in the source; the encoded copy keeps only the first. */
   readonly frames: number;
   readonly sha256: string;
   /** `~/.pim/cache/img-<sha256>.<ext>`, or null when the cache write failed. */
   readonly cachePath: string | null;
 };
 
-/** What every tool records about a picture it showed: the picture itself never rides here, `sha256` addresses it in the spill cache. */
+/** No pixel data: `sha256` addresses the picture in the spill cache. */
 export type ImageDetails = {
   readonly sha256: string;
   readonly mimeType: ImageMimeType;
@@ -49,12 +47,12 @@ export type ImageDetails = {
 
 type ToolContent = AgentToolResult<unknown>["content"];
 
-/** Never decode past this: a mislabelled video is rejected on its size alone. */
+/** Larger sources are rejected before decoding. */
 const MAX_SOURCE_BYTES = 25 * 1024 * 1024;
 const MAX_EDGE = 2000;
 const MAX_ENCODED_BYTES = 3_932_160;
 
-/** Enough for every magic-byte signature, WebP's `RIFF….WEBP` included. */
+/** Long enough for every signature, including WebP's `RIFF….WEBP`. */
 const SNIFF_BYTES = 12;
 
 const CACHE_PREFIX = "img-";
@@ -81,7 +79,7 @@ function startsWith(
   return signature.every((byte, index) => bytes[offset + index] === byte);
 }
 
-/** Magic bytes only: an extension is a claim, not evidence. */
+/** By magic bytes, never by extension. */
 function sniff(bytes: Uint8Array): ImageMimeType | null {
   if (startsWith(bytes, PNG)) {
     return "image/png";
@@ -102,7 +100,7 @@ function view(bytes: Uint8Array): DataView {
   return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 }
 
-/** RIFF chunks are padded to an even length, so an odd body carries one trailing byte. */
+/** RIFF chunks are padded to an even length. */
 function webpFrames(bytes: Uint8Array): number {
   const reader = view(bytes);
   let count = 0;
@@ -117,7 +115,7 @@ function webpFrames(bytes: Uint8Array): number {
   return count;
 }
 
-/** `acTL` carries the count outright, and must appear before the first `IDAT`. */
+/** `acTL` holds the count and must come before the first `IDAT`. */
 function apngFrames(bytes: Uint8Array): number {
   const reader = view(bytes);
   let at = 8;
@@ -173,32 +171,30 @@ const FRAME_READERS: Partial<
   "image/gif": gifFrames,
 };
 
-/** Headers only: the count has to be read before the resize, which keeps frame 1 alone. */
+/** Read from the source, since the resize keeps only frame 1. */
 function frames(bytes: Uint8Array, mimeType: ImageMimeType): number {
   return Math.max(1, FRAME_READERS[mimeType]?.(bytes) ?? 1);
 }
 
-/** An unknown model is not a blind one: only a model that names its inputs can rule the picture out. */
+/** An unknown model is assumed to see. */
 function canSee(model: VisionModel | undefined): boolean {
   return model === undefined || model.input.includes("image");
 }
 
-/** What a model without eyes is told in place of the picture it cannot be sent. */
 function noVisionNote(tool: string, subject: string): string {
   return `[${tool} tool: ${subject}; the current model has no vision input.]`;
 }
 
-/** A name that claims a picture — a claim the bytes still have to back. */
 function looksLikeImageName(path: string): boolean {
   return ImageMime.namesExtension(extname(path).slice(1).toLowerCase());
 }
 
-/** What the spill cache holds the picture under; the resize picks the extension, never the source path. */
+/** The extension follows the encoded type, not the source path. */
 function cacheName(sha256: string, mimeType: ImageMimeType): string {
   return `${CACHE_PREFIX}${sha256}.${ImageMime.extensionOf(mimeType)}`;
 }
 
-/** Refuse on the stat alone, so a mislabelled video is never pulled into memory. */
+/** Meant for the stat size, so an oversized file is never read. */
 function assertWithinSourceCap(byteLength: number, path: string): void {
   if (byteLength > MAX_SOURCE_BYTES) {
     throw new Error(
@@ -231,7 +227,7 @@ async function normalise(
     );
   }
 
-  // An unresized encode is the input re-spelled: decoding it back would copy the bytes twice.
+  // Unresized output is the input, so skip decoding the base64 back.
   const data = resized.wasResized ? Buffer.from(resized.data, "base64") : bytes;
   const mimeType = ImageMime.isSupported(resized.mimeType)
     ? resized.mimeType
@@ -256,7 +252,6 @@ async function normalise(
   };
 }
 
-/** The record of the picture a tool hands its view, off the picture itself. */
 function detailsOf(image: NormalisedImage): ImageDetails {
   return {
     sha256: image.sha256,
@@ -269,7 +264,7 @@ function detailsOf(image: NormalisedImage): ImageDetails {
   };
 }
 
-/** Text first, the way pi's own read orders it. */
+/** Text first, matching pi's read tool. */
 function contentOf(image: NormalisedImage, note?: string): ToolContent {
   const picture = {
     type: "image" as const,
@@ -281,7 +276,6 @@ function contentOf(image: NormalisedImage, note?: string): ToolContent {
     : [{ type: "text", text: note }, picture];
 }
 
-/** How the model maps coordinates it reads off the picture back onto the file. */
 function resizeNote(image: NormalisedImage): string | undefined {
   if (!image.resized) {
     return undefined;
@@ -290,10 +284,7 @@ function resizeNote(image: NormalisedImage): string | undefined {
   return `image resized from ${image.originalWidth}x${image.originalHeight} to ${image.width}x${image.height}; multiply coordinates by ${scale} to map to the original.`;
 }
 
-/**
- * What the picture leaves out, which a still under every cap says nothing about:
- * providers see one frame, so an unmentioned animation reads as an empty screen.
- */
+/** Providers see only one frame, so say the image is animated. */
 function animationNote(image: NormalisedImage): string | undefined {
   if (image.frames < 2) {
     return undefined;
@@ -301,7 +292,6 @@ function animationNote(image: NormalisedImage): string | undefined {
   return `animated ${ImageMime.extensionOf(image.originalMimeType)}: ${image.frames} frames, ${image.originalWidth}x${image.originalHeight}; frame 1 shown.`;
 }
 
-/** Everything true of the picture that is not in the picture. */
 function noteOf(image: NormalisedImage): string | undefined {
   const notes = [resizeNote(image), animationNote(image)].filter(
     (note) => note !== undefined
@@ -309,7 +299,7 @@ function noteOf(image: NormalisedImage): string | undefined {
   return notes.length === 0 ? undefined : notes.join(" ");
 }
 
-/** What the bytes are instead, in the words a person would use to go find them. */
+/** A human description of non-image bytes. */
 function describe(bytes: Uint8Array): string {
   if (bytes.length === 0) {
     return "an empty file";

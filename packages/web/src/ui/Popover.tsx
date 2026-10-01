@@ -4,31 +4,30 @@ import type { JSX } from "@solidjs/web/jsx-runtime";
 const GAP = 4;
 const EDGE = 8;
 
-/** Where in the viewport a gesture asked for a panel. */
+/** Viewport coordinates. */
 export type Point = { readonly x: number; readonly y: number };
 
-/** What the panel is measured against: the trigger's box, or the pointer that summoned it. */
 function box(trigger: HTMLElement, at: Point | undefined): DOMRect {
   return at === undefined
     ? trigger.getBoundingClientRect()
     : new DOMRect(at.x, at.y, 0, 0);
 }
 
-/** Whether the side asked for keeps the panel: it holds the rows, or it is the roomier of the two. */
+/** Keep the preferred side if it fits the content or is the roomier one. */
 function keeps(room: number, other: number, needed: number): boolean {
   return room >= needed || room >= other;
 }
 
-/** A non-modal top-layer overlay; placement is measured in script and must write all four insets, or the UA's `[popover] { inset: 0 }` stretches it. */
+/** Placement must set all four insets, or the UA's `[popover] { inset: 0 }` stretches it. */
 export function Popover(props: {
   readonly open: boolean;
   readonly anchor: () => HTMLElement;
   readonly at?: () => Point | undefined;
-  /** Cap the panel at the trigger's width instead of the room left on screen. */
+  /** Cap the width at the trigger's. */
   readonly match?: boolean;
-  /** A floor for the panel's width, in px, where the trigger is far narrower than the rows it opens; the viewport still wins. */
+  /** Minimum width in px; the viewport still wins. */
   readonly min?: number;
-  /** Which side of the trigger the panel takes; above it by default, as the composer's chips sit at the foot of the page. */
+  /** Defaults to "above". */
   readonly place?: "above" | "below";
   readonly class?: string;
   readonly children: Element;
@@ -50,9 +49,7 @@ export function Popover(props: {
     );
     const above = rect.top - EDGE - GAP;
     const under = window.innerHeight - rect.bottom - EDGE - GAP;
-    // The height the rows want, read off the content rather than the box an
-    // earlier cap has already squashed. A menu summoned by a finger near the
-    // foot of the screen is otherwise a sliver of a list.
+    // `scrollHeight`, not the box: an earlier max-height may have squashed it.
     const needed = host.scrollHeight;
     const below =
       props.place === "below"
@@ -72,37 +69,34 @@ export function Popover(props: {
   };
 
   createEffect(
-    // Read the trigger here: a prop read from a scroll or resize handler is subscribed to nothing.
+    // Read props here: reads from the scroll/resize handlers are untracked.
     () => ({ open: props.open, trigger: props.anchor(), at: props.at?.() }),
     ({ open, trigger, at }) => {
       try {
-        // Optional call: absent on engines without the attribute and in the test DOM.
+        // Absent in some engines and in the test DOM.
         if (open) {
           host.showPopover?.();
         } else {
           host.hidePopover?.();
         }
       } catch {
-        // Toggling to the state it is already in throws.
+        // Throws when already in that state.
       }
       if (!open) {
         return;
       }
-      // After the show, so the panel is laid out and can be measured.
       place(trigger, at);
       const reflow = (): void => {
         place(trigger, at);
       };
-      // Again once the flush is over: the `hidden` class comes off in this
-      // same flush but after this effect, so the height measured just now was
-      // a `display: none` box's. A microtask still lands before the paint.
+      // Again after the flush: `hidden` is removed later in it, so the first measure saw `display: none`.
       queueMicrotask(reflow);
-      // Scroll in the capture phase: the transcript that moves the composer scrolls itself, not the window.
+      // Capture phase: inner scrollers do not bubble scroll to the window.
       window.addEventListener("resize", reflow);
       window.addEventListener("scroll", reflow, true);
       const observer = new ResizeObserver(reflow);
       observer.observe(trigger);
-      // Return the cleanup: an effect callback is not an owner, so `onCleanup` here would never run.
+      // `onCleanup` would never run here: an effect callback is not an owner.
       return () => {
         window.removeEventListener("resize", reflow);
         window.removeEventListener("scroll", reflow, true);

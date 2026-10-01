@@ -1,12 +1,11 @@
 import { MovePath } from "#core/view/MovePath";
 import { elide } from "../format";
 
-/** What a piece of a title is, and so how far it may be spent for room. */
 export type Role = "lead" | "name" | "gone";
 
 export type Piece = { readonly text: string; readonly role: Role };
 
-/** One reading of a path, whole or shortened; the pieces read left to right. */
+/** One rendering of a path, whole or shortened. */
 export type Title = readonly Piece[];
 
 function directory(path: string): string {
@@ -18,11 +17,7 @@ function file(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1);
 }
 
-/**
- * The ways `dir` can lead to a name, longest first: whole, then a segment at a
- * time off the front, then gone. The near directories outlive the far ones —
- * `…/topbar/` says where the file is, `packages/web/` says only which repo.
- */
+/** Longest first: whole, then dropping leading segments, then empty. */
 function leads(dir: string): readonly string[] {
   if (dir === "") {
     return [""];
@@ -35,7 +30,6 @@ function leads(dir: string): readonly string[] {
   return [dir, ...dropped, ""];
 }
 
-/** A path with only its last segment lit: the directories lead the eye to the name. */
 function named(path: string): readonly Title[] {
   const name = file(path);
   return leads(directory(path)).map((lead) =>
@@ -50,12 +44,7 @@ function named(path: string): readonly Title[] {
 
 const ARROW: Piece = { text: ` ${MovePath.ARROW} `, role: "lead" };
 
-/**
- * A moved file reads as one path with the changed segments braced —
- * `packages/web/src/diff/{DiffOverlay ➝ DiffView}.test.tsx` — the same way the
- * patch tool titles a move, down to the arrow and the strike through what is
- * gone. Two paths that share nothing to fold are left whole.
- */
+/** `a/{Old ➝ New}.ts`; paths with nothing in common stay whole. */
 function moved(path: string, oldPath: string): readonly Title[] {
   const folded = MovePath.fold(oldPath, path);
   if (folded === undefined) {
@@ -66,7 +55,6 @@ function moved(path: string, oldPath: string): readonly Title[] {
     ]);
   }
 
-  // The new segments stay lit even when they are directories: they are the move.
   const tail: Title = [
     { text: "{", role: "lead" },
     { text: folded.from, role: "gone" },
@@ -86,11 +74,7 @@ function moved(path: string, oldPath: string): readonly Title[] {
   );
 }
 
-/**
- * Every reading of a file's title, widest first. A move that no longer fits is
- * read as the path it arrived at: the row's own `R` already says it moved, and
- * where it moved from is one tap away.
- */
+/** Widest first; a move that no longer fits falls back to its new path. */
 function readings(path: string, oldPath: string | undefined): readonly Title[] {
   const plain = named(path);
   return oldPath === undefined ? plain : [...moved(path, oldPath), ...plain];
@@ -100,16 +84,11 @@ function text(title: Title): string {
   return title.map((piece) => piece.text).join("");
 }
 
-/** The whole of it, which is what a box is measured against. */
 function widest(readings: readonly Title[]): string {
   return text(readings[0] ?? []);
 }
 
-/**
- * The widest reading `columns` character cells hold whole. Nothing holds a name
- * longer than the bar itself, so that one is elided middle-out — both ends of a
- * filename say more than its head alone.
- */
+/** The widest reading that fits `columns`; failing that, the name elided middle-out. */
 function fit(readings: readonly Title[], columns: number): Title {
   const found = readings.find((title) => text(title).length <= columns);
   if (found !== undefined) {

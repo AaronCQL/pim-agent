@@ -1,29 +1,16 @@
-/**
- * A file that moved, read as one path rather than two. Everything the old and
- * new paths agree on is said once, and only the segments that actually changed
- * are named on both sides — `packages/{web ➝ tui}/src/App.tsx` rather than two
- * near-identical paths a reader has to diff by eye.
- */
+/** A move split for display as `packages/{web ➝ tui}/src/App.tsx`. */
 export type MoveParts = {
-  /** The leading directories both paths share, with its trailing `/`. */
+  /** Shared leading segments, with a trailing `/`. */
   readonly prefix: string;
-  /** What those segments used to be. */
   readonly from: string;
-  /** What they are now. */
   readonly to: string;
-  /** The trailing segments both paths share, with its leading `/`. */
+  /** Shared trailing segments, with a leading `/`. */
   readonly suffix: string;
 };
 
-/** The arrow every surface draws a move with. */
 const ARROW = "➝";
 
-/**
- * The shared head and tail of a move, or `undefined` when there is nothing
- * worth folding: two paths that share no segment read better whole, since a
- * brace around the entire path only adds punctuation. Two bare filenames are
- * the exception — `{old.ts ➝ new.ts}` shares no segment but is still one name.
- */
+/** Undefined when the paths share no segment, unless both are bare filenames. */
 function fold(oldPath: string, newPath: string): MoveParts | undefined {
   const oldParts = oldPath.split("/");
   const newParts = newPath.split("/");

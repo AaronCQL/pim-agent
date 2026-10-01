@@ -7,19 +7,16 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
 
-/** One model a session can be switched to, named the way `setModel` takes it. */
 export type ModelChoice = {
+  /** `provider/id`, as `setModel` takes it. */
   readonly id: string;
   readonly label: string;
-  /** Who serves it, for a client that groups or tags the catalogue. */
   readonly provider: string;
 };
 
 /**
- * Pi's installation as one process sees it: a single `ModelRuntime` over a
- * single `auth.json`, and one `SettingsManager` per cwd. Every surface in a
- * process shares one of these — two runtimes over one auth file race each
- * other's token refresh.
+ * One `ModelRuntime` per process, shared by every surface: two runtimes over
+ * one `auth.json` race each other's token refresh.
  */
 export class AgentRuntime {
   public readonly agentDir: string;
@@ -32,7 +29,7 @@ export class AgentRuntime {
     this.agentDir = agentDir ?? getAgentDir();
   }
 
-  /** Idempotent, and shared by every caller: the second surface to ask waits on the first. */
+  /** Idempotent; concurrent callers share one boot. A failed boot can be retried. */
   public init(): Promise<void> {
     this.booting ??= this.bootstrap().catch((err: unknown) => {
       this.booting = undefined;
@@ -49,7 +46,7 @@ export class AgentRuntime {
     return this.required(this.registry);
   }
 
-  /** Every model this machine has credentials for, qualified as `setModel` takes them. */
+  /** Models with credentials available. */
   public models(): readonly ModelChoice[] {
     return this.modelRegistry.getAvailable().map((model: Model<ModelApi>) => ({
       id: `${model.provider}/${model.id}`,

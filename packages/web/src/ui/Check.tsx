@@ -1,7 +1,6 @@
 const BOX =
   "peer size-4 appearance-none rounded bg-neutral-850 ring-1 ring-neutral-700 outline-none hover:ring-neutral-600 checked:bg-indigo-400 checked:ring-0 checked:hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 disabled:opacity-40 disabled:hover:ring-neutral-700";
 
-/** A checkbox: the native input painted as the box, with the tick drawn over it. */
 export function Check(props: {
   readonly checked: boolean;
   readonly disabled?: boolean;

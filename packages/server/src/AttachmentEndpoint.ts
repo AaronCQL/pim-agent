@@ -17,25 +17,24 @@ const DEFAULT_MAX_BYTES = 25 * 1024 * 1024;
 
 const PREFIX = "/attachment/";
 
-/** Where stored bytes live when nothing says otherwise. */
 export function defaultAttachmentsRoot(): string {
   return join(Paths.pimHomeDir(), "attachments");
 }
 
-// Every origin is allowed: in dev the client is served from vite's own port and its upload is cross-origin.
+// Any origin: in dev the client is served from vite's port.
 function allow(response: Response): Response {
   response.headers.set("access-control-allow-origin", "*");
   response.headers.set("access-control-allow-headers", "content-type");
   return response;
 }
 
-/** Where `serve` answers for a stored file: the last two path segments only, never the server's layout. */
+/** Uses only the last two path segments, never the server's layout. */
 export function attachmentUrl(path: string): string {
   const scope = encodeURIComponent(basename(dirname(path)));
   return `${PREFIX}${scope}/${encodeURIComponent(basename(path))}`;
 }
 
-/** `POST /upload?session=<id>` with a multipart `file` field, and `GET /attachment/<session>/<file>` to read it back. */
+/** `POST /upload?session=<id>` with a multipart `file` field; `GET /attachment/<session>/<file>` reads it back. */
 export class AttachmentEndpoint {
   private readonly store: AttachmentStore;
   private readonly maxBytes: number;
@@ -46,7 +45,6 @@ export class AttachmentEndpoint {
     this.maxBytes = deps.maxBytes ?? DEFAULT_MAX_BYTES;
   }
 
-  /** Whether this endpoint owns the path, so the gateway can route to it. */
   public static owns(pathname: string): boolean {
     return pathname === "/upload" || pathname.startsWith(PREFIX);
   }
@@ -63,7 +61,7 @@ export class AttachmentEndpoint {
     );
   }
 
-  // Every segment goes back through the write's sanitising, so a crafted name cannot escape its scope.
+  // `locate` re-sanitises each segment, so a crafted name cannot escape its scope.
   private async serve(pathname: string): Promise<Response> {
     const [scope, name, ...rest] = pathname
       .slice(PREFIX.length)
@@ -91,10 +89,7 @@ export class AttachmentEndpoint {
     }
     const declared = Number(request.headers.get("content-length") ?? 0);
     if (declared > this.maxBytes) {
-      return Response.json(
-        { error: `upload exceeds ${this.maxBytes} bytes` },
-        { status: 413 }
-      );
+      return this.tooLarge();
     }
 
     let file: File | undefined;
@@ -112,10 +107,7 @@ export class AttachmentEndpoint {
       return Response.json({ error: "missing `file` field" }, { status: 400 });
     }
     if (file.size > this.maxBytes) {
-      return Response.json(
-        { error: `upload exceeds ${this.maxBytes} bytes` },
-        { status: 413 }
-      );
+      return this.tooLarge();
     }
 
     let stored: StoredAttachment;
@@ -140,7 +132,7 @@ export class AttachmentEndpoint {
     });
   }
 
-  /** Consume the uploads a prompt referenced; unknown ids are dropped, so a replayed command cannot re-attach. */
+  /** Consumes the uploads a prompt referenced; unknown ids are ignored, so a replay cannot re-attach. */
   public take(
     sessionId: string,
     ids: readonly string[]
@@ -161,6 +153,13 @@ export class AttachmentEndpoint {
       this.bySession.delete(sessionId);
     }
     return taken;
+  }
+
+  private tooLarge(): Response {
+    return Response.json(
+      { error: `upload exceeds ${this.maxBytes} bytes` },
+      { status: 413 }
+    );
   }
 
   private remember(sessionId: string, stored: StoredAttachment): void {

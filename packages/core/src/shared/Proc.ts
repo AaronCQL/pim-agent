@@ -1,9 +1,9 @@
 export type ProcOptions = {
   readonly cwd?: string | undefined;
   readonly stdout?: "pipe" | "inherit";
-  /** Merged over the process environment; a key set to `undefined` is removed from it. */
+  /** Merged over `process.env`; an `undefined` value removes the key. */
   readonly env?: Readonly<Record<string, string | undefined>>;
-  /** Kills the child once it elapses, answering `timedOut`. */
+  /** Kills the child and sets `timedOut` once elapsed. */
   readonly timeoutMs?: number;
 };
 
@@ -22,7 +22,6 @@ async function run(
     cwd: options.cwd,
     stdout: options.stdout ?? "pipe",
     stderr: "pipe",
-    // `undefined` is Bun's own "inherit this process's environment".
     env:
       options.env === undefined
         ? undefined

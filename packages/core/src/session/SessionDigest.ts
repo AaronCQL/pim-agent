@@ -3,35 +3,27 @@ import { parseSessionEntries } from "@earendil-works/pi-coding-agent";
 import { Attachments } from "../attachments/Attachments";
 import { MessageText } from "./MessageText";
 
-/** What the session catalogue shows for one file without opening a session. */
+/** Catalogue summary of a session file. */
 export type SessionDigest = {
-  /** The session's name if it has one, else its first user message; absent when it has neither. */
+  /** The session name, else the first user message. */
   readonly title?: string;
-  /** True when `title` is a name somebody wrote rather than the opening message. */
+  /** Set when `title` is a session name. */
   readonly named?: true;
-  /** When the agent last wrote; it moves with an in-flight turn, so read it before starting one. */
+  /** When the agent last wrote. Moves during a turn, so read it before starting one. */
   readonly settledAt?: number;
 };
 
-/**
- * The digest before it is clamped, so a reader that tails an appended region
- * can fold that region into what an earlier read of the same file found.
- */
+/** The unclamped digest, so a tail read can be merged into an earlier one. */
 export type DigestParts = {
   readonly name?: string;
-  /** The opening ask, unclamped. */
   readonly opening?: string;
   readonly settledAt?: number;
 };
 
-/**
- * A session file's durable bytes, undecoded: a whole session is megabytes of
- * tool output and the digest wants a handful of lines of it, so the search
- * runs over the bytes and only the lines it keeps become strings.
- */
+/** A session file's bytes, kept undecoded so only the lines used become strings. */
 export type Durable = {
   readonly bytes: Buffer;
-  /** Past the last newline; a trailing fragment is a write in progress and is not a line. */
+  /** Just past the last newline; a trailing partial line is excluded. */
   readonly end: number;
 };
 
@@ -41,7 +33,7 @@ const TAIL_LINES = 10;
 
 const TITLE_LIMIT = 120;
 
-/** Cheap reject before decoding a line: pi writes the discriminant verbatim. */
+/** Searched in raw bytes before decoding a line. */
 const NAMED = Buffer.from('"session_info"');
 
 export const NEWLINE = 0x0a;
@@ -60,7 +52,7 @@ function partsOf(body: Durable): DigestParts {
   };
 }
 
-/** An append only adds, so the opening ask stands and a later name or agent line wins. */
+/** Keeps the earlier opening; a later name or settle time wins. */
 function merge(before: DigestParts, appended: DigestParts): DigestParts {
   return {
     name: appended.name ?? before.name,
@@ -78,7 +70,7 @@ function of({ name, opening, settledAt }: DigestParts): SessionDigest {
   };
 }
 
-/** The last `session_info` line, found by walking the marker's occurrences backwards; a line that merely quotes the marker parses as something else, and the walk carries on past it. */
+/** The last `session_info` entry's name. Skips lines that merely quote the marker. */
 function nameOf({ bytes, end }: Durable): string | undefined {
   let at = end - 1;
   while (at >= 0) {
@@ -140,7 +132,6 @@ function clamp(text: string): string {
     : text;
 }
 
-/** Over the head window the caller has already cut, not the whole file. */
 function firstUserMessage(lines: readonly string[]): string | undefined {
   for (const line of lines) {
     const entry = parseSessionEntries(line)[0];

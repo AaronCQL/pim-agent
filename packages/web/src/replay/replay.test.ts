@@ -6,7 +6,6 @@ import type { DurableEvent } from "#protocol/ServerEvent";
 import { FIXTURE_CWD, FIXTURE_EVENTS, FIXTURE_JSONL } from "./fixture";
 import { pimTools } from "./tools";
 
-// Registers each tool's `toViewModel`, which is what the projection paints with.
 pimTools();
 
 async function committed(): Promise<readonly DurableEvent[]> {
@@ -31,7 +30,6 @@ describe("static replay fixture", () => {
     );
   });
 
-  /** The fixture only earns its place if it covers what the painter must draw. */
   test("the session exercises tool calls, a diff, an error and markdown", async () => {
     const events = await committed();
     const views = events.flatMap((event) =>

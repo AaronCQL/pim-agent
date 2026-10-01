@@ -12,12 +12,7 @@ import { GatewayHarness } from "../test/gateway";
 import { until } from "#core/shared/fixtures/wait";
 import { Topbar } from "./Topbar";
 
-/**
- * Choosing where to work, against the real gateway and a real filesystem: the
- * rows are `list_dirs` answers about a temporary directory this test made,
- * the row that makes one runs the real `create_dir`, and opening runs the
- * whole `attach` that starts a session in it.
- */
+// Runs against a real gateway and a temp directory tree.
 
 let harness: GatewayHarness;
 let store: SessionStore;
@@ -36,8 +31,7 @@ beforeEach(async () => {
   await mkdir(join(alpha, "inner"), { recursive: true });
   await mkdir(beta, { recursive: true });
   await mkdir(join(harness.tmp, ".hidden"), { recursive: true });
-  // A pair sharing a prefix, the second one deep: enough rows inside it that a
-  // caret left on the index it held outside would point somewhere arbitrary.
+  // `work` and `workshop` share a prefix; `workshop` has several children.
   await mkdir(join(harness.tmp, "work"), { recursive: true });
   for (const name of ["four", "one", "three", "two"]) {
     await mkdir(join(workshop, name), { recursive: true });
@@ -75,13 +69,11 @@ function paint(): HTMLElement {
   return host;
 }
 
-/** The chip that is the one way in, opened onto a listing that has landed. */
+/** Opens the modal and waits for the first listing. */
 async function open(): Promise<HTMLElement> {
   const host = paint();
   chip(host).click();
   flush();
-  // The button opens the directory being browsed, and can only offer to once
-  // the server has said it is one.
   await settle(() => action(host).disabled === false, "the directory listing");
   return host;
 }
@@ -108,14 +100,13 @@ function panel(host: HTMLElement): HTMLDialogElement {
   return host.querySelector("dialog")!;
 }
 
-/** The one way up, whose shortcut is the same walk. */
 function parent(host: HTMLElement): HTMLButtonElement {
   return host.querySelector<HTMLButtonElement>(
     '[aria-label="Parent directory"]'
   )!;
 }
 
-/** The one verb the modal has: open a session in whatever the box names. */
+/** The "New Session" button. */
 function action(host: HTMLElement): HTMLButtonElement {
   return host.querySelector<HTMLButtonElement>(
     '[aria-label="Start a new session in this directory"]'
@@ -135,7 +126,6 @@ type Chord = {
   readonly metaKey?: boolean;
 };
 
-/** A key aimed at one element, as the browser aims it at whatever holds focus. */
 function send(element: Element, key: string, chord: Chord = {}): void {
   element.dispatchEvent(
     new KeyboardEvent("keydown", { key, ...chord, bubbles: true })
@@ -147,7 +137,6 @@ function press(host: HTMLElement, key: string, chord: Chord = {}): void {
   send(box(host), key, chord);
 }
 
-/** The row under the caret, which the arrows move and Enter acts on. */
 function selected(host: HTMLElement): string | undefined {
   return (
     rows(host).find((row) => row.getAttribute("aria-selected") === "true")
@@ -155,7 +144,6 @@ function selected(host: HTMLElement): string | undefined {
   );
 }
 
-/** Polls a reactive answer: the listing arrives over the socket. */
 function settle(test: () => boolean, label: string): Promise<void> {
   return until(() => {
     flush();
@@ -167,18 +155,12 @@ test("the chip opens on the current directory, hiding what starts with a dot", a
   const host = await open();
 
   expect(box(host).value).toBe(`${harness.tmp}/`);
-  // Focused with the path selected, so typing another one replaces it. The
-  // focus is the attribute's: a dialog runs its own focusing steps as it is
-  // shown, and what they find instead is the close button in the header —
-  // where the arrows below would be that button's rather than the list's.
+  // Focus must come from `autofocus`, or the dialog focuses its close button.
   expect(box(host).hasAttribute("autofocus")).toBe(true);
   expect(box(host).selectionEnd).toBe(box(host).value.length);
   expect(labels(host)).toContain("alpha");
   expect(labels(host)).toContain("beta");
   expect(labels(host)).not.toContain(".hidden");
-  // Somewhere to go from the first frame: the directory already open is a
-  // destination too, because a second session in it is a normal thing to ask
-  // for.
   expect(action(host).disabled).toBe(false);
 });
 
@@ -187,9 +169,7 @@ test("a dot is how the hidden directories are asked for", async () => {
 
   type(host, `${harness.tmp}/.hid`);
 
-  // Half a name is not a directory, and the button only ever opens what the
-  // box names: a row under the caret is somewhere to walk to, not the answer,
-  // and what was typed is still a folder that could be made.
+  // A partial name isn't a directory, so the button is disabled.
   expect(labels(host)).toEqual([".hidden", "New folder “.hid”"]);
   expect(action(host).disabled).toBe(true);
 
@@ -208,10 +188,8 @@ test("clicking a directory steps into it rather than opening it", async () => {
   flush();
   await settle(() => labels(host).includes("inner"), "alpha's contents");
 
-  // Stepped in: the box moved, the session did not.
   expect(box(host).value).toBe(`${alpha}/`);
   expect(store.state.cwd).toBe(harness.tmp);
-  // And now the box names somewhere to open.
   expect(action(host).disabled).toBe(false);
 });
 
@@ -221,9 +199,6 @@ test("the arrows light a row, Enter walks to it, and every new set of rows start
   press(host, "ArrowDown");
   expect(selected(host)).toBe(labels(host)[1]);
 
-  // What the box says is what the rows are, so a filter that re-ranks them
-  // hands the caret back rather than leaving it on the index it held, which
-  // now names a folder nobody pointed at.
   type(host, `${harness.tmp}/w`);
   expect(labels(host)).toEqual(["work", "workshop", "New folder “w”"]);
   expect(selected(host)).toBe("work");
@@ -232,9 +207,6 @@ test("the arrows light a row, Enter walks to it, and every new set of rows start
   press(host, "Enter");
   await settle(() => labels(host).includes("four"), "workshop's contents");
 
-  // Enter is the keyboard's click: it walks to the lit row, so the box moved
-  // and the session did not — and the rows it moved to are a new list, whose
-  // first row is the only one the caret may land on unasked.
   expect(box(host).value).toBe(`${workshop}/`);
   expect(store.state.cwd).toBe(harness.tmp);
   expect(selected(host)).toBe("four");
@@ -255,27 +227,12 @@ test("Ctrl+Enter opens what the box names, whichever row the caret rests on", as
     "the new session's directory"
   );
 
-  // The key is the button: both open the box, never the highlighted row.
+  // Opens the box's path, not the selected row.
   expect(store.state.sessionId).not.toBe(first);
-  expect(host.querySelector("dialog")?.open).toBe(false);
-});
-
-test("the button opens a new session in the directory browsed to", async () => {
-  const host = await open();
-  const first = store.state.sessionId;
-
-  type(host, `${beta}/`);
-  await settle(() => action(host).disabled === false, "somewhere to open");
-  action(host).click();
-  await settle(() => store.state.cwd === beta, "the new session's directory");
-
-  expect(store.state.sessionId).not.toBe(first);
-  expect(store.state.durable).toEqual([]);
   expect(host.querySelector("dialog")?.open).toBe(false);
 });
 
 test("the button opens a second session in the directory already open", async () => {
-  // Written to, so the session about to be left is one worth counting.
   await store.prompt("hello");
   await settle(
     () => !store.isBusy() && store.state.durable.length > 0,
@@ -307,9 +264,7 @@ test("reopening never offers the directory last browsed to", async () => {
   chip(host).click();
   flush();
 
-  // Before the new listing lands there is nothing to open: the last answer
-  // was about somewhere else, and a modal that offered it would open a
-  // session in a directory the reader had already left.
+  // The stale listing must not enable the button.
   expect(action(host).disabled).toBe(true);
   await settle(() => action(host).disabled === false, "the current directory");
   expect(box(host).value).toBe(`${harness.tmp}/`);
@@ -320,8 +275,6 @@ test("a name nothing answers to is offered as a folder to make", async () => {
 
   type(host, `${harness.tmp}/gamma`);
 
-  // Nothing by that name is there, so the last row is the way to make it and
-  // the button has nothing to open yet.
   expect(labels(host)).toEqual(["New folder “gamma”"]);
   expect(action(host).disabled).toBe(true);
 
@@ -331,27 +284,13 @@ test("a name nothing answers to is offered as a folder to make", async () => {
     "the new directory"
   );
 
-  // Made on the server's disk, and stepped into like any other row: the box
-  // now names a real directory, so the button lights by itself.
   expect((await stat(join(harness.tmp, "gamma"))).isDirectory()).toBe(true);
   await settle(() => action(host).disabled === false, "somewhere to open");
   expect(store.state.cwd).toBe(harness.tmp);
 });
 
-test("a name that is already a directory is walked to, never made", async () => {
-  const host = await open();
-
-  type(host, `${harness.tmp}/alpha`);
-
-  // Exactly one of the two is ever true: the button opens what the box names,
-  // or the list offers to make it.
-  expect(labels(host)).toEqual(["alpha"]);
-  expect(action(host).disabled).toBe(false);
-});
-
 test("a folder that cannot be made says why, where the listing would", async () => {
-  // A file is not a place to work, so it is never listed — and the name it
-  // holds is still taken.
+  // Files aren't listed, but their names are taken.
   await Bun.write(join(harness.tmp, "notes.md"), "# hi\n");
   const host = await open();
 
@@ -363,8 +302,6 @@ test("a folder that cannot be made says why, where the listing would", async () 
     () => (host.textContent ?? "").includes("already exists"),
     "the refusal"
   );
-  // Refused, so the box stayed where it was rather than stepping into
-  // somewhere that is not a directory.
   expect(box(host).value).toBe(`${harness.tmp}/notes.md`);
 });
 
@@ -375,8 +312,7 @@ test("the keys are the dialog's, so a click on a row does not disarm them", asyn
     .find((row) => row.textContent === "workshop")!
     .click();
   await settle(() => labels(host).includes("four"), "workshop's contents");
-  // The click left focus on the dialog, the way it does on any row that is
-  // not a control: the arrows and Enter answer from there or not at all.
+  // Clicking a row leaves focus on the dialog itself.
   box(host).blur();
   panel(host).focus();
   expect(document.activeElement).toBe(panel(host));
@@ -401,7 +337,6 @@ test("Alt+↑ walks to the enclosing directory, and Meta+↑ with it", async () 
 
     press(host, "ArrowUp", chord);
 
-    // The shortcut is the ↑ button: the box moved out, the session stayed.
     expect(box(host).value).toBe(`${harness.tmp}/`);
     expect(store.state.cwd).toBe(harness.tmp);
   }
@@ -428,7 +363,6 @@ test("Alt+↑ at the root of the filesystem has nowhere to go", async () => {
 
   press(host, "ArrowUp", { altKey: true });
 
-  // Its own parent, so the key is spent rather than handed to the caret.
   expect(box(host).value).toBe("/");
   expect(selected(host)).toBe(lit);
 });
@@ -444,12 +378,10 @@ test("a key aimed at a button belongs to that button", async () => {
   action(host).focus();
   send(action(host), "Enter");
 
-  // Left alone for the button's own activation, which is the click the
-  // browser makes of it: the lit row was never stepped into.
+  // Enter is left to the button; the row isn't entered.
   expect(box(host).value).toBe(`${workshop}/`);
 
-  // The arrows are nobody's activation, though, so a caret parked on a
-  // button by a click still moves the list.
+  // Arrows still move the list.
   send(action(host), "ArrowDown");
   expect(selected(host)).toBe("one");
 

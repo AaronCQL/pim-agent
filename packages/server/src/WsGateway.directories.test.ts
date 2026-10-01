@@ -8,20 +8,9 @@ import type { ServerEvent } from "#protocol/ServerEvent";
 import { ProbeClient } from "./ProbeClient";
 import { WsGateway } from "./WsGateway";
 
-/**
- * Choosing where to work, over the wire: reading the server's directories,
- * and opening a session in one of them like the session it was asked for
- * from. No model server here — nothing in this file says anything, so the
- * provider is never called.
- */
-
 let tmp: string;
 let cwd: string;
-/**
- * Where a session with nothing to go on would land. Deliberately not the one
- * the probe works in, or inheriting a directory and falling back to the
- * default would look the same.
- */
+/** The default cwd; differs from the probe's so inheritance is distinguishable. */
 let fallback: string;
 let agentDir: string;
 let previousAgentDir: string | undefined;
@@ -38,12 +27,7 @@ async function connect(sessionCwd = cwd): Promise<ProbeClient> {
   return probe;
 }
 
-/**
- * The state frame that closes the replay of the attach after `from` — the
- * new session's, and not one the old session pushed on its way out. Nothing
- * on a `session_state` names its session, so the `attached` before it is
- * what makes this the right frame.
- */
+/** The `session_state` after the `attached` frame, so it belongs to the new session. */
 async function stateAfterAttach(
   probe: ProbeClient,
   from: number
@@ -122,14 +106,12 @@ test("list_dirs answers with the directories inside one, and the way out", async
   expect(response.success).toBe(true);
   expect(response.directory?.path).toBe(cwd);
   expect(response.directory?.parent).toBe(tmp);
-  // Files are not places to work; hidden directories are, and are left in for
-  // the client to hide until they are asked for.
+  // Files are excluded; hidden directories are kept for the client to filter.
   expect(response.directory?.entries.map((entry) => entry.name)).toEqual([
     ".git",
     "docs",
     "src",
   ]);
-  // Located as well as named, so nothing on the client joins paths.
   expect(response.directory?.entries.at(-1)?.path).toBe(join(cwd, "src"));
 });
 
@@ -145,8 +127,7 @@ test("list_dirs refuses what is not a readable directory", async () => {
     path: join(cwd, "nope"),
   });
 
-  // Refused rather than answered empty, so a client can tell "nothing in it"
-  // from "no such place".
+  // An error, so "empty" and "missing" are distinguishable.
   expect(file.success).toBe(false);
   expect(file.error).toContain("not a directory");
   expect(missing.success).toBe(false);
@@ -158,8 +139,7 @@ test("list_dirs refuses a path that is not rooted anywhere", async () => {
 
   const response = await probe.send({ type: "list_dirs", path: "src" });
 
-  // Resolving it would mean resolving against the directory this process was
-  // started in, which is an accident of the unit file and nobody's answer.
+  // A relative path would depend on the process cwd.
   expect(response.success).toBe(false);
   expect(response.error).toContain("absolute");
 });
@@ -173,7 +153,6 @@ test("create_dir makes one directory, and the listing has it", async () => {
   });
 
   expect(response.success).toBe(true);
-  // Nothing to read back: the client re-lists, and the listing is the answer.
   expect(
     (await probe.send({ type: "list_dirs", path: cwd })).directory?.entries.map(
       (entry) => entry.name
@@ -195,8 +174,7 @@ test("create_dir refuses a name already taken and a parent that is missing", asy
 
   expect(taken.success).toBe(false);
   expect(taken.error).toContain("already exists");
-  // One level, never a tree: a mistyped path would otherwise be answered by
-  // building it, and the reader would work in it none the wiser.
+  // One level only; a mistyped path is never created as a tree.
   expect(orphan.success).toBe(false);
   expect(orphan.error).toContain("does not exist");
   expect(
@@ -219,7 +197,6 @@ test("a new session opened `like` another runs its model in its directory", asyn
   ).toBe(true);
 
   const mark = probe.events.length;
-  // No cwd: the session being copied answers for that too.
   const response = await probe.send({
     type: "attach",
     like: first,
@@ -229,8 +206,6 @@ test("a new session opened `like` another runs its model in its directory", asyn
 
   expect(response.success).toBe(true);
   expect(probe.sessionId).not.toBe(first);
-  // The directory came from the session it was opened like: a new session
-  // with nothing to go on would have landed in `fallback`.
   expect(state).toMatchObject({ cwd, model: OTHER_MODEL });
 });
 
@@ -247,8 +222,7 @@ test("a directory given alongside `like` is the one that wins", async () => {
     fromSeq: 0,
   });
 
-  // The model is inherited, the directory is the one asked for: choosing
-  // where to work must not also choose what to work with.
+  // Model inherited, directory as requested.
   expect(await stateAfterAttach(probe, mark)).toMatchObject({
     cwd: join(tmp, "elsewhere"),
     model: OTHER_MODEL,
@@ -266,9 +240,7 @@ test("a `like` this server has never held opens the session anyway", async () =>
     fromSeq: 0,
   });
 
-  // A hint that cannot be honoured is not a reason to refuse the session
-  // being asked for — which is what a client reconnecting to a restarted
-  // server would otherwise be told.
+  // An unknown `like` is ignored, e.g. after a server restart.
   expect(response.success).toBe(true);
   expect(await stateAfterAttach(probe, mark)).toMatchObject({
     cwd,
@@ -286,13 +258,9 @@ test("a session cannot be opened in a directory that is not one", async () => {
     fromSeq: 0,
   });
 
-  // Pi names the log file after the directory the session was started in, so
-  // a session made in one that does not exist is a conversation whose every
-  // tool call fails.
   expect(response.success).toBe(false);
   expect(response.error).toContain("not a directory");
-  // Refused before anything moved: the connection is still on the session it
-  // was reading, rather than attached to nothing.
+  // The connection stays on its previous session.
   expect(probe.sessionId).toBe(first);
   expect((await probe.send({ type: "list_dirs", path: cwd })).success).toBe(
     true

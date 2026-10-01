@@ -63,8 +63,7 @@ export default function (pi: ExtensionAPI): void {
     ctx.ui.setWidget(FINAL_WIDGET_ID, [ctx.ui.theme.fg("muted", message)]);
   });
 
-  // Not redundant with `session_shutdown`: that is process exit, and a new chat or `/resume`
-  // swaps the conversation under the widget without it.
+  // A new chat or `/resume` swaps the session without `session_shutdown`.
   pi.on("session_before_switch", (_event, ctx) => {
     clear(ctx);
   });

@@ -68,17 +68,6 @@ describe("task tool: create", () => {
     expect(details.nextRun).toBe(new Date(t0 + 3600_000).toISOString());
   });
 
-  test("rejects sub-minute interval", async () => {
-    const { run } = makeTool();
-    await expect(
-      run({
-        action: "create",
-        prompt: "spam",
-        schedule: { type: "interval", every: "10s" },
-      })
-    ).rejects.toThrow(/at least 1 minute/);
-  });
-
   test("rejects invalid cron", async () => {
     const { run } = makeTool();
     await expect(

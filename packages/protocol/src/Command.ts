@@ -1,6 +1,6 @@
 import type { DiffBase, LineSpan } from "./Diff";
 
-/** A file already uploaded via `POST /upload`, by the id that endpoint answered with; never a client-local path. */
+/** A file already uploaded via `POST /upload`. */
 export type AttachmentRef = {
   readonly id: string;
 };
@@ -13,15 +13,15 @@ export type Command =
       readonly type: "attach";
       readonly sessionId?: string;
       readonly cwd?: string;
-      /** Copy model, thinking level and cwd from this session; ignored when `sessionId` is set or the session is not held open. */
+      /** Copy model, thinking level and cwd from this session; ignored when `sessionId` is set or it is not open. */
       readonly like?: string;
       readonly fromSeq: number;
-      /** Whether the client is looking at this session right now; absent means yes. */
+      /** Absent means true. */
       readonly attentive?: boolean;
     }
-  /** Whether this connection's reader is present: an inattentive one never consumes a turn as read. */
+  /** An inattentive connection never marks a turn as read. */
   | { readonly id: string; readonly type: "attention"; readonly value: boolean }
-  /** Sent into a running turn it steers that turn, landing before the next model call. */
+  /** Sent mid-turn, it steers the running turn. */
   | {
       readonly id: string;
       readonly type: "user_message";
@@ -30,7 +30,7 @@ export type Command =
       readonly attachments?: readonly AttachmentRef[];
     }
   | { readonly id: string; readonly type: "cancel"; readonly sessionId: string }
-  /** Take back the queued messages without stopping the turn; they come back on `restored`. */
+  /** Take back queued messages without stopping the turn; returned in `restored`. */
   | {
       readonly id: string;
       readonly type: "dequeue";
@@ -56,102 +56,94 @@ export type Command =
       readonly sessionId: string;
       readonly value: string;
     }
-  /** The session catalogue; answers before any `attach`. */
+  /** Works before any `attach`. */
   | {
       readonly id: string;
       readonly type: "list_sessions";
-      /** Restrict to one working directory; omit for every session on disk. */
       readonly cwd?: string;
       readonly limit?: number;
-      /** Keep at most this many sessions per working directory, so one busy project cannot fill the page. */
+      /** Max sessions per working directory. */
       readonly perProject?: number;
-      /** List the archived sessions instead of the live ones. */
       readonly archived?: boolean;
     }
-  /** Ranked search over every session on disk, titles and what was said; an empty `query` warms the index and answers with no hits. */
+  /** An empty `query` warms the index and returns no hits. */
   | {
       readonly id: string;
       readonly type: "search_sessions";
       readonly query: string;
       readonly limit?: number;
-      /** Restrict to one working directory; omit for every session on disk. */
       readonly cwd?: string;
-      /** Omitted, the archived are searched too and their hits say so; `false` leaves them out, `true` searches only them. */
+      /** Omitted searches everything; `false` excludes archived, `true` searches only archived. */
       readonly archived?: boolean;
     }
-  /** Names a session through pi's own `session_info`, so its terminal picker shows the name too; `null` clears it. */
+  /** Written as pi's `session_info`; `null` clears it. */
   | {
       readonly id: string;
       readonly type: "set_session_name";
       readonly sessionId: string;
       readonly value: string | null;
     }
-  /** pim's own overrides on a session: out of the default listing, or held unread until it is answered. */
   | {
       readonly id: string;
       readonly type: "set_session_archived" | "set_session_unread";
       readonly sessionId: string;
       readonly value: boolean;
     }
-  /**
-   * pim's own overrides on a working directory rather than a session: pinned
-   * sorts it above every other, expanded stands its sidebar group unfolded.
-   */
   | {
       readonly id: string;
       readonly type: "set_project_pinned" | "set_project_expanded";
       readonly cwd: string;
       readonly value: boolean;
     }
-  /** Names a working directory for the listings; `null` puts it back to its base name, and the directory is never renamed. */
+  /** Display label only; `null` clears it. */
   | {
       readonly id: string;
       readonly type: "set_project_label";
       readonly cwd: string;
       readonly value: string | null;
     }
-  /** Re-orders the pinned projects. The whole order, never a move: two surfaces settle on the last one sent. */
+  /** The full pinned order; last write wins. */
   | {
       readonly id: string;
       readonly type: "set_pin_order";
       readonly order: readonly string[];
     }
-  /** The models this server can switch to, plus the current model's thinking levels; answers without a session. */
+  /** Also returns the current model's thinking levels. */
   | { readonly id: string; readonly type: "list_models" }
-  /** The extensions this server can switch on and off, read against the connection's cwd when it has one. */
+  /** Read against the connection's cwd when it has one. */
   | { readonly id: string; readonly type: "list_extensions" }
-  /** Switch one extension on or off; the sessions built from here pick it up as each rebuilds its agent. */
+  /** Sessions pick it up when they next rebuild their agent. */
   | {
       readonly id: string;
       readonly type: "set_extension";
       readonly extensionId: string;
       readonly value: boolean;
     }
-  /** Subdirectories of `path` on the server's filesystem; errors rather than answering empty when it is not a readable directory. */
+  /** Errors when `path` is not a readable directory. */
   | { readonly id: string; readonly type: "list_dirs"; readonly path: string }
-  /** Makes the directory `path` names, one level inside an existing one; answers empty, and the caller re-lists. */
+  /** Parent must exist. */
   | { readonly id: string; readonly type: "create_dir"; readonly path: string }
-  /** Re-read the cwd's git state now; `fetch` asks the remote first, which is the only thing that moves ahead and behind. */
+  /** `fetch` fetches the remote first, updating ahead/behind. */
   | {
       readonly id: string;
       readonly type: "refresh_git";
       readonly sessionId: string;
       readonly fetch?: boolean;
     }
-  /** The cwd's local branches, trunk first and the rest by how recently they were worked on. */
+  /** Trunk first, then most recent. */
   | {
       readonly id: string;
       readonly type: "list_branches";
       readonly sessionId: string;
     }
-  /** Every changed file of one diff base, without a hunk of any of them; read-only, so never refused. */
+  /** Files only, no hunks. Allowed mid-turn. */
   | {
       readonly id: string;
       readonly type: "list_changes";
       readonly sessionId: string;
       readonly base: DiffBase;
     }
-  /** One file's hunks, computed only once a reader expands it; `context` defaults to 3. */
+  /** `context` defaults to 3. */
   | {
       readonly id: string;
       readonly type: "file_diff";
@@ -160,7 +152,7 @@ export type Command =
       readonly path: string;
       readonly context?: number;
     }
-  /** The file's own lines behind a gap between hunks, asked for when a reader opens one. */
+  /** Lines in the gaps between hunks. */
   | {
       readonly id: string;
       readonly type: "read_lines";
@@ -169,29 +161,29 @@ export type Command =
       readonly path: string;
       readonly spans: readonly LineSpan[];
     }
-  /** Refused while any session in the same directory is mid-turn: the agent may be halfway through an edit. */
+  /** Refused while any session in the same cwd is mid-turn. */
   | {
       readonly id: string;
       readonly type: "checkout";
       readonly sessionId: string;
       readonly branch: string;
     }
-  /** `pull` is fast-forward only; `push` adopts an upstream the first time a branch is published. */
+  /** `pull` is fast-forward only; `push` sets the upstream on first publish. */
   | {
       readonly id: string;
       readonly type: "pull" | "push";
       readonly sessionId: string;
     }
-  /** Path-limited: exactly `paths` are staged and committed, everything else changed stays dirty. Refused mid-turn, like `checkout`. */
+  /** Commits exactly `paths`. Refused mid-turn, like `checkout`. */
   | {
       readonly id: string;
       readonly type: "commit";
       readonly sessionId: string;
       readonly message: string;
-      /** A renamed file contributes both of its names, or its old one is left behind. */
+      /** Include both names of a renamed file. */
       readonly paths: readonly string[];
     }
-  /** Read-only view of a subagent's transcript; `callId` is the parent's tool call and `sessionId` must be this connection's session. */
+  /** `callId` is the parent's tool call; `sessionId` must be this connection's session. */
   | {
       readonly id: string;
       readonly type: "watch_subagent";
@@ -199,15 +191,15 @@ export type Command =
       readonly callId: string;
       readonly fromSeq: number;
     }
-  /** Stop watching; succeeds whether or not this connection holds the watch. */
+  /** Succeeds even if nothing is watched. */
   | {
       readonly id: string;
       readonly type: "unwatch_subagent";
       readonly callId: string;
     }
-  /** Update this install and restart it unconditionally; refused while any session is mid-turn unless `force`. */
+  /** Update and restart; refused while any session is mid-turn unless `force`. */
   | { readonly id: string; readonly type: "reload"; readonly force?: boolean }
-  /** Answers one `ui_request`; dismissal is `cancelled`, and a late answer to a settled request is refused. */
+  /** Answers a `ui_request`; refused once it is settled. */
   | {
       readonly id: string;
       readonly type: "ui_response";
@@ -227,13 +219,13 @@ export type CommandDraft = Command extends infer T
     : never
   : never;
 
-/** Which sessions a listing is asking for: the `list_sessions` payload, named so a client can pass it around. */
+/** The `list_sessions` payload. */
 export type SessionScope = Omit<
   Extract<CommandDraft, { readonly type: "list_sessions" }>,
   "type"
 >;
 
-/** Which sessions a search may reach: the `search_sessions` payload without the query it is asked with. */
+/** The `search_sessions` payload without `query`. */
 export type SearchScope = Omit<
   Extract<CommandDraft, { readonly type: "search_sessions" }>,
   "type" | "query"

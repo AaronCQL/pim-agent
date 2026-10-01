@@ -15,7 +15,6 @@ function create(args: ReadonlyArray<string>, runtime: AgentRuntime): Surface {
   };
 }
 
-/** `--print-config`, which resolves the bot's config the way a run would and stops there. */
 async function printConfig(args: ReadonlyArray<string>): Promise<void> {
   const config = await Config.load(Config.parseArgs(args));
   console.log(

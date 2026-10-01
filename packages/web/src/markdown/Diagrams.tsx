@@ -30,7 +30,7 @@ function ControlButton(props: {
   );
 }
 
-// Sized up to whole rows, so the prose below it stays on the --line grid.
+// Rounds up to whole rows to keep the prose below on the --line grid.
 function fitToGrid(canvas: HTMLElement, svg: SVGSVGElement): () => void {
   const resize = (): void => {
     const height = svg.getBoundingClientRect().height;
@@ -49,7 +49,7 @@ function fill(svg: SVGSVGElement): SVGSVGElement {
   return svg;
 }
 
-/** The diagram full screen, drawn afresh: mermaid scopes its styles and markers by id, which a copy would share. */
+// Re-rendered rather than cloned: mermaid scopes styles and markers by id.
 function DiagramLightbox(props: {
   readonly source: string;
   readonly onClose: () => void;
@@ -153,7 +153,7 @@ function showError(pre: HTMLElement, error: unknown): void {
   pre.after(note);
 }
 
-/** Closed mermaid fences drawn in place; runs after the copy buttons, since a diagram joins its fence's wrapper. */
+/** Must run after the copy buttons: a diagram mounts into its fence's wrapper. */
 function draw(
   host: HTMLElement,
   open: Element | undefined,

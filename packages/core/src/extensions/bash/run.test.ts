@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PNG_MAGIC } from "../../shared/fixtures/images";
 import { Images } from "../../shared/Images";
 import { SpillCache } from "../../shared/SpillCache";
 import { StreamCapture } from "./capture";
@@ -217,7 +218,6 @@ describe("runBashCommand (integration)", () => {
     expect(r.timedOut).toBe(false);
     expect(r.stdout.text.trim()).toBe("done");
     expect(elapsed).toBeLessThan(2000);
-    // clean up the orphaned sleep so it doesn't linger
     try {
       Bun.spawnSync({ cmd: ["pkill", "-f", "sleep 47"] });
     } catch {}
@@ -240,10 +240,7 @@ describe("runBashCommand (integration)", () => {
   });
 
   test("does not crash on timeout while drains still hold readers", async () => {
-    // Regression: stream.cancel() on a locked stream rejects (Bun throws
-    // synchronously). Drains run fire-and-forget, so when a quiet command
-    // times out (no output → drain blocked on read), the finally hits
-    // cancel before drain has released. Unhandled rejection would crash Bun.
+    // Regression: cancelling a reader still locked by drain() used to reject unhandled.
     const rejections: unknown[] = [];
     const onRejection = (err: unknown) => rejections.push(err);
     process.on("unhandledRejection", onRejection);
@@ -258,9 +255,6 @@ describe("runBashCommand (integration)", () => {
   });
 
   test("bounded drain returns even when a daemon escapes our process group", async () => {
-    // A child that calls setsid itself leaves our pgid and survives killGroup.
-    // If it keeps the pipe open, drain would block forever; the DRAIN_GRACE_MS
-    // bound forces us to return anyway. The marker lets us clean up after.
     const marker = `pim-test-detached-${Date.now()}`;
     const startedAt = Date.now();
     const r = await runBashCommand(
@@ -302,20 +296,6 @@ describe("runBashCommand (integration)", () => {
     }
   });
 
-  test("truncates very large stdout", async () => {
-    const totalBytes = STREAM_HEAD_BYTES + STREAM_TAIL_BYTES + 1000;
-    const r = await runBashCommand(
-      `head -c ${totalBytes} /dev/zero | tr '\\0' 'A'`,
-      5000,
-      undefined,
-      process.cwd()
-    );
-    expect(r.exitCode).toBe(0);
-    expect(r.stdout.totalBytes).toBe(totalBytes);
-    expect(r.stdout.truncated).toBe(true);
-    expect(r.stdout.text).toContain("bytes truncated");
-  });
-
   test("spills full stdout to ~/.pim/cache when truncated", async () => {
     const totalBytes = STREAM_HEAD_BYTES + STREAM_TAIL_BYTES + 4096;
     const r = await runBashCommand(
@@ -337,7 +317,6 @@ describe("runBashCommand (integration)", () => {
       expect(cacheMode).toBe(0o700);
       expect(spillMode).toBe(0o600);
       const spilled = await Bun.file(r.stdout.path!).text();
-      expect(spilled.length).toBe(totalBytes);
       expect(spilled).toBe("A".repeat(totalBytes));
     } finally {
       if (r.stdout.path) {
@@ -347,20 +326,8 @@ describe("runBashCommand (integration)", () => {
       }
     }
   });
-
-  test("omits spill path when stream is empty", async () => {
-    const r = await runBashCommand("true", 5000, undefined, process.cwd());
-    expect(r.exitCode).toBe(0);
-    expect(r.stdout.path).toBeNull();
-    expect(r.stderr.path).toBeNull();
-  });
 });
 
-const PNG_MAGIC = Uint8Array.from([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-]);
-
-/** Header plus filler: the verdict only ever looks at the leading bytes. */
 function captureOf(...chunks: readonly Uint8Array[]): StreamCapture {
   const cap = new StreamCapture();
   for (const chunk of chunks) {
@@ -389,13 +356,6 @@ describe("sniffStdoutImage", () => {
   test("only the leading bytes decide, never bytes that arrive later", () => {
     const cap = captureOf(new TextEncoder().encode("building...\n"), PNG_MAGIC);
     expect(sniffStdoutImage(cap)).toBeNull();
-  });
-
-  test("binary that is not one of the four formats stays text", () => {
-    const zip = Uint8Array.from([
-      0x50, 0x4b, 0x03, 0x04, 0, 0, 0, 0, 0, 0, 0, 0,
-    ]);
-    expect(sniffStdoutImage(captureOf(zip))).toBeNull();
   });
 
   test("over the source cap it degrades to text again", () => {

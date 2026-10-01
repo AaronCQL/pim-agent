@@ -10,29 +10,21 @@ const PANEL = {
   narrow: "max-h-[85dvh] w-[min(30rem,92vw)]",
 } as const;
 
-/** The keys a focused control activates on, which are never the panel's to claim. */
+/** Keys a focused button handles itself. */
 const ACTIVATION = new Set(["Enter", " ", "Tab"]);
 
 /**
- * One thing read on top of everything else: a full-screen sheet on a phone, a
- * centred panel otherwise. A dialog focuses itself as it opens — the first
- * control it finds, which is the close button in the header — so a panel with
- * a field to type in marks that field `autofocus`, the one thing those
- * focusing steps read ahead of them.
+ * Full screen on a phone, a centred panel otherwise. Opening focuses the close
+ * button; mark a field `autofocus` to focus it instead.
  */
 export function Modal(props: {
   readonly open: boolean;
   readonly onClose: () => void;
   readonly label: string;
   readonly header: Element;
-  /** `wide` and `column` are panels of fixed height, the second cut to what a list is read at; `narrow` ends where its content does. */
+  /** `wide` and `column` have a fixed height; `narrow` fits its content. */
   readonly size?: keyof typeof PANEL;
-  /**
-   * The shortcuts belong to the dialog rather than to whichever field inside
-   * it holds focus, so a click that lands on a row keeps them alive. What a
-   * focused control would activate on stays that control's: Enter on a button
-   * is its own click, and claiming it here would cancel it.
-   */
+  /** Dialog-wide shortcuts; skips Enter/Space/Tab on a focused button. */
   readonly onKeyDown?: (event: KeyboardEvent) => void;
   readonly children: Element;
 }) {

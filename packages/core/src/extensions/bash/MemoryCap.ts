@@ -33,7 +33,7 @@ function limitBytes(): number | null {
   return Math.floor(Number(match[1]) * UNITS[unit]);
 }
 
-/** Whether a scope's MemoryMax is really enforced: without the memory controller delegated, systemd accepts it and ignores it. */
+/** Whether MemoryMax is enforced; without memory controller delegation systemd silently ignores it. */
 async function probe(): Promise<boolean> {
   if (process.platform !== "linux") {
     return false;
@@ -65,7 +65,7 @@ async function probe(): Promise<boolean> {
   }
 }
 
-/** The user-manager service this process runs in, so a command's scope stops with it. */
+/** The user service pim runs in, so command scopes stop with it. */
 async function findOwner(): Promise<string | null> {
   try {
     const cgroup = await readFile("/proc/self/cgroup", "utf8");
@@ -82,7 +82,7 @@ async function findOwner(): Promise<string | null> {
   }
 }
 
-/** The systemd-run prefix that puts one command in its own memory-capped scope, or null when it cannot be capped. */
+/** systemd-run argv prefix for a memory-capped scope; null when capping is off or unsupported. */
 async function scope(): Promise<MemoryScope | null> {
   const limit = limitBytes();
   if (limit === null || !(await (supported ??= probe()))) {
@@ -120,7 +120,6 @@ async function systemctl(args: readonly string[]): Promise<void> {
   }).exited;
 }
 
-/** Ends whatever of a killed command is still in its scope, including a scope systemd never saw empty. */
 async function stop(unit: string): Promise<void> {
   await systemctl(["--no-block", "stop", unit]);
 }

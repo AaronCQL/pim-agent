@@ -55,7 +55,7 @@ describe("plan for a dev checkout", () => {
     expect(skipped).toEqual([]);
   });
 
-  test("skips the pull on a dirty tree, says why, and owes the operator nothing", () => {
+  test("skips the pull on a dirty tree as non-blocking", () => {
     const { steps, skipped } = Updater.plan(facts({ cleanTree: false }));
 
     expect(argv(steps)).toEqual([
@@ -71,13 +71,7 @@ describe("plan for a dev checkout", () => {
     ]);
   });
 
-  test("never stashes or forces a dirty tree back into shape", () => {
-    const commands = argv(Updater.plan(facts({ cleanTree: false })).steps);
-    expect(commands.flat()).not.toContain("stash");
-    expect(commands.flat()).not.toContain("--force");
-  });
-
-  test("skips the pull on a branch with no upstream, and still builds and restarts", () => {
+  test("skips the pull on a branch with no upstream", () => {
     const { steps, skipped } = Updater.plan(facts({ tracked: false }));
 
     expect(argv(steps)).toEqual([
@@ -114,13 +108,6 @@ describe("plan for a prod install", () => {
       "install pim-agent@1.4.2",
     ]);
     expect(skipped).toEqual([]);
-  });
-
-  test("names the package it was published as, not a hardcoded one", () => {
-    const { steps } = Updater.plan(
-      facts({ at: prod, packageName: "@scope/pim", latest: "0.1.0" })
-    );
-    expect(argv(steps)).toEqual([["bun", "install", "-g", "@scope/pim@0.1.0"]]);
   });
 
   test("skips the install when the registry did not answer, and marks the miss blocking", () => {

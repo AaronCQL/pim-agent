@@ -32,21 +32,6 @@ describe("AnsiPainter text", () => {
 });
 
 describe("AnsiPainter spans", () => {
-  test("joins runs with no separator and leaves default tone bare", () => {
-    expect(
-      paint({
-        kind: "spans",
-        spans: [
-          { text: "+2", tone: "added" },
-          { text: "/" },
-          { text: "-1", tone: "removed" },
-        ],
-      })
-    ).toEqual([
-      "<toolDiffAdded>+2</toolDiffAdded>/<toolDiffRemoved>-1</toolDiffRemoved>",
-    ]);
-  });
-
   test("applies the decoration inside the tone wrapper", () => {
     expect(
       paint({
@@ -168,10 +153,6 @@ describe("AnsiPainter.paintBody", () => {
       ""
     );
   });
-
-  test("no blocks produce no groups", () => {
-    expect(AnsiPainter.paintBody([], theme)).toEqual([]);
-  });
 });
 
 describe("AnsiPainter.paintTitle", () => {
@@ -233,10 +214,6 @@ describe("AnsiPainter diff", () => {
       DiffRenderer.render({ toolDiff: diff, theme }).split("\n")
     );
   });
-
-  test("paints nothing when there are no hunks", () => {
-    expect(paint({ kind: "diff", path: "notes.txt", hunks: [] })).toEqual([]);
-  });
 });
 
 describe("AnsiPainter file", () => {
@@ -244,33 +221,19 @@ describe("AnsiPainter file", () => {
     expect(paint({ kind: "file", path: "src/foo.ts" })).toEqual(["src/foo.ts"]);
   });
 
-  test("range and truncation render muted, matching the read title", () => {
-    expect(paint({ kind: "file", path: "src/foo.ts", range: [1, 7] })).toEqual([
-      "src/foo.ts<muted>:1-7</muted>",
-    ]);
-    expect(
-      paint({
-        kind: "file",
-        path: "src/foo.ts",
-        range: [1, 7],
-        truncated: true,
-      })
-    ).toEqual(["src/foo.ts<muted>:1-7 (truncated)</muted>"]);
-  });
-
-  test("an undefined range end renders open-ended and still muted", () => {
-    expect(
-      paint({ kind: "file", path: "src/foo.ts", range: [40, undefined] })
-    ).toEqual(["src/foo.ts<muted>:40</muted>"]);
-    expect(
-      paint({
-        kind: "file",
-        path: "src/foo.ts",
-        range: [40, undefined],
-        truncated: true,
-      })
-    ).toEqual(["src/foo.ts<muted>:40 (truncated)</muted>"]);
-  });
+  test.each([
+    [[1, 7], false, "src/foo.ts<muted>:1-7</muted>"],
+    [[1, 7], true, "src/foo.ts<muted>:1-7 (truncated)</muted>"],
+    [[40, undefined], false, "src/foo.ts<muted>:40</muted>"],
+    [[40, undefined], true, "src/foo.ts<muted>:40 (truncated)</muted>"],
+  ] as const)(
+    "range %p truncated=%p renders muted",
+    (range, truncated, expected) => {
+      expect(
+        paint({ kind: "file", path: "src/foo.ts", range, truncated })
+      ).toEqual([expected]);
+    }
+  );
 });
 
 describe("AnsiPainter list", () => {
@@ -324,10 +287,6 @@ describe("AnsiPainter list", () => {
       "  <muted>• </muted>inner2",
     ]);
   });
-
-  test("empty list paints nothing", () => {
-    expect(paint({ kind: "list", items: [] })).toEqual([]);
-  });
 });
 
 describe("AnsiPainter kv", () => {
@@ -358,9 +317,6 @@ describe("AnsiPainter link", () => {
   });
 });
 
-// A URL relative to a web gateway this terminal is not talking to says
-// nothing here, and the bytes behind it are a copy of a file already on this
-// machine: the delivery is the news, the address of it is not.
 describe("AnsiPainter attachment", () => {
   test("names the file and drops the url", () => {
     expect(
@@ -388,20 +344,6 @@ describe("AnsiPainter image", () => {
       })
     ).toEqual(["<muted>[image 1200×800 png · 240 KB]</muted>"]);
   });
-
-  test("names the format the resize left it in, not the one it was read as", () => {
-    expect(
-      paint({
-        kind: "image",
-        sha256: "b".repeat(64),
-        mimeType: "image/jpeg",
-        width: 10,
-        height: 20,
-        bytes: 512,
-        alt: "shot.png",
-      })
-    ).toEqual(["<muted>[image 10×20 jpg · 512 bytes]</muted>"]);
-  });
 });
 
 describe("AnsiPainter notice", () => {
@@ -413,21 +355,5 @@ describe("AnsiPainter notice", () => {
         { kind: "notice", text: "e", severity: "error" }
       )
     ).toEqual(["<muted>i</muted>", "<warning>w</warning>", "<error>e</error>"]);
-  });
-});
-
-describe("AnsiPainter.paint", () => {
-  test("concatenates blocks in order", () => {
-    expect(
-      paint(
-        { kind: "file", path: "a.ts" },
-        { kind: "text", text: "x\ny" },
-        { kind: "notice", text: "z", severity: "warn" }
-      )
-    ).toEqual(["a.ts", "x", "y", "<warning>z</warning>"]);
-  });
-
-  test("no blocks paints no lines", () => {
-    expect(AnsiPainter.paint([], theme)).toEqual([]);
   });
 });

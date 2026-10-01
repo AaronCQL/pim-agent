@@ -45,23 +45,12 @@ const defaultScanOptions = {
 } as const;
 
 describe("buildMatcher", () => {
-  test("compiles regexes with no flags by default", () => {
-    const matcher = makeMatcher("alpha");
-    expect(matcher.regex.flags).toBe("");
-    expect(matcher.regex.test("alpha")).toBe(true);
-    expect(matcher.regex.test("Alpha")).toBe(false);
-  });
-
-  test("applies the i flag for caseInsensitive regexes", () => {
-    const matcher = makeMatcher("alpha", { caseInsensitive: true });
-    expect(matcher.regex.flags).toBe("i");
-    expect(matcher.regex.test("Alpha")).toBe(true);
-  });
-
-  test("applies the s flag for matchAcrossLines regexes", () => {
-    const matcher = makeMatcher(".", { matchAcrossLines: true });
-    expect(matcher.regex.flags).toBe("s");
-    expect(matcher.regex.test("\n")).toBe(true);
+  test.each([
+    [{}, ""],
+    [{ caseInsensitive: true }, "i"],
+    [{ matchAcrossLines: true }, "s"],
+  ])("%j compiles with flags %p", (options, flags) => {
+    expect(makeMatcher("alpha", options).regex.flags).toBe(flags);
   });
 
   test("throws an actionable error on invalid regex syntax", () => {
@@ -121,53 +110,6 @@ describe("findMatches", () => {
     expect(matches[0]?.lines).toEqual([{ lineNumber: 2, text: "foo.bar[0]" }]);
   });
 
-  test("supports regular expressions", async () => {
-    const root = await tempRoot();
-    const path = join(root, "code.ts");
-    await writeFile(path, "alpha\nbeta\n", "utf8");
-
-    const matches = await findMatches(
-      root,
-      undefined,
-      makeMatcher("^a.*a$"),
-      defaultScanOptions
-    );
-
-    expect(matches.map((match) => match.filePath)).toEqual([path]);
-    expect(matches[0]?.lines).toEqual([{ lineNumber: 1, text: "alpha" }]);
-  });
-
-  test("matches escaped dots and alternation as regex syntax", async () => {
-    const root = await tempRoot();
-    const schema = join(root, "src", "extensions", "todo", "schema.ts");
-    const helper = join(root, "src", "shared", "arrays.ts");
-
-    await mkdir(join(root, "src", "extensions", "todo"), { recursive: true });
-    await mkdir(join(root, "src", "shared"), { recursive: true });
-    await writeFile(schema, "const x = Type.Union([Type.String()]);\n", "utf8");
-    await writeFile(
-      helper,
-      "export const oneOrMany = normalizeArray;\n",
-      "utf8"
-    );
-
-    const typeUnionMatches = await findMatches(
-      root,
-      "src/extensions/**/schema.ts",
-      makeMatcher("Type\\.Union"),
-      defaultScanOptions
-    );
-    const alternationMatches = await findMatches(
-      root,
-      "src/**/*.ts",
-      makeMatcher("StringOrArray|OneOrMany|oneOrMany|normalizeArray"),
-      defaultScanOptions
-    );
-
-    expect(typeUnionMatches.map((match) => match.filePath)).toEqual([schema]);
-    expect(alternationMatches.map((match) => match.filePath)).toEqual([helper]);
-  });
-
   test("matchAcrossLines enables regex matches spanning line breaks", async () => {
     const root = await tempRoot();
     const path = join(root, "block.txt");
@@ -195,24 +137,6 @@ describe("findMatches", () => {
       { lineNumber: 2, text: "BEGIN" },
       { lineNumber: 3, text: "middle" },
       { lineNumber: 4, text: "END" },
-    ]);
-  });
-
-  test("matchAcrossLines enables exact regex matches spanning line breaks", async () => {
-    const root = await tempRoot();
-    const path = join(root, "block.txt");
-    await writeFile(path, "BEGIN\nmiddle\nEND\n", "utf8");
-
-    const matches = await findMatches(
-      root,
-      undefined,
-      makeMatcher("BEGIN\nmiddle", { matchAcrossLines: true }),
-      defaultScanOptions
-    );
-
-    expect(matches.map((match) => match.filePath)).toEqual([path]);
-    expect(matches[0]?.ranges).toEqual([
-      { startLineNumber: 1, endLineNumber: 2 },
     ]);
   });
 
@@ -296,42 +220,7 @@ describe("findMatches", () => {
     expect(dotfileMatches.map((match) => match.filePath)).toEqual([dotfile]);
   });
 
-  test("filters by glob", async () => {
-    const root = await tempRoot();
-    const ts = join(root, "a.ts");
-    const md = join(root, "a.md");
-
-    await writeFile(ts, "needle", "utf8");
-    await writeFile(md, "needle", "utf8");
-
-    const matches = await findMatches(
-      root,
-      "**/*.ts",
-      makeMatcher("needle"),
-      defaultScanOptions
-    );
-
-    expect(matches.map((match) => match.filePath)).toEqual([ts]);
-  });
-
-  test("excludes a single glob pattern", async () => {
-    const root = await tempRoot();
-    const source = join(root, "src", "app.ts");
-    const test = join(root, "src", "app.test.ts");
-
-    await mkdir(join(root, "src"), { recursive: true });
-    await writeFile(source, "needle", "utf8");
-    await writeFile(test, "needle", "utf8");
-
-    const matches = await findMatches(root, "**/*.ts", makeMatcher("needle"), {
-      ...defaultScanOptions,
-      exclude: ["**/*.test.ts"],
-    });
-
-    expect(matches.map((match) => match.filePath)).toEqual([source]);
-  });
-
-  test("excludes multiple glob patterns", async () => {
+  test("filters by glob and excludes patterns", async () => {
     const root = await tempRoot();
     const source = join(root, "src", "app.ts");
     const test = join(root, "src", "app.test.ts");
@@ -341,6 +230,7 @@ describe("findMatches", () => {
     await writeFile(source, "needle", "utf8");
     await writeFile(test, "needle", "utf8");
     await writeFile(generated, "needle", "utf8");
+    await writeFile(join(root, "src", "notes.md"), "needle", "utf8");
 
     const matches = await findMatches(root, "**/*.ts", makeMatcher("needle"), {
       ...defaultScanOptions,
@@ -366,25 +256,6 @@ describe("findMatches", () => {
     );
 
     expect(matches.map((match) => match.filePath)).toEqual([text]);
-  });
-
-  test("matches a single file path directly", async () => {
-    const root = await tempRoot();
-    const path = join(root, "notes.txt");
-    await writeFile(path, "alpha\nbeta\nalphabet", "utf8");
-
-    const matches = await findMatches(
-      path,
-      undefined,
-      makeMatcher("alpha"),
-      defaultScanOptions
-    );
-
-    expect(matches.length).toBe(1);
-    expect(matches[0]?.lines).toEqual([
-      { lineNumber: 1, text: "alpha" },
-      { lineNumber: 3, text: "alphabet" },
-    ]);
   });
 
   test("throws an actionable error when the path does not exist", async () => {

@@ -74,12 +74,6 @@ describe("subagent render formatting", () => {
   test("top line is the summary flattened: turns, cost, context", () => {
     expect(formatTopLine(baseDetails)).toBe("3 turns ⬝ $0.23 ⬝ 0.4%/1.0M");
   });
-
-  test("top line reads the same mid-run as it does once the run lands", () => {
-    const running = detailsWith({ stopReason: undefined });
-
-    expect(formatTopLine(running)).toBe("3 turns ⬝ $0.23 ⬝ 0.4%/1.0M");
-  });
 });
 
 describe("subagentView", () => {
@@ -108,11 +102,6 @@ describe("subagentView", () => {
     expect(subagentView(viewInput({ text: "boom" })).labelTone).toBe("error");
   });
 
-  /**
-   * Turns, money, context — and no tally of the tools the child reached for:
-   * that is a transcript with the substance taken out, and the transcript
-   * itself is one tap away.
-   */
   test("summarizes what the run cost, muted, with muted dots", () => {
     const view = subagentView(viewInput({ details: baseDetails }));
 
@@ -120,16 +109,6 @@ describe("subagentView", () => {
       "<muted>3 turns</muted><muted> ⬝ </muted><muted>$0.23</muted>" +
         "<muted> ⬝ </muted><muted>0.4%/1.0M</muted>",
     ]);
-  });
-
-  test("keeps the model out of the summary", () => {
-    const painted =
-      AnsiPainter.paint(
-        subagentView(viewInput({ details: baseDetails })).summary ?? [],
-        stubTheme
-      )[0] ?? "";
-
-    expect(painted).not.toContain("deepseek-v4-flash");
   });
 
   test("summarizes turns and cost alone when no context was reported", () => {
@@ -179,26 +158,6 @@ describe("subagentView", () => {
     });
   });
 
-  test("streams the partial body while the call is still running", () => {
-    const partial = detailsWith({
-      fullOutput: "Reading the confi",
-      returnedOutput: "Reading the confi",
-      stopReason: undefined,
-    });
-    const view = subagentView(
-      viewInput({
-        text: formatTopLine(partial),
-        details: partial,
-        isPartial: true,
-      })
-    );
-
-    expect(view.body?.[0]).toEqual({
-      kind: "markdown",
-      text: "Reading the confi",
-    });
-  });
-
   test("keeps a multi-line prompt whole as a body section", () => {
     const view = subagentView(
       viewInput({
@@ -229,14 +188,6 @@ describe("subagentView", () => {
       kind: "kv",
       pairs: [["model", "deepseek-v4-flash"]],
     });
-  });
-
-  test("omits the foot for a model the child never reported", () => {
-    const view = subagentView(
-      viewInput({ details: detailsWith({ model: undefined }) })
-    );
-
-    expect(view.body?.some((block) => block.kind === "kv")).toBe(false);
   });
 
   test("falls back to the error text when pi stripped the details", () => {

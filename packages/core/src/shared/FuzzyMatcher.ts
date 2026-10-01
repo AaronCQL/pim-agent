@@ -43,27 +43,26 @@ function prepare<T>(candidates: readonly FuzzyCandidate<T>[]): FuzzyIndex<T> {
   return {
     find: (query, options = {}) => {
       const trimmed = query.trim();
-      const limit = options.limit ?? Infinity;
       if (trimmed.length === 0) {
-        if (emptyHits === undefined) {
-          emptyHits = [...candidates]
-            .sort((a, b) =>
-              (a.haystacks[0] ?? "").localeCompare(b.haystacks[0] ?? "")
-            )
-            .map((candidate) => ({
-              item: candidate.item,
-              score: 0,
-              positions: new Set<number>(),
-            }));
-        }
-        return limit === Infinity ? emptyHits : emptyHits.slice(0, limit);
+        emptyHits ??= [...candidates]
+          .sort((a, b) =>
+            (a.haystacks[0] ?? "").localeCompare(b.haystacks[0] ?? "")
+          )
+          .map((candidate) => ({
+            item: candidate.item,
+            score: 0,
+            positions: new Set<number>(),
+          }));
+        return emptyHits.slice(0, options.limit);
       }
-      const hits = fzf.find(trimmed).map((result) => ({
-        item: result.item.item,
-        score: result.score,
-        positions: result.positions,
-      }));
-      return limit === Infinity ? hits : hits.slice(0, limit);
+      return fzf
+        .find(trimmed)
+        .slice(0, options.limit)
+        .map((result) => ({
+          item: result.item.item,
+          score: result.score,
+          positions: result.positions,
+        }));
     },
   };
 }

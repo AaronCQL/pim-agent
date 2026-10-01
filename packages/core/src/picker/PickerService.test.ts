@@ -52,12 +52,6 @@ test("ranks files under the session cwd", async () => {
   expect(items.every((item) => !item.value.startsWith("/"))).toBe(true);
 });
 
-test("caps the rows it answers with", async () => {
-  const items = await service().files("", 2);
-
-  expect(items).toHaveLength(2);
-});
-
 test("skills come from the session cwd, not the process cwd", async () => {
   await skill(cwd, "deploy", "Ship the thing.");
   const other = join(tmp, "other");

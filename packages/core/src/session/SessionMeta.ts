@@ -6,23 +6,22 @@ import { Paths } from "../shared/Paths";
 
 export type SessionEntry = {
   readonly archived?: boolean;
-  /** Sticky: set by hand, and only a read clears it. */
+  /** Set by hand; only a read clears it. */
   readonly unread?: boolean;
 };
 
 export type ProjectEntry = {
   readonly pinned?: boolean;
-  /** The sidebar group stands unfolded; absent is folded, which is where a project starts. */
+  /** Absent means folded. */
   readonly expanded?: boolean;
-  /** What to call the directory instead of its base name; the directory itself is never touched. */
+  /** Display name instead of the directory's base name. */
   readonly label?: string;
 };
 
-/** The pin flags and the order they are shown in, from one read of the file. */
 export type Pinning = {
   /** Keyed by absolute cwd. */
   readonly projects: ReadonlyMap<string, ProjectEntry>;
-  /** The pinned directories, in the order they are shown. */
+  /** Pinned cwds in display order. */
   readonly order: readonly string[];
 };
 
@@ -30,13 +29,7 @@ type Stored = {
   readonly version: 1;
   readonly sessions: Record<string, SessionEntry>;
   readonly projects: Record<string, ProjectEntry>;
-  /**
-   * Where the pinned directories sort, and only that: `projects` stays the
-   * truth of whether one is pinned. An entry here that is not pinned is
-   * ignored and a pin it has never heard of still sorts, so a file written by
-   * a pim that predates the order — or by one that does not write it — needs
-   * no migration.
-   */
+  /** Sort order only; `projects` decides what is pinned. */
   readonly pins: readonly string[];
 };
 
@@ -48,7 +41,7 @@ type Loaded = {
 
 const NONE: SessionEntry = {};
 
-/** Per-session and per-project overrides, shared by every surface on a machine. */
+/** Per-session and per-project UI state, shared by every surface on the machine. */
 export class SessionMeta {
   private readonly file: string;
   private readonly writes = Fs.serialised();
@@ -62,18 +55,17 @@ export class SessionMeta {
     return (await this.sessions()).get(sessionId) ?? NONE;
   }
 
-  /** One read for a whole listing; `of` per row is one read per row. */
+  /** One file read for the whole listing. */
   public async sessions(): Promise<ReadonlyMap<string, SessionEntry>> {
     return (await this.read()).sessions;
   }
 
-  /** The pinned directories in display order; a listing wants both halves, and this is one read for them. */
   public async pinning(): Promise<Pinning> {
     const loaded = await this.read();
     return { projects: loaded.projects, order: ordered(loaded) };
   }
 
-  /** The pinned directories in display order. */
+  /** Pinned cwds in display order. */
   public async pins(): Promise<readonly string[]> {
     return ordered(await this.read());
   }
@@ -88,7 +80,7 @@ export class SessionMeta {
     return this.mutate((loaded) => put(loaded.sessions, sessionId, { unread }));
   }
 
-  /** A new pin goes to the top, where you have just put it; an old one leaves the order with the flag. */
+  /** A new pin goes to the top. */
   public setPinned(cwd: string, pinned: boolean): Promise<void> {
     return this.mutate((loaded) => {
       const at = loaded.pins.indexOf(cwd);
@@ -102,22 +94,18 @@ export class SessionMeta {
     });
   }
 
-  /**
-   * Folds a project's group, or unfolds it. Kept beside the pin rather than
-   * in the browser, so the fold a phone made is the fold a desktop opens to.
-   */
   public setExpanded(cwd: string, expanded: boolean): Promise<void> {
     return this.mutate((loaded) => put(loaded.projects, cwd, { expanded }));
   }
 
-  /** Names the project for the sidebar; `null` puts it back to its base name. */
+  /** `null` restores the base name. */
   public setLabel(cwd: string, label: string | null): Promise<void> {
     return this.mutate((loaded) =>
       put(loaded.projects, cwd, { label: label ?? "" })
     );
   }
 
-  /** Takes the whole order rather than a move, so two surfaces settle on the last one written. */
+  /** Replaces the whole order; unpinned and duplicate cwds are dropped. */
   public setPinOrder(order: readonly string[]): Promise<void> {
     return this.mutate((loaded) => {
       loaded.pins = [...new Set(order)].filter(
@@ -127,7 +115,7 @@ export class SessionMeta {
     });
   }
 
-  /** Drops the sessions that are gone; a pin outlives every session of its project. */
+  /** Drops entries for sessions not in `alive`. Projects are kept. */
   public prune(alive: ReadonlySet<string>): Promise<void> {
     return this.mutate((loaded) => {
       let dropped = false;
@@ -141,7 +129,7 @@ export class SessionMeta {
     });
   }
 
-  /** Settles the writes taken so far, for a clean stop. */
+  /** Waits for pending writes. */
   public async flush(): Promise<void> {
     await this.writes.run(async () => undefined);
   }
@@ -162,7 +150,7 @@ export class SessionMeta {
     };
   }
 
-  /** Re-reads under the lock, so a write by another process survives this one. */
+  /** Re-reads under the lock so another process's write is not lost. */
   private async mutate(update: (loaded: Loaded) => boolean): Promise<void> {
     await this.writes.run(async () => {
       const loaded = await this.read();
@@ -180,11 +168,7 @@ export class SessionMeta {
   }
 }
 
-/**
- * The pinned directories in display order: the ones the stored order names,
- * then any pin it has not heard of, by path. A duplicate in the order is
- * taken once, at the first place it appears.
- */
+/** Stored order first, then pins missing from it sorted by path. */
 function ordered({ projects, pins }: Loaded): readonly string[] {
   const unplaced = new Set(
     [...projects]
@@ -209,7 +193,7 @@ function put<T extends object>(
   return true;
 }
 
-/** Every field is opt-in, so a false flag or an empty name is the same as an absent one. */
+/** Drops `false` and `""` fields; they mean the same as absent. */
 function onlySet<T extends object>(entry: T): T {
   return Object.fromEntries(
     Object.entries(entry).filter(

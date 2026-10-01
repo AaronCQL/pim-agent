@@ -2,7 +2,7 @@ import { createSignal } from "solid-js";
 
 import type hljsCore from "highlight.js/lib/core";
 
-/** The roles a theme colours, folded from highlight.js's scopes as the TUI folds them. */
+/** Same folding of highlight.js scopes as the TUI. */
 export type SyntaxRole =
   | "keyword"
   | "type"
@@ -17,7 +17,6 @@ export type SyntaxRole =
   | "added"
   | "removed";
 
-/** A run of code carrying one role; no role means it reads as plain code. */
 export type Token = {
   readonly text: string;
   readonly role?: SyntaxRole;
@@ -101,7 +100,7 @@ const GRAMMARS: Readonly<Record<string, () => Promise<unknown>>> = {
   yaml: () => import("highlight.js/lib/languages/yaml"),
 };
 
-// Bumped when a grammar lands, so every `tokenize` repaints the plain block.
+// Bumped when a grammar loads, so `tokenize` callers re-run.
 const [loaded, setLoaded] = createSignal(0);
 
 const registered = new Set<string>();
@@ -111,7 +110,7 @@ type Grammar = { readonly default: unknown };
 
 let hljs: typeof hljsCore | undefined;
 
-/** Past either of these a block is left plain: highlighting it blocks the tab for longer than anyone waits. */
+/** Larger blocks stay plain: highlighting them freezes the tab. */
 const TEXT_LIMIT = 100_000;
 
 const LINE_LIMIT = 2000;
@@ -141,15 +140,10 @@ function request(lang: string): void {
   }
 
   pending.add(lang);
-  void load(lang).catch(() => {
-    // A grammar that will not load leaves the block plain.
-  });
+  void load(lang).catch(() => {});
 }
 
-/**
- * `code` cut into one token list per line; whole blocks only, since
- * highlight.js must see a comment or literal open and close to tokenise it.
- */
+/** One token list per line. Pass whole blocks: multi-line comments and strings need both ends. */
 function tokenize(
   code: string,
   lang: string | undefined
@@ -184,7 +178,7 @@ function plain(code: string): readonly (readonly Token[])[] {
   return code.split("\n").map((line) => (line === "" ? [] : [{ text: line }]));
 }
 
-// Walked into tokens, never injected as HTML: model text cannot become markup.
+// Walked into tokens, never injected as HTML.
 function parse(html: string): readonly Token[] {
   const template = document.createElement("template");
   template.innerHTML = html;
@@ -235,6 +229,6 @@ function split(tokens: readonly Token[]): readonly (readonly Token[])[] {
 
 export const Highlight = {
   tokenize,
-  /** How many grammars have landed; a reactive read for consumers that repaint. */
+  /** Reactive count of loaded grammars. */
   version: loaded,
 };

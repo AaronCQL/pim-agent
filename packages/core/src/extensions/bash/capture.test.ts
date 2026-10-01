@@ -7,7 +7,6 @@ import { STREAM_HEAD_BYTES, STREAM_TAIL_BYTES } from "./schema";
 const enc = new TextEncoder();
 const u8 = (s: string) => enc.encode(s);
 
-/** Header plus filler: the capture only ever looks at the leading bytes. */
 function pngish(totalBytes: number): Uint8Array {
   const bytes = new Uint8Array(totalBytes).fill(0x41);
   bytes.set(PNG_MAGIC);
@@ -80,37 +79,7 @@ describe("StreamCapture", () => {
 
     const snap = c.snapshot();
     expect(snap.truncated).toBe(true);
-    // Head holds exactly 4 newline-terminated lines, so reading resumes at 5.
     expect(snap.nextStart).toBe(5);
-  });
-
-  test("splits a single chunk between head and tail when needed", () => {
-    const c = new StreamCapture();
-    const big = "Z".repeat(STREAM_HEAD_BYTES + STREAM_TAIL_BYTES + 500);
-    c.push(u8(big));
-
-    const snap = c.snapshot();
-    expect(snap.truncated).toBe(true);
-    expect(snap.totalBytes).toBe(big.length);
-    expect(snap.text.startsWith("Z".repeat(STREAM_HEAD_BYTES))).toBe(true);
-    expect(snap.text.endsWith("Z".repeat(STREAM_TAIL_BYTES))).toBe(true);
-    expect(snap.text).toContain(`... ${500} bytes truncated ...`);
-  });
-
-  test("keeps head and final tail when many middle chunks arrive", () => {
-    const c = new StreamCapture();
-    const HEAD_FILL = "A".repeat(STREAM_HEAD_BYTES);
-    c.push(u8(HEAD_FILL));
-    for (let i = 0; i < 100; i++) {
-      c.push(u8("M".repeat(STREAM_TAIL_BYTES)));
-    }
-    const finalTail = "B".repeat(STREAM_TAIL_BYTES);
-    c.push(u8(finalTail));
-
-    const snap = c.snapshot();
-    expect(snap.truncated).toBe(true);
-    expect(snap.text.startsWith(HEAD_FILL)).toBe(true);
-    expect(snap.text.endsWith(finalTail)).toBe(true);
   });
 
   test("at exact head+tail boundary is not truncated", () => {

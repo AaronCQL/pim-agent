@@ -6,15 +6,15 @@ export type Disclosure = {
   readonly open: Accessor<boolean>;
   readonly toggle: () => void;
   readonly close: () => void;
-  /** The whole control, panel included: a pointer landing outside it dismisses. */
+  /** Trigger and panel; a pointerdown outside it closes. */
   readonly root: (element: HTMLElement) => void;
   readonly trigger: (element: HTMLElement) => void;
-  /** The trigger, for a panel that positions itself against it. */
   readonly anchor: () => HTMLElement;
-  /** The panel's filter box, if it has one; cleared on the way out and focused on the way in. */
+  /** Optional filter input: focused on open, cleared on close. */
   readonly field: (element: HTMLInputElement) => void;
 };
 
+// Eats the click that follows a dismissing pointerdown, so it does not land on what was under the panel.
 function swallowPress(): void {
   const drop = (): void => {
     document.removeEventListener("click", swallow, true);
@@ -32,7 +32,6 @@ function swallowPress(): void {
   document.addEventListener("pointerdown", drop, true);
 }
 
-/** A panel a chip opens: what closes it, what it clears, and where focus goes. */
 export function createDisclosure(
   options: {
     readonly onOpen?: () => void;
@@ -42,8 +41,6 @@ export function createDisclosure(
   const [open, setOpen] = createSignal(false);
   const keyboard = createMediaQuery(KEYBOARD);
   let root: HTMLElement | undefined;
-  // Definite: nothing reads the anchor before the trigger's ref has run, and
-  // the panel it positions cannot be open before that either.
   let trigger!: HTMLElement;
   let field: HTMLInputElement | undefined;
 
@@ -52,7 +49,6 @@ export function createDisclosure(
     (isOpen) => {
       if (!isOpen) {
         options.onClose?.();
-        // The box is uncontrolled, so it keeps what was typed until told otherwise.
         if (field) {
           field.value = "";
         }
@@ -62,21 +58,20 @@ export function createDisclosure(
         return;
       }
       options.onOpen?.();
-      // Focus in a microtask: the panel is shown by another effect, and a hidden field cannot take focus.
+      // Microtask: the panel is shown by another effect, and a hidden field cannot take focus.
       if (untrack(keyboard)) {
         queueMicrotask(() => {
           field?.focus();
         });
       }
       const dismiss = (event: PointerEvent): void => {
-        // Test the whole control, chip and panel: a chip-only test closes the list under a touch scroll of a row.
         if (root && !root.contains(event.target as Node)) {
           setOpen(false);
           swallowPress();
         }
       };
       document.addEventListener("pointerdown", dismiss, true);
-      // Return the cleanup: an effect callback is not an owner, so `onCleanup` here would never run.
+      // `onCleanup` would never run here: an effect callback is not an owner.
       return () => {
         document.removeEventListener("pointerdown", dismiss, true);
       };

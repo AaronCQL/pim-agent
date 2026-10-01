@@ -6,7 +6,6 @@ import { copyText } from "./clipboard";
 
 const secure = navigator.clipboard;
 
-/** An http origin has no `navigator.clipboard` at all — not a denied one. */
 function insecureContext(): void {
   Object.defineProperty(navigator, "clipboard", {
     configurable: true,
@@ -14,7 +13,7 @@ function insecureContext(): void {
   });
 }
 
-/** happy-dom has no `execCommand`; the fallback needs one to call. */
+/** happy-dom has no `execCommand`. */
 function execCommand(result: boolean): () => string[] {
   const copied: string[] = [];
   Object.defineProperty(document, "execCommand", {
@@ -41,14 +40,12 @@ describe("copyText", () => {
     expect(await navigator.clipboard.readText()).toBe("secure");
   });
 
-  /** The case this fallback exists for: the web UI reached over plain http. */
   test("falls back to the selection where there is not", async () => {
     insecureContext();
     const copied = execCommand(true);
 
     expect(await copyText("over http\nand a newline")).toBe(true);
     expect(copied()).toEqual(["over http\nand a newline"]);
-    // Nothing of the carrier survives the copy.
     expect(document.body.querySelector("span")).toBe(null);
   });
 

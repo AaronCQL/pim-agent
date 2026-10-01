@@ -18,7 +18,7 @@ import { SendFileTool } from "./SendFileTool";
 import type { TaskScheduler } from "./TaskScheduler";
 import { TaskTool } from "./TaskTool";
 
-export type { SessionCompactResult, SetCwdResult, SetModelResult };
+export type { SessionCompactResult };
 
 export type SessionId = {
   readonly chatId: number;
@@ -30,12 +30,11 @@ export type SessionSettings = HostSettings & {
   readonly temporary?: boolean;
 };
 
-export type SessionDeps = {
+type SessionDeps = {
   readonly id: SessionId;
   readonly settings: SessionSettings;
   readonly config: TelegramConfig;
   readonly api: Api;
-  /** Pi's installation, shared with every other surface in this process. */
   readonly runtime: AgentRuntime;
   readonly scheduler: TaskScheduler;
   readonly persistSettings: (patch: Partial<SessionSettings>) => Promise<void>;
@@ -71,8 +70,7 @@ export class Session {
       modelRegistry: deps.runtime.modelRegistry,
       settingsManagerFor: (cwd) => deps.runtime.settingsManagerFor(cwd),
       persistSettings: deps.persistSettings,
-      // Nothing else opens these files; the lease is here for the turn a crashed
-      // daemon left behind, and for an eviction that races its own turn.
+      // Guards against a crashed daemon's leftover turn and eviction racing a turn.
       lease: "daemon",
       mainSessionPath: () => this.sessionPath("sessions"),
       isolatedSessionPath: () =>
@@ -117,11 +115,6 @@ export class Session {
 
   public sessionCost(): number | undefined {
     return this.host.sessionCost();
-  }
-
-  /** Pi's session UUID, once an agent exists. */
-  public get sessionId(): string | undefined {
-    return this.host.sessionId;
   }
 
   public get currentModelId(): string | undefined {

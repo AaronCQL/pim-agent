@@ -11,18 +11,18 @@ export type ImageReadOutcome = {
   readonly details: ReadImageDetails;
 };
 
-/** The picture is already in the transcript: the row still draws it, the model is only told so. */
+/** Already sent earlier; the model only gets a note. */
 export type UnchangedImageReadOutcome = {
   readonly kind: "image-unchanged";
   readonly details: ReadImageDetails;
 };
 
-/** Bytes that are a picture, or a name that claims one — a claim that fails is a diagnostic, not text. */
+/** True for image bytes or an image filename; a bad image then errors rather than reading as text. */
 export function isImageRead(head: Uint8Array, path: string): boolean {
   return Images.sniff(head) !== null || Images.looksLikeImageName(path);
 }
 
-/** Both refusals that must land before the file is pulled into memory. */
+/** Checks to run before loading the file into memory. */
 export function assertImageReadable(
   path: string,
   sizeOnDisk: number,

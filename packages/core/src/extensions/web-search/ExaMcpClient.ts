@@ -19,6 +19,8 @@ type ExaSearchInput = {
   readonly signal?: AbortSignal;
 };
 
+type ResultObject = Readonly<Record<string, unknown>>;
+
 class ExaSearchError extends Error {
   public constructor(message: string) {
     super(message);
@@ -28,7 +30,7 @@ class ExaSearchError extends Error {
 
 const defaultEndpoint = "https://mcp.exa.ai/mcp";
 const toolName = "web_search_exa";
-// Stay under the keyless endpoint's 2 req/s window, or a 429 no longer means the daily cap.
+// Stay under the keyless 2 req/s limit so a 429 means the daily cap.
 const maxRequestsPerWindow = 2;
 const windowMs = 1100;
 
@@ -40,7 +42,7 @@ export class ExaMcpClient {
       options.apiKey === undefined || options.apiKey.length === 0
         ? undefined
         : options.apiKey;
-    // Throttle only on the free tier; an API key lifts the rate limit.
+    // An API key lifts the rate limit.
     const rateLimiter =
       apiKey !== undefined
         ? undefined
@@ -181,37 +183,30 @@ function readPlainTextSnippet(lines: readonly string[]): string {
 
 function findFirstObjectArray(
   values: readonly unknown[]
-): readonly Readonly<Record<string, unknown>>[] | undefined {
+): readonly ResultObject[] | undefined {
   for (const value of values) {
-    if (
-      Array.isArray(value) &&
-      value.every((item) => Json.asRecord(item) !== undefined)
-    ) {
-      return value as readonly Readonly<Record<string, unknown>>[];
+    if (isObjectArray(value)) {
+      return value;
     }
-
-    const record = Json.asRecord(value);
-
-    if (record === undefined) {
-      continue;
-    }
-
-    for (const nestedValue of Object.values(record)) {
-      if (
-        Array.isArray(nestedValue) &&
-        nestedValue.every((item) => Json.asRecord(item) !== undefined)
-      ) {
-        return nestedValue as readonly Readonly<Record<string, unknown>>[];
-      }
+    const nested = Object.values(Json.asRecord(value) ?? {}).find(
+      isObjectArray
+    );
+    if (nested !== undefined) {
+      return nested;
     }
   }
 
   return undefined;
 }
 
-function projectResult(
-  result: Readonly<Record<string, unknown>>
-): SearchResult {
+function isObjectArray(value: unknown): value is readonly ResultObject[] {
+  return (
+    Array.isArray(value) &&
+    value.every((item) => Json.asRecord(item) !== undefined)
+  );
+}
+
+function projectResult(result: ResultObject): SearchResult {
   return {
     title: readResultString(result, "title"),
     url: readResultString(result, "url"),
@@ -219,7 +214,7 @@ function projectResult(
   };
 }
 
-function readSnippet(result: Readonly<Record<string, unknown>>): string {
+function readSnippet(result: ResultObject): string {
   return (
     readOptionalResultString(result, "snippet") ??
     readOptionalResultString(result, "text") ??
@@ -228,10 +223,7 @@ function readSnippet(result: Readonly<Record<string, unknown>>): string {
   );
 }
 
-function readResultString(
-  result: Readonly<Record<string, unknown>>,
-  name: string
-): string {
+function readResultString(result: ResultObject, name: string): string {
   const value = readOptionalResultString(result, name);
 
   if (value === undefined) {
@@ -242,7 +234,7 @@ function readResultString(
 }
 
 function readOptionalResultString(
-  result: Readonly<Record<string, unknown>>,
+  result: ResultObject,
   name: string
 ): string | undefined {
   const value = result[name];

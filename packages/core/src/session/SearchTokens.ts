@@ -1,6 +1,5 @@
-/** One indexable word and where it sits in the string it came from. */
 export type SearchToken = {
-  /** Lowercased: the corpus itself is never lowered, only its tokens. */
+  /** Lowercased. */
   readonly text: string;
   readonly start: number;
   readonly end: number;
@@ -33,10 +32,8 @@ function scan(text: string): readonly SearchToken[] {
 }
 
 /**
- * The words a query asks for: its pieces alone, never the identifier they
- * spell. `SessionLease` asks for `session` and `lease`, which the index holds
- * for `SessionLease` and for `session lease` alike; asking for `sessionlease`
- * too would AND away the second.
+ * Query pieces only, never the whole identifier: `SessionLease` asks for
+ * `session` and `lease`, so it also matches "session lease".
  */
 function words(query: string): readonly string[] {
   const found: string[] = [];
@@ -51,7 +48,7 @@ function words(query: string): readonly string[] {
   return found;
 }
 
-/** Half-open slices of one run: `WsGateway` is `ws` and `gateway`, `read_file` is `read` and `file`. */
+/** Half-open slices: `WsGateway` → `ws`, `gateway`; `read_file` → `read`, `file`. */
 function piecesOf(run: string): readonly (readonly [number, number])[] {
   const pieces: (readonly [number, number])[] = [];
   let start = -1;

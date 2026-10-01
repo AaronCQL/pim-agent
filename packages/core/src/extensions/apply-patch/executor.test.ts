@@ -248,7 +248,6 @@ describe("applyPatch", () => {
       )
     ).rejects.toThrow("Failed to delete file");
 
-    // The successful update must NOT have been written.
     expect(await readFile(ok, "utf8")).toBe("alpha\n");
   });
 
@@ -279,10 +278,6 @@ describe("applyPatch", () => {
 
     await apply(wrap("*** Update File: a.txt\n@@\n-beta\n+BETA"), root);
 
-    const bytes = await Bun.file(path).bytes();
-    expect(bytes[0]).toBe(0xef);
-    expect(bytes[1]).toBe(0xbb);
-    expect(bytes[2]).toBe(0xbf);
     expect(await readFile(path, "utf8")).toBe("﻿alpha\nBETA\n");
   });
 

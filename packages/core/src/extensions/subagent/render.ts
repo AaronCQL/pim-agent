@@ -28,7 +28,7 @@ export function formatCallTitle(prompt: string | undefined): string {
   return (prompt ?? "...").split(/\r?\n/u)[0]?.trim() || "...";
 }
 
-/** The status line the parent model reads while the call streams: the summary flattened. */
+/** The summary as plain text, for streaming updates. */
 export function formatTopLine(details: SubagentDetails): string {
   return summarySpans(details, details.stopReason === undefined)
     .map((span) => span.text)
@@ -57,7 +57,7 @@ function summarySpans(
   details: SubagentDetails,
   isPartial: boolean
 ): readonly Span[] {
-  // `details` is typed whole but may not be: pi empties it on failure, and old sessions lack usage.
+  // pi empties `details` on failure, and old sessions lack usage.
   if (details.usage === undefined) {
     return [];
   }

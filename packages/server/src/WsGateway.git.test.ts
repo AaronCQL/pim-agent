@@ -9,12 +9,6 @@ import type { ServerEvent } from "#protocol/ServerEvent";
 import { ProbeClient } from "./ProbeClient";
 import { WsGateway } from "./WsGateway";
 
-/**
- * The repository half of a session, over the wire: what the branch menu lists,
- * what it is allowed to do, and what git says when it refuses. No model server
- * here — nothing in this file takes a turn.
- */
-
 let tmp: string;
 let cwd: string;
 let agentDir: string;
@@ -206,7 +200,7 @@ test("a branch moving drops the file pickers pointed at the old one", async () =
   await probe.waitFor((event) => branchIn(event) === "main");
   const from = probe.events.length;
 
-  // Not through the gateway: a checkout in a terminal invalidates just the same.
+  // Outside the gateway, like a terminal checkout.
   await git(cwd, ["checkout", "feat/work"]);
 
   await probe.waitFor(

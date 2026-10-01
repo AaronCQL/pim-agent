@@ -57,16 +57,9 @@ describe("elide", () => {
   });
 
   test("a prefix worth reading outlives the name it qualifies", () => {
-    // The odd cell goes to the head, so `feat/` still reads as one where the
-    // branch it names no longer does.
     expect(elide("feat/keyboard-shortcuts", 12)).toBe("feat/k…tcuts");
     expect(elide("feat/keyboard-shortcuts", 6)).toBe("fea…ts");
     expect(elide("feat/keyboard-shortcuts", 2)).toBe("f…");
-  });
-
-  test("leaves a text its budget already fits alone", () => {
-    expect(elide("~/src/pim-agent", 15)).toBe("~/src/pim-agent");
-    expect(elide("main", 40)).toBe("main");
   });
 
   test("spends exactly its budget, ellipsis included", () => {

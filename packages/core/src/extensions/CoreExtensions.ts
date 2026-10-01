@@ -26,7 +26,7 @@ export type PimInlineExtension = {
   readonly factory: ExtensionFactory;
 };
 
-// Enumerated, never globbed: the published tarball must not depend on a directory scan.
+// Listed explicitly so the published package needs no directory scan.
 function list(surface?: Surface): readonly PimInlineExtension[] {
   return [
     { name: "apply-patch", factory: applyPatch },

@@ -7,7 +7,6 @@ import {
 } from "#protocol/ServerEvent";
 import type { SessionProjection } from "./SessionProjection";
 
-/** The half of `SessionStream` a connection needs: subscribe, and ask for everything missed. */
 export type AttachableStream = {
   readonly subscribe: (listener: (event: ServerEvent) => void) => () => void;
   readonly replay: (fromSeq: number) => Promise<readonly StreamEvent[]>;
@@ -20,11 +19,13 @@ type SubagentWatch = {
   cursor: number;
 };
 
+/** Bytes buffered before the connection pauses. */
 const HIGH_WATER_MARK = 1 << 20;
 
+/** Serialized once per event, shared across connections. */
 const FRAMES = new WeakMap<object, string>();
 
-export function frame(event: object): string {
+function frame(event: object): string {
   const cached = FRAMES.get(event);
   if (cached !== undefined) {
     return cached;
@@ -34,7 +35,7 @@ export function frame(event: object): string {
   return text;
 }
 
-/** One WebSocket client, attached to at most one session; a lagging client is paused and re-derived on `drain`. */
+/** One WebSocket client, attached to at most one session. A lagging client is paused and resynced on `drain`. */
 export class ClientConnection {
   private readonly ws: ServerWebSocket<undefined>;
   private stream: AttachableStream | undefined;
@@ -55,7 +56,6 @@ export class ClientConnection {
     return this.stream?.sessionId;
   }
 
-  /** Whether the reader behind this socket is looking at the session right now. */
   public get attentive(): boolean {
     return this.reading;
   }
@@ -65,7 +65,6 @@ export class ClientConnection {
     return this.cursor;
   }
 
-  /** The subagent this client is reading, if it is reading one. */
   public get watchedCallId(): string | undefined {
     return this.watch?.callId;
   }
@@ -89,7 +88,7 @@ export class ClientConnection {
     this.reading = attentive;
   }
 
-  /** Read a subagent's log alongside the attached session; at most one watch at a time. */
+  /** At most one watch at a time. */
   public async watchSubagent(
     callId: string,
     projection: SessionProjection,
@@ -99,14 +98,14 @@ export class ClientConnection {
     await this.pumpWatch();
   }
 
-  /** Closes only the named watch, so it cannot close the one that replaced it. */
+  /** Only closes the named watch, never one that replaced it. */
   public unwatchSubagent(callId: string): void {
     if (this.watch?.callId === callId) {
       this.watch = undefined;
     }
   }
 
-  /** Send something that belongs to no stream, e.g. a command response. */
+  /** For events outside the stream, e.g. command responses. */
   public send(event: ServerEvent): void {
     if (this.closed) {
       return;
@@ -135,7 +134,7 @@ export class ClientConnection {
     this.detach();
   }
 
-  // Gate live events during the read and reconcile by `seq`; ephemeral ones are already in the snapshot.
+  // Queue live events during replay, then keep only durable ones (ephemeral state is in the snapshot).
   private async sync(): Promise<void> {
     const stream = this.stream;
     if (!stream || this.closed) {
@@ -156,7 +155,7 @@ export class ClientConnection {
     if (this.touchesWatch(event)) {
       void this.pumpWatch();
     }
-    // Gate a batch unwrapped: the durable filter cannot see into an envelope.
+    // Unwrap so the durable filter can see inside.
     if (event.type === "replay") {
       if (this.gated) {
         this.gate.push(...event.events);
@@ -172,12 +171,12 @@ export class ClientConnection {
     this.write(event);
   }
 
-  // Sent whole or not at all: the cursor moves only once the frame is on the socket.
+  // The cursor only moves once the frame is sent.
   private writeBatch(events: readonly StreamEvent[]): void {
     if (this.closed || this.paused) {
       return;
     }
-    // Filter against a cursor that moves inside the batch: replay and queue can name the same line.
+    // Replay and queue can overlap, so dedupe against a moving cursor.
     let cursor = this.cursor;
     const fresh: StreamEvent[] = [];
     for (const event of events) {

@@ -3,7 +3,7 @@ const MINUTE = 60 * SECOND;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
-/** How long ago, in the sidebar's one-token form: `25s`, `23m`, `3h`, `2d`. */
+/** `25s`, `23m`, `3h`, `2d`. */
 export function relativeTime(timestamp: number, now = Date.now()): string {
   if (!Number.isFinite(timestamp)) {
     return "";
@@ -23,12 +23,12 @@ export function relativeTime(timestamp: number, now = Date.now()): string {
 
 const HOME = /^(?:\/home|\/Users)\/[^/]+(?=\/|$)/;
 
-/** `~`-collapses a path from the server's filesystem, matched by shape; anything else is left alone. */
+/** Replaces a `/home/<user>` or `/Users/<user>` prefix with `~`. */
 export function abbreviateHome(path: string): string {
   return path.replace(HOME, "~");
 }
 
-/** The directory a path ends in; a trailing slash is not a segment of its own. */
+/** Ignores trailing slashes. */
 export function baseName(path: string): string {
   const trimmed = path.replace(/\/+$/, "");
   return trimmed.slice(trimmed.lastIndexOf("/") + 1) || path;
@@ -36,7 +36,7 @@ export function baseName(path: string): string {
 
 const ELLIPSIS = "…";
 
-/** `text` in `columns` character cells, the middle spent first so both ends survive, the odd cell to the head. */
+/** Truncates to `columns` with an ellipsis in the middle. */
 export function elide(text: string, columns: number): string {
   if (text.length <= columns) {
     return text;
@@ -48,7 +48,7 @@ export function elide(text: string, columns: number): string {
   return `${text.slice(0, head)}${ELLIPSIS}${text.slice(text.length - columns + 1 + head)}`;
 }
 
-/** The first of `texts` — widest first — that `columns` cells hold whole, elided when none of them do. */
+/** The first of `texts` (widest first) that fits `columns`, else the last one elided. */
 export function fit(texts: readonly string[], columns: number): string {
   return (
     texts.find((text) => text.length <= columns) ??
@@ -56,7 +56,7 @@ export function fit(texts: readonly string[], columns: number): string {
   );
 }
 
-/** Wall-clock `17:24` for an epoch stamp, in the reader's own timezone. */
+/** `17:24` in local time. */
 export function clockTime(timestamp: number): string {
   if (!Number.isFinite(timestamp) || timestamp <= 0) {
     return "";

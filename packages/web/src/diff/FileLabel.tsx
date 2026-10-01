@@ -20,15 +20,12 @@ const LETTER_CLASSES = {
   untracked: "text-neutral-400",
 } as const satisfies Record<ChangeStatus, string>;
 
-/** What leads to the name, the name itself, and the half of a move that is
-    gone — struck exactly as the patch tool strikes it. */
 const ROLES = {
   lead: "text-neutral-400",
   name: "text-neutral-100",
   gone: "text-neutral-400 line-through",
 } as const satisfies Record<Role, string>;
 
-/** What happened to a file and what it is called, as wide as the box holding it allows. */
 export function FileLabel(props: { readonly file: ChangeSummary }) {
   const readings = createMemo(() =>
     FileTitle.readings(props.file.path, props.file.oldPath)

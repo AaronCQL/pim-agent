@@ -10,7 +10,6 @@ import { Json } from "../shared/Json";
 
 export type LeaseFrontend = "tui" | "daemon";
 
-/** What one holder wrote into `<sessionPath>.lease`. */
 export type LeaseRecord = {
   readonly pid: number;
   readonly hostname: string;
@@ -24,14 +23,14 @@ export type LeaseHandle = {
 
 export type AcquireResult =
   | { readonly ok: true; readonly handle: LeaseHandle }
-  /** Absent when the holder's file is torn or vanished mid-read. */
+  /** Absent when the lease file is torn or vanished mid-read. */
   | { readonly ok: false; readonly holder?: LeaseRecord };
 
 export type LeaseOptions = {
   readonly heartbeatMs?: number;
   readonly pollMs?: number;
   readonly timeoutMs?: number;
-  /** Called with the current holder each time an acquire is denied and another poll follows. */
+  /** Called on each denied attempt that will be retried. */
   readonly onBlocked?: (holder: LeaseRecord | undefined) => void;
 };
 
@@ -73,7 +72,7 @@ async function recordAt(path: string): Promise<LeaseRecord | undefined> {
   return toRecord(await Fs.readJsonOr<unknown>(path, undefined));
 }
 
-/** The current holder, or undefined when the file is absent, torn, or half-written. */
+/** Undefined when the file is absent or unparseable. */
 async function read(sessionPath: string): Promise<LeaseRecord | undefined> {
   return await recordAt(pathFor(sessionPath));
 }
@@ -83,12 +82,12 @@ function isAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (err) {
-    // EPERM is someone else's live process.
+    // EPERM means the process exists but belongs to another user.
     return FsErrors.code(err) !== "ESRCH";
   }
 }
 
-/** A holder is stale once its pid is gone, or once it stops heartbeating; never across hosts. */
+/** Stale when its pid is gone or it stopped heartbeating. Never stale across hosts. */
 function isStale(
   record: LeaseRecord,
   mtimeMs: number,
@@ -100,7 +99,6 @@ function isStale(
   return !isAlive(record.pid) || now - mtimeMs > STALE_MS;
 }
 
-/** Whether this very process wrote that record — the one holder allowed to release it. */
 function isOurs(record: LeaseRecord | undefined): boolean {
   return record?.pid === process.pid && record.hostname === HOST;
 }
@@ -116,7 +114,7 @@ async function stealable(
   if (mtimeMs === undefined) {
     return true;
   }
-  // A torn file is a holder mid-write until it stops being refreshed.
+  // A torn file may be mid-write; only steal it once its heartbeat stops.
   return record === undefined
     ? Date.now() - mtimeMs > STALE_MS
     : isStale(record, mtimeMs);
@@ -136,7 +134,7 @@ async function claim(
     if (FsErrors.code(err) === "EEXIST") {
       return undefined;
     }
-    // The session's directory is pi's to create, and a lease can precede the file it guards.
+    // The lease can be taken before pi creates the session directory.
     if (FsErrors.code(err) === "ENOENT") {
       return mkdir(dirname(path), { recursive: true }).then(() =>
         open(path, "wx")
@@ -174,7 +172,7 @@ function hookExit(): void {
 function handleFor(path: string, options: LeaseOptions): LeaseHandle {
   held.add(path);
   hookExit();
-  // Bump mtime rather than rewrite: a rename would clobber whoever holds the file next.
+  // Touch mtime only; rewriting could clobber the next holder's file.
   const beat = setInterval(() => {
     const now = new Date();
     void utimes(path, now, now).catch(() => undefined);
@@ -197,7 +195,7 @@ function handleFor(path: string, options: LeaseOptions): LeaseHandle {
   };
 }
 
-/** Create-exclusive, stealing only a lease whose holder is provably gone. */
+/** Create-exclusive; steals only a stale lease. */
 async function acquire(
   sessionPath: string,
   frontend: LeaseFrontend,
@@ -217,7 +215,7 @@ async function acquire(
   }
 }
 
-/** Polls until the lease is free, the deadline passes, or the holder is stealable. */
+/** Polls `acquire` until it succeeds or the timeout passes. */
 async function waitFor(
   sessionPath: string,
   frontend: LeaseFrontend,
@@ -243,7 +241,7 @@ function denial(result: { readonly holder?: LeaseRecord }): string {
   return `Session is busy: ${who} still holds its turn lease.`;
 }
 
-/** The only safe way to take a lease: waits for it, and always gives it back. */
+/** Runs `work` under the lease, always releasing it. Throws if it cannot be taken. */
 async function hold<T>(
   sessionPath: string,
   frontend: LeaseFrontend,
@@ -261,12 +259,11 @@ async function hold<T>(
   }
 }
 
-/** Fires whenever the lease appears, changes hands, or is released. */
 function watch(sessionPath: string, onChange: () => void): () => void {
   return FileWatch.file(pathFor(sessionPath), onChange);
 }
 
-/** A turn lease over one session file, held as a sibling `<sessionPath>.lease`. */
+/** A turn lease over one session file, stored at `<sessionPath>.lease`. */
 export const SessionLease = {
   pathFor,
   read,

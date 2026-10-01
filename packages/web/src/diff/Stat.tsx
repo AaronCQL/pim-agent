@@ -1,11 +1,6 @@
 import { Show } from "solid-js";
 
-/**
- * `+12/−3`, the stat a diff tool's own title carries: the slash binds the two
- * counts into one reading, so neither is mistaken for a number belonging to
- * something else on the bar. A side that never happened is left out — a
- * trailing `/` would promise a removal.
- */
+/** `+12/−3`; a zero side is omitted along with the slash. */
 export function Stat(props: {
   readonly added: number;
   readonly removed: number;

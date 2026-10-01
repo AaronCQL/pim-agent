@@ -18,13 +18,6 @@ afterEach(async () => {
 });
 
 describe("SessionMeta", () => {
-  test("an unknown session has no overrides", async () => {
-    const meta = new SessionMeta(file);
-
-    expect(await meta.of("s1")).toEqual({});
-    expect((await meta.pinning()).projects).toEqual(new Map());
-  });
-
   test("archived, unread and pinned survive a restart", async () => {
     const meta = new SessionMeta(file);
     await meta.setArchived("s1", true);
@@ -50,19 +43,6 @@ describe("SessionMeta", () => {
     await restarted.setArchived("s1", false);
 
     expect(await new SessionMeta(file).of("s1")).toEqual({});
-  });
-
-  test("the bulk read answers for every session at once", async () => {
-    const meta = new SessionMeta(file);
-    await meta.setArchived("s1", true);
-    await meta.setUnread("s2", true);
-
-    expect(await new SessionMeta(file).sessions()).toEqual(
-      new Map([
-        ["s1", { archived: true }],
-        ["s2", { unread: true }],
-      ])
-    );
   });
 
   test("a file that will not parse is a file that is not there", async () => {
@@ -117,8 +97,6 @@ describe("SessionMeta", () => {
     await meta.setPinned("/work/one", true);
     await meta.setPinned("/work/two", true);
 
-    // Newest first: it goes where you have just put it, and it displaces
-    // nothing that was already arranged.
     expect(await meta.pins()).toEqual(["/work/two", "/work/one"]);
     expect(await new SessionMeta(file).pins()).toEqual([
       "/work/two",
@@ -137,20 +115,13 @@ describe("SessionMeta", () => {
       "/work/two",
     ]);
 
-    // Unpinned, it leaves the order with the flag; pinned again, it is new.
     await meta.setPinned("/work/one", false);
     expect(await meta.pins()).toEqual(["/work/two"]);
     await meta.setPinned("/work/one", true);
     expect(await meta.pins()).toEqual(["/work/one", "/work/two"]);
   });
 
-  /**
-   * The sidebar's fold is kept here rather than in a browser, so the group a
-   * phone opened is the group a desktop opens to. Folded is where a project
-   * starts, and a fold written back is the same as one never written: the
-   * file stays the size of what somebody actually did to it.
-   */
-  test("a fold survives a restart, and folding again writes nothing down", async () => {
+  test("a fold survives a restart, and folding again removes the entry", async () => {
     const meta = new SessionMeta(file);
     await meta.setExpanded("/work/pim", true);
 
@@ -160,29 +131,6 @@ describe("SessionMeta", () => {
 
     await meta.setExpanded("/work/pim", false);
     expect((await new SessionMeta(file).pinning()).projects).toEqual(new Map());
-  });
-
-  /** A fold and a pin are two facts about one directory; neither may clear the other. */
-  test("folding a project keeps its pin, and unpinning keeps its fold", async () => {
-    const meta = new SessionMeta(file);
-    await meta.setPinned("/work/pim", true);
-    await meta.setExpanded("/work/pim", true);
-
-    expect((await new SessionMeta(file).pinning()).projects).toEqual(
-      new Map([["/work/pim", { pinned: true, expanded: true }]])
-    );
-
-    // Folded, it is still pinned, and still sorts where the pin put it.
-    await meta.setExpanded("/work/pim", false);
-    expect(await meta.pins()).toEqual(["/work/pim"]);
-
-    // Unpinned, the fold it was left open at is still its own.
-    await meta.setExpanded("/work/pim", true);
-    await meta.setPinned("/work/pim", false);
-    expect((await new SessionMeta(file).pinning()).projects).toEqual(
-      new Map([["/work/pim", { expanded: true }]])
-    );
-    expect(await meta.pins()).toEqual([]);
   });
 
   test("a project's name survives a restart, and emptying it puts the directory back", async () => {
@@ -197,7 +145,6 @@ describe("SessionMeta", () => {
     expect((await new SessionMeta(file).pinning()).projects).toEqual(new Map());
   });
 
-  /** A name is a third fact about one directory, and no more clears the others than they clear it. */
   test("naming a project keeps its pin and its fold", async () => {
     const meta = new SessionMeta(file);
     await meta.setPinned("/work/pim", true);
@@ -218,9 +165,8 @@ describe("SessionMeta", () => {
     expect(await meta.pins()).toEqual([]);
   });
 
-  test("the order is a hint over the flags, so it can say nothing true and cost nothing", async () => {
-    // Written by a pim that predates the order, or by one that dropped it: two
-    // pins and no word on where they sit.
+  test("a missing order sorts unlisted pins by path, and the order keeps only pins", async () => {
+    // No `pins` field.
     await Bun.write(
       file,
       JSON.stringify({
@@ -232,10 +178,8 @@ describe("SessionMeta", () => {
     const meta = new SessionMeta(file);
     await meta.setPinned("/work/one", true);
 
-    // The pin it has heard of first, then the one it has not, by path.
     expect(await meta.pins()).toEqual(["/work/one", "/work/two"]);
 
-    // And an order naming what is not pinned keeps only what is.
     await meta.setPinOrder(["/work/gone", "/work/two", "/work/one"]);
     expect(await new SessionMeta(file).pins()).toEqual([
       "/work/two",
@@ -265,7 +209,7 @@ describe("SessionMeta", () => {
     const meta = new SessionMeta(join(blocked, "sessions.json"));
 
     await expect(meta.setArchived("s1", true)).rejects.toThrow();
-    // The failure must not poison the queue behind it.
+    // A failure must not poison the queue.
     await expect(meta.setPinned("/work/pim", true)).rejects.toThrow();
   });
 

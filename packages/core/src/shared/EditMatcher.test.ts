@@ -16,44 +16,53 @@ const replace = (
 };
 
 describe("EditMatcher", () => {
-  test("resolves exact matches", () => {
-    expect(replace("alpha\nbeta\ngamma", "beta", "delta")).toBe(
-      "alpha\ndelta\ngamma"
-    );
-  });
-
-  test("uses lineTrimmed fallback", () => {
-    expect(replace("alpha\n  beta\ngamma", "beta ", "delta")).toBe(
-      "alpha\ndelta\ngamma"
-    );
-  });
-
-  test("uses whitespaceNormalized fallback", () => {
-    expect(replace("alpha\nfoo     bar\ngamma", "foo bar", "baz")).toBe(
-      "alpha\nbaz\ngamma"
-    );
-  });
-
-  test("uses indentationFlexible fallback", () => {
-    const content = "root\n    if (ok) {\n      run()\n    }\nend";
-    const oldString = "if (ok) {\n  run()\n}";
-    expect(replace(content, oldString, "done()")).toBe("root\ndone()\nend");
-  });
-
-  test("uses escapeNormalized fallback", () => {
-    expect(replace("alpha\nbeta\ngamma", "beta\\ngamma", "delta")).toBe(
-      "alpha\ndelta"
-    );
-  });
-
-  test("uses trimmedBoundary fallback", () => {
-    expect(replace("alpha\nbeta\ngamma", "\n beta \n", "delta")).toBe(
-      "alpha\ndelta\ngamma"
-    );
-  });
-
-  test("uses unicodeNormalized fallback", () => {
-    expect(replace("say “hello” now", 'say "hello" now', "done")).toBe("done");
+  test.each([
+    ["simple", "alpha\nbeta\ngamma", "beta", "delta", "alpha\ndelta\ngamma"],
+    [
+      "lineTrimmed",
+      "alpha\n  beta\ngamma",
+      "beta ",
+      "delta",
+      "alpha\ndelta\ngamma",
+    ],
+    [
+      "whitespaceNormalized",
+      "alpha\nfoo     bar\ngamma",
+      "foo bar",
+      "baz",
+      "alpha\nbaz\ngamma",
+    ],
+    [
+      "indentationFlexible",
+      "root\n    if (ok) {\n      run()\n    }\nend",
+      "if (ok) {\n  run()\n}",
+      "done()",
+      "root\ndone()\nend",
+    ],
+    [
+      "escapeNormalized",
+      "alpha\nbeta\ngamma",
+      "beta\\ngamma",
+      "delta",
+      "alpha\ndelta",
+    ],
+    [
+      "trimmedBoundary",
+      "alpha\nbeta\ngamma",
+      "\n beta \n",
+      "delta",
+      "alpha\ndelta\ngamma",
+    ],
+    ["unicodeNormalized", "say “hello” now", 'say "hello" now', "done", "done"],
+    [
+      "contextAware",
+      "start\nsame\nactual\nend",
+      "start\nsame\nexpected\nend",
+      "done",
+      "done",
+    ],
+  ])("%s", (_, content, oldString, newString, expected) => {
+    expect(replace(content, oldString, newString)).toBe(expected);
   });
 
   test("uses blockAnchor fallback with same-line-count constraint", () => {
@@ -78,11 +87,6 @@ describe("EditMatcher", () => {
     expect(replace(content, "start\nexpected middle\nend", "done")).toBe(
       "done"
     );
-  });
-
-  test("uses contextAware fallback", () => {
-    const content = "start\nsame\nactual\nend";
-    expect(replace(content, "start\nsame\nexpected\nend", "done")).toBe("done");
   });
 
   test("replaceAll returns every occurrence", () => {

@@ -8,6 +8,7 @@ import type { UpdateOutcome } from "#core/shared/Updater";
 import type { ServerEvent } from "#protocol/ServerEvent";
 import { ProbeClient } from "./ProbeClient";
 import { WsGateway } from "./WsGateway";
+import { until } from "#core/shared/fixtures/wait";
 
 const STEP = "bun install";
 const SKIPPED = [
@@ -34,13 +35,13 @@ let registry: SessionRegistry;
 let gateway: WsGateway;
 let probes: ProbeClient[] = [];
 
-/** Everything the injected seams were asked to do, and what they answer. */
+/** Records what the injected seams were asked to do. */
 let updates = 0;
 let shutdowns = 0;
 let outcome: UpdateOutcome;
-/** Set by a test that needs the update still running while it asks again. */
+/** Keeps the update running while a test asks again. */
 let heldUpdate: Promise<void> | undefined;
-/** Set by a test that needs a session mid-turn; the model waits on it. */
+/** Holds a turn open; the model waits on it. */
 let heldTurn: Promise<void> | undefined;
 
 function holdUpdate(): () => void {
@@ -75,7 +76,7 @@ function chunk(delta: Record<string, unknown>, finish?: string): string {
   })}\n\n`;
 }
 
-/** Streams one word and then waits, so a turn can be caught in flight. */
+/** Streams one word, then waits on `hold`. */
 function startModelServer(): void {
   modelServer = Bun.serve({
     port: 0,
@@ -136,16 +137,6 @@ async function connect(): Promise<ProbeClient> {
   return probe;
 }
 
-async function until(ready: () => boolean, what: string): Promise<void> {
-  const deadline = Date.now() + 10_000;
-  while (!ready()) {
-    if (Date.now() > deadline) {
-      throw new Error(`timed out waiting for ${what}`);
-    }
-    await Bun.sleep(1);
-  }
-}
-
 function phaseOf(event: ServerEvent): string | undefined {
   return event.type === "update_state" ? event.phase : undefined;
 }
@@ -168,8 +159,7 @@ beforeEach(async () => {
   await mkdir(join(agentDir, "extensions"), { recursive: true });
   previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = agentDir;
-  // The restart path is the one under test, and only a supervised process has
-  // one: unsupervised, an exit is the end rather than a replacement.
+  // Only a supervised process restarts.
   previousSupervised = process.env.PIM_SUPERVISED;
   process.env.PIM_SUPERVISED = "1";
   await Bun.write(
@@ -193,10 +183,7 @@ afterEach(async () => {
     probe.close();
   }
   probes = [];
-  // A test that fails between a hold and its release never reaches the
-  // release, and the hold is module state: the next test's model server would
-  // await a promise nothing resolves, so its turn would never end and every
-  // wait in it would burn its full timeout.
+  // Release a hold a failed test left behind, or the next turn never ends.
   heldUpdate = undefined;
   heldTurn = undefined;
   await gateway.stop();
@@ -232,8 +219,6 @@ test("refuses to reload out from under a running turn, unless forced", async () 
 
   const refused = await probe.send({ type: "reload" });
   expect(refused.success).toBe(false);
-  // Named, because the operator is the only one who can decide whether that
-  // particular turn is worth keeping.
   expect(refused.error).toContain(sessionId);
   expect(refused.error).toContain("mid-turn");
   expect(updates).toBe(0);
@@ -255,8 +240,7 @@ test("answers the client before it starts, and tells every one of them", async (
   const response = await first.send({ type: "reload" });
   expect(response.success).toBe(true);
   await awaitPhase(first, "step");
-  // The ack cannot wait for the work: the work ends with this socket gone,
-  // so an answer behind it is an answer nobody ever reads.
+  // Acked before the work, which ends with this socket closed.
   const tail = first.events.slice(mark);
   expect(tail.findIndex((event) => event.type === "response")).toBeLessThan(
     tail.findIndex((event) => phaseOf(event) !== undefined)
@@ -301,7 +285,7 @@ test("a failed update is said to everyone, and this server keeps serving", async
     });
   }
   expect(shutdowns).toBe(0);
-  // Still the server it was: a failed update leaves the working code running.
+  // A failed update leaves the server running.
   expect(await first.listSessions()).toBeArray();
 });
 
@@ -335,7 +319,6 @@ test("two clients asking at once are one update", async () => {
   release();
 
   await until(() => shutdowns === 1, "the server to be taken down");
-  // The second click joined the run in flight rather than racing it over the
-  // same tree.
+  // The second request joined the first run.
   expect(updates).toBe(1);
 });

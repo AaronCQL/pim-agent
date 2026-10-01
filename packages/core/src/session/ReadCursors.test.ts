@@ -9,14 +9,13 @@ let tmp: string;
 let file: string;
 let opened: ReadCursors[] = [];
 
-/** Tracked, so teardown can settle the write each one queues before its dir goes. */
+/** Tracked so teardown can flush pending writes. */
 function open(): ReadCursors {
   const cursors = new ReadCursors(file);
   opened.push(cursors);
   return cursors;
 }
 
-/** Long enough ago to be behind any baseline taken during the test. */
 const BEFORE = Date.now() - 60_000;
 
 beforeEach(async () => {
@@ -34,7 +33,6 @@ test("a first launch reads everything that already exists", async () => {
   const cursors = open();
 
   expect(await cursors.isUnread("old", BEFORE)).toBe(false);
-  // Answered after this server first ran, so it is news.
   expect(await cursors.isUnread("fresh", Date.now() + 1)).toBe(true);
 });
 
@@ -44,13 +42,7 @@ test("the baseline outlives the process, so an unread session stays unread", asy
   const answeredAt = Date.now() + 1;
   expect(await first.isUnread("s1", answeredAt)).toBe(true);
 
-  // The baseline is written behind the load that took it, so the restart has
-  // to be given a file to find. Without this the second instance races that
-  // write, misses it, and takes a *fresh* baseline off the clock — which is
-  // the very thing the assertion below is here to rule out.
   await first.flush();
-  // A restart takes the baseline off disk rather than from the clock; taking
-  // it from the clock would read every session that had gone unread.
   expect(await open().isUnread("s1", answeredAt)).toBe(true);
 });
 
@@ -74,10 +66,7 @@ test("marking is forward-only and survives a restart", async () => {
 
 test("reading a session settles it against a later answer", async () => {
   const cursors = open();
-  // The baseline is taken off the clock inside the load, so the load has to
-  // settle before the clock is read here. Reading it first only asks for an
-  // answer later than a baseline that does not exist yet, and loses the tie
-  // whenever the load happens to span a millisecond.
+  // Let the load take its baseline before reading the clock.
   await cursors.isUnread("any", BEFORE);
   const answeredAt = Date.now() + 1;
   expect(await cursors.isUnread("s1", answeredAt)).toBe(true);
@@ -95,7 +84,6 @@ test("pruning forgets the sessions that are gone and keeps the rest", async () =
 
   const restarted = open();
   expect(await restarted.isUnread("kept", Date.now())).toBe(false);
-  // Back to the baseline, which everything on disk at first launch is behind.
   expect(await restarted.isUnread("deleted", Date.now() + 2_000)).toBe(true);
 });
 

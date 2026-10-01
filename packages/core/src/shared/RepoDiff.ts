@@ -30,10 +30,10 @@ export type ChangeSummary = {
   readonly added: number;
   readonly removed: number;
   readonly binary?: boolean;
-  /** Blob SHAs the diff was computed against; anchors an outdated review comment. */
+  /** Blob SHAs of each side; used to anchor outdated review comments. */
   readonly baseSha?: string;
   readonly headSha?: string;
-  /** Changes whenever the file's content does, so a `seen` mark keyed to it clears itself. */
+  /** Changes whenever the file's content does. */
   readonly fingerprint: string;
 };
 
@@ -51,14 +51,14 @@ export type FileDiff = {
   readonly hunks: readonly ToolDiffHunk[];
   readonly truncated?: boolean;
   readonly binary?: boolean;
-  /** Byte size of each side of a binary file, when git or the working tree can say. */
+  /** Byte sizes of each side of a binary file, when known. */
   readonly oldBytes?: number;
   readonly newBytes?: number;
-  /** Lines in the side context is read from; absent on a clipped diff, whose end is not the file's. */
+  /** Line count of the side `readLines` reads. Absent when the diff was clipped. */
   readonly total?: number;
 };
 
-/** A stretch of one file, 1-based and inclusive, numbered on the side `readLines` reads. */
+/** 1-based, inclusive, numbered on the side `readLines` reads. */
 export type LineSpan = {
   readonly start: number;
   readonly end: number;
@@ -78,24 +78,24 @@ const DEFAULT_CONTEXT = 3;
 
 const FILE_LIMIT = 2000;
 
-/** How much of one file a reader is handed at once; past either limit the rest is dropped. */
+/** Per-file caps on a diff; the rest is dropped. */
 const CHANGED_LINE_LIMIT = 2000;
 const PATCH_TEXT_LIMIT = 1_000_000;
 
-/** Past this an untracked file is reported as binary rather than read. */
+/** Larger untracked files are reported as binary. */
 const UNTRACKED_BYTE_LIMIT = 1_000_000;
 
-/** Past this a file is diffed but never read whole, so no gap of it can be opened. */
+/** Larger files are diffed but never read whole, so gaps can't be expanded. */
 const CONTEXT_BYTE_LIMIT = 1_000_000;
 
-/** Most lines one `readLines` hands back, however many spans asked. */
+/** Max lines per `readLines` call, across all spans. */
 const CONTEXT_LINE_LIMIT = 2000;
 
 const EMPTY_SHA = /^0+$/;
 
 const BINARY_PATCH = /^(?:Binary files |GIT binary patch)/m;
 
-/** One `git` read; `--no-optional-locks` or it takes `index.lock` and fails an agent's write beside it. */
+/** `--no-optional-locks` keeps reads from taking `index.lock` and failing concurrent writes. */
 function git(cwd: string, args: readonly string[]): Promise<ProcResult> {
   return Proc.run(["git", "--no-optional-locks", ...args], { cwd });
 }
@@ -112,21 +112,13 @@ async function read(
   return result.stdout;
 }
 
-/**
- * Whether the branch checked out has a commit on it. A repository whose first
- * commit is still unwritten has an unborn `HEAD`: it names nothing, and every
- * `git diff HEAD` of it fails outright instead of calling the tree new.
- */
+/** False for an unborn `HEAD` (no commits yet), where `git diff HEAD` fails. */
 async function born(cwd: string): Promise<boolean> {
   const head = await git(cwd, ["rev-parse", "--quiet", "--verify", "HEAD"]);
   return head.code === 0;
 }
 
-/**
- * The base an unborn `HEAD` is diffed against, so that every file reads as
- * added. `hash-object` names git's empty tree without writing it, and names it
- * right in a sha256 repository too, where the familiar `4b825dc…` is not it.
- */
+/** Base for an unborn `HEAD`. `hash-object` also gets it right in sha256 repos. */
 async function emptyTree(cwd: string): Promise<string> {
   const sha = await read(
     cwd,
@@ -136,7 +128,7 @@ async function emptyTree(cwd: string): Promise<string> {
   return sha.trim();
 }
 
-/** What every `git diff` of this base is asked about; `branch` resolves to the merge base first. */
+/** `git diff` args for a base; `branch` diffs against the merge base. */
 async function baseArgs(
   cwd: string,
   base: DiffBase
@@ -151,7 +143,6 @@ async function baseArgs(
     case "commit":
       return [base.ref];
     case "branch": {
-      // Nothing is shared with a branch when this one has no commits at all.
       if (!(await born(cwd))) {
         return [await emptyTree(cwd)];
       }
@@ -199,7 +190,7 @@ function shaOf(value: string | undefined): string | undefined {
     : value;
 }
 
-/** `:<oldmode> <newmode> <oldsha> <newsha> <status>\0<path>\0`, a second path when the status is a rename or copy. */
+/** `:<oldmode> <newmode> <oldsha> <newsha> <status>\0<path>\0`, plus a second path for a rename or copy. */
 function parseRaw(text: string): readonly Entry[] {
   const fields = text.split("\0");
   const entries: Entry[] = [];
@@ -240,7 +231,7 @@ function parseRaw(text: string): readonly Entry[] {
   return entries;
 }
 
-/** `<added>\t<removed>\t<path>\0`; a rename leaves the path empty and follows with the old and new ones. */
+/** `<added>\t<removed>\t<path>\0`; a rename has an empty path followed by old and new paths. */
 function parseNumstat(text: string): ReadonlyMap<string, Counts> {
   const fields = text.split("\0");
   const counts = new Map<string, Counts>();
@@ -278,7 +269,7 @@ function parseNumstat(text: string): ReadonlyMap<string, Counts> {
   return counts;
 }
 
-/** Only the `?` entries of porcelain v2; a rename entry carries a second field that is a path, not a record. */
+/** The `?` entries of porcelain v2. A rename (`2`) entry is followed by an extra path field. */
 function parseUntracked(text: string): readonly string[] {
   const fields = text.split("\0");
   const paths: string[] = [];
@@ -332,10 +323,7 @@ async function readUntracked(cwd: string, path: string): Promise<Untracked> {
     return opaque;
   }
   const bytes = await file.bytes().catch(() => undefined);
-  if (bytes === undefined) {
-    return opaque;
-  }
-  if (Lines.isBinaryBytes(bytes)) {
+  if (bytes === undefined || Lines.isBinaryBytes(bytes)) {
     return opaque;
   }
   const text = new TextDecoder().decode(bytes);
@@ -446,7 +434,7 @@ type Clip = {
   readonly truncated: boolean;
 };
 
-/** The longest prefix of a patch that is still whole hunks, once it is too much text to parse. */
+/** Cuts an oversized patch back to its last whole hunk. */
 function clipPatch(patch: string): {
   readonly text: string;
   readonly cut: boolean;
@@ -462,7 +450,7 @@ function changedOf(lines: readonly ToolDiffLine[]): number {
   return lines.filter((line) => line.kind !== "context").length;
 }
 
-/** A hunk cut short still has to describe itself: its spans count the lines left in it. */
+/** Recounts a cut hunk's line spans. */
 function reflow(
   hunk: ToolDiffHunk,
   lines: readonly ToolDiffLine[]
@@ -493,7 +481,7 @@ function headOf(
   return kept;
 }
 
-/** Hunks while the changed-line budget lasts, the one that overruns it cut short. */
+/** Keeps hunks within the changed-line budget, cutting the one that overruns it. */
 function clipHunks(hunks: readonly ToolDiffHunk[]): Clip {
   let budget = CHANGED_LINE_LIMIT;
   const kept: ToolDiffHunk[] = [];
@@ -531,11 +519,7 @@ function clipped(
   };
 }
 
-/**
- * The text of the side a gap is read from: the new one, which is the index
- * blob where the base has staged it and the working tree everywhere else. A
- * file too big to hold, or gone from the side asked for, has no text at all.
- */
+/** The new side: the index blob when staged, else the working tree. Undefined if missing or too big. */
 async function sideText(
   cwd: string,
   path: string,
@@ -578,7 +562,6 @@ async function worktreeSize(
   return (await file.exists()) ? file.size : undefined;
 }
 
-/** A binary file is a row, not a diff: all a reader is told is how big each side is. */
 async function binaryDiff(
   cwd: string,
   path: string,
@@ -599,7 +582,7 @@ async function binaryDiff(
   };
 }
 
-/** Every changed file of one base, in git's own order and without a hunk of any of them. */
+/** Changed files in git's order, without hunks. */
 async function listChanges(
   cwd: string,
   base: DiffBase,
@@ -629,7 +612,7 @@ async function listChanges(
   });
 }
 
-/** One file's hunks; a renamed file is diffed against the path it came from, an untracked one against nothing. */
+/** A rename is diffed against its old path; an untracked file against nothing. */
 async function fileDiff(
   cwd: string,
   base: DiffBase,
@@ -679,7 +662,6 @@ async function fileDiff(
   });
 }
 
-/** The lines a reader asked to see of a file they are already reading a diff of, as they are. */
 async function readLines(
   cwd: string,
   base: DiffBase,
@@ -718,11 +700,7 @@ async function readLines(
   });
 }
 
-/**
- * Reading is serialised against the checkouts and pulls that move the tree
- * under it; a read that arrives while one runs is refused rather than answered
- * from half a working tree.
- */
+/** Refuses to read while a checkout or pull is moving the tree. */
 async function serialise<T>(
   monitor: GitMonitor,
   cwd: string,

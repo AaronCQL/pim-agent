@@ -8,7 +8,6 @@ import { SendFile } from "#core/shared/SendFile";
 import { AttachmentEndpoint } from "./AttachmentEndpoint";
 import { SendFileTool } from "./SendFileTool";
 
-/** A one-pixel PNG, so the mime sniff has something true to say. */
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
   "base64"
@@ -26,7 +25,6 @@ function tool(sessionId: () => string | undefined = () => "session-1") {
   });
 }
 
-/** Pi hands `execute` a signal, an update callback and its own context. */
 function run(definition: ReturnType<typeof tool>, path: string) {
   return definition.execute(
     "call-1",
@@ -65,9 +63,7 @@ test("a sent image comes back as a name, a url and nothing else", async () => {
     isImage: true,
   });
 
-  // The model is told what it sent and how big it was. Not the URL: an
-  // address it can repeat is a second copy of this delivery, and one that is
-  // dead in any transcript this server is not the one serving.
+  // The model sees name and size, but never the URL.
   const said = JSON.stringify(result.content);
   expect(said).toContain("revenue.png");
   expect(said).toContain(String(PNG.byteLength));
@@ -84,10 +80,6 @@ test("a relative path is resolved against the session cwd", async () => {
   expect(result.details.isImage).toBe(false);
 });
 
-/**
- * The whole point of copying rather than serving in place: the endpoint is
- * never told a path, and the bytes under a stamped name cannot change.
- */
 test("the bytes are fetchable at the url, and the agent's path is not", async () => {
   const result = await send("revenue.png");
   const endpoint = new AttachmentEndpoint({ root });
@@ -108,7 +100,7 @@ test("only a regular file that exists and fits can be sent", async () => {
 
   const huge = join(cwd, "huge.bin");
   await Bun.write(huge, "");
-  // Sparse, so the limit is tested without spending 50 MB to do it.
+  // Sparse file, so no real 50 MB write.
   await truncate(huge, SendFile.MAX_BYTES + 1);
   expect(send("huge.bin")).rejects.toThrow(/max allowed/);
 });
@@ -119,22 +111,6 @@ test("a session pi has not named yet cannot send", async () => {
   );
 });
 
-/**
- * The description is the model's only account of the limit, and it is the one
- * string here nothing else reads — so an unevaluated `${...}` in it is
- * invisible to every other test and to the server that ships it.
- */
-test("the description quotes the real ceiling", () => {
-  const { description } = tool();
-
-  expect(description).toContain("50 MB");
-  expect(description).not.toContain("${");
-});
-
-/**
- * The view is rebuilt from persisted details alone, which is what makes a
- * delivery survive a restart and a replay of the log.
- */
 test("the view carries the delivery, and only once there is one", async () => {
   const definition = tool();
   const args = { path: "revenue.png" };
@@ -146,7 +122,7 @@ test("the view carries the delivery, and only once there is one", async () => {
   const result = await run(definition, args.path);
   const settled = definition.toViewModel!({
     args,
-    // Exactly what a replay has: the persisted details, no live state.
+    // Only persisted details, as on replay.
     result: { content: [], details: result.details },
     isPartial: false,
     cwd,

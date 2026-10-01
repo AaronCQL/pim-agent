@@ -201,9 +201,9 @@ export class McpClient {
 
   private async sendCancellation(
     sessionId: string | undefined,
-    requestId: number | undefined
+    requestId: number
   ): Promise<void> {
-    if (sessionId === undefined || requestId === undefined) {
+    if (sessionId === undefined) {
       return;
     }
 

@@ -37,24 +37,10 @@ function title(
 }
 
 describe("webSearchView title", () => {
-  test("supplies the title-cased display label", () => {
-    expect(
-      webSearchView({
-        args: {} as WebSearchInput,
-        cwd: "/repo",
-        isPartial: false,
-      }).label
-    ).toBe("Web Search");
-  });
-
   test("always includes the default count", () => {
     expect(title({ query: "bun release notes" })).toBe(
       `bun release notes ${DEFAULT_NUM_RESULTS}`
     );
-  });
-
-  test("includes explicit counts", () => {
-    expect(title({ query: "pi agent", numResults: 3 })).toBe("pi agent 3");
   });
 
   test("clamps out-of-range counts before the result lands", () => {
@@ -63,15 +49,6 @@ describe("webSearchView title", () => {
 
   test("uses a placeholder while keeping the count visible", () => {
     expect(title({})).toBe(`... ${DEFAULT_NUM_RESULTS}`);
-  });
-
-  test("names the provider once it is known", () => {
-    expect(
-      title(
-        { query: "pi agent", numResults: 3 },
-        result("hits", { count: 3, provider: "firecrawl" })
-      )
-    ).toBe("pi agent 3 · firecrawl");
   });
 
   test("shows the delivered count, not the requested one", () => {

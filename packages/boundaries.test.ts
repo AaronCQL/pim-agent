@@ -3,9 +3,7 @@ import { dirname, relative, resolve } from "node:path";
 
 const packagesRoot = dirname(new URL(import.meta.url).pathname);
 
-// Who may import whom. `protocol → core` is type-only (PickerItem, ViewBlock
-// live in core); `web → server` is confined to test scaffolding and the
-// fixture generator, but web ships built so nothing browser-bound leaks.
+// `protocol → core` is type-only; `web → server` is only for tests and fixtures.
 const allowed: Record<string, readonly string[]> = {
   core: [],
   protocol: ["core"],
@@ -64,25 +62,14 @@ describe("layer boundaries", () => {
   });
 });
 
-// Vite stubs Node built-ins for the browser, so a value import of one is not a
-// build error — it is a blank page the first time the module body runs.
-const aliases: Record<string, string> = {
-  core: "core/src/",
-  daemon: "daemon/src/",
-  protocol: "protocol/src/",
-  server: "server/src/",
-  tui: "tui/src/",
-  telegram: "telegram/src/",
-  web: "web/src/",
-};
-
+// Vite stubs Node built-ins, so a value import of one fails at runtime, not at build.
 const nodeOnly = (specifier: string) =>
   specifier.startsWith("node:") || specifier.startsWith("@earendil-works/");
 
 function resolveModule(file: string, specifier: string): string | undefined {
   const aliased = /^#([a-z]+)\/(.+)$/.exec(specifier);
   const base = aliased
-    ? resolve(packagesRoot, aliases[aliased[1]!] ?? "", aliased[2]!)
+    ? resolve(packagesRoot, aliased[1]!, "src", aliased[2]!)
     : specifier.startsWith(".")
       ? resolve(dirname(file), specifier)
       : undefined;
@@ -95,7 +82,7 @@ function resolveModule(file: string, specifier: string): string | undefined {
   );
 }
 
-/** Imports left after type erasure — the ones that actually reach the bundle. */
+/** Imports left after type erasure. */
 async function valueImportsOf(file: string): Promise<readonly string[]> {
   const loader = file.endsWith(".tsx") ? "tsx" : "ts";
   const source = await Bun.file(file).text();

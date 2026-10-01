@@ -27,12 +27,7 @@ function distance(left: string, right: string): number {
   return previous[right.length] ?? 0;
 }
 
-/**
- * Damerau–Levenshtein, where a transposition is one edit rather than two, and
- * a pair that cannot reach `max` answers `max + 1` without finishing the
- * matrix — the shape a vocabulary scan wants, since almost every term it asks
- * about is nowhere near.
- */
+/** Damerau–Levenshtein (a transposition is one edit). Returns `max + 1` early once over `max`. */
 function damerau(left: string, right: string, max: number): number {
   const over = max + 1;
   if (left === right) {

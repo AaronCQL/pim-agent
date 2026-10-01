@@ -1,11 +1,7 @@
 import { Format } from "../../shared/Format";
 import { Images, type NormalisedImage } from "../../shared/Images";
 
-/**
- * The picture stdout printed, once a provider will take it. Bytes that sniffed
- * as an image but cannot be decoded are not an error here: the command ran, and
- * bash reports what it printed.
- */
+/** Null when the bytes cannot be decoded; that is not a tool error. */
 export async function normaliseStdoutImage(
   bytes: Uint8Array
 ): Promise<NormalisedImage | null> {
@@ -16,12 +12,12 @@ export async function normaliseStdoutImage(
   }
 }
 
-/** `stdout is a 1200x800 png (240 KB)`, the subject every note about the picture shares. */
-export function imageSubject(image: NormalisedImage): string {
+/** e.g. `stdout is a 1200x800 png (240 KB)`. */
+function imageSubject(image: NormalisedImage): string {
   return `stdout is a ${image.width}x${image.height} ${Images.extensionOf(image.mimeType)} (${Format.bytes(image.bytes)})`;
 }
 
-/** What the model is told next to the picture, or instead of it when it has no eyes. */
+/** Text sent with the image, or instead of it for a model without vision. */
 export function imageNote(image: NormalisedImage, vision: boolean): string {
   if (!vision) {
     return Images.noVisionNote("bash", imageSubject(image));

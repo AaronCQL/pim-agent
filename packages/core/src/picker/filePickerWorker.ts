@@ -18,9 +18,7 @@ const refreshRelative = async (id: number, root: string): Promise<void> => {
       ok: true,
     } satisfies FilePickerWorkerResponse);
   } catch (error) {
-    if (cachedRelative === undefined) {
-      cachedRelative = [];
-    }
+    cachedRelative ??= [];
     self.postMessage({
       id,
       type: "refreshRelative",

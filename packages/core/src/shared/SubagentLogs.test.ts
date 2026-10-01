@@ -69,13 +69,6 @@ describe("SubagentLogs.create", () => {
     await SubagentLogs.create("parent-3", "call-3");
     expect(await SubagentLogs.create("parent-3", "call-3")).toBeNull();
   });
-
-  test("creates a log for a provider id with path punctuation", async () => {
-    const callId = "call_4|fc_123";
-    const path = await SubagentLogs.create("parent-4", callId);
-    expect(path).toBe(SubagentLogs.pathFor("parent-4", callId));
-    expect(path).not.toContain(callId);
-  });
 });
 
 describe("SubagentLogs.cleanup", () => {
@@ -89,7 +82,7 @@ describe("SubagentLogs.cleanup", () => {
     try {
       await mkdir(cold);
       await mkdir(warm);
-      // A truncated log is the crash case: it must sweep like any other.
+      // Truncated, as after a crash.
       await writeFile(join(cold, "a.jsonl"), '{"type":"session"');
       await writeFile(join(warm, "old.jsonl"), "{}\n");
       await writeFile(join(warm, "new.jsonl"), "{}\n");

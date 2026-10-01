@@ -37,18 +37,18 @@ export type BashCommandResult = {
   readonly signal: NodeJS.Signals | null;
   readonly stdout: CapturedStream;
   readonly stderr: CapturedStream;
-  /** What stdout's leading bytes sniffed as, whether or not the picture could then be decoded. */
+  /** Set even when the image could not be decoded. */
   readonly stdoutSniffed: ImageMimeType | null;
-  /** Set only when stdout sniffed as a picture and a provider will take it. */
+  /** Set only when the image decoded and will be shown. */
   readonly stdoutImage: NormalisedImage | null;
   readonly timedOut: boolean;
   readonly aborted: boolean;
-  /** The limit in bytes, set when the capped command was SIGKILLed without pim sending it. */
+  /** The limit in bytes; set when the command was SIGKILLed by something other than pim. */
   readonly memoryLimitHit: number | null;
   readonly durationMs: number;
 };
 
-export type BashStreamDetails = {
+type BashStreamDetails = {
   readonly totalBytes: number;
   readonly truncated: boolean;
   readonly path: string | null;

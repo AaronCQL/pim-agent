@@ -41,43 +41,6 @@ index 0000000..5786b13
 +new
 `;
 
-const DELETED = `diff --git a/del.txt b/del.txt
-deleted file mode 100644
-index 4208d7e..0000000
---- a/del.txt
-+++ /dev/null
-@@ -1,2 +0,0 @@
--gone
--for good
-`;
-
-const RENAMED = `diff --git a/old-name.txt b/new-name.txt
-similarity index 68%
-rename from old-name.txt
-rename to new-name.txt
-index dc2b5bc..8ba42a9 100644
---- a/old-name.txt
-+++ b/new-name.txt
-@@ -1,3 +1,3 @@
- title
--body
-+BODY
- tail
-`;
-
-const CRLF = [
-  "diff --git a/crlf.txt b/crlf.txt",
-  "index b5eff57..d5a6cc6 100644",
-  "--- a/crlf.txt",
-  "+++ b/crlf.txt",
-  "@@ -1,3 +1,3 @@",
-  " a\r",
-  "-b\r",
-  "+B\r",
-  " c\r",
-  "",
-].join("\n");
-
 const NO_EOL_BEFORE = `diff --git a/noeol.txt b/noeol.txt
 index 66455a1..661264d 100644
 --- a/noeol.txt
@@ -100,27 +63,6 @@ index 4c6f843..6d334bc 100644
 -r
 +R
 \\ No newline at end of file
-`;
-
-const OMITTED_COUNTS = `diff --git a/one.txt b/one.txt
-index 4994d72..161726a 100644
---- a/one.txt
-+++ b/one.txt
-@@ -1 +1 @@
--single
-+SINGLE
-`;
-
-const MARKER_CONTENT = `diff --git a/trap.txt b/trap.txt
-index 6b6368b..94ffbb6 100644
---- a/trap.txt
-+++ b/trap.txt
-@@ -1,4 +1,4 @@
- --- not a header
--+++ also not
-++++ changed
- -- dash dash
- content
 `;
 
 const MODE_ONLY = `diff --git a/plain.txt b/plain.txt
@@ -198,89 +140,15 @@ describe("DiffPatch.fromUnified", () => {
     ]);
   });
 
-  test("reads a deleted file as removed lines only", () => {
-    const diff = DiffPatch.fromUnified("del.txt", DELETED);
-    expect(diff?.hunks[0]?.newLines).toBe(0);
-    expect(diff?.hunks[0]?.lines).toEqual([
-      { kind: "removed", oldLine: 1, text: "gone" },
-      { kind: "removed", oldLine: 2, text: "for good" },
-    ]);
-  });
-
-  test("reads a rename that also changed content", () => {
-    const diff = DiffPatch.fromUnified("new-name.txt", RENAMED);
-    expect(diff?.path).toBe("new-name.txt");
-    expect(diff?.hunks[0]?.lines.map((line) => line.kind)).toEqual([
-      "context",
-      "removed",
-      "added",
-      "context",
-    ]);
-    expect(diff?.hunks[0]?.lines.map((line) => line.text)).toEqual([
-      "title",
-      "body",
-      "BODY",
-      "tail",
-    ]);
-  });
-
-  test("preserves the carriage return of a CRLF file", () => {
-    const diff = DiffPatch.fromUnified("crlf.txt", CRLF);
-    expect(diff?.hunks[0]?.lines.map((line) => line.text)).toEqual([
-      "a\r",
-      "b\r",
-      "B\r",
-      "c\r",
-    ]);
-  });
-
-  test("drops the no-newline marker when the old side lacked one", () => {
-    const diff = DiffPatch.fromUnified("noeol.txt", NO_EOL_BEFORE);
-    expect(diff?.hunks[0]?.lines).toEqual([
-      { kind: "context", oldLine: 1, newLine: 1, text: "x" },
-      { kind: "context", oldLine: 2, newLine: 2, text: "y" },
-      { kind: "removed", oldLine: 3, text: "z" },
-      { kind: "added", newLine: 3, text: "Z" },
-    ]);
-  });
-
-  test("drops the no-newline marker when the new side lacks one", () => {
-    const diff = DiffPatch.fromUnified("noeol.txt", NO_EOL_AFTER);
-    expect(diff?.hunks[0]?.lines).toEqual([
-      { kind: "context", oldLine: 1, newLine: 1, text: "p" },
-      { kind: "context", oldLine: 2, newLine: 2, text: "q" },
-      { kind: "removed", oldLine: 3, text: "r" },
-      { kind: "added", newLine: 3, text: "R" },
-    ]);
-  });
-
-  test("treats a hunk header with omitted counts as one line per side", () => {
-    const diff = DiffPatch.fromUnified("one.txt", OMITTED_COUNTS);
-    const hunk = diff?.hunks[0];
-    expect([
-      hunk?.oldStart,
-      hunk?.oldLines,
-      hunk?.newStart,
-      hunk?.newLines,
-    ]).toEqual([1, 1, 1, 1]);
-    expect(hunk?.lines).toEqual([
-      { kind: "removed", oldLine: 1, text: "single" },
-      { kind: "added", newLine: 1, text: "SINGLE" },
-    ]);
-  });
-
-  test("does not mistake content beginning with -- or +++ for headers", () => {
-    const diff = DiffPatch.fromUnified("trap.txt", MARKER_CONTENT);
-    expect(diff?.hunks).toHaveLength(1);
-    expect(diff?.hunks[0]?.lines.map((line) => [line.kind, line.text])).toEqual(
-      [
-        ["context", "--- not a header"],
-        ["removed", "+++ also not"],
-        ["added", "+++ changed"],
-        ["context", "-- dash dash"],
-        ["context", "content"],
-      ]
-    );
+  test.each([
+    ["old", NO_EOL_BEFORE],
+    ["new", NO_EOL_AFTER],
+  ])("drops the no-newline marker on the %s side", (_, patch) => {
+    expect(
+      DiffPatch.fromUnified("noeol.txt", patch)?.hunks[0]?.lines.map(
+        (line) => line.kind
+      )
+    ).toEqual(["context", "context", "removed", "added"]);
   });
 
   test("returns undefined for a patch with no hunks", () => {

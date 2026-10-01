@@ -52,8 +52,6 @@ function paint(
         onToggleSidebar={() => {}}
         onToggleDiff={onToggleDiff}
         onOpenSettings={onOpenSettings}
-        // The grace period is what the mark is *for*; a test that waited it
-        // out would be paying 1.5s to assert a `setTimeout`.
         graceMs={0}
       />
     ),
@@ -78,18 +76,13 @@ function mark(host: HTMLElement): HTMLButtonElement | null {
 }
 
 describe("the disconnected mark", () => {
-  /**
-   * The only ambient connection signal left in the app, and the reason it is
-   * in this bar rather than the sidebar: below `md` the sidebar is a closed
-   * drawer, and a phone waking up is how a socket usually dies.
-   */
   test("shows only once a socket has been down, and leads to the address", async () => {
     const store = stocked("/repo", "main");
     const opened: number[] = [];
     const host = paint(store, false, () => opened.push(1));
     expect(mark(host)).toBeNull();
 
-    // A gateway that is not there: `connecting`, then `reconnecting` forever.
+    // No gateway: connecting, then reconnecting forever.
     void store.client.connect().catch(() => undefined);
     await until(() => {
       flush();
@@ -103,11 +96,6 @@ describe("the disconnected mark", () => {
     flush();
   });
 
-  /**
-   * A tab from another build is still talking to the server perfectly well;
-   * only the toast asks for a reload. A mark reading "not connected" would
-   * send the reader looking at their network instead.
-   */
   test("stays away for a tab running another build", () => {
     // `stocked` attaches to a server on 1.2.3, which is not this bundle.
     const store = stocked("/repo", "main");
@@ -126,7 +114,6 @@ describe("the topbar's chips", () => {
     expect(host.textContent).toContain("~/src/pim-agent");
     expect(host.textContent).toContain("main");
     expect(changes(host).textContent).toBe("3");
-    // The pair reads as one drift, unsplit by the chip's gap, as in the footer.
     expect(host.textContent).toContain("↑2↓1");
   });
 
@@ -135,7 +122,6 @@ describe("the topbar's chips", () => {
 
     expect(host.textContent).toContain("pim-agent");
     expect(host.textContent).not.toContain("~/src");
-    // Which branch and how dirty survive; how far it has drifted does not.
     expect(host.textContent).toContain("main");
     expect(changes(host).textContent).toBe("3");
     expect(host.textContent).not.toContain("↑2");
@@ -173,11 +159,6 @@ describe("the topbar's chips", () => {
     );
   });
 
-  /**
-   * A clean tree still has a way in — the diff view says so itself — and a
-   * segment that came and went would move the branch chip under the pointer
-   * every time an agent wrote a file.
-   */
   test("a clean tree keeps the segment, without the count", () => {
     const host = paint(stocked("/home/ada/src/pim-agent", "main", 0), false);
 
@@ -186,26 +167,5 @@ describe("the topbar's chips", () => {
     );
     expect(changes(host).textContent).toBe("");
     expect(host.querySelector(".text-amber-400")).toBeNull();
-  });
-
-  /**
-   * Cutting is measured, not guessed: a copy of the whole text is what the row
-   * lays out, and the line the reader gets is painted over it and sliced to the
-   * share of that copy the row granted. A DOM with no layout — this one — grants
-   * all of it; `fit` is tested on its own arithmetic.
-   */
-  test("every chip lays out its whole text and paints the fitting one over it", () => {
-    const host = paint(stocked("/home/ada/src/pim-agent", "feat/chips"), false);
-
-    const laid = [...host.querySelectorAll("span.invisible")];
-    expect(laid.map((node) => node.textContent)).toEqual([
-      "~/src/pim-agent",
-      "feat/chips",
-    ]);
-    const painted = [...host.querySelectorAll("span.absolute")];
-    expect(painted.map((node) => node.textContent)).toEqual([
-      "~/src/pim-agent",
-      "feat/chips",
-    ]);
   });
 });

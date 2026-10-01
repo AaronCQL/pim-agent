@@ -37,54 +37,36 @@ afterAll(async () => {
 });
 
 describe("validatePublicUrl", () => {
-  test("accepts http and https", () => {
+  test("accepts public http(s) URLs", () => {
     expect(validatePublicUrl("https://example.com/path")).toBe(
       "https://example.com/path"
     );
     expect(validatePublicUrl("http://example.com")).toBe("http://example.com/");
-  });
-
-  test("rejects non-http schemes", () => {
-    expect(() => validatePublicUrl("ftp://example.com")).toThrow(/http/);
-    expect(() => validatePublicUrl("file:///etc/passwd")).toThrow(/http/);
-  });
-
-  test("rejects malformed URLs", () => {
-    expect(() => validatePublicUrl("not a url")).toThrow(/valid/);
-  });
-
-  test("rejects embedded credentials", () => {
-    expect(() => validatePublicUrl("https://user:pw@example.com")).toThrow(
-      /credentials/
-    );
-  });
-
-  test("rejects localhost and .local", () => {
-    expect(() => validatePublicUrl("http://localhost/")).toThrow(/public/);
-    expect(() => validatePublicUrl("http://printer.local/")).toThrow(/public/);
-  });
-
-  test("rejects RFC1918 IPv4", () => {
-    expect(() => validatePublicUrl("http://10.0.0.1/")).toThrow(/public/);
-    expect(() => validatePublicUrl("http://192.168.1.1/")).toThrow(/public/);
-    expect(() => validatePublicUrl("http://172.16.0.1/")).toThrow(/public/);
-    expect(() => validatePublicUrl("http://127.0.0.1/")).toThrow(/public/);
-    expect(() => validatePublicUrl("http://169.254.0.1/")).toThrow(/public/);
-  });
-
-  test("rejects IPv6 loopback and link-local", () => {
-    expect(() => validatePublicUrl("http://[::1]/")).toThrow(/public/);
-    expect(() => validatePublicUrl("http://[fe80::1]/")).toThrow(/public/);
-    expect(() => validatePublicUrl("http://[fc00::1]/")).toThrow(/public/);
-  });
-
-  test("accepts public IPs", () => {
     expect(validatePublicUrl("http://8.8.8.8/")).toBe("http://8.8.8.8/");
+  });
+
+  test.each([
+    ["ftp://example.com", /http/],
+    ["file:///etc/passwd", /http/],
+    ["not a url", /valid/],
+    ["https://user:pw@example.com", /credentials/],
+    ["http://localhost/", /public/],
+    ["http://printer.local/", /public/],
+    ["http://10.0.0.1/", /public/],
+    ["http://192.168.1.1/", /public/],
+    ["http://172.16.0.1/", /public/],
+    ["http://127.0.0.1/", /public/],
+    ["http://169.254.0.1/", /public/],
+    ["http://[::1]/", /public/],
+    ["http://[fe80::1]/", /public/],
+    ["http://[fc00::1]/", /public/],
+  ])("rejects %s", (url, message) => {
+    expect(() => validatePublicUrl(url)).toThrow(message);
   });
 });
 
 describe("executeFetch", () => {
-  /** The image probe runs first on every fetch; this answers it offline, with a page. */
+  // Answers the image probe with a non-image.
   const notAnImage: HttpFetch = async () =>
     new Response("<html>hello</html>", {
       headers: { "content-type": "text/html" },
@@ -234,8 +216,7 @@ describe("formatOutcome", () => {
   });
 
   test("spills the full body and points the footer at the resume line over the inline budget", async () => {
-    // 1 KiB newline-terminated lines: the 32 KiB head holds exactly 32 lines,
-    // so the footer should resume reading at line 33.
+    // 1 KiB lines: the 32 KiB head holds 32 of them.
     const line = `${"x".repeat(1023)}\n`;
     const content = line.repeat(40);
     const long = { ...page, content };
@@ -256,12 +237,6 @@ describe("formatOutcome", () => {
 });
 
 describe("truncationFooter", () => {
-  test("points at the spill file with a resume line when one was written", () => {
-    expect(truncationFooter(100, 2000, "/tmp/pim/cache/fetch-abc.md", 7)).toBe(
-      "[web_fetch tool: showing first 100 bytes of 2000; use read with path=/tmp/pim/cache/fetch-abc.md and start=7 for the rest.]"
-    );
-  });
-
   test("signals the rest is unavailable when the spill failed", () => {
     expect(truncationFooter(100, 2000, null, 7)).toBe(
       "[web_fetch tool: showing first 100 bytes of 2000; full content unavailable.]"

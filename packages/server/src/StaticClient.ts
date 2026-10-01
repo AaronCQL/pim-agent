@@ -3,7 +3,6 @@ import { brotliCompressSync, constants } from "node:zlib";
 
 import type { BunFile } from "bun";
 
-/** The built Vite bundle, resolved relative to this file so it works installed. */
 export const DEFAULT_CLIENT_DIR = resolve(
   import.meta.dir,
   "..",
@@ -18,13 +17,13 @@ const BUILD_HINT =
   "Run `bun run web:build` in the pim checkout, then restart `pim --mode web`.\n" +
   "(Installed copies ship the bundle; a git checkout has to build it once.)\n";
 
-/** Vite fingerprints everything under `assets/`, so it can never go stale. */
+/** For fingerprinted files that never go stale. */
 export const IMMUTABLE = "public, max-age=31536000, immutable";
 
 const COMPRESSIBLE =
   /^(?:text\/|image\/svg\+xml|application\/(?:javascript|json|wasm|xml))/;
 
-/** Below this a deflate stream is its own header: the framing costs more than the saving. */
+/** Bytes; smaller files don't benefit from compression. */
 const MIN_COMPRESSED = 1024;
 
 type Bytes = Uint8Array<ArrayBuffer>;
@@ -34,7 +33,7 @@ type Encoding = {
   readonly compress: (bytes: Bytes) => Bytes;
 };
 
-/** Best first. Brotli at q5 beats gzip -9 on both size and time; q11 would cost 40x the CPU for 8%. */
+/** Best first. Brotli q5: q11 costs ~40x the CPU for ~8% smaller output. */
 const ENCODINGS: readonly Encoding[] = [
   {
     name: "br",
@@ -60,7 +59,7 @@ function accepts(header: string, name: string): boolean {
   });
 }
 
-/** A file off disk under a caching policy, or the 404 that a path naming nothing is. */
+/** 404 when the file is missing. */
 export async function serveFile(
   path: string,
   cacheControl: string
@@ -116,7 +115,7 @@ export class StaticClient {
     );
   }
 
-  // `vary` rides every answer, compressed or not: a cache must not hand one client's encoding to another.
+  // `vary` on every response so caches never mix encodings.
   private async respond(
     file: BunFile,
     request: Request,
@@ -145,7 +144,7 @@ export class StaticClient {
     return ENCODINGS.find((encoding) => accepts(accepted, encoding.name));
   }
 
-  // Keyed by name, stamped by mtime: a rebuilt bundle replaces its entry instead of adding one.
+  // Keyed by name and stamped by mtime, so a rebuilt file replaces its entry.
   private async compress(file: BunFile, encoding: Encoding): Promise<Bytes> {
     const key = `${file.name ?? ""}\0${encoding.name}`;
     const stamp = `${file.lastModified}:${file.size}`;
@@ -158,7 +157,7 @@ export class StaticClient {
     return bytes;
   }
 
-  // `new URL()` normalises literal `../` but not its percent-encoded spelling: re-resolve the decoded path.
+  // `new URL()` normalises `../` but not `%2e%2e/`, so re-resolve the decoded path.
   private within(pathname: string): string | undefined {
     let decoded: string;
     try {

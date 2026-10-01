@@ -19,16 +19,15 @@ import { SessionProjection } from "./SessionProjection";
 
 export type StreamListener = (event: ServerEvent) => void;
 
-/** What one client sent back for a `ui_request`; a dismissal is `cancelled`. */
 export type UiAnswer = Omit<
   Extract<Command, { readonly type: "ui_response" }>,
   "id" | "type" | "sessionId" | "requestId"
 >;
 
 type PendingRequest = {
-  /** Kept whole: a client that reattaches inside the grace is shown the dialog again. */
+  /** Re-sent to clients that attach while it is pending. */
   readonly asked: Extract<EphemeralEvent, { readonly type: "ui_request" }>;
-  /** Answers the waiting extension; only the first call of the first caller lands. */
+  /** Only the first call has any effect. */
   readonly settle: (answer: UiAnswer | undefined, because?: string) => void;
   readonly expiry: ReturnType<typeof setTimeout>;
   grace: ReturnType<typeof setTimeout> | undefined;
@@ -53,26 +52,20 @@ type LiveMessage = {
 };
 
 export type SessionStreamDeps = {
-  /** How often the file watch falls back to a poll; the default is a second. */
+  /** File watch poll interval. Defaults to 1s. */
   readonly pollMs?: number;
-  /** Shared with every other session in the same directory; one is made here when none is given. */
+  /** Shared across sessions in the same directory. */
   readonly git?: GitMonitor;
-  /**
-   * Whether a session in this stream's directory is mid-turn, this one
-   * included. Only the gateway can see the others, so a stream standing alone
-   * reports nothing rather than guessing from itself.
-   */
+  /** Whether any session in this cwd is mid-turn, this one included. */
   readonly repoBusy?: () => boolean;
-  /** Longest a dialog may hold an extension waiting; defaults to `REQUEST_CEILING_MS`. */
   readonly requestCeilingMs?: number;
-  /** How long a pending dialog outlives its last reader; defaults to `DETACH_GRACE_MS`. */
   readonly detachGraceMs?: number;
 };
 
-/** No extension may be parked on a human forever, whatever it asked for; `opts.timeout` still wins when shorter. */
+/** Max wait for a dialog answer; a shorter `opts.timeout` wins. */
 const REQUEST_CEILING_MS = 180_000;
 
-/** A reload, a tunnel blip and a phone unlock all read as a detach, and all three are back inside this. */
+/** How long a pending dialog survives its last client detaching (reloads, reconnects). */
 const DETACH_GRACE_MS = 15_000;
 
 function sameLease(a: LeaseState, b: LeaseState): boolean {
@@ -83,7 +76,7 @@ function sameLease(a: LeaseState, b: LeaseState): boolean {
   );
 }
 
-/** One session's view of the world, shared by every client attached to it and kept running when none are. */
+/** One session's live state, shared by every attached client; keeps running with none. */
 export class SessionStream implements SessionUi {
   public readonly sessionId: string;
   public readonly host: SessionHost;
@@ -138,7 +131,7 @@ export class SessionStream implements SessionUi {
     });
   }
 
-  /** Follow the host, not one agent: a rehydrated session is a new `AgentSession`. */
+  /** Subscribes to the host, not the agent, which is replaced on rehydrate. */
   public start(): void {
     this.unsubscribe ??= this.host.subscribe((event) => {
       this.onAgentEvent(event);
@@ -155,12 +148,7 @@ export class SessionStream implements SessionUi {
     });
   }
 
-  /**
-   * Watch the lease and the session file while a client is reading: un-greying
-   * has to feel instant, and a turn another process runs reaches the browser
-   * only through the file, which emits no agent event here. Idle sessions pay
-   * nothing.
-   */
+  /** Watches the lease and session file while a client is reading, to pick up other processes' turns. */
   public watchFiles(active: boolean): void {
     if (active === (this.unwatch !== undefined)) {
       return;
@@ -191,7 +179,7 @@ export class SessionStream implements SessionUi {
     this.syncGit();
   }
 
-  /** Re-points the git watch after the session moves; the monitor is shared, so a repeat is free. */
+  /** Re-points the git watch after the cwd changes. */
   public syncGit(): void {
     const wanted = this.unwatch === undefined ? undefined : this.host.cwd;
     if (wanted === this.gitCwd) {
@@ -204,9 +192,7 @@ export class SessionStream implements SessionUi {
       return;
     }
     this.gitStop = this.git.watch(wanted, (state) => {
-      // Whoever moved it — this client, the terminal, another window — every
-      // path the pickers hold is from the branch that just left. The first
-      // reading is a discovery rather than a move, and drops nothing.
+      // A branch switch stales file pickers; the first reading is not a switch.
       const moved = this.gitBranch !== null && state.branch !== this.gitBranch;
       this.gitBranch = state.branch;
       if (moved) {
@@ -216,12 +202,11 @@ export class SessionStream implements SessionUi {
     });
   }
 
-  /** Reads the repository again for a client that has reason to think its picture is old. */
   public async refreshGit(fetch: boolean): Promise<void> {
     await this.git.refresh(this.host.cwd, { fetch });
   }
 
-  /** Project whatever pi has appended since the last read, telling every client; returns the head. */
+  /** Projects and broadcasts new entries; returns the head. */
   public async refresh(): Promise<number> {
     await this.flushDurable();
     return this.projection.head;
@@ -236,11 +221,7 @@ export class SessionStream implements SessionUi {
     };
   }
 
-  /**
-   * Hears everything a client hears without counting as one: the server's own
-   * bookkeeping must not make a session nobody is reading look attended, or
-   * the rules below park an extension on a dialog with no eyes on it.
-   */
+  /** Like `subscribe`, but does not count as an attached client. */
   public observe(listener: StreamListener): () => void {
     this.observers.add(listener);
     return () => {
@@ -248,12 +229,7 @@ export class SessionStream implements SessionUi {
     };
   }
 
-  /**
-   * Runs `run` as the answer to something the user typed, so anything it says
-   * or asks reaches the client under `command`'s name. A stack rather than a
-   * name: one command handler may prompt another, and the innermost is the
-   * one speaking.
-   */
+  /** Tags notices and requests raised during `run` with `command`. Nests; the innermost wins. */
   public async dispatch<T>(command: string, run: () => Promise<T>): Promise<T> {
     this.dispatching.push(command);
     try {
@@ -263,7 +239,7 @@ export class SessionStream implements SessionUi {
     }
   }
 
-  /** Fire-and-forget: with nobody attached the notice is dropped rather than held. */
+  /** Dropped when nobody is attached. */
   public notify(text: string, severity: NoticeSeverity): void {
     this.emit({
       type: "ui_notice",
@@ -274,7 +250,6 @@ export class SessionStream implements SessionUi {
     });
   }
 
-  /** Whose words these are: the command being dispatched, if any is. */
   private asked(): { readonly command?: string } {
     const command = this.dispatching.at(-1);
     return command === undefined ? {} : { command };
@@ -318,7 +293,7 @@ export class SessionStream implements SessionUi {
     )?.value;
   }
 
-  /** Whether the answer was taken; a second one for the same request is refused. */
+  /** False when the request is unknown or already settled. */
   public answer(requestId: string, answer: UiAnswer): boolean {
     const request = this.pending.get(requestId);
     if (request === undefined) {
@@ -328,7 +303,7 @@ export class SessionStream implements SessionUi {
     return true;
   }
 
-  /** The answer as the client sent it, or `undefined` where it was cancelled, timed out or never asked. */
+  /** Undefined when cancelled, timed out, or nobody is attached. */
   private ask(
     request: Omit<
       Extract<ServerEvent, { readonly type: "ui_request" }>,
@@ -336,7 +311,6 @@ export class SessionStream implements SessionUi {
     >,
     opts: UiAsk | undefined
   ): Promise<UiAnswer | undefined> {
-    // A headless session may not park an extension on a dialog nobody can see.
     if (this.listeners.size === 0) {
       this.answered(request.title, "nobody was attached");
       return Promise.resolve(undefined);
@@ -378,19 +352,18 @@ export class SessionStream implements SessionUi {
       });
       opts?.signal?.addEventListener("abort", abort, { once: true });
       this.emit(asked);
-      // A listener is never called for a signal that was already spent.
+      // `abort` listeners don't fire for an already-aborted signal.
       if (opts?.signal?.aborted === true) {
         abort();
       }
     });
   }
 
-  /** A dialog answered by the server is never silent: the human is told what was decided for them. */
   private answered(title: string, why: string): void {
     this.notify(`Answered “${title}” for you: ${why}.`, "warn");
   }
 
-  /** The last reader leaving starts the grace; one arriving inside it calls the whole thing off. */
+  /** Starts the detach grace when the last client leaves; cancels it when one returns. */
   private holdRequests(): void {
     const detached = this.listeners.size === 0;
     for (const [requestId, request] of this.pending) {
@@ -410,12 +383,11 @@ export class SessionStream implements SessionUi {
     return `${this.sessionId}:${kind}:${this.uiSeq}`;
   }
 
-  /** Whether `callId` names a tool this session is still running, log written or not. */
   public isRunning(callId: string): boolean {
     return this.findTool(callId)?.done === false;
   }
 
-  /** Everything a client at `fromSeq` has not seen: the durable tail, the in-flight turn coalesced, then state. */
+  /** The durable tail after `fromSeq`, then the in-flight turn coalesced, then state. */
   public async replay(fromSeq: number): Promise<readonly StreamEvent[]> {
     await Promise.all([this.flushDurable(), this.readLease()]);
     return [...this.projection.since(fromSeq), ...this.inFlight()];
@@ -454,8 +426,6 @@ export class SessionStream implements SessionUi {
         }
       }
     }
-    // A dialog is only ever answered by whoever is attached now, so a client
-    // arriving mid-question is handed it rather than left waiting on a grace.
     for (const request of this.pending.values()) {
       events.push(request.asked);
     }
@@ -463,12 +433,10 @@ export class SessionStream implements SessionUi {
     return events;
   }
 
-  /** Broadcast an event the stream did not derive itself, e.g. a state push. */
   public push(event: ServerEvent): void {
     this.emit(event);
   }
 
-  /** Drop the server's picker caches and tell every client to drop theirs. */
   public invalidatePickers(scope: "files" | "commands" | "all"): void {
     this.picker.invalidate();
     this.emit({ type: "picker_invalidate", scope, cwd: this.host.cwd });
@@ -509,11 +477,7 @@ export class SessionStream implements SessionUi {
     };
   }
 
-  /**
-   * Two sources, and both are needed: the host knows only about a mutation of
-   * its own parked behind someone else, and reads writable for a session
-   * merely sitting idle under a foreign lease — which the cached record covers.
-   */
+  /** The host only knows about its own blocked writes; the lease record covers an idle session under a foreign lease. */
   private leaseState(): LeaseState {
     const own = this.host.leaseState;
     if (!own.writable) {
@@ -533,11 +497,7 @@ export class SessionStream implements SessionUi {
     };
   }
 
-  /**
-   * Re-reads the holder; true when what a client would render changed. Our own
-   * lease comes and goes on every turn we take and says nothing, so only a
-   * holder that is not us ever moves this.
-   */
+  /** Re-reads the holder; true when the visible lease state changed. */
   private async readLease(): Promise<boolean> {
     this.holder = await SessionLease.read(this.sessionPath);
     const next = this.leaseState();
@@ -562,7 +522,7 @@ export class SessionStream implements SessionUi {
     this.unsubscribeForeign?.();
     this.unsubscribeForeign = undefined;
     this.watchFiles(false);
-    // Deleting the entry each settle clears is what a Map iterator is allowed to outlive.
+    // Safe: Map iteration tolerates deleting the current entry.
     for (const request of this.pending.values()) {
       request.settle(undefined, "the session stopped");
     }
@@ -658,7 +618,7 @@ export class SessionStream implements SessionUi {
         });
         if (Tools.effectOf(event.toolName)?.kind !== "readOnly") {
           this.invalidatePickers("files");
-          // The tool just wrote the worktree, which `.git` never reports.
+          // Worktree writes don't touch `.git`, so the watch won't see them.
           void this.git.refresh(this.host.cwd);
         }
         return;
@@ -666,7 +626,7 @@ export class SessionStream implements SessionUi {
       case "entry_appended":
         void this.flushDurable();
         return;
-      // Never await the flush: pi appends the entry only after this listener returns.
+      // Don't await: pi appends the entry only after this listener returns.
       case "message_end": {
         if (event.message.role === "assistant") {
           const open = this.liveTurn.at(-1);
@@ -693,7 +653,7 @@ export class SessionStream implements SessionUi {
       }
       case "agent_settled":
         void this.flushDurable().then(() => {
-          // Clear only once the durable events superseding it are on the wire.
+          // Clear only after the superseding durable events are sent.
           this.liveTurn = [];
           this.emit(this.sessionState());
         });
@@ -726,7 +686,7 @@ export class SessionStream implements SessionUi {
     return message;
   }
 
-  // Pi re-states the whole message on each update; only a suffix is expressible as a delta.
+  // Pi re-sends the whole message each update; only an appended suffix becomes a delta.
   private emitDelta(
     message: LiveMessage,
     channel: "text" | "thinking",
@@ -761,19 +721,14 @@ export class SessionStream implements SessionUi {
     return found === undefined ? undefined : found.message.tools[found.at];
   }
 
-  /**
-   * Serialised: two reads in flight would race on `sentSeq` and hand a client
-   * the same lines twice, or out of order. The agent-event path and the file
-   * watch both come through here, so they can only ever queue behind one
-   * another.
-   */
+  /** Serialized: concurrent reads would race on `sentSeq` and duplicate or reorder lines. */
   private flushDurable(): Promise<void> {
     const done = this.draining.then(() => this.drainDurable());
     this.draining = done.catch(() => {});
     return done;
   }
 
-  // A burst of appends is one drain: a trigger waits for the read already running, and one arriving after that starts gets its own.
+  // Coalesces a burst of file changes into one drain queued behind the current one.
   private scheduleDrain(): void {
     if (this.drainQueued) {
       return;
@@ -787,10 +742,9 @@ export class SessionStream implements SessionUi {
       .catch(() => {});
   }
 
-  // One frame: a retire split from the durable message that caused it paints the step twice.
+  // One frame, so a retire never arrives apart from the durable message replacing it.
   private async drainDurable(): Promise<void> {
     await this.projection.drain();
-    // The watermark is what every listener has been offered, so one client's read cannot swallow another's tail.
     const fresh = this.projection.since(this.sentSeq);
     this.sentSeq = this.projection.head;
     const batch: StreamEvent[] = [];
@@ -811,7 +765,7 @@ export class SessionStream implements SessionUi {
     }
   }
 
-  // Retire the oldest *finished* message, never the oldest: a retired shell may still be collecting calls.
+  // The oldest *ended* message; a retired one with tools stays until they settle.
   private retireLive(): EphemeralEvent | undefined {
     const retired = this.liveTurn.find(
       (message) => message.ended && !message.retired
@@ -841,8 +795,7 @@ export class SessionStream implements SessionUi {
   }
 
   private emit(event: ServerEvent): void {
-    // Observers first: the bookkeeping one does may broadcast server-wide, and
-    // that belongs ahead of the frame that caused it on every socket.
+    // Observers first, so their broadcasts precede this event on every socket.
     for (const observer of this.observers) {
       observer(event);
     }

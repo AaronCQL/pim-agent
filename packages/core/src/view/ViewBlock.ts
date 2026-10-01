@@ -41,11 +41,10 @@ export type KvPair = readonly [string, string];
 
 export type ViewBlock =
   | { readonly kind: "text"; readonly text: string; readonly tone?: Tone }
-  /** Markdown source; framed as an embed and never re-coloured or re-wrapped. */
+  /** Never re-coloured or re-wrapped. */
   | { readonly kind: "markdown"; readonly text: string }
-  /** One line of mixed-tone text, e.g. a `+5`/`-2` diff stat or a rename. */
+  /** One line of mixed-tone text, e.g. a `+5`/`-2` diff stat. */
   | { readonly kind: "spans"; readonly spans: readonly Span[] }
-  /** Introduces a sub-item inside a body; painters draw it as a separated heading. */
   | {
       readonly kind: "section";
       readonly label: string;
@@ -66,7 +65,7 @@ export type ViewBlock =
   | {
       readonly kind: "file";
       readonly path: string;
-      /** An undefined end is an open-ended range (`:40`), not a missing one. */
+      /** An undefined end means open-ended (`:40`). */
       readonly range?: readonly [number, number | undefined];
       readonly truncated?: boolean;
     }
@@ -80,15 +79,15 @@ export type ViewBlock =
       readonly pairs: readonly KvPair[];
     }
   | { readonly kind: "link"; readonly href: string; readonly label: string }
-  /** A file delivered to the reader, not a path on the agent's machine; `url` is server-relative. */
   | {
       readonly kind: "attachment";
-      /** What to call it on screen; never a path. */
+      /** Display name, never a path. */
       readonly name: string;
+      /** Server-relative. */
       readonly url: string;
       readonly isImage: boolean;
     }
-  /** A picture the model was shown, addressed by digest; the bytes never ride the wire, and the client that fetches them builds the URL. */
+  /** An image the model saw, addressed by digest; the client builds the URL. */
   | {
       readonly kind: "image";
       readonly sha256: string;
@@ -110,15 +109,15 @@ export type BlockOf<TKind extends ViewBlock["kind"]> = Extract<
 >;
 
 export type ToolView = {
-  /** Display label for the title row, e.g. `"Read"`; defaults to the definition's label. */
+  /** Defaults to the tool definition's label. */
   readonly label?: string;
-  /** Tints the label; defaults to the title colour. */
+  /** Defaults to the title colour. */
   readonly labelTone?: Tone;
   readonly icon?: ToolIcon;
-  /** Painted as one line; a lone `markdown` block is handed over unpainted instead. */
+  /** Painted as one line; a lone `markdown` block is passed through unpainted. */
   readonly title: readonly ViewBlock[];
-  /** Status content rendered in every state: streaming, collapsed and expanded. */
+  /** Shown in every state, including streaming. */
   readonly summary?: readonly ViewBlock[];
-  /** Rendered only once the row is expanded, and never while streaming. */
+  /** Shown only when expanded, never while streaming. */
   readonly body?: readonly ViewBlock[];
 };

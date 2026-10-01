@@ -25,8 +25,7 @@ function attached(sessionId = "s1"): ServerEvent {
   };
 }
 
-// Each test is its own browser: a draft outlives a tab by design, so the
-// storage it lives in must not outlive the test that wrote it.
+// Drafts persist in localStorage.
 beforeEach(() => {
   localStorage.clear();
 });
@@ -34,12 +33,7 @@ beforeEach(() => {
 let realMatchMedia: typeof globalThis.matchMedia | undefined;
 let fakedViewport: ReturnType<typeof fakeViewport> | undefined;
 
-/**
- * A device whose only keyboard is the one drawn over the page: no hover and
- * no fine pointer, and so no Shift+Enter for the composer to offer. happy-dom
- * answers every feature query like a desktop, which is the right default for
- * every other test here and has to be taken away for these.
- */
+// A touch-only device; happy-dom otherwise answers media queries like a desktop.
 function softKeyboard(): void {
   realMatchMedia ??= globalThis.matchMedia;
   const real = realMatchMedia.bind(globalThis);
@@ -69,12 +63,7 @@ function offline(): SessionStore {
   return new SessionStore({ url: "ws://127.0.0.1:1", pickerDebounceMs: 0 });
 }
 
-/**
- * One upload, answered the way the gateway answers it. The store is offline
- * here — a socket it cannot open — but an upload is plain HTTP and goes out
- * whether or not the socket is up, so it is the fetch that has to be told
- * what the server would have said.
- */
+// Stubs the upload fetch: the store is offline, but uploads are plain HTTP.
 async function attach(store: SessionStore, name: string): Promise<void> {
   const real = globalThis.fetch;
   const sessionId = store.state.sessionId;
@@ -95,7 +84,7 @@ function scrollerOf(host: HTMLElement): HTMLElement {
   return host.querySelector<HTMLElement>("div.overflow-y-auto")!;
 }
 
-/** Pinned to the newest content: the scroller, not the browser's anchoring, owns the position. */
+// True while pinned to the newest content.
 function follows(scroller: HTMLElement): boolean {
   return scroller.classList.contains("[overflow-anchor:none]");
 }
@@ -216,17 +205,14 @@ describe("the shell, painted from events alone", () => {
     });
     flush();
 
-    // Model, thinking and cost are the composer's chips and pill.
     const composer = host.querySelector("textarea")!.closest("div")!;
     expect(composer.textContent).toContain("sonnet");
     expect(composer.textContent).toContain("medium");
     expect(host.textContent).toContain("$1.250");
 
-    // Dropped with the footer: the status word, tok/s and the seq readout.
     expect(host.textContent).not.toContain("tok/s");
     expect(host.textContent).not.toContain("streaming");
 
-    // The clank chip is the only running indicator.
     expect(host.textContent).toContain("Clanking…");
   });
 
@@ -256,7 +242,6 @@ describe("the shell, painted from events alone", () => {
     expect(host.textContent).toContain("~/src/repo");
     expect(host.innerHTML).toContain("i-griddy-icons:code-branch");
     expect(host.textContent).toContain("feat/new-stuff");
-    // Dirt is a count on its own segment; divergence stays with the branch.
     expect(host.innerHTML).toContain("i-griddy-icons:file-edit");
     expect(
       host.querySelector('[aria-label^="Review changes"]')?.textContent
@@ -268,7 +253,6 @@ describe("the shell, painted from events alone", () => {
       node.textContent?.startsWith("74.5%")
     )!;
     expect(fill.textContent).toBe("74.5%/1.0M");
-    // Past the TUI footer's own 70, so it reads as full rather than as fine.
     expect(fill.className).toContain("text-rose-400");
   });
 
@@ -289,15 +273,9 @@ describe("the shell, painted from events alone", () => {
     flush();
 
     expect(host.innerHTML).not.toContain("code-branch");
-    // A clean tree says nothing rather than saying zero.
     expect(host.textContent).not.toContain("*");
   });
 
-  /**
-   * The chip names the model the way the menu does. The id is what a switch
-   * is sent as, and a server that has not resolved a name yet leaves it as
-   * the only thing there is to say.
-   */
   test("the model chip says the model's name, falling back to its id", () => {
     const store = offline();
     const host = paint(store);
@@ -323,11 +301,6 @@ describe("the shell, painted from events alone", () => {
     expect(host.textContent).toContain("anthropic/claude-opus-5");
   });
 
-  /**
-   * The TUI's own gesture, on the key the fingers already use for it. The
-   * catalogue is the server's, so the step is up the order the menu reads,
-   * and the chip only changes once the server says the level did.
-   */
   test("Shift+Tab in the box steps the thinking level and wraps", async () => {
     const store = offline();
     const asked: string[] = [];
@@ -364,9 +337,7 @@ describe("the shell, painted from events alone", () => {
     await until(() => asked.length === 1, "the level after medium");
     expect(asked).toEqual(["high"]);
 
-    // The chip follows the server, not the keypress: until a state frame
-    // says otherwise the session is still thinking at the old level, and the
-    // next step is measured from that.
+    // The chip follows the server, not the keypress.
     store.ingest({
       type: "session_state",
       writable: true,
@@ -388,8 +359,6 @@ describe("the shell, painted from events alone", () => {
     const real = Date.now;
     let now = real();
     Date.now = () => now;
-    // As the server says it: a state frame about a working agent dates the
-    // turn it is working on, so the client never has to guess.
     const started = now;
     const state = (status: SessionStatus): ServerEvent => ({
       type: "session_state",
@@ -401,8 +370,6 @@ describe("the shell, painted from events alone", () => {
       status,
       ...(status === "idle" ? {} : { turnElapsedMs: now - started }),
     });
-    // The whole reading lives in the chip's title, words and all, because a
-    // narrow screen drops the words from the pill itself.
     const chip = (): HTMLElement =>
       host.querySelector<HTMLElement>("[title*='lank']")!;
 
@@ -411,20 +378,14 @@ describe("the shell, painted from events alone", () => {
       store.ingest(state("thinking"));
       flush();
 
-      // A turn is a run of statuses, and each one of them wakes the clock's
-      // effect; none of them is a new turn.
       now += 8_000;
       store.ingest({ type: "text_delta", messageId: "live-1", delta: "hi" });
       store.ingest(state("tool"));
       store.ingest(state("streaming"));
       flush();
-      // The reading itself only moves on the interval, which is a real timer
-      // and has not fired; what is asserted here is the running state.
       expect(chip().title).toStartWith("Clanking…");
       expect(chip().innerHTML).toContain("animate-spin");
 
-      // Idle settles the reading, and idle again — a branch poll, say — must
-      // not carry on adding to it.
       now += 1_000;
       store.ingest(state("idle"));
       flush();
@@ -432,7 +393,6 @@ describe("the shell, painted from events alone", () => {
       store.ingest(state("idle"));
       flush();
       expect(chip().title).toBe("Clanked for 9s");
-      // Settled reads as a tick where running read as the spun ring.
       expect(chip().innerHTML).toContain("i-griddy-icons:check");
       expect(chip().innerHTML).not.toContain("animate-spin");
     } finally {
@@ -440,12 +400,6 @@ describe("the shell, painted from events alone", () => {
     }
   });
 
-  /**
-   * The chip is mounted once and every session borrows it, so its reading
-   * has to be the attached session's own: a new chat has clanked for
-   * nothing, and one switched *to* is timed by its own log rather than by
-   * whatever was on screen a moment ago.
-   */
   test("the clank reading does not follow the reader to another session", () => {
     const store = offline();
     const host = paint(store);
@@ -475,13 +429,11 @@ describe("the shell, painted from events alone", () => {
       flush();
       expect(chip()?.title).toBe("Clanked for 12s");
 
-      // A brand-new chat: nothing has run in it, so there is nothing to say.
       store.ingest(attached("s2"));
       store.ingest(state("idle"));
       flush();
       expect(chip()).toBeNull();
 
-      // And one with a turn behind it reads that turn off its own log.
       store.ingest(attached("s3"));
       store.ingest({
         seq: 1,
@@ -507,12 +459,6 @@ describe("the shell, painted from events alone", () => {
     }
   });
 
-  /**
-   * Walking in on a running turn: only the process running it knows when it
-   * began, so it says so, and the chip times from there rather than from the
-   * moment the reader arrived — and says nothing at all until it has been
-   * told, rather than starting at zero and correcting itself on screen.
-   */
   test("a turn already running is timed from where it started", () => {
     const store = offline();
     const host = paint(store);
@@ -523,9 +469,6 @@ describe("the shell, painted from events alone", () => {
     Date.now = () => now;
 
     try {
-      // The listing knows this session is working a round trip before the
-      // server says since when, and a turn of unknown age is not a turn that
-      // has run for nothing.
       store.ingest({
         type: "session_activity",
         sessionId: "s1",
@@ -549,8 +492,6 @@ describe("the shell, painted from events alone", () => {
       flush();
       expect(chip()?.title).toBe("Clanking… 1m 30s");
 
-      // From there it is this client's own clock: the reading grows by what
-      // passed here, on top of what it was handed.
       now += 5_000;
       store.ingest({
         type: "session_state",
@@ -590,8 +531,6 @@ describe("the shell, painted from events alone", () => {
     });
     void store.switchTo("s2");
     flush();
-    // The transcript alone: the sidebar goes on naming the session that was
-    // left, which is the point of a sidebar.
     const transcript = host.querySelector("div.overflow-y-auto")!;
     expect(transcript.textContent).not.toContain("the session being left");
 
@@ -641,8 +580,6 @@ describe("the shell, painted from events alone", () => {
     });
     flush();
 
-    // Nothing was asked for, so nothing is taken over: the reader is still
-    // looking at the transcript.
     expect(host.textContent).toContain("The cache finished warming.");
     expect(
       [...host.querySelectorAll("dialog")].some((found) => found.open)
@@ -660,7 +597,6 @@ describe("the shell, painted from events alone", () => {
     const panel = [...host.querySelectorAll("dialog")].find(
       (found) => found.open
     );
-    // Named by the command that opened it, heading and accessible name alike.
     expect(panel?.getAttribute("aria-label")).toBe("/claude-quota");
     expect(panel?.querySelector("h2")?.textContent).toBe("Claude Quotas");
   });
@@ -673,13 +609,11 @@ describe("the shell, painted from events alone", () => {
     const input = host.querySelector("textarea")!;
     type(input, "half a thought");
 
-    // Another session is another box: this one has never been typed into.
     store.ingest(attached("s2"));
     flush();
     expect(input.value).toBe("");
     type(input, "and something else");
 
-    // And back, to the message exactly as it was left.
     store.ingest(attached("s1"));
     flush();
     expect(input.value).toBe("half a thought");
@@ -695,13 +629,10 @@ describe("the shell, painted from events alone", () => {
     flush();
     expect(host.querySelector("img[alt='shot.png']")).not.toBeNull();
 
-    // Away, where it is another session's business and not on screen...
     store.ingest(attached("s2"));
     flush();
     expect(host.querySelector("img[alt='shot.png']")).toBeNull();
 
-    // ...and back, to the picture still waiting to be sent. The server is
-    // holding those bytes under this session, so the id still names them.
     store.ingest(attached("s1"));
     flush();
     expect(host.querySelector("img[alt='shot.png']")).not.toBeNull();
@@ -724,8 +655,6 @@ describe("the shell, painted from events alone", () => {
     expect(store.attachmentsOf("s1")).toEqual([]);
   });
 
-  // Drop and paste are the only other ways in, and neither is visible: a
-  // phone cannot drag and nobody guesses at a gesture.
   test("the attach button reaches the file dialogue", () => {
     const store = offline();
     const host = paint(store);
@@ -768,16 +697,13 @@ describe("the shell, painted from events alone", () => {
     flush();
     const input = host.querySelector("textarea")!;
 
-    // Left to the browser, which is what puts the second line in the box.
     type(input, "hello");
     expect(press(input, "Enter").defaultPrevented).toBe(false);
     flush();
     expect(input.value).toBe("hello");
 
-    // The key is drawn from this hint, so it must not read "send" either.
     expect(input.getAttribute("enterkeyhint")).toBe("enter");
 
-    // An external keyboard on the same device still has a way through.
     press(input, "Enter", { metaKey: true });
     flush();
     expect(input.value).toBe("");
@@ -793,8 +719,6 @@ describe("the shell, painted from events alone", () => {
     type(input, "hello");
 
     const send = host.querySelector<HTMLButtonElement>('[aria-label="Send"]')!;
-    // The press before the click keeps the box focused, so the soft keyboard
-    // does not retract and slide the button out from under the finger.
     const tap = new MouseEvent("mousedown", {
       bubbles: true,
       cancelable: true,
@@ -823,16 +747,12 @@ describe("the shell, painted from events alone", () => {
     });
     flush();
 
-    // Nothing to send, so the running turn is the only thing the button can
-    // mean — and it is one button, never a destructive one beside it.
     expect(host.querySelector('[aria-label="Stop"]')).not.toBeNull();
     expect(host.querySelector('[aria-label="Steer"]')).toBeNull();
 
     const input = host.querySelector("textarea")!;
     type(input, "actually, use the other file");
     flush();
-    // A phone's only way to say anything is this button, so typing takes it
-    // back from stop; otherwise steering would be keyboard-only.
     expect(host.querySelector('[aria-label="Stop"]')).toBeNull();
     const steer = host.querySelector<HTMLButtonElement>(
       '[aria-label="Steer"]'
@@ -842,7 +762,6 @@ describe("the shell, painted from events alone", () => {
     expect(input.value).toBe("");
     expect(store.state.optimistic.map((one) => one.queued)).toEqual([true]);
     expect(host.textContent).toContain("Queued. Click to edit.");
-    // The box is empty again, so the button goes back to being the turn's.
     expect(host.querySelector('[aria-label="Stop"]')).not.toBeNull();
   });
 
@@ -882,8 +801,6 @@ describe("the shell, painted from events alone", () => {
     expect(scroller.classList.contains("flex")).toBe(true);
     expect(scroller.classList.contains("flex-col-reverse")).toBe(true);
     expect(follows(scroller)).toBe(true);
-    // Two items, and the reversed column puts the first of them at the foot:
-    // the fade the composer floats over, then the transcript above it.
     expect(scroller.children).toHaveLength(2);
     expect(scroller.firstElementChild!.className).toContain("sticky");
     const content = scroller.lastElementChild!;
@@ -924,7 +841,6 @@ describe("the shell, painted from events alone", () => {
     flush();
     expect(follows(scroller)).toBe(false);
 
-    // A wheel or a momentum scroll settles near the origin, not on it.
     scroller.scrollTop = -8;
     scroller.dispatchEvent(new Event("scroll"));
     flush();
@@ -990,13 +906,10 @@ describe("the composer, against a real gateway", () => {
 
     const list = () => host.querySelector('nav[aria-label="Sessions"]')!;
     await until(
-      // A session is named by its opening message, not by its id.
       () => list().textContent.includes("say hello"),
       "the catalogue"
     );
 
-    // Folded by directory, and this server has the one: a single group, named
-    // for the working directory, with the session under it.
     expect(list().querySelectorAll("h3 > button")).toHaveLength(1);
     expect(list().querySelector("h3 > button")?.textContent).toContain(
       baseName(harness.tmp)
@@ -1008,7 +921,6 @@ describe("the composer, against a real gateway", () => {
     expect(scroller.scrollTop).toBe(0);
   });
 
-  /** What another sitting of this browser left against the working copy. */
   function seedComments(cwd: string, ...texts: readonly string[]): void {
     localStorage.setItem(
       "pim.diff.comments",
@@ -1079,7 +991,6 @@ describe("the composer, against a real gateway", () => {
   });
 
   test("a plain message sent from the diff view brings the transcript back", async () => {
-    // A comment only to get in: it is thrown away, so the message carries nothing.
     seedComments(harness.tmp, "never mind");
     const host = paint(store);
     chip(host)!.click();
@@ -1095,7 +1006,6 @@ describe("the composer, against a real gateway", () => {
     host.querySelector<HTMLButtonElement>('[aria-label="Send"]')!.click();
     flush();
 
-    // The reader is reading the reply, not the diff they sent it from.
     expect(host.querySelector('section[aria-label="Changes"]')).toBeNull();
     await until(
       () =>
@@ -1109,23 +1019,14 @@ describe("the composer, against a real gateway", () => {
     );
   });
 
-  /** Everything this client has said and not yet had heard, as one string. */
   function queuedCard(host: HTMLElement): HTMLButtonElement | null {
     return host.querySelector<HTMLButtonElement>(
       '[aria-label="Edit queued message"]'
     );
   }
 
-  /**
-   * A turn held open with a message waiting behind it, and the box painted.
-   *
-   * The prompt must not ask for a tool. pi hands its steering queue to the
-   * turn at a turn boundary, and a tool result is one — so a message queued
-   * while the tool ran would be delivered rather than held, and there would
-   * be nothing left for these tests to take back. Parked on the gate mid
-   * stream there is no next boundary until `release`, so what is queued
-   * stays queued.
-   */
+  // Holds a turn open with a queued message. The prompt must not use a tool:
+  // pi delivers queued messages at tool boundaries.
   async function withQueued(waiting: string): Promise<{
     readonly host: HTMLElement;
     readonly input: HTMLTextAreaElement;
@@ -1136,10 +1037,7 @@ describe("the composer, against a real gateway", () => {
     await store.prompt("hold this turn open");
     await until(() => store.isBusy(), "the turn to start");
     await store.prompt(waiting);
-    // The card above is painted on the gateway's ack, which means it took the
-    // message — not that pi is holding it yet. Reclaiming it reads pi's queue,
-    // so a test that clicks the card the moment it appears can beat the
-    // message into that queue and get nothing back.
+    // The card shows on the gateway's ack, before pi has queued the message.
     await until(
       () => harness.pending(store.state.sessionId) === 1,
       "pi to be holding the queued message"
@@ -1159,8 +1057,6 @@ describe("the composer, against a real gateway", () => {
         "the message to come back to the box"
       );
       flush();
-      // It is being edited now, so it is no longer waiting to be said — and
-      // the turn it was waiting behind is still running.
       expect(queuedCard(host)).toBeNull();
       expect(store.isBusy()).toBe(true);
     } finally {
@@ -1172,8 +1068,6 @@ describe("the composer, against a real gateway", () => {
     const { host, input, release } = await withQueued("and the weather");
     try {
       type(input, "one more thing");
-      // A typed box no longer hides the stop: the turn is what Escape means,
-      // and what pi was holding lands above what was being written.
       press(input, "Escape");
       await until(
         () => input.value.startsWith("and the weather"),
@@ -1189,10 +1083,8 @@ describe("the composer, against a real gateway", () => {
   });
 });
 
-/** Rows the user can actually see; a closed popover keeps its list mounted. */
+// Rows of the open popover; closed ones keep their lists mounted.
 function options(host: HTMLElement): readonly Element[] {
-  // The composer holds three popovers now — the picker and the two chip
-  // menus — and only an open one has any rows the reader can reach.
   const panel = [...host.querySelectorAll("[popover]")].find(
     (element) => !element.className.includes("hidden")
   );

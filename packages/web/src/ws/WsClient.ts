@@ -12,7 +12,7 @@ export type ConnectionStatus =
   | "reconnecting"
   | "closed";
 
-/** Which session the client wants; an absent `sessionId` means "make me one". */
+/** No `sessionId` means create a new session. */
 export type AttachTarget = {
   readonly sessionId?: string;
   readonly cwd?: string;
@@ -37,10 +37,7 @@ type Pending = {
 const RETRY_MS = 1000;
 const CONNECT_TIMEOUT_MS = 5000;
 
-/**
- * The transport half of pim-web: one socket, one attached session, and a seq
- * cursor that survives the socket.
- */
+/** One socket and one attached session, with a seq cursor that survives reconnects. */
 export class WsClient {
   private readonly options: WsClientOptions;
   private readonly pending = new Map<string, Pending>();
@@ -51,9 +48,9 @@ export class WsClient {
   private retrying = false;
   private retry: ReturnType<typeof setTimeout> | undefined;
   private disposed = false;
-  /** Declared on every attach: an inattentive client never consumes a turn as read. */
+  /** Sent on every attach; an inattentive client never marks a turn read. */
   private attention = true;
-  /** Gate: frames between an `attach` and its `attached` belong to the old session. */
+  /** False between an `attach` and its `attached`, when frames still belong to the old session. */
   private settled = false;
   private state: ConnectionStatus = "closed";
 
@@ -75,17 +72,15 @@ export class WsClient {
     return this.target.sessionId;
   }
 
-  /** Whether this client last told the server its reader was looking. */
   public get attentive(): boolean {
     return this.attention;
   }
 
-  /** Highest durable `seq` this client has painted; the resume cursor. */
+  /** Highest durable `seq` received; the resume cursor. */
   public get seq(): number {
     return this.cursor;
   }
 
-  /** Where `POST /upload` lives, derived from the socket URL. */
   public get httpUrl(): string {
     return this.options.url.replace(/^ws/, "http");
   }
@@ -95,10 +90,7 @@ export class WsClient {
     return await this.sendAttach();
   }
 
-  /**
-   * Point this connection at another session, or at a new one. A refusal
-   * restores the previous target and cursor.
-   */
+  /** A refusal restores the previous target and cursor. */
   public async attachTo(target: AttachTarget): Promise<ResponseEvent> {
     const previous = this.target;
     const cursor = this.cursor;
@@ -112,7 +104,6 @@ export class WsClient {
     if (!response.success) {
       this.target = previous;
       this.cursor = cursor;
-      // Only a socket already carrying the old session has one to go back to.
       this.settled = live;
     }
     return response;
@@ -130,11 +121,7 @@ export class WsClient {
     });
   }
 
-  /**
-   * Whether the reader is looking at this tab. Told to the server while the
-   * socket is up, and carried by the next attach frame when it is not — so a
-   * hidden tab that reconnects stays hidden.
-   */
+  /** Sent now if connected, otherwise on the next attach. */
   public setAttention(value: boolean): void {
     if (this.attention === value) {
       return;
@@ -146,11 +133,7 @@ export class WsClient {
     void this.send({ type: "attention", value }).catch(() => undefined);
   }
 
-  /**
-   * Retries now instead of waiting out the backoff: the page is back, and the
-   * timer may have been frozen with it. An attempt already in flight is left
-   * to its connect timeout.
-   */
+  /** Retries now instead of waiting for the backoff timer, which may have been frozen. */
   public wake(): void {
     if (this.state !== "reconnecting" || this.socket !== undefined) {
       return;
@@ -185,7 +168,7 @@ export class WsClient {
         clearTimeout(timeout);
         reject(new Error(`could not connect to ${this.options.url}`));
       };
-      // A socket stuck connecting fires nothing, and nothing would retry it.
+      // A socket stuck connecting fires no events.
       const timeout = setTimeout(() => {
         fail();
         this.onClose(socket);
@@ -246,7 +229,6 @@ export class WsClient {
       this.retry = undefined;
       void this.reconnect();
     }, this.options.retryMs ?? RETRY_MS);
-    // A pending retry must never hold a Bun test process open.
     (this.retry as { unref?: () => void }).unref?.();
   }
 
@@ -271,8 +253,7 @@ export class WsClient {
     } catch {
       return;
     }
-    // Fanned out synchronously: a consumer batching by task paints the resume
-    // in one pass.
+    // Dispatched synchronously so the resume renders in one pass.
     if (frame.type === "replay") {
       for (const event of frame.events) {
         this.dispatch(event);
@@ -296,8 +277,7 @@ export class WsClient {
       return;
     }
     if (isDurableEvent(event)) {
-      // The server already filters on `fromSeq`; this makes a duplicate
-      // impossible even if a future one does not.
+      // Belt and braces: the server already filters on `fromSeq`.
       if (event.seq <= this.cursor) {
         return;
       }

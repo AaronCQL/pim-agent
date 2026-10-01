@@ -28,18 +28,16 @@ function matching(
   );
 }
 
-/** A chip that opens a `Combobox` of choices beside itself. */
 export function Menu(props: {
   readonly label: string;
   readonly icon: string;
   readonly options: readonly MenuOption[];
   readonly value?: string;
   readonly title?: string;
-  /** Which shape the trigger takes: a composer pill by default, or a topbar chip. */
+  /** Defaults to "pill". */
   readonly shape?: "pill" | "chip";
-  /** Which side of the trigger the list takes; above it by default, as the composer sits at the foot. */
   readonly place?: "above" | "below";
-  /** Places a filter box at the top of the list, with this as its placeholder. */
+  /** Placeholder for an optional filter box. */
   readonly search?: string;
   readonly onOpen?: () => void;
   readonly onSelect: (value: string) => void;
@@ -65,12 +63,11 @@ export function Menu(props: {
 
   const panel = createDisclosure({
     onClose: () => {
-      // Clear on the way out: a reset written at open has not applied when the active row is chosen from it.
+      // Not on open: the reset would not apply before the active row is picked.
       setQuery("");
     },
     onOpen: () => {
       props.onOpen?.();
-      // Untracked: a snapshot at the open, not a dependency of this effect.
       const at = untrack(() =>
         shown().findIndex((option) => option.value === props.value)
       );

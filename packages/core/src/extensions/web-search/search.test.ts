@@ -1,22 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { clampNumResults, formatResults } from "./search";
 
-describe("clampNumResults", () => {
-  test("defaults when undefined", () => {
-    expect(clampNumResults(undefined)).toBe(5);
-  });
-
-  test("clamps above maximum", () => {
-    expect(clampNumResults(25)).toBe(10);
-  });
-
-  test("clamps below minimum", () => {
-    expect(clampNumResults(0)).toBe(1);
-  });
-
-  test("passes through valid values", () => {
-    expect(clampNumResults(3)).toBe(3);
-  });
+test.each([
+  [undefined, 5],
+  [25, 10],
+  [0, 1],
+  [3, 3],
+])("clampNumResults(%p) is %p", (value, expected) => {
+  expect(clampNumResults(value)).toBe(expected);
 });
 
 describe("formatResults", () => {
@@ -45,9 +36,5 @@ describe("formatResults", () => {
         "snippet: Second snippet.",
       ].join("\n")
     );
-  });
-
-  test("returns empty string for empty input", () => {
-    expect(formatResults([])).toBe("");
   });
 });

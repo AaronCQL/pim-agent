@@ -34,10 +34,8 @@ import { SessionName } from "./SessionName";
 import { adaptSessionUi, type SessionUi } from "./SessionUi";
 import { WriteMark } from "./WriteMark";
 
-/** What the agent is doing right now. */
 export type SessionStatus = "idle" | "thinking" | "streaming" | "tool";
 
-/** Everything the host persists about a session; frontend-specific settings stay with the adapter. */
 export type HostSettings = {
   readonly cwd?: string;
   readonly model?: string;
@@ -63,13 +61,12 @@ export type SessionCompactResult = {
   readonly activeMessages: number;
 };
 
-/** What a `cancel` did; `restored` messages are the caller's from here on. */
+/** `restored` are the queued messages taken back from pi. */
 export type CancelResult = {
   readonly cancelled: boolean;
   readonly restored: readonly string[];
 };
 
-/** Whether this host can mutate its session file right now, and who is stopping it. */
 export type LeaseState = {
   readonly writable: boolean;
   readonly heldBy?: {
@@ -79,7 +76,7 @@ export type LeaseState = {
 };
 
 export type SessionHostDeps = {
-  /** Prefix for this host's log lines; also the registry key in practice. */
+  /** Log prefix. */
   readonly label: string;
   readonly settings: HostSettings;
   readonly defaults: { readonly cwd: string; readonly model?: string };
@@ -88,36 +85,25 @@ export type SessionHostDeps = {
   readonly modelRegistry: ModelRegistry;
   readonly settingsManagerFor: (cwd: string) => SettingsManager;
   readonly persistSettings: (patch: Partial<HostSettings>) => Promise<void>;
-  /**
-   * Take the session file's turn lease around every mutation, as this frontend.
-   * Leave unset where nothing else can open the file.
-   */
+  /** Takes the turn lease around every mutation. Omit when no other process can open the file. */
   readonly lease?: LeaseFrontend;
-  /** Omit to let pi place the file in its own cwd-grouped sessions directory. */
+  /** Omit to let pi choose the file path. */
   readonly mainSessionPath?: () => string;
   readonly isolatedSessionPath?: () => string;
   readonly systemInstruction?: () => Promise<string | undefined>;
-  /** Where this host's human is reading; surfaces in the system prompt's environment block. */
   readonly surface?: Surface;
   readonly customTools?: (
     context: CustomToolContext
   ) => readonly ToolDefinition[];
-  /** Runs after the agent is disposed, before the session file is forgotten. */
+  /** Runs after the agent is disposed, before `sessionPath` is cleared. */
   readonly onRetire?: (sessionPath: string) => Promise<void>;
-  /**
-   * Where this host's extensions say things, resolved per call so an agent
-   * rebuilt under the host follows its live target. Omit to leave pi's no-op
-   * UI in place: pi freezes the mode at `bindExtensions`, so this is a dep
-   * rather than something a caller can turn on once a session exists.
-   */
+  /** Extension UI sink, read per call. Omit for pi's no-op UI; pi fixes the mode at bind time. */
   readonly ui?: () => SessionUi | undefined;
 };
 
-/** What a frontend's own tools are built against. */
 export type CustomToolContext = {
-  /** Where this session's tools resolve relative paths. */
   readonly cwd: string;
-  /** Pi's session uuid, undefined until the agent exists. */
+  /** Undefined until the agent exists. */
   readonly sessionId: () => string | undefined;
 };
 
@@ -126,7 +112,7 @@ type ModelResolveResult =
   | { readonly kind: "ambiguous"; readonly candidates: readonly string[] }
   | { readonly kind: "none"; readonly candidates: readonly string[] };
 
-/** A mutation of ours parked behind someone else's lease; the holder is unknown when their file is torn. */
+/** `holder` is absent when the lease file is unreadable. */
 type LeaseWait = { readonly holder?: LeaseRecord };
 
 const FOREIGN_POLL_MS = 2_000;
@@ -150,7 +136,7 @@ function isOutput(event: AssistantMessageEvent): boolean {
   }
 }
 
-/** Owns one in-process `createAgentSession()`, its settings and a serialized turn queue. */
+/** One in-process pi agent session, its settings and a serialized turn queue. */
 export class SessionHost {
   public readonly label: string;
   public lastUsed = Date.now();
@@ -162,12 +148,12 @@ export class SessionHost {
   private cachedLog: EventLog | undefined;
   private queue: Promise<unknown> = Promise.resolve();
   private seqLog: EventLog | undefined;
-  /** The `EventLog` head as of this host's own last write to that file. */
+  /** File head after this host's last write. */
   private lastSeen: { readonly path: string; readonly seq: number } | undefined;
   private blockedBy: LeaseWait | undefined;
   private readonly leaseListeners = new Set<() => void>();
   private readonly foreignListeners = new Set<() => void>();
-  /** Set only while a held turn is watching the file; re-samples on demand. */
+  /** Set only while a held turn is watching for foreign writes. */
   private sampleWrites: (() => Promise<void>) | undefined;
   private readonly agentListeners = new Set<
     (event: AgentSessionEvent) => void
@@ -204,12 +190,12 @@ export class SessionHost {
     return this.cached?.sessionId;
   }
 
-  /** Reader over this session's JSONL, live only once the agent is built. */
+  /** Undefined until the agent is built. */
   public get eventLog(): EventLog | undefined {
     return this.cachedLog;
   }
 
-  /** False only while one of this host's own mutations waits on another process. */
+  /** Not writable only while one of our mutations waits on another process's lease. */
   public get leaseState(): LeaseState {
     const blocked = this.blockedBy;
     if (blocked === undefined) {
@@ -232,7 +218,7 @@ export class SessionHost {
     };
   }
 
-  /** Fires once per turn in which another process appended to this session's file. */
+  /** Fires at most once per turn in which another process appended to the file. */
   public onForeignWrite(listener: () => void): () => void {
     this.foreignListeners.add(listener);
     return () => {
@@ -240,7 +226,7 @@ export class SessionHost {
     };
   }
 
-  /** Events from whatever agent this host currently holds, across rehydration rebuilds. */
+  /** Survives agent rebuilds. */
   public subscribe(listener: (event: AgentSessionEvent) => void): () => void {
     this.agentListeners.add(listener);
     return () => {
@@ -280,17 +266,17 @@ export class SessionHost {
   }
 
   public get currentModelId(): string | undefined {
-    const model = this.cached?.model ?? this.resolveDefaultModel();
+    const model = this.currentModel();
     return model ? qualifiedModelId(model) : undefined;
   }
 
-  /** The model's display name — "Claude Opus 5.0", not `anthropic/claude-opus-5`. */
+  /** Display name, e.g. "Claude Opus 5.0". */
   public get currentModelLabel(): string | undefined {
-    return (this.cached?.model ?? this.resolveDefaultModel())?.name;
+    return this.currentModel()?.name;
   }
 
   public get supportedThinkingLevels(): readonly ThinkingLevel[] {
-    const model = this.cached?.model ?? this.resolveDefaultModel();
+    const model = this.currentModel();
     return model ? getSupportedThinkingLevels(model) : [];
   }
 
@@ -303,17 +289,16 @@ export class SessionHost {
     return (sm.getDefaultThinkingLevel() as ThinkingLevel) ?? "medium";
   }
 
-  /** The level this session was told to think at, absent when only its directory has a default. */
+  /** Undefined when only the directory's default applies. */
   public get chosenThinkingLevel(): ThinkingLevel | undefined {
     return this.currentSettings.thinkingLevel ?? this.cached?.thinkingLevel;
   }
 
-  /** Run `work` as a turn, serialized in submission order; `isolated` uses a throwaway agent and file. */
+  /** Runs `work` as a queued turn. `isolated` uses a throwaway agent and file, without the lease. */
   public run(
     work: (agent: AgentSession) => Promise<void>,
     opts?: { readonly isolated?: boolean }
   ): Promise<void> {
-    // An isolated run owns a throwaway file nobody else can name, so it takes no lease.
     if (opts?.isolated) {
       return this.enqueue(async () => {
         const { agent, sessionPath } = await this.buildIsolatedAgent();
@@ -335,28 +320,28 @@ export class SessionHost {
     });
   }
 
-  /** Build or reuse the cached agent inside the turn queue; its id and file exist once this resolves. */
+  /** Builds or reuses the agent inside the turn queue. */
   public ensureAgent(): Promise<AgentSession> {
     return this.enqueue(() => this.ensureCached());
   }
 
-  /** Run `work` in this session's turn queue without touching the agent. */
+  /** Runs `work` in the turn queue without touching the agent. */
   public serialize<T>(work: () => Promise<T>): Promise<T> {
     return this.enqueue(work);
   }
 
-  /** Stop the turn in flight; empty the queue before aborting or pi delivers it to the next turn. */
+  /** Aborts the running turn and takes back its queued messages. */
   public async cancel(): Promise<CancelResult> {
     if (!this.cached || !this.cached.isStreaming) {
       return { cancelled: false, restored: [] };
     }
-    // Take the queue back *before* aborting: anything left in pi is delivered to the next turn.
+    // Before aborting, or pi delivers the queue to the next turn.
     const restored = this.takeBack();
     await this.cached.abort();
     return { cancelled: true, restored };
   }
 
-  /** Take back every message queued behind the running turn; not serialized, the turn holds the queue. */
+  /** Takes back messages queued behind the running turn. Not queued: the turn holds the queue. */
   public takeBack(): readonly string[] {
     if (!this.cached || !this.cached.isStreaming) {
       return [];
@@ -412,10 +397,7 @@ export class SessionHost {
     });
   }
 
-  /**
-   * Rename this session through pi's own session name, so its `/resume` picker
-   * shows it too; `null` clears it. Answers with the name pi kept.
-   */
+  /** Sets pi's session name; `null` clears it. Returns the stored name. */
   public setName(name: string | null): Promise<string | undefined> {
     return this.withLease(async () => {
       const agent = await this.ensureCached();
@@ -432,7 +414,7 @@ export class SessionHost {
     });
   }
 
-  /** Drop the cached agent so the next turn rebuilds it from the file; never retires the session. */
+  /** Drops the agent so the next turn rebuilds it from the file. */
   public async invalidate(): Promise<void> {
     if (!this.cached) {
       return;
@@ -449,7 +431,7 @@ export class SessionHost {
 
   private enqueue<T>(work: () => Promise<T>): Promise<T> {
     const next = this.queue.then(work);
-    // Only the stored tail swallows: the chain must never reject, callers still see their own failure.
+    // Keep the chain alive; callers still get their own rejection.
     this.queue = next.catch((err: unknown) => {
       console.error(`[${this.label}] work failed:`, err);
     });
@@ -457,7 +439,6 @@ export class SessionHost {
     return next;
   }
 
-  /** Where this session's turn lease lives, once anything has named the file. */
   private get leasePath(): string | undefined {
     return (
       this.cached?.sessionFile ??
@@ -466,11 +447,7 @@ export class SessionHost {
     );
   }
 
-  /**
-   * Serialize `work` behind the session file's turn lease, with a rehydration on
-   * either side of the acquire: waiting for the lease is exactly the window in
-   * which the other surface appends.
-   */
+  /** Queues `work` under the turn lease, rehydrating before and after waiting for it. */
   private withLease<T>(work: () => Promise<T>): Promise<T> {
     return this.enqueue(async () => {
       const frontend = this.deps.lease;
@@ -478,7 +455,7 @@ export class SessionHost {
         return await work();
       }
       await this.rehydrateIfStale();
-      // pi names a brand-new session's file itself, and a file nobody else knows cannot be contended.
+      // A new session's path is only known once pi builds the agent.
       const path = this.leasePath ?? (await this.ensureCached()).sessionFile;
       if (path === undefined) {
         return await work();
@@ -494,8 +471,7 @@ export class SessionHost {
             try {
               return await work();
             } finally {
-              // A line we cannot account for means the file has moved past our
-              // agent: leave `lastSeen` behind the head so the next turn rebuilds.
+              // After a foreign write, leave `lastSeen` stale so the next turn rebuilds.
               if (!(await settle())) {
                 await this.markSeen(path);
               }
@@ -513,10 +489,8 @@ export class SessionHost {
   }
 
   /**
-   * Watch, for one held turn, for lines this host cannot account for: a `pi` that
-   * took no lease, or a holder killed mid-write. Reports at most once and never
-   * aborts — the work in flight is worth more than the inconsistency it races.
-   * Resolves to whether anything foreign landed.
+   * Polls for lines another process appended during a held turn. Warns at most
+   * once and never aborts. The returned stop function resolves to whether any landed.
    */
   private async watchForeignWrites(
     path: string
@@ -531,8 +505,7 @@ export class SessionHost {
         return;
       }
       const agent = this.cached;
-      // A rebuilt agent re-opened the file, which repairs a torn tail and rewrites
-      // on migration, so its own accounting starts from whatever it just read.
+      // A rebuilt agent may have rewritten the file, so restart accounting from it.
       if (agent?.sessionFile !== path) {
         base = undefined;
         return;
@@ -579,7 +552,7 @@ export class SessionHost {
     }
   }
 
-  /** Another writer moved the file past what this host's `messages` were loaded from. */
+  /** Drops the agent if the file grew since our last write. */
   private async rehydrateIfStale(): Promise<void> {
     const path = this.cached?.sessionFile;
     const seen = this.lastSeen;
@@ -591,8 +564,6 @@ export class SessionHost {
     }
   }
 
-  // Reading the head is how our own writes stop looking foreign: pi repairs a torn tail and
-  // rewrites on migration, so a rebuild moves the head without anyone else touching the file.
   private async markSeen(path: string): Promise<void> {
     this.lastSeen = { path, seq: await this.logFor(path).head() };
   }
@@ -626,8 +597,7 @@ export class SessionHost {
     if (this.deps.lease !== undefined && agent.sessionFile) {
       await this.markSeen(agent.sessionFile);
     }
-    // Anchor a watching turn on the agent it is about to run, not on the file as
-    // it was before this rebuild read it.
+    // Re-anchor a watching turn on the new agent.
     await this.sampleWrites?.();
     await this.patchSettings({ cwd, sessionPath: agent.sessionFile });
     return agent;
@@ -740,7 +710,7 @@ export class SessionHost {
       cwd,
       agentDir: this.deps.agentDir,
       settingsManager,
-      // Load core tools in-process: a disk-loaded copy registers views into a second `Tools`.
+      // In-process: a disk-loaded copy would register views into a second `Tools`.
       extensionFactories: CoreExtensions.gated(this.deps.surface),
       appendSystemPromptOverride: (base) => {
         return promptRef.wrapped ? [...base, promptRef.wrapped] : base;
@@ -784,8 +754,7 @@ export class SessionHost {
         `[${this.label}] extension ${err.extensionPath} (${err.event}):`,
         err.error
       );
-      // Pi answers a command handler that threw as if it had succeeded, so
-      // without this the user's message vanishes and only stderr says why.
+      // Pi treats a throwing command as success, so tell the user.
       this.deps
         .ui?.()
         ?.notify(
@@ -794,11 +763,10 @@ export class SessionHost {
         );
     };
     const ui = this.deps.ui;
-    // Emits session_start; without it extension tools are registered but never usable.
+    // Emits session_start; extension tools are unusable without it.
     await agent.bindExtensions(
       ui
-        ? // Any context at all makes pi's `hasUI()` true (`uiContext !== noOpUIContext`,
-          // runner.js:318); "rpc" is its own name for dialog-capable but not a terminal.
+        ? // Any uiContext makes pi's `hasUI()` true; "rpc" means dialogs but no terminal.
           {
             uiContext: adaptSessionUi(ui),
             mode: "rpc",
@@ -834,6 +802,10 @@ export class SessionHost {
     await this.deps.persistSettings(patch);
   }
 
+  private currentModel(): Model<ModelApi> | undefined {
+    return this.cached?.model ?? this.resolveDefaultModel();
+  }
+
   private resolveDefaultModel(): Model<ModelApi> | undefined {
     this.deps.modelRegistry.refresh();
     for (const candidate of [
@@ -862,23 +834,21 @@ export class SessionHost {
   private resolveModel(pattern: string): ModelResolveResult {
     this.deps.modelRegistry.refresh();
     const available = this.deps.modelRegistry.getAvailable();
+    const wanted = pattern.trim();
+    const exact = available.find(
+      (m) =>
+        qualifiedModelId(m) === wanted || m.id === wanted || m.name === wanted
+    );
+    if (exact) {
+      return { kind: "ok", model: exact };
+    }
+
     const candidates: FuzzyCandidate<Model<ModelApi>>[] = available.map(
       (m) => ({
         item: m,
         haystacks: [qualifiedModelId(m), m.id, m.name],
       })
     );
-
-    const exact = available.find(
-      (m) =>
-        qualifiedModelId(m) === pattern.trim() ||
-        m.id === pattern.trim() ||
-        m.name === pattern.trim()
-    );
-    if (exact) {
-      return { kind: "ok", model: exact };
-    }
-
     const hits = FuzzyMatcher.rank(pattern, candidates, { limit: 5 });
     if (hits.length === 0) {
       return {

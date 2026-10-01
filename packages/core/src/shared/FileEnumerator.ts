@@ -1,4 +1,4 @@
-import { readdir } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import ignore, { type Ignore } from "ignore";
 
@@ -86,8 +86,8 @@ function pushRules(out: string[], content: string): void {
   }
 }
 
-// Gitignore anchoring: a pattern containing a non-trailing slash only gains the prefix; one
-// without also gains `**/`, or it stops matching below its own directory.
+// Rewrites a nested .gitignore relative to the repo root. Slash-free patterns gain `**/`
+// so they still match at any depth below their directory.
 function reanchorRules(
   content: string,
   basePrefix: string,
@@ -122,10 +122,30 @@ function reanchorRules(
   }
 }
 
+function addDirRules(
+  out: string[],
+  content: string,
+  dirAbs: string,
+  repoRootAbs: string
+): void {
+  const dirRel = relFromBase(dirAbs, repoRootAbs);
+  if (dirRel === undefined || dirRel === "") {
+    pushRules(out, content);
+  } else {
+    reanchorRules(content, `${dirRel}/`, out);
+  }
+}
+
 async function findRepoRoot(start: string): Promise<string | undefined> {
   let dir = start;
   for (;;) {
-    if (await Bun.file(join(dir, ".git")).exists()) {
+    // `.git` is a directory in a normal repo and a file in a worktree.
+    if (
+      await stat(join(dir, ".git")).then(
+        () => true,
+        () => false
+      )
+    ) {
       return dir;
     }
     const parent = dirname(dir);
@@ -177,7 +197,7 @@ async function processDir(
   if (ctx.useIgnore) {
     const hasDotGit = entries.some((e) => e.name === ".git");
     if (hasDotGit) {
-      // A .git is a repo boundary: a child repo must not inherit its parent's rules.
+      // A nested repo does not inherit its parent's rules.
       inRepo = true;
       repoRootAbs = currentDir.abs;
       rules = await repoBaseRules(currentDir.abs, ctx.globalGitIgnore);
@@ -191,14 +211,8 @@ async function processDir(
           join(currentDir.abs, ".gitignore")
         );
         if (content !== undefined) {
-          const dirRel = relFromBase(currentDir.abs, repoRootAbs);
-          const next = rules.slice();
-          if (dirRel === undefined || dirRel === "") {
-            pushRules(next, content);
-          } else {
-            reanchorRules(content, `${dirRel}/`, next);
-          }
-          rules = next;
+          rules = rules.slice();
+          addDirRules(rules, content, currentDir.abs, repoRootAbs);
           matcher = ignore().add(rules);
         }
       }
@@ -255,13 +269,11 @@ async function processDir(
 
     if (entry.isFile() || isSymlink) {
       ctx.result.push(relPath);
-      continue;
     }
   }
 }
 
-// Refill from the shared stack on each completion; N worker loops would exit on the root-only
-// stack before any child was pushed and silently return a partial listing.
+// Refill on each completion: fixed workers would exit early while the stack holds only the root.
 function drain(ctx: WalkContext): Promise<void> {
   let inFlight = 0;
   return new Promise<void>((resolve, reject) => {
@@ -282,6 +294,41 @@ function drain(ctx: WalkContext): Promise<void> {
   });
 }
 
+/** Rules from a repo strictly above `root`; `root`'s own .gitignore is read by processDir. */
+async function enclosingRepo(
+  root: string,
+  globalGitIgnore: string | undefined
+): Promise<
+  { readonly repoRoot: string; readonly rules: string[] } | undefined
+> {
+  const repoRoot = await findRepoRoot(root);
+  if (repoRoot === undefined || repoRoot === root) {
+    return undefined;
+  }
+  const rules = await repoBaseRules(repoRoot, globalGitIgnore);
+
+  // Shallowest first: gitignore precedence is by depth.
+  const intermediates: string[] = [];
+  let dir = dirname(root);
+  while (dir !== repoRoot && dir.length > repoRoot.length) {
+    intermediates.push(dir);
+    const parent = dirname(dir);
+    if (parent === dir) {
+      break;
+    }
+    dir = parent;
+  }
+  intermediates.reverse();
+
+  for (const dirAbs of intermediates) {
+    const content = await readIgnoreFile(join(dirAbs, ".gitignore"));
+    if (content !== undefined) {
+      addDirRules(rules, content, dirAbs, repoRoot);
+    }
+  }
+  return { repoRoot, rules };
+}
+
 /** All files under `root` as root-relative POSIX paths; `.gitignore` is honored only inside a repo. */
 async function enumerate(
   root: string,
@@ -298,43 +345,9 @@ async function enumerate(
       pathname === undefined ? undefined : await readIgnoreFile(pathname);
   }
 
-  // Seed rules from a repo enclosing `root`; `root`'s own .gitignore is added by processDir.
-  let initialInRepo = false;
-  let initialRepoRootAbs = root;
-  let initialRules: string[] = [];
-  if (useIgnore) {
-    const repoRoot = await findRepoRoot(root);
-    if (repoRoot !== undefined && repoRoot !== root) {
-      initialInRepo = true;
-      initialRepoRootAbs = repoRoot;
-      initialRules = await repoBaseRules(repoRoot, globalGitIgnore);
-
-      // Shallowest first: gitignore precedence is by depth.
-      const intermediates: string[] = [];
-      let dir = dirname(root);
-      while (dir !== repoRoot && dir.length > repoRoot.length) {
-        intermediates.push(dir);
-        const parent = dirname(dir);
-        if (parent === dir) {
-          break;
-        }
-        dir = parent;
-      }
-      intermediates.reverse();
-
-      for (const dirAbs of intermediates) {
-        const content = await readIgnoreFile(join(dirAbs, ".gitignore"));
-        if (content !== undefined) {
-          const dirRel = relFromBase(dirAbs, repoRoot);
-          if (dirRel === undefined || dirRel === "") {
-            pushRules(initialRules, content);
-          } else {
-            reanchorRules(content, `${dirRel}/`, initialRules);
-          }
-        }
-      }
-    }
-  }
+  const enclosing = useIgnore
+    ? await enclosingRepo(root, globalGitIgnore)
+    : undefined;
 
   const ctx: WalkContext = {
     includeDotfiles,
@@ -344,10 +357,13 @@ async function enumerate(
       {
         abs: root,
         rel: "",
-        inRepo: initialInRepo,
-        repoRootAbs: initialRepoRootAbs,
-        ignoreRules: initialRules,
-        matcher: initialInRepo ? ignore().add(initialRules) : EMPTY_MATCHER,
+        inRepo: enclosing !== undefined,
+        repoRootAbs: enclosing?.repoRoot ?? root,
+        ignoreRules: enclosing?.rules ?? [],
+        matcher:
+          enclosing === undefined
+            ? EMPTY_MATCHER
+            : ignore().add(enclosing.rules),
       },
     ],
     result: [],

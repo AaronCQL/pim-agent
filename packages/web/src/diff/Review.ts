@@ -2,16 +2,13 @@ import type { ChangeSummary } from "#protocol/Diff";
 import type { Comment, CommentSide } from "./Comments";
 import type { BaseKind } from "./DiffStore";
 
-/** How much of the quoted line is carried; the rest is behind the line number. */
+/** Max characters of a quoted line. */
 const QUOTE = 120;
 
-/** Entries, and the message they ride with, are parted the same way. */
+/** Separates entries, and the review from the typed message. */
 const DIVIDER = "\n\n---\n\n";
 
-/**
- * The revision a side of each base is read from. Absent is the file on disk,
- * which is what a bare reference already names.
- */
+/** The revision each side is read from; absent means the working tree. */
 const REVISIONS: Record<BaseKind, Partial<Record<CommentSide, string>>> = {
   worktree: { old: "HEAD" },
   unstaged: { old: "index" },
@@ -33,10 +30,6 @@ function span(comment: Comment): string {
     : `:${comment.start}-${end}`;
 }
 
-/**
- * A quote only survives where no revision holds what was read: the working
- * copy has moved on, and the lines it names are the ones that moved.
- */
 function stale(comment: Comment): string {
   const quote = comment.quote?.trim();
   return quote === undefined || quote === ""
@@ -69,11 +62,7 @@ function byLine(left: Comment, right: Comment): number {
   return ends(left) - ends(right) || left.createdAt - right.createdAt;
 }
 
-/**
- * What a reader has written, as the one block that rides the next message.
- * Empty when nothing has been written; a comment the reader has not typed
- * into yet says nothing and is left out.
- */
+/** The review as one message block; blank comments are skipped. Empty if none. */
 function compose(
   base: BaseKind,
   comments: readonly Comment[],
@@ -87,15 +76,14 @@ function compose(
   const fingerprints = new Map(
     files.map((file) => [file.path, file.fingerprint])
   );
-  // The list's order, then whatever a comment names that the list does not.
+  // File-list order, then paths the list doesn't have.
   const paths = [...new Set(written.map((comment) => comment.path))].sort(
     (left, right) =>
       (order.get(left) ?? files.length) - (order.get(right) ?? files.length)
   );
   return paths
     .flatMap((path) => {
-      // A file the list does not carry cannot be said to have moved: the list
-      // may never have been read at all, and every comment would wear it.
+      // Unlisted files are never outdated: the list may not have been read yet.
       const held = fingerprints.get(path);
       return written
         .filter((comment) => comment.path === path)

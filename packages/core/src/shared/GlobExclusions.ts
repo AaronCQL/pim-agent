@@ -3,10 +3,6 @@ function compile(exclude: readonly string[] | undefined): readonly Bun.Glob[] {
 }
 
 function ignores(globs: readonly Bun.Glob[], relativePath: string): boolean {
-  if (globs.length === 0) {
-    return false;
-  }
-
   return globs.some((glob) => glob.match(relativePath));
 }
 

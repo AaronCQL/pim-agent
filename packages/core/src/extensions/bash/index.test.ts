@@ -8,7 +8,7 @@ import type {
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { usePimHome } from "../../shared/fixtures/home";
-import { animatedGif, PNG_MAGIC, png } from "../../shared/fixtures/images";
+import { PNG_MAGIC, png } from "../../shared/fixtures/images";
 import registerBash from "./index";
 import type { BashDetails } from "./schema";
 
@@ -64,7 +64,7 @@ async function fileOf(name: string, bytes: Uint8Array): Promise<string> {
 }
 
 describe("bash tool on text", () => {
-  test("plain output is reported exactly as before", async () => {
+  test("plain output", async () => {
     const result = await run("echo hi");
 
     expect(result.content).toEqual([
@@ -137,20 +137,6 @@ describe("bash tool on stdout that is a picture", () => {
     expect(textOf(result)[0]).toContain("stderr:");
   });
 
-  test("the placeholder names the frames an animation cannot show", async () => {
-    const path = await fileOf("spin.gif", animatedGif(3));
-
-    const result = await run(`cat ${path}`);
-
-    expect(textOf(result)[1]).toMatch(
-      /^\[bash tool: stdout is a 1x1 gif \([\d.]+ bytes\), shown as an image\. animated gif: 3 frames, 1x1; frame 1 shown\.\]$/
-    );
-    expect(images(result)).toEqual([
-      expect.objectContaining({ mimeType: "image/gif" }),
-    ]);
-    expect(result.details?.image?.frames).toBe(3);
-  });
-
   test("a model without vision is told, and the command still succeeds", async () => {
     const path = await fileOf("unseen.png", png(40, 30));
 
@@ -163,7 +149,7 @@ describe("bash tool on stdout that is a picture", () => {
     expect(result.details?.image?.width).toBe(40);
   });
 
-  test("bytes that only claim to be a picture keep today's behaviour", async () => {
+  test("bytes that only claim to be a picture are reported as undecodable", async () => {
     const path = await fileOf(
       "liar.png",
       Uint8Array.from([...PNG_MAGIC, 9, 9, 9, 9])

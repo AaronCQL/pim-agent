@@ -47,10 +47,7 @@ function inProgressSection(items: readonly TodoItem[]): readonly ViewBlock[] {
   ];
 }
 
-export function formatWidgetTitle(
-  items: readonly TodoItem[],
-  theme: Theme
-): string {
+function formatWidgetTitle(items: readonly TodoItem[], theme: Theme): string {
   const total = theme.bold(Format.count(items.length, "todo"));
   const summary = formatStatusSummary(items);
   return summary ? `${total} (${summary})` : total;

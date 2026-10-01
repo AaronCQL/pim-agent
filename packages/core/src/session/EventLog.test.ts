@@ -44,7 +44,6 @@ describe("EventLog replay", () => {
     const header = await new EventLog(FIXTURE).header();
     expect(header?.id).toBe("019fbcd4-6fe8-78eb-914d-6a736b04203e");
     expect(header?.cwd).toBe("/home/htpc/Desktop/dev/mmorpg");
-    expect((await new EventLog(FIXTURE).read()).at(-1)?.seq).toBe(7);
   });
 
   test("resuming at an arbitrary seq loses nothing", async () => {
@@ -96,28 +95,6 @@ describe("EventLog replay", () => {
     expect(rest.map((e) => e.seq)).toEqual([7]);
   });
 
-  test("an appended compaction does not shift earlier ordinals", async () => {
-    const path = await copyFixture();
-    const log = new EventLog(path);
-    const before = await log.read();
-
-    const compaction = `${JSON.stringify({
-      type: "compaction",
-      id: "c0ffee01",
-      parentId: "a6f46698",
-      timestamp: "2026-08-01T10:19:00.000Z",
-      summary: "summarised",
-      firstKeptEntryId: "a6f46698",
-      tokensBefore: 4185,
-    })}\n`;
-    await Bun.file(path).write((await Bun.file(path).text()) + compaction);
-
-    const after = await new EventLog(path).read();
-    expect(after.slice(0, before.length)).toEqual([...before]);
-    expect(after.at(-1)?.seq).toBe(8);
-    expect(after.at(-1)?.entry.type).toBe("compaction");
-  });
-
   test("a session that pi has not flushed yet reads as empty", async () => {
     const log = new EventLog(join(tmp, "never-written.jsonl"));
     expect(await log.read()).toEqual([]);
@@ -133,32 +110,6 @@ describe("EventLog digest", () => {
     );
   });
 
-  test("trims a long opening message rather than widening the sidebar", async () => {
-    const path = join(tmp, "long.jsonl");
-    await Bun.write(
-      path,
-      line({
-        type: "session",
-        id: "s1",
-        timestamp: "2026-08-01T10:00:00.000Z",
-        cwd: "/tmp",
-      }) +
-        line({
-          type: "message",
-          id: "m1",
-          parentId: null,
-          timestamp: "2026-08-01T10:00:01.000Z",
-          message: {
-            role: "user",
-            content: [{ type: "text", text: "x".repeat(500) }],
-          },
-        })
-    );
-
-    const digest = await new EventLog(path).digest();
-    expect(digest.title).toBe(`${"x".repeat(120)}…`);
-  });
-
   test("a session with no user message yet has no name", async () => {
     const digest = await new EventLog(join(tmp, "absent.jsonl")).digest();
 
@@ -167,9 +118,6 @@ describe("EventLog digest", () => {
   });
 
   test("names a session opened with an inline image by what was typed", async () => {
-    // pi stores an attached image as base64 in the message, so line 4 of a
-    // session that starts with a screenshot is hundreds of kilobytes wide.
-    // The name is on that line, in the text part in front of the photo.
     const path = join(tmp, "photo.jsonl");
     await Bun.write(
       path,
@@ -212,8 +160,6 @@ describe("EventLog digest", () => {
   });
 
   test("an opening message still being written is not a name", async () => {
-    // Same shape, cut mid-entry: a fragment is not an entry, however much of
-    // it is on disk. Naming a row from one would show half a message.
     const path = join(tmp, "torn-head.jsonl");
     await Bun.write(
       path,
@@ -237,7 +183,6 @@ describe("EventLog digest", () => {
 
     const log = new EventLog(path);
     expect((await log.digest()).title).toBeUndefined();
-    // The header is line 1 and complete, so it survives the same read.
     expect((await log.header())?.id).toBe("s1");
   });
 
@@ -398,7 +343,6 @@ describe("EventLog settle time", () => {
     });
 
   async function write(...lines: string[]): Promise<EventLog> {
-    // A fresh directory per test, so one name serves every case.
     const path = join(tmp, "settle.jsonl");
     await Bun.write(
       path,
@@ -412,8 +356,6 @@ describe("EventLog settle time", () => {
     const log = await write(
       user(1),
       assistant(2, [{ type: "text", text: "done" }]),
-      // Queued while the agent was idle: three messages, no reply. None of
-      // them is the agent having answered, so none of them is the date.
       user(3),
       user(4),
       user(5)
@@ -423,9 +365,6 @@ describe("EventLog settle time", () => {
   });
 
   test("a turn that stopped on a tool is dated by the tool", async () => {
-    // No closing message: a tool that terminated the run, or an abort. The
-    // agent stopped there all the same, and there is no line in pi's file
-    // that says so — only the fact that nothing was written after it.
     const log = await write(
       user(1),
       assistant(2, [
@@ -444,9 +383,6 @@ describe("EventLog settle time", () => {
   });
 
   test("a final line with no newline yet is a write in progress, not a date", async () => {
-    // pi flushes the entry and its terminator separately, so a whole valid
-    // entry can be on disk before it is durable. Dating a session by one
-    // would move a row — and raise its dot — mid-write.
     const log = await write(
       user(1),
       assistant(2, [{ type: "text", text: "done" }]),

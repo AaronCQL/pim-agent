@@ -16,8 +16,7 @@ import { Renderer } from "./Renderer";
 import type { Session } from "./Session";
 import { TaskTool } from "./TaskTool";
 
-// The renderer paints whatever view a tool registered, so the tests register
-// the real ones the same way a session does: by loading the extensions.
+// Register the real tool views, as a session does.
 const fakePi = {
   registerTool: () => {},
   on: () => {},
@@ -37,9 +36,6 @@ for (const extension of [
 }
 Tools.wrap(TaskTool.build({} as never));
 
-// Every delivered message logs a line, which is the daemon's journal and this
-// suite's noise: a hundred `[send] ... ok` lines around the one failure that
-// matters. Silenced here rather than in `Renderer`, so the log stays real.
 const sendLog = spyOn(console, "log").mockImplementation(() => {});
 afterAll(() => {
   sendLog.mockRestore();
@@ -67,8 +63,6 @@ class FakeApi {
   public readonly sent: SentMessage[] = [];
   public readonly edited: EditedMessage[] = [];
 
-  // Replies and status go through the typed rich-message methods; capture the
-  // html they carry so assertions read it as the message text.
   public async sendRichMessage(
     chatId: number,
     richMessage: { readonly html: string },
@@ -78,8 +72,6 @@ class FakeApi {
     return { message_id: this.sent.length };
   }
 
-  // editMessageText takes rich content (object) on the happy path and a plain
-  // string on the degrade path; both resolve to the captured text.
   public async editMessageText(
     chatId: number,
     messageId: number,
@@ -94,7 +86,6 @@ class FakeApi {
     });
   }
 
-  // Plain-text degrade path, exercised only when a rich send is rejected.
   public async sendMessage(
     chatId: number,
     text: string,
@@ -238,7 +229,6 @@ function toolEndWithDiff(
   } as AgentSessionEvent;
 }
 
-// countStats only reads diff.hunks[].lines[].kind, so a minimal shape suffices.
 function fakeDiff(added: number, removed: number): unknown {
   return {
     hunks: [
@@ -279,8 +269,6 @@ describe("Telegram Renderer apply_patch status", () => {
     expect(api.sent.map((m) => m.text)).toEqual(["🗑️ <code>old.ts</code>"]);
   });
 
-  // Before the result lands there are no entries to describe, so the row shows
-  // the patch's first path under the tool's own icon.
   test("names the first patched file while the patch is still running", async () => {
     const { api, renderer } = makeRenderer();
     renderer.handleEvent(
@@ -446,11 +434,6 @@ describe("Telegram Renderer edit/write stats", () => {
 
 const IMAGE_BASE64 = "iVBORw0KGgoAAAANSUhEUg";
 
-/**
- * A picture is what the model looked at, not something being handed to the
- * reader, so nothing is uploaded: the row names the file it read and the
- * picture's shape, and the base64 the result carries stops at the view.
- */
 describe("Telegram Renderer read of an image", () => {
   test("summarises the picture and carries none of its bytes", async () => {
     const { api, renderer } = makeRenderer();
@@ -625,8 +608,7 @@ describe("Telegram Renderer subagent status", () => {
     ]);
   });
 
-  // pi replaces a failed tool result with `createErrorToolResult`, whose
-  // `details` is an empty object; the label update must not choke on it.
+  // pi's error tool result has empty `details`.
   test("ignores a failed subagent result with empty details", async () => {
     const { renderer } = makeRenderer();
 

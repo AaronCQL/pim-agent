@@ -11,9 +11,7 @@ import type {
   globSchema,
 } from "./schema";
 
-export type RenderOutcome = SearchList;
-
-export type RenderOptions = {
+type RenderOptions = {
   readonly cwd: string;
   readonly pathFormat: GlobPathFormat;
 };
@@ -22,7 +20,7 @@ export function renderFiles(
   matches: readonly GlobMatch[],
   headLimit: number,
   options: RenderOptions
-): RenderOutcome {
+): SearchList {
   return SearchRender.capList(
     matches.map((match) => SearchRender.formatPath(match.path, options)),
     headLimit

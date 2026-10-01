@@ -50,7 +50,6 @@ export function createFooterWidget(
   const refresh = (): void => {
     void monitor.refresh(ctx.cwd);
   };
-  // The monitor holds the state; a copy here would be a second one to keep.
   const unwatch = monitor.watch(ctx.cwd, () => {
     tui.requestRender();
   });

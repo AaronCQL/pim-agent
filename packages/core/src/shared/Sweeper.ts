@@ -18,7 +18,7 @@ function install(options: {
     cleanup();
   });
 
-  // Signals skip the "exit" handler; re-raise after the once-handler, or the default exit is suppressed.
+  // Signals skip "exit": clean up, then re-raise so the process still dies.
   for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
     process.once(sig, () => {
       try {

@@ -5,16 +5,13 @@ import { Git, type GitOutcome, type GitState } from "./Git";
 
 export type GitListener = (state: GitState) => void;
 
-/**
- * What one operation under the lock says, and what it made where it made
- * anything: a commit has a sha to hand back, a checkout has only its outcome.
- */
+/** `value` carries an operation's result, e.g. a commit's sha. */
 export type GitRun<T = never> = GitOutcome & { readonly value?: T };
 
 export type GitMonitorDeps = {
-  /** How long a fetch stands before another is worth its round trip. */
+  /** Minimum gap between fetches. Defaults to 30s. */
   readonly fetchTtlMs?: number;
-  /** How often a watched repository is read for the edits `.git` never hears about. */
+  /** Poll for worktree edits, which `.git` never sees. Defaults to 2s. */
   readonly pollMs?: number;
   readonly status?: (cwd: string) => Promise<GitState>;
   readonly fetch?: (cwd: string) => Promise<GitOutcome>;
@@ -29,20 +26,18 @@ type Entry = {
   pending: boolean;
   fetchedAt: number;
   locked: boolean;
-  /** How long the last read took, and when it ended: what the poll paces itself by. */
+  /** Duration and end time of the last read; the poll backs off by these. */
   readMs: number;
   readAt: number;
 };
 
-/** A checkout writes half the repository; one read has to stand for the burst. */
 const DEBOUNCE_MS = 200;
 
 const FETCH_TTL_MS = 30_000;
 
-/** A worktree edit touches nothing under `.git`, so the watch alone would never see it. */
 const POLL_MS = 2_000;
 
-/** A repository too big to read in a tick is read this many times its own cost apart. */
+/** A slow repository is polled at most once per this many read durations. */
 const BACKOFF = 4;
 
 function same(a: GitState, b: GitState): boolean {
@@ -55,12 +50,7 @@ function same(a: GitState, b: GitState): boolean {
   );
 }
 
-/**
- * One reader of one repository, however many sessions share it: it watches
- * `.git` so a commit anywhere reaches every surface, coalesces the burst a
- * checkout makes into a single read, and serialises the operations that write,
- * which cannot run two at a time over one index.
- */
+/** One shared reader per repository: watches `.git`, debounces reads, and allows one writing operation at a time. */
 export class GitMonitor {
   private readonly entries = new Map<string, Entry>();
   private readonly deps: GitMonitorDeps;
@@ -69,7 +59,7 @@ export class GitMonitor {
     this.deps = deps;
   }
 
-  /** Follows `cwd` until the returned stop is called; the listener hears only changes, after a read of its own. */
+  /** The listener hears only changes. */
   public watch(cwd: string, listener: GitListener): () => void {
     const entry = this.entryOf(cwd);
     entry.listeners.add(listener);
@@ -84,12 +74,12 @@ export class GitMonitor {
     };
   }
 
-  /** The last state read, without waiting: a caller painting a frame takes what is known now. */
+  /** The last state read; never waits. */
   public stateOf(cwd: string): GitState {
     return this.entries.get(cwd)?.state ?? Git.EMPTY;
   }
 
-  /** Re-reads now; `fetch` also asks the remote, which is what ahead and behind are counted against. */
+  /** `fetch` also fetches the remote first, at most once per TTL. */
   public async refresh(
     cwd: string,
     options: { readonly fetch?: boolean } = {}
@@ -107,7 +97,7 @@ export class GitMonitor {
     return await this.read(entry);
   }
 
-  /** Runs one writing operation over `cwd`, refusing a second while it lasts and re-reading once it ends. */
+  /** Refuses while another operation runs on `cwd`; re-reads after. */
   public async run<T = never>(
     cwd: string,
     operation: () => Promise<GitRun<T>>
@@ -165,8 +155,7 @@ export class GitMonitor {
       }, DEBOUNCE_MS);
       timer.unref?.();
     });
-    // `false`: a read already running is fresh enough for a tick, and a slow
-    // status must never queue another behind itself.
+    // `false`: a tick must not queue a read behind a slow one.
     const poll = setInterval(() => {
       if (Date.now() - entry.readAt < entry.readMs * BACKOFF) {
         return;
@@ -181,7 +170,7 @@ export class GitMonitor {
     };
   }
 
-  /** `restart` re-reads behind a read already running: a change cannot be answered by a read that predates it, a new subscriber can. */
+  /** `restart` re-reads after an in-flight read, which may predate the change. */
   private read(entry: Entry, restart = true): Promise<GitState> {
     if (entry.inFlight) {
       entry.pending ||= restart;

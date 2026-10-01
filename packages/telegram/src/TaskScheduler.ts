@@ -2,9 +2,9 @@ import type { SessionId } from "./Session";
 import type { ScheduleSpec, ScheduledTask } from "./TaskSchema";
 import { TaskStore } from "./TaskStore";
 
-export type RunTaskFn = (task: ScheduledTask) => Promise<void>;
+type RunTaskFn = (task: ScheduledTask) => Promise<void>;
 
-export type TaskSchedulerOptions = {
+type TaskSchedulerOptions = {
   readonly configDir: string;
   readonly runTask: RunTaskFn;
   readonly pollIntervalMs?: number;

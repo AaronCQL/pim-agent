@@ -9,7 +9,7 @@ const TONE_CLASSES = {
   error: "text-rose-400",
 } as const satisfies Record<ReloadNotice["tone"], string>;
 
-/** What the app has to say about itself, over the transcript rather than in it. */
+/** Reload and version notices. */
 export function Toast(props: {
   readonly update: Reload;
   readonly desktop: boolean;

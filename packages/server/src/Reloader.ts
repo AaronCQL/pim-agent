@@ -4,21 +4,19 @@ import { Updater, type UpdateOutcome } from "#core/shared/Updater";
 import type { ServerEvent } from "#protocol/ServerEvent";
 
 export type ReloaderDeps = {
-  /** To every connection: the restart takes all of them down together. */
   readonly announce: (event: ServerEvent) => void;
-  /** Runs the update, reporting each step as it starts. */
   readonly update?: (onStep: (label: string) => void) => Promise<UpdateOutcome>;
-  /** Takes this process down so the supervisor puts the new code up in its place. */
+  /** Exits so the supervisor restarts on the new code. */
   readonly shutdown?: () => Promise<void>;
 };
 
-// Re-raise SIGTERM rather than exiting: the handler stops the gateway and flushes the read cursors.
+// SIGTERM rather than exit, so the handler stops the gateway and flushes read cursors.
 async function restartAndExit(): Promise<void> {
   await Supervisor.restartSiblings(DaemonUnit);
   process.kill(process.pid, "SIGTERM");
 }
 
-/** Runs the update-restart-return an operator asked for, announcing each phase. */
+/** Runs update then restart, announcing each phase. */
 export class Reloader {
   private readonly announce: (event: ServerEvent) => void;
   private readonly update: (
@@ -34,7 +32,7 @@ export class Reloader {
     this.running = undefined;
   }
 
-  /** The run already in flight, or a new one; two callers share one install. */
+  /** Concurrent callers share one run. */
   public start(): Promise<void> {
     this.running ??= this.run().finally(() => {
       this.running = undefined;
@@ -78,7 +76,6 @@ export class Reloader {
     try {
       await this.shutdown();
     } catch (err) {
-      // Must follow the `restarting` frame: it corrects a client already told to expect the drop.
       this.failed(messageOf(err));
     }
   }

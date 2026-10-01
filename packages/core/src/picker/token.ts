@@ -1,15 +1,14 @@
-/** Which picker the caret is sitting in, if any. */
 export type PickerToken = {
   readonly kind: "file" | "command";
   readonly query: string;
-  /** Offset of the sigil itself, so a completion replaces it too. */
+  /** Offset of the sigil. */
   readonly start: number;
 };
 
 export const AT_PREFIX = /(?:^|\s)@(\S*)$/;
 export const SLASH_PREFIX = /(?:^|\s)\/(\S*)$/;
 
-/** Offset of the sigil in a match that also swallows the whitespace before it. */
+/** Skips the leading whitespace the prefix regexes may match. */
 export function sigilOffset(match: RegExpMatchArray): number {
   const matched = match[0] ?? "";
   return (match.index ?? 0) + (/^\s/.test(matched) ? 1 : 0);
@@ -53,7 +52,7 @@ export function tokenKey(token: PickerToken | undefined): string {
 export type Completion = {
   readonly text: string;
   readonly caret: number;
-  /** A directory keeps the picker open so the next segment can be drilled into. */
+  /** True for a directory, so the next segment can be picked. */
   readonly keepOpen: boolean;
 };
 

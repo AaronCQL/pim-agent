@@ -4,11 +4,6 @@ import { expect, test } from "bun:test";
 
 import { SplitMode } from "./SplitMode";
 
-/**
- * The width is the pane's, not the window's: a diff beside a sidebar has less
- * of the screen than the media query the switch used to ask would have said.
- */
-
 test("auto takes the split as soon as the pane can seat it", () => {
   expect(SplitMode.split("auto", 900)).toBe(true);
   expect(SplitMode.split("auto", 899)).toBe(false);

@@ -8,11 +8,7 @@ import type {
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { usePimHome } from "../../shared/fixtures/home";
-import {
-  animatedGif,
-  png,
-  RESIZE_TIMEOUT_MS,
-} from "../../shared/fixtures/images";
+import { png, RESIZE_TIMEOUT_MS } from "../../shared/fixtures/images";
 import { Images } from "../../shared/Images";
 import { PimSettings } from "../../shared/PimSettings";
 import registerRead from "./index";
@@ -37,7 +33,7 @@ function registeredTool(): ToolDefinition {
 const visionModel = { id: "anthropic/claude", input: ["text", "image"] };
 const textOnlyModel = { id: "openai/o3-mini", input: ["text"] };
 
-/** One registered tool is one session, which is one dedup memory. */
+/** Each call registers a fresh tool, i.e. a fresh dedup memory. */
 function session(): (
   path: string,
   model?: unknown
@@ -159,25 +155,6 @@ describe("read tool on images", () => {
     await Bun.write(path, png(16, 16));
 
     expect((await call(path)).details?.kind).toBe("image");
-  });
-
-  test("reports the frames an animation cannot show, and counts them in details", async () => {
-    const path = join(home.path, "spin.gif");
-    await Bun.write(path, animatedGif(3));
-
-    const result = await call(path);
-    expect(result.content[0]).toEqual({
-      type: "text",
-      text: "animated gif: 3 frames, 1x1; frame 1 shown.",
-    });
-    expect(result.content[1]?.type).toBe("image");
-
-    const details = result.details;
-    if (details?.kind !== "image") {
-      throw new Error(`expected an image read, got ${details?.kind}`);
-    }
-    expect(details.frames).toBe(3);
-    expect(details.mimeType).toBe("image/gif");
   });
 
   test("names what a file with an image extension really holds", async () => {

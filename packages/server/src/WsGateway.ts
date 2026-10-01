@@ -4,16 +4,10 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 
 import { Attachments } from "#core/attachments/Attachments";
-import type { PickerItem } from "#core/picker/PickerItem";
 import { Directories } from "#core/shared/Directories";
-import type { DirectoryListing } from "#core/shared/Directories";
-import { Git, type GitBranch } from "#core/shared/Git";
+import { Git } from "#core/shared/Git";
 import { GitMonitor, type GitRun } from "#core/shared/GitMonitor";
-import {
-  PiExtensions,
-  type ExtensionEntry,
-  type ExtensionScope,
-} from "#core/shared/PiExtensions";
+import { PiExtensions, type ExtensionScope } from "#core/shared/PiExtensions";
 import { RepoDiff } from "#core/shared/RepoDiff";
 import { ReadCursors } from "#core/session/ReadCursors";
 import type { SessionHost } from "#core/session/SessionHost";
@@ -23,14 +17,7 @@ import { PimVersion } from "#core/shared/PimVersion";
 import { SubagentLogs } from "#core/shared/SubagentLogs";
 import type { UpdateOutcome } from "#core/shared/Updater";
 import type { Command } from "#protocol/Command";
-import type { ChangeList, FileDiff, FileLines } from "#protocol/Diff";
-import type {
-  ModelView,
-  ProjectView,
-  SearchHitView,
-  ServerEvent,
-  SessionSummaryView,
-} from "#protocol/ServerEvent";
+import type { ResponseEvent, ServerEvent } from "#protocol/ServerEvent";
 import { ClientConnection } from "./ClientConnection";
 import { Reloader } from "./Reloader";
 import { SessionCatalogue } from "./SessionCatalogue";
@@ -46,48 +33,28 @@ export type WsGatewayDeps = {
   readonly hostname?: string;
   /** 0 asks the OS for a free port; read it back from `port`. */
   readonly port?: number;
-  /** Where uploaded bytes are kept; defaults to `~/.pim/attachments`. */
+  /** Defaults to `~/.pim/attachments`. */
   readonly attachmentsRoot?: string;
-  /** Where `read` spilled the pictures it showed the model; defaults to `~/.pim/cache`. */
+  /** Images cached by `read`. Defaults to `~/.pim/cache`. */
   readonly imagesRoot?: string;
-  /** Where the read cursors live; defaults to `~/.pim/read.json`. */
+  /** Defaults to `~/.pim/read.json`. */
   readonly readCursorsPath?: string;
-  /** Where the per-session and per-project overrides live; defaults to `~/.pim/sessions.json`. */
+  /** Defaults to `~/.pim/sessions.json`. */
   readonly sessionMetaPath?: string;
-  /** How often a session file is polled where `fs.watch` says nothing; the default is a second. */
+  /** Session file poll interval. Defaults to 1s. */
   readonly pollMs?: number;
-  /** Longest a dialog may hold an extension waiting; the default is `SessionStream`'s three minutes. */
+  /** Defaults to 3 minutes. */
   readonly requestCeilingMs?: number;
-  /** How long a pending dialog outlives its last reader; the default is `SessionStream`'s fifteen seconds. */
+  /** Defaults to 15s. */
   readonly detachGraceMs?: number;
-  /** The built web client; defaults to the bundle shipped beside this package. */
+  /** Defaults to the bundled web client. */
   readonly clientDir?: string;
-  /** Runs the update a `reload` asks for, reporting each step as it starts. */
   readonly update?: (onStep: (label: string) => void) => Promise<UpdateOutcome>;
-  /** Ends this process so the supervisor replaces it with the updated code. */
   readonly shutdown?: () => Promise<void>;
 };
 
-type Outcome = {
-  readonly error?: string;
-  readonly items?: readonly PickerItem[];
-  readonly sessions?: readonly SessionSummaryView[];
-  readonly projects?: readonly ProjectView[];
-  readonly hits?: readonly SearchHitView[];
-  readonly dropped?: readonly string[];
-  readonly scanned?: number;
-  readonly models?: readonly ModelView[];
-  readonly thinkingLevels?: readonly string[];
-  readonly extensions?: readonly ExtensionEntry[];
-  readonly directory?: DirectoryListing;
-  readonly branches?: readonly GitBranch[];
-  readonly commit?: { readonly sha: string };
-  readonly changes?: ChangeList;
-  readonly fileDiff?: FileDiff;
-  readonly fileLines?: FileLines;
-  readonly restored?: readonly string[];
-  /** The message was dispatched as an extension command: no turn started, no entry written. */
-  readonly dispatched?: boolean;
+type Outcome = Omit<ResponseEvent, "type" | "id" | "success"> & {
+  /** Runs after the response is sent. */
   readonly after?: () => void;
 };
 
@@ -101,19 +68,16 @@ export const DEFAULT_PORT = 4319;
 
 export const DEFAULT_HOSTNAME = "127.0.0.1";
 
-// Bun 1.3.14 never frees the slot of a server-closed socket, so an unbounded `Server.stop(true)` hangs.
+// Bun 1.3.14 can hang in `Server.stop(true)` after closing sockets server-side.
 const STOP_GRACE_MS = 250;
 
-/**
- * Pi's own dispatch parse, three lines of `_tryExecuteExtensionCommand`
- * (`agent-session.js:954`); a pi upgrade re-verifies it.
- */
+/** Mirrors pi's `_tryExecuteExtensionCommand` parse (`agent-session.js:954`). */
 function commandNameOf(text: string): string {
   const spaceIndex = text.indexOf(" ");
   return spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
 }
 
-/** The transport half of pim-server: a WebSocket endpoint over the session runtime in `core`. */
+/** WebSocket + HTTP endpoint over the session runtime in `core`. */
 export class WsGateway {
   private readonly registry: SessionRegistry;
   private readonly hostname: string;
@@ -140,8 +104,6 @@ export class WsGateway {
 
   public constructor(deps: WsGatewayDeps) {
     this.registry = deps.registry;
-    // `SessionStream` is the sink, so the whole routing is a lookup: a host
-    // outlives the stream that speaks for it, and pi asks per call.
     this.registry.setUi((host) =>
       host.sessionId === undefined
         ? undefined
@@ -213,13 +175,13 @@ export class WsGateway {
         if (ImageEndpoint.owns(pathname)) {
           return this.images.handle(req);
         }
-        // Try the upgrade first: the socket must answer on every path.
+        // The socket must answer on every path.
         return server.upgrade(req) ? undefined : this.client.handle(req);
       },
       websocket: {
         backpressureLimit: 8 << 20,
         closeOnBackpressureLimit: false,
-        // Dedicated, so the window survives between frames: the repeated event envelope is most of a delta.
+        // Dedicated keeps the window between frames, which shrinks the repeated envelopes.
         perMessageDeflate: { compress: "dedicated", decompress: "dedicated" },
         open: (ws) => {
           this.connections.set(ws, new ClientConnection(ws));
@@ -324,11 +286,7 @@ export class WsGateway {
         return await this.catalogue.list(command);
       case "search_sessions":
         return await this.catalogue.search(command);
-      // The four below take a session this server may never have opened: a row
-      // is archived or renamed from the sidebar without being attached to, so
-      // none of them may reach for a stream. A sidecar write moves no session
-      // file and produces no `sessions_changed`, so the broadcast each ends
-      // with is the only word a listing already in a client's hands gets.
+      // These may target a session this server never opened, so they must not need a stream.
       case "set_session_name": {
         const name = await this.registry.setName(
           command.sessionId,
@@ -364,8 +322,6 @@ export class WsGateway {
           cwd: command.cwd,
           pinned: command.value,
         });
-        // The flag and the place it takes are one fact to a sidebar; a pin
-        // that arrived without a rank would sort by nothing until the next listing.
         this.broadcast({ type: "pins_changed", order: await this.meta.pins() });
         return {};
       case "set_project_expanded":
@@ -425,7 +381,7 @@ export class WsGateway {
             this.requireStream(connection).host.cwd
           ),
         };
-      // Reading the repository never moves it, so neither of these takes the `repoBusy` refusal.
+      // Read-only, so allowed while `repoBusy`.
       case "list_changes":
         return {
           changes: await RepoDiff.listChanges(
@@ -550,7 +506,7 @@ export class WsGateway {
     return sessionId ? this.streams.get(sessionId) : undefined;
   }
 
-  /** A session's directory decides which project extensions are listed; a connection without one reads this process's. */
+  /** Uses the process cwd when the connection is not attached. */
   private scopeFor(connection: ClientConnection): ExtensionScope {
     return {
       cwd: this.streamFor(connection)?.host.cwd ?? process.cwd(),
@@ -561,7 +517,7 @@ export class WsGateway {
   private rebuildAgents(): void {
     for (const stream of this.streams.values()) {
       const { host } = stream;
-      // Through the turn queue: detaching the agent under a running turn kills it.
+      // Queued behind any running turn, which detaching the agent would kill.
       void host
         .serialize(() => host.invalidate())
         .catch((err: unknown) => {
@@ -579,7 +535,7 @@ export class WsGateway {
     return stream;
   }
 
-  // Derive the log path from the parent session and call id: a client-sent path reads arbitrary JSONL off this machine.
+  // The log path is derived server-side; never accept a client-sent path.
   private async watchSubagent(
     connection: ClientConnection,
     stream: SessionStream,
@@ -594,7 +550,7 @@ export class WsGateway {
     if (path === null) {
       return { error: `malformed call id: ${command.callId}` };
     }
-    // A running call may not have written its log yet; the watch waits for it.
+    // A running call may not have written its log yet.
     if (!stream.isRunning(command.callId) && !(await Bun.file(path).exists())) {
       return { error: `no subagent log for call ${command.callId}` };
     }
@@ -641,19 +597,16 @@ export class WsGateway {
     return {};
   }
 
-  /** A watch costs a poll, so only attached sessions get one — and the catalogue only while someone is connected. */
+  /** Watches only attached sessions, and the catalogue only while anyone is connected. */
   private syncWatches(): void {
     for (const [sessionId, stream] of this.streams) {
-      // Attachment, not attention: a hidden tab that lost its watches would stop hearing about the session.
+      // Attached, not attentive: hidden tabs still need updates.
       stream.watchFiles(this.isAttached(sessionId));
     }
     this.catalogue.watch(this.connections.size > 0);
   }
 
-  /**
-   * An operation that moves the working tree cannot run under an agent that
-   * may be halfway through an edit; `push` leaves the tree alone, so it can.
-   */
+  /** `movesTree` operations are refused while an agent in the cwd is mid-turn. */
   private async runGit<T = never>(
     stream: SessionStream,
     movesTree: boolean,
@@ -701,7 +654,7 @@ export class WsGateway {
     return false;
   }
 
-  /** A turn starting anywhere freezes the branch menu of every session beside it, which only their own state can say. */
+  /** Pushes fresh state to the other sessions in `cwd` when its busy flag flips. */
   private syncRepoBusy(cwd: string, source: string): void {
     const busy = this.repoBusy(cwd);
     if (this.busyRepos.has(cwd) === busy) {
@@ -747,7 +700,6 @@ export class WsGateway {
       .some((connection) => connection.sessionId === sessionId);
   }
 
-  // The TUI never attaches, so reading a session there clears no dot here and a turn it runs trips no mark.
   private isBeingRead(sessionId: string): boolean {
     return this.connections
       .values()
@@ -796,7 +748,7 @@ export class WsGateway {
           ...(target.cwd === undefined ? {} : { cwd: target.cwd }),
           ...(target.like === undefined ? {} : { like: target.like }),
         });
-    // Pi assigns the id and the session file only once an agent exists.
+    // Pi assigns the id and session file only once an agent exists.
     const agent = host.agentSession ?? (await host.ensureAgent());
     const id = agent.sessionId;
     const path = agent.sessionFile ?? host.settings.sessionPath;
@@ -816,8 +768,7 @@ export class WsGateway {
     });
     stream.start();
     this.catalogue.track(id, host.status);
-    // Observed rather than subscribed: this never leaves, and a reader that
-    // never leaves is a session that is never detached.
+    // Observe, not subscribe, so this doesn't count as an attached client.
     stream.observe((event) => {
       if (event.type === "session_state") {
         this.catalogue.onStatus(id, event.status);
@@ -832,18 +783,14 @@ export class WsGateway {
     stream: SessionStream,
     command: Command & { readonly type: "user_message" }
   ): Promise<Outcome> {
-    // Trimmed once, here: pi dispatches on the text it is handed after the
-    // fallthrough trims it, so a client that does not trim would otherwise
-    // slip a command past this check and into pi's own.
+    // Pi trims before dispatching, so trim here too or a padded command slips past this check.
     const text = command.text.trim();
-    // Read before anything is rendered: what a command is, is its own text.
     const dispatched = await this.dispatchCommand(stream, text);
     const taken = this.uploads.take(
       stream.sessionId,
       (command.attachments ?? []).map((ref) => ref.id)
     );
-    // A slash command carries no pictures; the uploads are still taken, so the
-    // endpoint stops holding their bytes for the rest of the session.
+    // Uploads are taken even for commands, so the endpoint releases them.
     if (dispatched) {
       return { dispatched: true };
     }
@@ -852,11 +799,7 @@ export class WsGateway {
     return {};
   }
 
-  /**
-   * Whether `text` names an extension command, having started it if it does.
-   * Only the decision is awaited: the handler runs on beyond the ack, exactly
-   * as a turn does.
-   */
+  /** Starts `text` if it is an extension command; only the decision is awaited. */
   private async dispatchCommand(
     stream: SessionStream,
     text: string
@@ -865,8 +808,6 @@ export class WsGateway {
     if (!text.startsWith("/")) {
       return false;
     }
-    // The picker offers extension commands only once an agent exists, so this
-    // is someone typing from memory; cold is idle, so nothing is queued behind it.
     const agent = host.agentSession ?? (await host.ensureAgent());
     const name = commandNameOf(text);
     if (agent.extensionRunner.getCommand(name) === undefined) {
@@ -874,9 +815,7 @@ export class WsGateway {
     }
     void stream
       .dispatch(`/${name}`, async () => {
-        // Prompted whole, never merged into the queue: a merged string starts
-        // with the earlier message, and pi reads the leading `/` before it
-        // looks at `isStreaming` — so the turn we are holding dispatches it.
+        // Never merged into the queue, or the leading `/` would be lost.
         if (host.isStreaming) {
           await agent.prompt(text, {
             streamingBehavior: "steer",
@@ -894,7 +833,7 @@ export class WsGateway {
     return true;
   }
 
-  // Merge into the queued message: pi holds at most one, so a second queued send would be unreachable.
+  // Merge with the queued message: pi holds at most one.
   private prompt(
     stream: SessionStream,
     text: string,

@@ -16,10 +16,8 @@ type Reader = ReadableStreamDefaultReader<Uint8Array>;
 const activePids = new Set<number>();
 
 const COMMAND_VAR = "PIM_BASH_COMMAND";
-// argv is what `pkill -f`/`pgrep -f` match, so a command naming its own target would
-// signal this shell before its target. The env hands it over out of argv's reach, and
-// the unset keeps it out of every child's environment too.
-// The raised oom_score_adj makes the command, not the agent or the desktop, the kernel's first victim.
+// The command goes via env, not argv, so `pkill -f <target>` inside it can't match this shell.
+// oom_score_adj makes the command the OOM killer's first victim, not pim.
 const RUNNER = `{ echo 500 > /proc/self/oom_score_adj; } 2>/dev/null; __pim_command=$${COMMAND_VAR}; unset ${COMMAND_VAR}; eval "$__pim_command"`;
 
 export function killAllActiveBashGroups(sig: NodeJS.Signals = "SIGTERM"): void {
@@ -59,11 +57,7 @@ async function spillIfTruncated(
   return stream.truncated ? SpillCache.write("bash", ext, cap.full()) : null;
 }
 
-/**
- * The picture stdout printed, or null. The verdict is the leading bytes',
- * before anything is decoded; the cap is the whole stream's, so an image too
- * big to send is text again and truncates like any other output.
- */
+/** Sniffs the leading bytes only. Over the size cap, stdout is treated as text. */
 export function sniffStdoutImage(cap: StreamCapture): ImageMimeType | null {
   if (
     cap.totalBytes < Images.SNIFF_BYTES ||
@@ -104,7 +98,7 @@ export async function runBashCommand(
   const stderrCap = new StreamCapture();
   const scope = await MemoryCap.scope();
 
-  // setsid gives the tree its own process group (pgid == proc.pid) so the whole tree can be signalled.
+  // setsid: own process group (pgid == pid), so the whole tree can be signalled.
   const proc = Bun.spawn({
     cmd: [...(scope?.argv ?? []), "setsid", "bash", "-lc", RUNNER],
     cwd,
@@ -119,7 +113,7 @@ export async function runBashCommand(
   let timedOut = false;
   let aborted = false;
 
-  // Hold the readers: cancelling a locked stream through the stream itself throws.
+  // Keep the readers: cancelling a locked stream directly throws.
   const stdoutReader = getReader(
     proc.stdout as unknown as ReadableStream<Uint8Array>
   );
@@ -127,7 +121,7 @@ export async function runBashCommand(
     proc.stderr as unknown as ReadableStream<Uint8Array>
   );
 
-  // Never block on EOF: a backgrounded child can hold the pipes open after bash exits.
+  // Not awaited: a backgrounded child can hold the pipes open after bash exits.
   const stdoutDrain = drain(stdoutReader, stdoutCap);
   const stderrDrain = drain(stderrReader, stderrCap);
 
@@ -181,7 +175,7 @@ export async function runBashCommand(
     exitCode = proc.exitCode ?? null;
     signalCode = (proc.signalCode as NodeJS.Signals | null | undefined) ?? null;
 
-    // Bound the drain: a detached grandchild holding the pipe would outlive this call.
+    // Bounded: a detached grandchild may hold the pipe open forever.
     await Promise.race([
       Promise.all([stdoutDrain, stderrDrain]),
       Bun.sleep(DRAIN_GRACE_MS),
@@ -206,14 +200,14 @@ export async function runBashCommand(
     }
   }
 
-  // A picture nothing will show is never decoded: a failed command reports its bytes instead.
+  // A failed command's image is never decoded.
   const sniffed = sniffStdoutImage(stdoutCap);
   const shows =
     sniffed !== null && !isErrorResult({ exitCode, timedOut, aborted });
   const stdout = stdoutCap.snapshot(sniffed !== null);
   const stderr = stderrCap.snapshot();
 
-  // Under OOMPolicy=kill a limit hit is a SIGKILL of the whole scope; systemd's own Result for it is racy.
+  // OOMPolicy=kill SIGKILLs the scope; systemd's own Result for it is racy.
   const memoryLimitHit =
     scope !== null && signalCode === "SIGKILL" && !timedOut && !aborted
       ? scope.limitBytes

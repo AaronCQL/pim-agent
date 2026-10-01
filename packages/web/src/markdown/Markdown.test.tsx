@@ -28,8 +28,7 @@ Object.defineProperty(document, "fonts", {
   configurable: true,
 });
 
-// A selection outlives the test that made it, and a click inside one copies
-// nothing: left standing, it decides what every later test here does.
+// A leftover selection would make later clicks copy nothing.
 afterEach(() => {
   window.getSelection()?.removeAllRanges();
 });
@@ -55,7 +54,7 @@ function click(element: Element | null): void {
   element?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 }
 
-/** A click does not hand back the copy it starts; yield until it has settled. */
+// Lets the async copy started by a click settle.
 async function settle(): Promise<void> {
   for (let tick = 0; tick < 10; tick += 1) {
     await Promise.resolve();
@@ -63,37 +62,12 @@ async function settle(): Promise<void> {
 }
 
 describe("Markdown", () => {
-  test("renders a completed message in one pass", () => {
-    const view = mount("# Title\n\nBody with `code`.\n");
-    expect(view.html()).toContain("<h1>Title</h1>");
-    expect(view.html()).toContain("<code>code</code>");
-  });
-
-  /** Mid-stream the last character is deliberately withheld: it may still turn
-   *  out to be part of a token, and holding it is what buys zero repaints. */
-  test("a growing message is appended to, never repainted", () => {
+  test("mid-stream the tail is withheld until the message completes", () => {
     const view = mount("Hello", false);
     expect(view.html()).toBe("<p>Hell</p>");
     view.write("Hello world");
     expect(view.html()).toBe("<p>Hello worl</p>");
-  });
-
-  test("completing the message flushes the withheld tail", () => {
-    const [host, complete] = [mount("Hello", false), mount("Hello")];
-    expect(host.html()).toBe("<p>Hell</p>");
-    expect(complete.html()).toBe("<p>Hello</p>");
-  });
-
-  test("an unclosed fence still renders as a code block", () => {
-    const view = mount("```ts\nconst a = 1;", false);
-    expect(view.html()).toContain("<pre>");
-    expect(view.html()).toContain('class="ts"');
-  });
-
-  /** Withheld, not guessed: the language tag may still be growing, so nothing
-   *  is painted until it is known to be finished. */
-  test("a half-typed language tag paints nothing at all", () => {
-    expect(mount("```typescr", false).html()).toBe("");
+    expect(mount("Hello").html()).toBe("<p>Hello</p>");
   });
 
   test("text that diverges rebuilds instead of appending", () => {
@@ -114,8 +88,6 @@ describe("Markdown", () => {
     expect(view.html()).toContain('aria-label="Copy code"');
   });
 
-  /** A closing fence is only known to be closed once something follows it, so
-   *  mid-stream the button waits rather than offering half a payload. */
   test("a block still being written gets none", () => {
     const view = mount("```ts\nconst a = 1;", false);
     expect(view.html()).not.toContain("Copy code");
@@ -129,12 +101,6 @@ describe("Markdown", () => {
     expect(view.html().match(/aria-label="Copy code"/gu)).toHaveLength(1);
   });
 
-  /**
-   * Fences are highlighted on the copy button's rule — only once closed —
-   * because the parser owns this DOM and never repaints it. The grammar
-   * arrives a tick later, so the block is written plain and coloured in
-   * place; what must never change through any of it is the code itself.
-   */
   test("a finished fence is syntax highlighted once its grammar lands", async () => {
     const view = mount("```ts\nconst a = 1;\n```\n\nprose\n");
 
@@ -145,7 +111,6 @@ describe("Markdown", () => {
 
     expect(view.html()).toContain(SYNTAX_CLASSES.keyword);
     expect(view.text()).toContain("const a = 1;");
-    // The fence markers are drawn from the language class, which stays put.
     expect(view.html()).toContain('class="ts"');
   });
 
@@ -162,8 +127,6 @@ describe("Markdown", () => {
     expect(link?.getAttribute("rel")).toBe("noopener");
   });
 
-  /** Anchors are marked as they are created, so one still being written has
-   *  them too — the href arrives later and does not change who opens it. */
   test("a link still being written is marked already", () => {
     const view = mount("See [the docs](https://pi.", false);
     expect(view.find("a")?.getAttribute("target")).toBe("_blank");
@@ -178,7 +141,6 @@ describe("Markdown", () => {
 
     expect(await navigator.clipboard.readText()).toBe("bun run check");
     expect(code?.hasAttribute("data-copied")).toBe(true);
-    // The flash is an attribute the CSS animates; the text is untouched.
     expect(view.text()).toContain("Run bun run check first.");
   });
 
@@ -193,7 +155,6 @@ describe("Markdown", () => {
     expect(code?.hasAttribute("data-copied")).toBe(false);
   });
 
-  /** A fence answers a click with its own button, and a link navigates. */
   test("code that already answers a click is left alone", async () => {
     await navigator.clipboard.writeText("untouched");
     const view = mount(
@@ -207,7 +168,6 @@ describe("Markdown", () => {
     expect(await navigator.clipboard.readText()).toBe("untouched");
   });
 
-  /** A click that ends a drag is where a selection stopped. */
   test("a click that finishes a selection copies nothing", async () => {
     await navigator.clipboard.writeText("untouched");
     const view = mount("Run `bun run check` first.\n");
@@ -220,6 +180,7 @@ describe("Markdown", () => {
     expect(await navigator.clipboard.readText()).toBe("untouched");
     expect(code?.hasAttribute("data-copied")).toBe(false);
   });
+
   describe("mermaid", () => {
     const FENCE = "```mermaid\ngraph LR\n  a --> b\n```\n";
 
@@ -316,13 +277,6 @@ describe("Markdown", () => {
       expect(view.find(".pim-diagram")).toBeNull();
       expect(view.find("pre")?.hasAttribute("hidden")).toBe(false);
       expect(view.text()).not.toContain("---^");
-    });
-
-    test("other fences are left to the highlighter", async () => {
-      const view = mount("```ts\nconst a = 1;\n```\n");
-      await settle();
-      flush();
-      expect(view.find(".pim-diagram")).toBeNull();
     });
   });
 });

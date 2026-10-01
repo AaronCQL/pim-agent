@@ -25,9 +25,7 @@ export class InProcessFilePickerSuggestionEngine implements FilePickerSuggestion
         this.cachedRelative = catalog;
       })
       .catch(() => {
-        if (this.cachedRelative === undefined) {
-          this.cachedRelative = [];
-        }
+        this.cachedRelative ??= [];
       })
       .finally(() => {
         this.refresh = undefined;

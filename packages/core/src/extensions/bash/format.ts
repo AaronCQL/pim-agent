@@ -10,7 +10,7 @@ import {
 
 const STREAMS = ["stdout", "stderr"] as const;
 
-export function stripTrailingNewline(s: string): string {
+function stripTrailingNewline(s: string): string {
   return s.endsWith("\n") ? s.slice(0, -1) : s;
 }
 
@@ -68,7 +68,7 @@ export function formatResult(
   return lines.join("\n");
 }
 
-/** The words for a picture the content array will not carry; null when it will. */
+/** Null when the image is shown in the content array. */
 function unshownImageLine(
   result: BashCommandResult,
   sniffed: ImageMimeType,

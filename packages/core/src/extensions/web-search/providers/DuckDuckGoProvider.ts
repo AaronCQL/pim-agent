@@ -25,7 +25,7 @@ const defaultReaderEndpoint = "https://r.jina.ai";
 const defaultSearchEndpoint = "https://lite.duckduckgo.com/lite/";
 const defaultTimeoutMs = 30_000;
 
-/** Reads the Lite SERP through Jina: DuckDuckGo answers direct API calls with a 202 anti-bot challenge. */
+/** Reads the Lite SERP through Jina; direct requests get a 202 anti-bot challenge. */
 export class DuckDuckGoProvider implements SearchProvider {
   public readonly name = "duckduckgo";
 
@@ -43,7 +43,7 @@ export class DuckDuckGoProvider implements SearchProvider {
     this.timeoutMs = options.timeoutMs ?? defaultTimeoutMs;
     this.headers = {
       Accept: "application/json",
-      // The reader caches aggressively and would serve a stale SERP.
+      // Otherwise the reader may serve a stale SERP.
       "x-no-cache": "true",
       ...(options.apiKey === undefined || options.apiKey.length === 0
         ? {}

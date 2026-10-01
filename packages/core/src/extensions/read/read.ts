@@ -30,9 +30,8 @@ export type ReadOutcome =
   | ImageReadOutcome
   | UnchangedImageReadOutcome;
 
-export type ReadOptions = {
+type ReadOptions = {
   readonly model?: VisionModel;
-  /** The pictures this session has already sent; absent when the caller keeps none. */
   readonly memory?: ImageMemory;
 };
 
@@ -75,7 +74,7 @@ export async function readFile(
 
   const file = Bun.file(path);
 
-  // One head serves both verdicts: the signature is in its first bytes, a NUL anywhere in it.
+  // Sniffs both the image signature and binary-ness.
   const head = await bytesOf(file.slice(0, Lines.binarySniffBytes), path);
 
   if (isImageRead(head, path)) {
@@ -113,7 +112,7 @@ async function bytesOf(file: Bun.BunFile, path: string): Promise<Uint8Array> {
   try {
     return await file.bytes();
   } catch (error) {
-    rethrowFsError(error, path, "read");
+    rethrowFsError(error, path);
   }
 }
 
@@ -178,7 +177,7 @@ function renderText(
   };
 }
 
-function rethrowFsError(error: unknown, path: string, action: string): never {
+function rethrowFsError(error: unknown, path: string): never {
   const code = FsErrors.code(error);
 
   if (code === "EACCES" || code === "EPERM") {
@@ -186,6 +185,6 @@ function rethrowFsError(error: unknown, path: string, action: string): never {
   }
 
   throw new Error(
-    `Cannot ${action} ${path}: ${code ?? (error instanceof Error ? error.message : "unknown error")}.`
+    `Cannot read ${path}: ${code ?? (error instanceof Error ? error.message : "unknown error")}.`
   );
 }

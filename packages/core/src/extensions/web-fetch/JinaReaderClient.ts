@@ -155,17 +155,9 @@ function requiredString(value: unknown, name: string): string {
 }
 
 function optionalString(value: unknown, name: string): string | undefined {
-  if (value === undefined || value === null) {
-    return undefined;
-  }
-
-  if (typeof value !== "string") {
-    throw new JinaReaderClientError(
-      `Response contained invalid payload: expected string ${name}.`
-    );
-  }
-
-  return value;
+  return value === undefined || value === null
+    ? undefined
+    : requiredString(value, name);
 }
 
 function stringifyErrorData(data: unknown): string {

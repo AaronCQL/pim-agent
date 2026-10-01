@@ -18,7 +18,7 @@ export function createDialog(options: {
     host.close();
   });
 
-  // Open from an effect, not the ref: a `<dialog>` must be in the document before it can be shown.
+  // Not from the ref: a `<dialog>` must be in the document to be shown.
   createEffect(
     () => options.open(),
     (open) => {

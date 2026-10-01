@@ -295,34 +295,8 @@ export class Commands {
     ctx: Filter<Context, "callback_query:data">
   ): Promise<void> {
     const data = ctx.callbackQuery.data;
-
     if (data.startsWith(`${CB_MODEL}|`)) {
-      const idx1 = data.indexOf("|");
-      const idx2 = data.lastIndexOf("|");
-      const modelId = data.slice(idx1 + 1, idx2);
-      const keyPart = data.slice(idx2 + 1);
-      const session = this.registry.get(decodeId(keyPart));
-      await ctx.answerCallbackQuery({ text: `Model: ${modelId}` });
-      try {
-        const result = await session.setModel(modelId);
-        if (result.ok) {
-          await safeEditMessage(
-            ctx,
-            `<b>Model</b> → <code>${Markdown.escape(result.id)}</code>`
-          );
-        } else {
-          await safeEditMessage(
-            ctx,
-            strikeOriginal(ctx, `⚠️ model set failed: ${modelId}`)
-          );
-        }
-      } catch (err) {
-        console.error(`[bot] model callback failed for ${modelId}:`, err);
-        await safeEditMessage(
-          ctx,
-          strikeOriginal(ctx, `⚠️ model set failed: ${(err as Error).message}`)
-        );
-      }
+      await this.onModelPicked(ctx, data);
       return;
     }
 
@@ -331,24 +305,7 @@ export class Commands {
     const keyPart = colon >= 0 ? data.slice(colon + 1) : "";
 
     if (action === CB_CLEAR_CONFIRM && keyPart) {
-      const session = this.registry.get(decodeId(keyPart));
-      const wasBusy = session.isStreaming;
-      await ctx.answerCallbackQuery({
-        text: wasBusy ? "Queued — clearing after current turn" : "Cleared",
-      });
-      try {
-        await session.clear();
-        await safeEditMessage(
-          ctx,
-          strikeOriginal(ctx, "Context window cleared.")
-        );
-      } catch (err) {
-        console.error(`[bot] queued clear failed:`, err);
-        await safeEditMessage(
-          ctx,
-          strikeOriginal(ctx, `⚠️ clear failed: ${(err as Error).message}`)
-        );
-      }
+      await this.onClearConfirmed(ctx, keyPart);
       return;
     }
     if (action === CB_CLEAR_CANCEL) {
@@ -358,22 +315,80 @@ export class Commands {
     }
     const picker = PICKERS.find((one) => one.action === action);
     if (picker && keyPart) {
-      const parts = splitValueAndKey(keyPart);
-      const applyTo = parts && picker.apply(parts.value);
-      if (!parts || !applyTo) {
-        await ctx.answerCallbackQuery();
-        return;
-      }
-      const session = this.registry.get(decodeId(parts.key));
-      await applyTo(session);
-      await ctx.answerCallbackQuery({
-        text: `${picker.title}: ${picker.label(parts.value)}`,
-      });
-      const { kb, html } = buildPicker(picker, session, parts.value);
-      await safeEditMessage(ctx, html, kb);
+      await this.onPicked(ctx, picker, keyPart);
       return;
     }
     await ctx.answerCallbackQuery();
+  }
+
+  private async onModelPicked(
+    ctx: Filter<Context, "callback_query:data">,
+    data: string
+  ): Promise<void> {
+    const modelId = data.slice(data.indexOf("|") + 1, data.lastIndexOf("|"));
+    const keyPart = data.slice(data.lastIndexOf("|") + 1);
+    const session = this.registry.get(decodeId(keyPart));
+    await ctx.answerCallbackQuery({ text: `Model: ${modelId}` });
+    try {
+      const result = await session.setModel(modelId);
+      await safeEditMessage(
+        ctx,
+        result.ok
+          ? `<b>Model</b> → <code>${Markdown.escape(result.id)}</code>`
+          : strikeOriginal(ctx, `⚠️ model set failed: ${modelId}`)
+      );
+    } catch (err) {
+      console.error(`[bot] model callback failed for ${modelId}:`, err);
+      await safeEditMessage(
+        ctx,
+        strikeOriginal(ctx, `⚠️ model set failed: ${(err as Error).message}`)
+      );
+    }
+  }
+
+  private async onClearConfirmed(
+    ctx: Filter<Context, "callback_query:data">,
+    keyPart: string
+  ): Promise<void> {
+    const session = this.registry.get(decodeId(keyPart));
+    await ctx.answerCallbackQuery({
+      text: session.isStreaming
+        ? "Queued — clearing after current turn"
+        : "Cleared",
+    });
+    try {
+      await session.clear();
+      await safeEditMessage(
+        ctx,
+        strikeOriginal(ctx, "Context window cleared.")
+      );
+    } catch (err) {
+      console.error(`[bot] queued clear failed:`, err);
+      await safeEditMessage(
+        ctx,
+        strikeOriginal(ctx, `⚠️ clear failed: ${(err as Error).message}`)
+      );
+    }
+  }
+
+  private async onPicked(
+    ctx: Filter<Context, "callback_query:data">,
+    picker: Picker,
+    keyPart: string
+  ): Promise<void> {
+    const parts = splitValueAndKey(keyPart);
+    const applyTo = parts && picker.apply(parts.value);
+    if (!parts || !applyTo) {
+      await ctx.answerCallbackQuery();
+      return;
+    }
+    const session = this.registry.get(decodeId(parts.key));
+    await applyTo(session);
+    await ctx.answerCallbackQuery({
+      text: `${picker.title}: ${picker.label(parts.value)}`,
+    });
+    const { kb, html } = buildPicker(picker, session, parts.value);
+    await safeEditMessage(ctx, html, kb);
   }
 
   private async runQueued(
@@ -583,7 +598,7 @@ export class Commands {
     const notes = outcome.skipped.map(
       (s) => `\nSkipped ${s.label}: ${s.reason}.`
     );
-    // Restart siblings first; this daemon restarts by exiting, so it must go last.
+    // This process restarts by exiting, so restart siblings first.
     await Supervisor.restartSiblings(DaemonUnit);
     if (!Supervisor.isSupervised()) {
       await progress(
@@ -738,7 +753,7 @@ function strikeOriginal(
   note: string
 ): string {
   const original = ctx.callbackQuery.message?.text ?? "";
-  return `<s>${Markdown.escape(original)}</s>\n\n<i>${note}</i>`;
+  return `<s>${Markdown.escape(original)}</s>\n\n<i>${Markdown.escape(note)}</i>`;
 }
 
 function renderCompactSuccess(result: SessionCompactResult): string {
@@ -763,6 +778,6 @@ async function safeEditMessage(
       reply_markup: replyMarkup,
     });
   } catch {
-    // Message may have aged out past Telegram's edit window — non-fatal.
+    // The message may be past Telegram's edit window.
   }
 }

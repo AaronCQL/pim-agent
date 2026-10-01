@@ -4,7 +4,6 @@ import { copyText } from "./clipboard";
 
 const FLASH_MS = 1200;
 
-/** Copy-to-clipboard button; the tick is shown only for a copy that happened. */
 export function CopyButton(props: {
   readonly text: () => string;
   readonly label?: string;

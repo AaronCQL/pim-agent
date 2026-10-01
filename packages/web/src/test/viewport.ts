@@ -1,4 +1,4 @@
-/** A visual viewport under the test's control: the height a software keyboard takes from. */
+/** A fake `visualViewport`, e.g. to simulate a software keyboard. */
 export function fakeViewport(initialHeight: number): {
   readonly resize: (height: number) => void;
   readonly restore: () => void;

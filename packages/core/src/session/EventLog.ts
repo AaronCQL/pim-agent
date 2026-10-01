@@ -18,7 +18,7 @@ async function ifPresent<T>(read: () => Promise<T>, absent: T): Promise<T> {
   }
 }
 
-/** One durable line of a session file; the header is line 1, so entries start at `seq` 2. */
+/** `seq` is the 1-based line number; the header is line 1. */
 export type LoggedEntry = {
   readonly seq: number;
   readonly entry: FileEntry;
@@ -40,7 +40,7 @@ function isHeader(entry: FileEntry): entry is SessionHeader {
   return entry.type === "session";
 }
 
-/** A reader over one pi session file: append-only JSONL, so a line's `seq` never changes. */
+/** Reader over one append-only pi session file. */
 export class EventLog {
   public readonly path: string;
   private cursor: Cursor = { offset: 0, seq: 0 };
@@ -56,7 +56,7 @@ export class EventLog {
     const file = Bun.file(this.path);
     const text = await ifPresent(() => file.slice(start.offset).text(), "");
 
-    // A trailing fragment is a write in progress: stop short of it or reads lose entries.
+    // Skip a trailing partial line; it is still being written.
     const lastBreak = text.lastIndexOf("\n");
     if (lastBreak === -1) {
       return [];
@@ -92,24 +92,18 @@ export class EventLog {
     return undefined;
   }
 
-  /** The `seq` of the last complete line, without parsing any of them. */
+  /** The `seq` of the last complete line. */
   public async head(): Promise<number> {
     await this.read(Number.MAX_SAFE_INTEGER);
     return this.cursor.seq;
   }
 
-  /**
-   * The name pi's own `/name` writes: the last `session_info` entry wins, and an
-   * empty one clears it. Appended rather than replaced, so it is found by reading
-   * the whole file — the one unbounded read the catalogue makes, and the only
-   * reason `SessionDigest` takes a whole file rather than a bounded head and tail.
-   */
+  /** The last `session_info` name; an empty one clears it. Reads the whole file. */
   public async name(): Promise<string | undefined> {
     const body = await durableBytes(Bun.file(this.path));
     return body === undefined ? undefined : SessionDigest.nameOf(body);
   }
 
-  /** Title and settle time for the catalogue, without opening a session. */
   public async digest(): Promise<SessionDigest> {
     const body = await durableBytes(Bun.file(this.path));
     return body === undefined
@@ -122,7 +116,7 @@ async function* headLines(
   file: BunFile,
   count: number
 ): AsyncGenerator<string> {
-  // Decode with `stream: true`: a chunk boundary can split a character.
+  // `stream: true`: a chunk boundary can split a character.
   const decoder = new TextDecoder();
   let pending = "";
   let yielded = 0;

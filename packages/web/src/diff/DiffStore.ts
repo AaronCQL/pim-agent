@@ -13,7 +13,7 @@ import type { ChangeSummary, DiffBase, FileDiff } from "#protocol/Diff";
 import { DiffExpand, type DiffGap } from "#core/view/DiffExpand";
 import type { SessionStore } from "../session/SessionStore";
 
-/** The bases the selector offers; `commit` and `branch` exist on the wire and have no UI. */
+/** `commit` and `branch` bases exist on the wire but have no UI. */
 export type BaseKind = Extract<
   DiffBase,
   { readonly kind: "worktree" | "unstaged" | "staged" }
@@ -24,10 +24,10 @@ export type FileState =
   | {
       readonly kind: "ready";
       readonly diff: FileDiff;
-      /** Lines behind a gap this reader has since opened, by their new-side number. */
+      /** Lines revealed from opened gaps, keyed by new-side line number. */
       readonly lines: ReadonlyMap<number, string>;
       readonly opening: boolean;
-      /** Why the last gap a reader opened stayed shut. */
+      /** Error from the last gap open. */
       readonly failed?: string;
     }
   | { readonly kind: "error"; readonly message: string };
@@ -36,43 +36,37 @@ export type DiffState = {
   base: BaseKind;
   added: number;
   removed: number;
-  /** The repository has more changed files than the list holds. */
   truncated: boolean;
-  /** `ready` only once a list has landed, so an empty overlay never claims a clean tree it has not read. */
+  /** `ready` only once a list has landed, so an empty list never means "clean" before it is read. */
   status: "idle" | "loading" | "ready";
   error: string | undefined;
-  /** The commit message, held here so closing the modal does not lose it. */
+  /** Kept here so closing the modal keeps the draft. */
   message: string;
   committing: boolean;
-  /** Why the last commit was refused. */
   failure: string | undefined;
-  /** The short sha last written, read back in the pane the commit emptied. */
+  /** Short sha of the last commit. */
   committed: string | undefined;
 };
 
-/** A burst of writes — one turn's edits — is one re-read. */
+/** Debounce for re-reading after repo changes. */
 const SETTLE_MS = 200;
 
-/** A working copy's change set: what it is measured against, and the hunks read so far. */
 export class DiffStore {
   public readonly state: Store<DiffState>;
   private readonly setState: StoreSetter<DiffState>;
-  /** A whole snapshot at a time, outside the store: a proxied array would make every row a source of the list. */
+  /** A signal, not a store, so rows don't each subscribe to the list. */
   public readonly files: Accessor<readonly ChangeSummary[]>;
   private readonly setFiles: Setter<readonly ChangeSummary[]>;
-  /** Flat and keyed by path, so a row tracks its own file and not every other row's. */
   private readonly diffs: Store<Record<string, FileState>>;
   private readonly setDiffs: StoreSetter<Record<string, FileState>>;
-  /** Which files a reader has unfolded; list state, so a re-read of the list can keep or clear it. */
   private readonly opened: Store<Record<string, boolean>>;
   private readonly setOpened: StoreSetter<Record<string, boolean>>;
   private readonly session: SessionStore;
   private readonly settleMs: number;
   private queue: Promise<unknown> = Promise.resolve();
   private generation = 0;
-  /** The repository as it stood when the list in hand was read. */
+  /** `repoRevision` when the current list was read. */
   private synced = "";
-  /** Nothing is re-read for a pane nobody is looking at. */
   private watching = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private syncing = false;
@@ -124,17 +118,15 @@ export class DiffStore {
     );
   }
 
-  /** What is known about one file's hunks; absent until a reader expands it. */
+  /** Undefined until the file is expanded. */
   public fileState(path: string): FileState | undefined {
     return this.diffs[path];
   }
 
-  /** The working copy these changes were read from. */
   public cwd(): string {
     return this.session.state.cwd;
   }
 
-  /** Re-reads the file list and drops every hunk read against the last one. */
   public async refresh(): Promise<void> {
     ++this.generation;
     this.setState((draft) => {
@@ -145,7 +137,7 @@ export class DiffStore {
     await this.load(false);
   }
 
-  /** Whether a reader is on the change set, and so whether it is kept current. */
+  /** Only a watched store re-reads on repo changes. */
   public watch(active: boolean): void {
     this.watching = active;
     if (active) {
@@ -167,7 +159,7 @@ export class DiffStore {
     }, this.settleMs);
   }
 
-  /** Re-reads what the repository has made of the list in hand, painting no spinner over it. */
+  /** Quiet re-read: no loading state. */
   private async sync(): Promise<void> {
     if (this.syncing) {
       this.resync = true;
@@ -180,8 +172,7 @@ export class DiffStore {
     ) {
       return;
     }
-    // The list was read before the server said where the repository stood; the
-    // first word of it is not news of a change.
+    // The first revision seen after the initial read is not a change.
     if (this.synced === "") {
       this.synced = revision;
       return;
@@ -198,7 +189,7 @@ export class DiffStore {
     }
   }
 
-  /** Reads the list; a quiet read keeps the rows that survived it and re-reads the hunks of those that moved. */
+  /** A quiet load keeps surviving rows and re-reads the hunks of changed ones. */
   private async load(quiet: boolean): Promise<void> {
     const mine = this.generation;
     this.synced = untrack(() => this.session.state.repoRevision);
@@ -219,7 +210,7 @@ export class DiffStore {
         draft.status = "ready";
       });
       for (const path of moved) {
-        void this.reread(path);
+        void this.read(path);
       }
     } catch (error) {
       if (mine !== this.generation) {
@@ -237,7 +228,7 @@ export class DiffStore {
     }
   }
 
-  /** Drops the hunks of files the list has lost, and names those whose content moved. */
+  /** Drops hunks of files no longer listed; returns the paths whose content changed. */
   private reconcileDiffs(files: readonly ChangeSummary[]): readonly string[] {
     const next = new Map(files.map((file) => [file.path, file.fingerprint]));
     const held = new Map(
@@ -247,8 +238,7 @@ export class DiffStore {
     const gone: string[] = [];
     for (const path of untrack(() => Object.keys(this.diffs))) {
       const fingerprint = next.get(path);
-      // A read already in flight lands on its own; anything else the
-      // repository has moved under is read again, a refusal included.
+      // A read already in flight will land on its own.
       if (fingerprint === undefined) {
         gone.push(path);
       } else if (
@@ -269,8 +259,8 @@ export class DiffStore {
     return moved;
   }
 
-  /** Reads one open file's hunks again, leaving the ones on screen until they land. */
-  private async reread(path: string): Promise<void> {
+  /** Leaves the hunks on screen until the new ones land. */
+  private async read(path: string): Promise<void> {
     const mine = this.generation;
     try {
       const diff = await this.enqueue(() =>
@@ -292,7 +282,6 @@ export class DiffStore {
     }
   }
 
-  /** Another working copy: every file, hunk and count read against the last one is void. */
   public reset(): void {
     this.generation += 1;
     this.forget();
@@ -315,18 +304,12 @@ export class DiffStore {
     });
   }
 
-  /**
-   * Drops the receipt for the last commit. The sha stands until a reader goes
-   * to write the next one: it answers "did that land?", and that question is
-   * over the moment they are writing another.
-   */
   public forgetCommit(): void {
     this.setState((draft) => {
       draft.committed = undefined;
     });
   }
 
-  /** Commits the typed message over exactly these paths, then re-reads the list it emptied. */
   public async commit(paths: readonly string[]): Promise<void> {
     if (untrack(() => this.state.committing)) {
       return;
@@ -363,12 +346,10 @@ export class DiffStore {
     void this.refresh();
   }
 
-  /** Whether a reader has this file unfolded. */
   public isOpen(path: string): boolean {
     return this.opened[path] === true;
   }
 
-  /** Folds a file open or shut; the first opening reads its hunks. */
   public toggle(path: string): void {
     const open = !untrack(() => this.opened[path]);
     this.setOpened((draft) => {
@@ -379,39 +360,17 @@ export class DiffStore {
     }
   }
 
-  /** The first expansion of a file reads it; every later one is answered from the cache. */
+  /** Reads a file's hunks once; later calls use the cache. */
   public async expand(path: string): Promise<void> {
     if (untrack(() => this.diffs[path]) !== undefined) {
       return;
     }
-    const mine = this.generation;
     this.setDiffs((draft) => {
       draft[path] = { kind: "loading" };
     });
-    try {
-      const diff = await this.enqueue(() =>
-        this.session.fileDiff(path, this.base())
-      );
-      if (mine !== this.generation) {
-        return;
-      }
-      this.setDiffs((draft) => {
-        draft[path] = { kind: "ready", diff, lines: new Map(), opening: false };
-      });
-    } catch (error) {
-      if (mine !== this.generation) {
-        return;
-      }
-      this.setDiffs((draft) => {
-        draft[path] = {
-          kind: "error",
-          message: (error as Error).message,
-        };
-      });
-    }
+    await this.read(path);
   }
 
-  /** Reads the lines behind one gap and splices them into the file already open. */
   public async open(path: string, gap: DiffGap): Promise<void> {
     const state = untrack(() => this.diffs[path]);
     if (state?.kind !== "ready" || state.opening) {
@@ -466,11 +425,7 @@ export class DiffStore {
     return { kind: untrack(() => this.state.base) };
   }
 
-  /**
-   * One request in flight at a time: the server reads through a `GitMonitor`
-   * that refuses a second concurrent operation rather than queueing it, so two
-   * expansions racing would fail one of themselves.
-   */
+  /** Serialises requests: the server's `GitMonitor` rejects concurrent operations. */
   private enqueue<T>(work: () => Promise<T>): Promise<T> {
     const next = this.queue.then(work, work);
     this.queue = next.catch(() => undefined);

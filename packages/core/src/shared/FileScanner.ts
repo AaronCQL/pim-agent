@@ -21,19 +21,11 @@ async function scan(
   });
   const matcher = new Bun.Glob(await expandDirectory(absoluteRoot, pattern));
   const excludes = GlobExclusions.compile(options.exclude);
-  const files: string[] = [];
-
-  for (const relativePath of relativePaths) {
-    if (!matcher.match(relativePath)) {
-      continue;
-    }
-    if (GlobExclusions.ignores(excludes, relativePath)) {
-      continue;
-    }
-    files.push(join(absoluteRoot, relativePath));
-  }
-
-  return files;
+  return relativePaths
+    .filter(
+      (path) => matcher.match(path) && !GlobExclusions.ignores(excludes, path)
+    )
+    .map((path) => join(absoluteRoot, path));
 }
 
 async function expandDirectory(

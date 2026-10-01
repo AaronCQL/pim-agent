@@ -20,7 +20,6 @@ export type FirecrawlProviderOptions = {
 const defaultEndpoint = "https://api.firecrawl.dev/v2/search";
 const defaultTimeoutMs = 20_000;
 
-/** Firecrawl search; omitting `Authorization` is the keyless tier, whose exhaustion shows only as a 429. */
 export class FirecrawlProvider implements SearchProvider {
   public readonly name = "firecrawl";
 
@@ -73,7 +72,7 @@ export class FirecrawlProvider implements SearchProvider {
       quotaStatuses: [429],
       quotaMessage:
         "Firecrawl rejected the request: keyless daily limit reached.",
-      // Firecrawl meters a rolling 24h window and reports the remainder in the body, not Retry-After.
+      // Firecrawl reports the wait in the body, not Retry-After.
       readRetryAfterMs,
     });
   }

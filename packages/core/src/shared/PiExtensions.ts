@@ -10,11 +10,7 @@ import { ExtensionToggles } from "./ExtensionToggles";
 import { Fs } from "./Fs";
 import { Paths } from "./Paths";
 
-/**
- * Every origin an entry comes from, in the order a reader meets them: the
- * roster is sorted by it, and a pane groups what it is handed without
- * restating it.
- */
+/** Also the sort order of `list`. */
 const EXTENSION_GROUPS = ["pim", "package", "user", "project"] as const;
 
 export type ExtensionGroup = (typeof EXTENSION_GROUPS)[number];
@@ -24,7 +20,7 @@ export type ExtensionEntry = {
   readonly label: string;
   readonly group: ExtensionGroup;
   readonly enabled: boolean;
-  /** Whether this process will write the toggle; a project-scoped entry is listed but not switched. */
+  /** False for project-scoped entries: listed, but not switchable. */
   readonly writable: boolean;
 };
 
@@ -76,8 +72,7 @@ async function setEnabled(
   await writes.run(() => writePiToggle(id.slice("pi:".length), enabled, scope));
 }
 
-// A fresh SettingsManager per write: `setExtensionPaths` persists its in-memory
-// copy, which another process may have superseded since we last read it.
+// Fresh SettingsManager per write: another process may have changed the file since.
 async function writePiToggle(
   path: string,
   enabled: boolean,
@@ -171,8 +166,7 @@ async function resolve(scope: ExtensionScope): Promise<Resolution> {
     agentDir,
     settingsManager,
   });
-  // Without an answer, pi npm-installs every missing or drifted package, so a
-  // bare listing request would fire off an install.
+  // "skip" stops pi from npm-installing missing packages during a listing.
   const resolved = await manager.resolve(async () => "skip");
   return { extensions: resolved.extensions, settingsManager };
 }
@@ -205,8 +199,7 @@ function piEntry(resource: ResolvedResource): ExtensionEntry {
       : fileLabel(path),
     group,
     enabled: resource.enabled,
-    // Scope, not group: a package a project configures is written to the repo's
-    // settings, which a browser toggle never touches.
+    // By scope, not group: project-configured packages live in the repo's settings.
     writable: metadata.scope === "user",
   };
 }

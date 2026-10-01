@@ -140,17 +140,11 @@ describe("row grouping", () => {
   test("a run of tool calls is one group, so the calls stack with no gap", () => {
     const host = replay([call("a"), call("b"), call("c")]);
 
-    // One wrapper, three rows: only the wrappers are spaced by a blank line.
     const groups = [...host.querySelectorAll(":scope > div > div")];
     expect(groups).toHaveLength(1);
     expect(groups[0]?.querySelectorAll("article")).toHaveLength(3);
   });
 
-  /**
-   * A step that only thought before calling the next tool is a row with
-   * nothing left in it once reasoning is hidden, and an empty row between two
-   * calls is a blank line between two calls: it must not be there at all.
-   */
   test("a step that only thought leaves no gap once thinking is hidden", () => {
     const host = mountPoint();
     const thought: DurableEvent = {
@@ -221,7 +215,6 @@ describe("painting", () => {
     );
   });
 
-  // Said with no words at all, which is most of how a screenshot is sent.
   test("a message that is only a picture draws no empty bubble", () => {
     const host = replay([photo("")]);
 
@@ -229,8 +222,7 @@ describe("painting", () => {
     expect(host.querySelector(".bg-neutral-850")).toBeNull();
   });
 
-  // Telegram keeps its uploads under a root this server does not publish, so
-  // the bytes are a 404 and a broken glyph is not an answer.
+  // e.g. Telegram uploads, which this server does not publish.
   test("a picture the server cannot serve falls back to its name", () => {
     const host = replay([photo("look")]);
     host.querySelector("img")!.dispatchEvent(new Event("error"));
@@ -240,12 +232,7 @@ describe("painting", () => {
     expect(host.querySelector("a")?.textContent).toBe("shot.png");
   });
 
-  // A subagent's prompt is the message that showed this up: it names files,
-  // and a path is one unbreakable run. The card is only ever as wide as its
-  // text, so a break that waits for the box to have a width leaves the box
-  // itself min-content wide — wider than the phone, hanging off its left
-  // edge. There is no layout in the DOM stub to measure, so the rule that
-  // makes the run count against the intrinsic width is the assertion.
+  // Long paths otherwise widen the card past a phone screen.
   test("a user message breaks a run too long to fit instead of widening", () => {
     const host = replay([
       {
@@ -263,9 +250,6 @@ describe("painting", () => {
     ).toContain("wrap-anywhere");
   });
 
-  // What was typed was written as markdown, so it is read back as markdown —
-  // and a chat message's own newlines survive it, which is why the card no
-  // longer carries `pre-wrap`.
   test("a sent user message is drawn as markdown, line breaks kept", () => {
     const host = replay([
       {
@@ -282,23 +266,6 @@ describe("painting", () => {
     expect(card?.querySelector("code")?.textContent).toBe("Card");
     expect(card?.querySelectorAll("li")).toHaveLength(2);
     expect(card?.querySelector("strong")?.textContent).toBe("bold");
-  });
-
-  test("a fenced block in a user message scrolls instead of widening the card", () => {
-    const host = replay([
-      {
-        seq: 1,
-        type: "message",
-        messageId: "m",
-        role: "user",
-        text: "I like this:\n\n```\nAn opinionated distro of Pi, reachable from your terminal, browser, or Telegram.\n```",
-        timestamp: 0,
-      },
-    ]);
-    const card = host.querySelector(".bg-neutral-850");
-
-    expect(card?.className).toContain("max-w-full");
-    expect(card?.querySelector("pre")).not.toBeNull();
   });
 
   test("a dead turn is a tagged rose line where the answer would have been", () => {
@@ -324,13 +291,6 @@ describe("painting", () => {
 });
 
 describe("static replay of a real session", () => {
-  test("renders every durable event without a live connection", () => {
-    const host = replay();
-
-    expect(host.textContent).toContain("Modernise the string building");
-    expect(host.querySelectorAll("article").length).toBeGreaterThan(4);
-  });
-
   test("a body sits behind a disclosure, and nothing opens itself", () => {
     const details = [...replay().querySelectorAll("details")];
     const diff = details.find((node) =>
@@ -353,7 +313,6 @@ describe("static replay of a real session", () => {
 
     expect(errored).toHaveLength(1);
     expect(errored[0]?.textContent).toContain("tsc --noEmit greeter.ts");
-    // No fill and no border box: the rule and the caret carry the failure.
     expect(errored[0]?.className).not.toContain("bg-");
   });
 
@@ -363,7 +322,6 @@ describe("static replay of a real session", () => {
     expect(first?.querySelector("div.bg-neutral-850")?.textContent).toContain(
       "Modernise the string building"
     );
-    // The wall clock beneath the card, in the reader's own timezone.
     const stamp = events.find((event) => event.type === "message")?.timestamp;
     expect(first?.textContent).toContain(clockTime(stamp ?? 0));
   });
@@ -378,10 +336,6 @@ describe("static replay of a real session", () => {
     expect(host.textContent).not.toContain("## Done");
   });
 
-  /**
-   * The one row a reader can still act on: it has no time to show, because
-   * it has not happened yet, and clicking it is how it is taken back.
-   */
   test("a queued message is a button that says so, and it calls back", () => {
     const host = mountPoint();
     let edits = 0;

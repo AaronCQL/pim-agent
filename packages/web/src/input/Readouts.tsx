@@ -9,7 +9,6 @@ const CONTEXT_TONES: Record<ContextFill, string> = {
   full: "text-rose-400",
 };
 
-/** What the session has spent and how full its context is. */
 export function Readouts(props: { readonly store: SessionStore }) {
   const fill = createMemo(() => {
     const percent = props.store.state.contextPercent;

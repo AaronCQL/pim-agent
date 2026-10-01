@@ -87,7 +87,7 @@ test("traversal in the filename cannot escape the scope", async () => {
 test("traversal in the scope is refused outright", async () => {
   const store = new AttachmentStore(join(root, "attachments"));
 
-  expect(
+  await expect(
     store.store("..", { bytes: bytes("x"), mimeType: "text/plain" })
   ).rejects.toThrow(/refusing path outside/);
 });
@@ -103,11 +103,6 @@ test("an explicit stem and extension are kept verbatim", async () => {
   expect(stored.id).toMatch(/^AgADAQADq6c-\d+\.jpg$/);
 });
 
-/**
- * The other direction: a file already on the agent's disk, copied in so the
- * endpoint can answer for it. The copy is the point — the transcript that
- * references it outlives whatever the agent does to the original next.
- */
 test("a file the agent nominated is copied under a stamped name", async () => {
   const source = join(root, "revenue.png");
   await Bun.write(source, PNG);
@@ -120,7 +115,6 @@ test("a file the agent nominated is copied under a stamped name", async () => {
   expect(stored.mimeType).toStartWith("image/png");
   expect(await Bun.file(stored.path).bytes()).toEqual(PNG);
 
-  // A copy, not a link: rewriting the original leaves the delivery alone.
   await Bun.write(source, "not a png anymore");
   expect(await Bun.file(stored.path).bytes()).toEqual(PNG);
 });
@@ -132,11 +126,10 @@ test("a delivered file is scoped and named like any other", async () => {
 
   const stored = await store.storeFile("session-1", source);
   expect(store.locate("session-1", stored.id)).toBe(stored.path);
-  // No extension to borrow, and none invented.
   expect(stored.id).toMatch(/^notes-\d+$/);
   expect(stored.mimeType).toBe("application/octet-stream");
 
-  expect(store.storeFile("..", source)).rejects.toThrow(
+  await expect(store.storeFile("..", source)).rejects.toThrow(
     /refusing path outside/
   );
 });

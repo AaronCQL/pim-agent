@@ -6,7 +6,7 @@ import { Pool } from "../../shared/Pool";
 
 const MATCH_CONCURRENCY = 16;
 
-export type GrepLine = {
+type GrepLine = {
   readonly lineNumber: number;
   readonly text: string;
 };
@@ -24,18 +24,18 @@ export type GrepMatch = {
   readonly fileLines: readonly string[];
 };
 
-export type GrepMatcher = {
+type GrepMatcher = {
   readonly regex: RegExp;
   readonly matchAcrossLines: boolean;
-  /** Raw-byte needle for the literal fast path; undefined leaves the regex path unchanged. */
+  /** Byte needle for the literal fast path. */
   readonly literal: Buffer | undefined;
 };
 
-export type GrepScanOptions = FileScanOptions & {
+type GrepScanOptions = FileScanOptions & {
   readonly retainFileLines?: boolean;
 };
 
-// ASCII-only: these stand for themselves in both a default-flag regex and raw UTF-8 bytes.
+// ASCII chars that mean the same as regex source and as raw bytes.
 const PURE_LITERAL = /^[A-Za-z0-9_ \-/]+$/;
 
 function literalNeedle(
@@ -95,7 +95,7 @@ export async function findMatches(
   return scanned.filter((match) => match !== undefined);
 }
 
-// An entry may not be a readable regular file: an unreadable one is a non-match, never a failure.
+// Unreadable entries are non-matches, not errors.
 async function matchFile(
   filePath: string,
   matcher: GrepMatcher,
@@ -110,7 +110,7 @@ async function matchFile(
     }
 
     if (matcher.literal !== undefined) {
-      // Literal fast path: an ASCII needle's raw-byte hit/miss matches the decoded result.
+      // Skip decoding files that can't contain the needle.
       const bytes = Buffer.from(await file.arrayBuffer());
       if (bytes.indexOf(matcher.literal) < 0) {
         return undefined;

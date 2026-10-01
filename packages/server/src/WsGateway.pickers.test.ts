@@ -12,7 +12,7 @@ import { ProbeClient } from "./ProbeClient";
 import { WsGateway } from "./WsGateway";
 
 const REPLY = "all done";
-/** Roughly this repository's tracked file count, generated on the fly. */
+/** Roughly this repository's tracked file count. */
 const BIG_TREE_FILES = 1400;
 
 let tmp: string;
@@ -27,7 +27,6 @@ let probes: ProbeClient[] = [];
 
 const writeSchema = Type.Object({ path: Type.String() });
 
-/** Tier 2: runs unattended, and moves what the file picker would answer. */
 function writeTool(): PimToolDefinition<typeof writeSchema, { path: string }> {
   return {
     name: "put_file",
@@ -209,7 +208,7 @@ test("ships rows, never a catalog", async () => {
     (event) => event.type === "response" && event.items !== undefined
   );
   expect(response?.type === "response" && response.items).toHaveLength(2);
-  // Everything past the limit stayed on the server, catalog included.
+  // Nothing past the limit leaves the server.
   expect(JSON.stringify(probe.events)).not.toContain("Router.ts");
 });
 
@@ -299,14 +298,8 @@ test("stays well under 50ms per keystroke on a repo-sized tree", async () => {
     expect(items?.length).toBeGreaterThan(0);
   }
 
-  // A budget on the slowest of five queries is a budget on the machine's
-  // scheduler: a shared CI core preempts one of them and the run goes red
-  // while nothing regressed. What a regression looks like — an index rebuilt
-  // per keystroke instead of reused — is every query getting slower, so the
-  // median is what carries the claim.
+  // Assert the median: a single slow query is usually scheduler noise.
   const median = warm.toSorted((a, b) => a - b)[Math.floor(warm.length / 2)]!;
-  // Only worth reading on the way to the budget; printed every run it is a
-  // number nobody compares against anything.
   if (median > 25) {
     console.log(
       `[picker] ${String(BIG_TREE_FILES)} files: cold ${coldMs.toFixed(1)}ms, warm median ${median.toFixed(1)}ms, warm ${warm.map((ms) => ms.toFixed(1)).join("/")}ms`

@@ -40,7 +40,6 @@ function entryLine(index: number): string {
   return `${JSON.stringify({ type: "message", id: `e${index}` })}\n`;
 }
 
-/** Header on line 1, so `entryCount` durable entries put the head at `entryCount + 1`. */
 async function writeSession(path: string, entryCount: number): Promise<void> {
   const header = `${JSON.stringify({ type: "session", id: "s", version: 8 })}\n`;
   const entries = Array.from({ length: entryCount }, (_, i) => entryLine(i));
@@ -53,7 +52,6 @@ async function appendEntries(path: string, count: number): Promise<void> {
   }
 }
 
-/** The one line a rename from another surface leaves behind. */
 async function appendName(path: string, name: string): Promise<void> {
   await appendFile(
     path,
@@ -154,7 +152,6 @@ function createHarness(): Harness {
   return harness;
 }
 
-/** A harness bound to a session file whose entries pi already has in memory. */
 async function started(
   name: string,
   entryCount: number
@@ -224,8 +221,6 @@ test("an out-of-turn write from this terminal is not staleness", async () => {
   expect(harness.notifications).toEqual([]);
 });
 
-// The browser renames a session the terminal is sitting in. Nothing it holds has
-// moved, so tearing the session down to catch up would cost more than it saves.
 test("a rename from another surface is not staleness", async () => {
   const { harness, path } = await started("renamed", 2);
 
@@ -234,7 +229,6 @@ test("a rename from another surface is not staleness", async () => {
   await expect(harness.input("hello")).resolves.toEqual({ action: "continue" });
   expect(harness.notifications).toEqual([]);
 
-  // Re-anchored on the rename, so the next foreign line is still caught.
   await appendEntries(path, 1);
   await expect(harness.input("hello")).resolves.toEqual({ action: "handled" });
 });
@@ -249,8 +243,7 @@ test("a message beside the rename is still staleness", async () => {
   expect(harness.notifications[0]?.message).toContain("continued elsewhere");
 });
 
-// pi names the file at session_start and buffers entries until the first assistant reply,
-// so the whole of that first write — header included — is ours.
+// pi creates the file only on the first assistant reply.
 test("a session file that only appears during the first turn is not staleness", async () => {
   const path = join(tmp, "unborn.jsonl");
   const harness = createHarness();

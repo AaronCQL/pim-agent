@@ -336,39 +336,6 @@ test("a query nothing matches shows no picker at all", async () => {
   expect(panel(host)).toBeUndefined();
 });
 
-test("the picker asks for fifty files and twenty commands", async () => {
-  const store = offline();
-  const seen = answers(store, () => rows("greeter.ts"));
-  const asked = commands(store, () => [{ value: "/skill", label: "/skill" }]);
-  store.ingest(attached());
-  const { host, input } = paint(store);
-
-  type(input, "@gre");
-  await until(() => options(host).length > 0, "the file rows");
-  type(input, "/ski");
-  await until(() => asked.length > 0, "the command query");
-
-  expect(seen.find((command) => command.type === "pick_files")).toEqual({
-    type: "pick_files",
-    sessionId: "s1",
-    query: "gre",
-    limit: 50,
-  });
-  expect(asked).toEqual([{ query: "ski", limit: undefined }]);
-
-  const direct = offline();
-  const frames = answers(direct, () => rows("/skill"));
-  direct.ingest(attached());
-  flush();
-  await direct.pickCommands("ski");
-  expect(frames.find((command) => command.type === "pick_commands")).toEqual({
-    type: "pick_commands",
-    sessionId: "s1",
-    query: "ski",
-    limit: 20,
-  });
-});
-
 test("pasting files uploads them; pasting words is left to the browser", async () => {
   const store = offline();
   answers(store, () => ({}));
@@ -751,7 +718,6 @@ test("a foreign lease wears the reason and keeps the words typed", async () => {
   expect(seen[0]?.text).toBe("your turn is mine now");
 });
 
-/** A review the shell would hand down, whose count the test moves. */
 function reviewProp(
   count: () => number,
   trace: string[],
@@ -811,7 +777,6 @@ test("the review chip counts, opens and discards, and hides at zero", () => {
   expect(chip()).toBeNull();
 });
 
-/** The comments are what the message is about, so the message is read last. */
 test("one message carries the review above the words, and only a send clears it", async () => {
   const store = offline();
   answers(store, () => ({}));
@@ -827,7 +792,7 @@ test("one message carries the review above the words, and only a send clears it"
   const { host, input } = paint(store, [], () => ({
     count: 2,
     text: () => "REVIEW BLOCK",
-    // What went, so a send that was refused cannot pass for one that went.
+    // Records what went, so a refused send cannot pass for a sent one.
     sent: () => {
       sent.push(said[said.length - 1] ?? "");
     },

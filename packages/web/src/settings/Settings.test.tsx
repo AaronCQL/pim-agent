@@ -21,31 +21,19 @@ afterEach(() => {
   dispose = undefined;
 });
 
-test("an empty address is this origin, and every way of typing one is a socket", () => {
+test.each([
+  ["", `ws://${location.host}`],
+  ["laptop:4319", "ws://laptop:4319"],
+  ["http://laptop:4319", "ws://laptop:4319"],
+  ["https://pim.example.com", "wss://pim.example.com"],
+  ["ws://laptop:4319", "ws://laptop:4319"],
+  ["wss://pim.example.com/", "wss://pim.example.com"],
+  ["  laptop:4319  ", "ws://laptop:4319"],
+  ["file:///etc/passwd", `ws://${location.host}`],
+])("gateway for %p is %p", (typed, expected) => {
   const settings = new Settings();
-  expect(settings.gateway()).toBe(`ws://${location.host}`);
-  const cases: Record<string, string> = {
-    "laptop:4319": "ws://laptop:4319",
-    "http://laptop:4319": "ws://laptop:4319",
-    "https://pim.example.com": "wss://pim.example.com",
-    "ws://laptop:4319": "ws://laptop:4319",
-    "wss://pim.example.com/": "wss://pim.example.com",
-    "  laptop:4319  ": "ws://laptop:4319",
-  };
-  for (const [typed, expected] of Object.entries(cases)) {
-    settings.setServerUrl(typed);
-    expect(settings.gateway()).toBe(expected);
-  }
-});
-
-/**
- * A typo must not be able to strand the app with nowhere to connect: the
- * modal that repairs it is only reachable from a shell that mounted.
- */
-test("an address that cannot be read falls back to this origin", () => {
-  const settings = new Settings();
-  settings.setServerUrl("file:///etc/passwd");
-  expect(settings.gateway()).toBe(`ws://${location.host}`);
+  settings.setServerUrl(typed);
+  expect(settings.gateway()).toBe(expected);
 });
 
 test("preferences survive the tab that set them", () => {
@@ -65,7 +53,6 @@ test("junk in storage reads as the defaults rather than throwing", () => {
   expect(settings.state.hideThinking).toBe(false);
 });
 
-/** The whole point of the preference, at the one place it is read. */
 test("hidden thinking keeps reasoning out of the transcript", () => {
   const host = mountPoint();
   const settings = new Settings();
@@ -97,10 +84,6 @@ test("hidden thinking keeps reasoning out of the transcript", () => {
   expect(host.textContent).toContain("Done.");
 });
 
-/**
- * Saving an address is a navigation, not a reconnect: one URL is baked into
- * the socket, the upload endpoint and every image link at construction.
- */
 test("a saved address is persisted and the page is sent to it", () => {
   const { host, settings, reloads, store } = open();
   const field = host.querySelector<HTMLInputElement>(
@@ -120,7 +103,6 @@ test("a saved address is persisted and the page is sent to it", () => {
   store.dispose();
 });
 
-/** The way back from a typo, on the tab that can no longer reach anything. */
 test("this device is offered as somewhere to go back to, and only then", () => {
   localStorage.setItem(
     "pim.settings",

@@ -4,13 +4,10 @@ import type { ToolDiffLineKind } from "#core/shared/DiffLines";
 import type { AnchorState } from "./anchors";
 import type { SyntaxRole } from "./highlight";
 
-/** How a block sits in a body: prose, a payload nothing may re-wrap, or a heading. */
+/** `embed` is a payload that must not re-wrap. */
 export type Frame = "flow" | "embed" | "heading";
 
-export const FRAMES = Painting.FRAMES satisfies Record<
-  ViewBlock["kind"],
-  Frame
->;
+const FRAMES = Painting.FRAMES satisfies Record<ViewBlock["kind"], Frame>;
 
 export const FRAME_CLASSES = {
   flow: "flex flex-col",
@@ -19,7 +16,6 @@ export const FRAME_CLASSES = {
 } as const satisfies Record<Frame, string>;
 
 export const TONE_CLASSES = {
-  // Empty: prose inherits the transcript's colour, including inside a tool body.
   default: "",
   muted: "text-neutral-400",
   dim: "text-neutral-500",
@@ -74,23 +70,12 @@ export const DIFF_GUTTER_CLASSES = {
   removed: "text-rose-400",
 } as const satisfies Record<ToolDiffLineKind, string>;
 
-/**
- * Both of a gutter's channels in one indigo: offered on hover, standing once a
- * line is held. The hold's wash is opaque — see `.pim-diff-held` in
- * `styles.css` — so a unified row's own tint passes behind the number rather
- * than through it.
- */
+/** `.pim-diff-held` (styles.css) is opaque, hiding the row tint behind the gutter. */
 export const DIFF_ANCHOR_CLASSES = {
   idle: "hover:bg-indigo-500/12 hover:text-indigo-300",
   held: "pim-diff-held text-indigo-200",
 } as const satisfies Record<AnchorState, string>;
 
-/**
- * A gutter's own ink, given over to indigo while a comment has the line: the
- * number and sign go with the wash so the mark reads as one object with the
- * card under it. The kind is not lost with them — the row's green or red runs
- * behind the whole line, and the sign says it in glyph rather than colour.
- */
 export function diffAnchorClass(
   kind: ToolDiffLineKind,
   state: AnchorState,
@@ -99,18 +84,12 @@ export function diffAnchorClass(
   if (state === "held") {
     return DIFF_ANCHOR_CLASSES.held;
   }
-  // Ink for the kind and a hover offer over it: the `hover:` variant outranks
-  // the plain colour by specificity, so the two never race on source order.
   return target
     ? `${DIFF_GUTTER_CLASSES[kind]} ${DIFF_ANCHOR_CLASSES.idle}`
     : DIFF_GUTTER_CLASSES[kind];
 }
 
-/**
- * A gutter that wears its row's tint itself, as a split cell does where a
- * unified one sits inside the tinted row. A held gutter wears the anchor
- * alone: two washes over one another would read as a third colour.
- */
+/** For split cells, which carry the row tint themselves; a held gutter drops it. */
 export function diffGutterClass(
   kind: ToolDiffLineKind,
   state: AnchorState,
@@ -121,18 +100,12 @@ export function diffGutterClass(
 }
 
 /**
- * The half of a split pair whose side has no line there: not a blank line, but
- * no line at all. Hatched, defined in `styles.css` — the two say different
- * things and a reader has to be able to tell them apart at a glance. The text
- * column wears it alone: a gradient restarts in every box it is given, so a
- * hatched gutter beside a hatched line would show the phase break between them.
+ * Hatched (styles.css) split-view cell with no line. Put it on the text column
+ * only: on the gutter too, the gradient's phase break would show.
  */
 export const DIFF_FILLER_CLASS = "pim-diff-filler";
 
-/**
- * The gap between two hunks: code that exists and is not being shown. A flat
- * wash, because unlike a filler it stands for something a reader could ask for.
- */
+/** Hidden lines between two hunks. */
 export const DIFF_GAP_CLASS = "bg-neutral-500/10";
 
 export function toneClass(tone: Tone | undefined): string {
@@ -155,12 +128,12 @@ export function spineClass(isPartial: boolean, isError: boolean): string {
     : "text-neutral-750 group-hover:text-neutral-500";
 }
 
-export type FrameGroup = {
+type FrameGroup = {
   readonly frame: Frame;
   readonly blocks: readonly ViewBlock[];
 };
 
-/** Runs of consecutive same-frame blocks; headings never merge with a neighbour. */
+/** Headings never merge with a neighbour. */
 export function groupByFrame(
   blocks: readonly ViewBlock[]
 ): readonly FrameGroup[] {

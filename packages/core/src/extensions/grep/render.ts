@@ -10,13 +10,13 @@ import type { ToolView, ViewBlock } from "../../view/ViewBlock";
 import type { GrepLineRange, GrepMatch } from "./grep";
 import type { GrepInput, GrepOutputMode, GrepPathFormat } from "./schema";
 
-export type RenderOutcome = SearchList & {
+type RenderOutcome = SearchList & {
   readonly fileCount: number;
   readonly totalMatches: number;
   readonly itemNoun: string;
 };
 
-export type RenderOptions = {
+type RenderOptions = {
   readonly cwd: string;
   readonly pathFormat: GrepPathFormat;
   readonly context: number;
@@ -60,7 +60,7 @@ export function renderMatches(
   };
 }
 
-export type TitleOptions = {
+type TitleOptions = {
   readonly pattern: string | undefined;
   readonly path: string | undefined;
   readonly glob: string | undefined;
@@ -81,10 +81,9 @@ export type GrepViewDetails = {
   readonly fileCount?: number;
 };
 
-export type GrepViewInput = {
-  /** Partially streamed while the call is in flight; every field is optional. */
+type GrepViewInput = {
   readonly args: Partial<GrepInput>;
-  /** The result body the tool already rendered for the model; empty in flight. */
+  /** Empty while in flight. */
   readonly body: string;
   readonly details?: GrepViewDetails;
   readonly cwd: string;

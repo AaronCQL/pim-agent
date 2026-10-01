@@ -8,7 +8,6 @@ import { Surfaces, type SurfaceName } from "./Surfaces";
 
 type FrozenUnit = Unit & { readonly args: ReadonlyArray<string> };
 
-/** What this machine serves today: the unit being replaced, or the ones it supersedes. */
 export type Installed = {
   readonly surfaces: ReadonlyArray<SurfaceName>;
   readonly args: ReadonlyArray<string>;
@@ -17,10 +16,8 @@ export type Installed = {
 const NOTHING: Installed = { surfaces: [], args: [] };
 
 /**
- * A supervisor starts the daemon with no argv: every flag it needs must be
- * frozen in here. What is installed already is the base the new argv overrides
- * flag by flag, so installing one surface keeps the other one — and its
- * settings. Naming `--surfaces` outright is how a daemon is shrunk again.
+ * The supervisor starts the daemon with no argv, so every flag is frozen here.
+ * `argv` overrides `installed` flag by flag; an explicit `--surfaces` replaces the surface list.
  */
 function unit(
   argv: ReadonlyArray<string>,
@@ -35,7 +32,7 @@ function unit(
     description: `${DaemonUnit.description} (${surfaces.join(", ")})`,
     args: [
       "--surfaces",
-      Surfaces.format(surfaces),
+      surfaces.join(","),
       ...(surfaces.includes("web")
         ? WebOptions.freeze(WebOptions.parse(merged))
         : []),
@@ -43,10 +40,7 @@ function unit(
   };
 }
 
-/**
- * The merged unit's own argv, or — before the cutover — whatever the per-surface
- * units were installed with, so a tailnet hostname frozen months ago survives.
- */
+/** The daemon unit's argv, falling back to the superseded per-surface units'. */
 async function installed(): Promise<Installed> {
   const current = await Supervisor.installedArgs(DaemonUnit);
   if (current.length > 0) {
@@ -63,7 +57,7 @@ async function installed(): Promise<Installed> {
   };
 }
 
-// `--web-cwd` becomes `--cwd` on the way in, or it would outrank a new `--cwd`.
+// Map `--web-cwd` back to `--cwd` so a new `--cwd` can override it.
 function carriedOver(args: ReadonlyArray<string>): ReadonlyArray<string> {
   return args.map((arg) => (arg === "--web-cwd" ? "--cwd" : arg));
 }
@@ -93,7 +87,6 @@ async function uninstall(): Promise<void> {
 
 async function buildClient(): Promise<void> {
   const at = await Supervisor.detectInstall();
-  // Probe `index.html`, not the directory: a half-emptied `dist/client` is still a broken bundle.
   const bundled = await Bun.file(
     join(DEFAULT_CLIENT_DIR, "index.html")
   ).exists();

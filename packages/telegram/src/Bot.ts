@@ -20,7 +20,7 @@ export class Bot {
   private readonly scheduler: TaskScheduler;
   private readonly config: TelegramConfig;
   private readonly commands: Commands;
-  /** Grammy's long poll, which only settles once the bot is stopped. */
+  /** Settles only once the bot is stopped. */
   private polling: Promise<void> | undefined;
 
   public constructor(config: TelegramConfig, runtime: AgentRuntime) {
@@ -106,7 +106,7 @@ export class Bot {
     this.registry.setBotUsername(username);
     console.log(`bot @${username} ready`);
     await this.scheduler.start();
-    // Polling outlives this call: awaiting it would hold every other surface down with it.
+    // Not awaited: it resolves only when polling stops.
     this.polling = this.grammy.start().catch((err: unknown) => {
       console.error("[bot] polling stopped:", err);
     });

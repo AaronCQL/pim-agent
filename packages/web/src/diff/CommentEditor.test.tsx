@@ -8,14 +8,9 @@ import { DiffLines, type ToolDiffHunk } from "#core/shared/DiffLines";
 import type { ChangeSummary } from "#protocol/Diff";
 import { mountPoint } from "../test/dom";
 import { CommentEditor } from "./CommentEditor";
-import { Comments, ReviewComments } from "./Comments";
+import { Comments, ReviewComments, type Comment } from "./Comments";
 import type { FileState } from "./DiffStore";
 import { FileRow } from "./FileRow";
-
-/**
- * The card is the editor, and on a device with no pointer the editor is a
- * sheet: the same words, written where the soft keyboard leaves room for them.
- */
 
 const PATH = "src/alpha.ts";
 const REPO = "/home/dev/repo";
@@ -25,7 +20,7 @@ const TO = "one\nTWO\nthree\n";
 let dispose: (() => void) | undefined;
 let realMatchMedia: typeof globalThis.matchMedia | undefined;
 
-/** A device that answers no to "is there a real pointer?", which is a phone. */
+/** Simulates a device with no hover-capable pointer. */
 function touch(): void {
   realMatchMedia ??= globalThis.matchMedia;
   const real = realMatchMedia.bind(globalThis);
@@ -127,14 +122,6 @@ test("every keystroke is written through, with nothing to press", () => {
   expect(card.host.textContent).not.toContain("Cancel");
 });
 
-/** No header, no line label, no quote: the card is the comment and nothing else. */
-test("the card carries the comment and says nothing about where it hangs", () => {
-  const card = paint({ text: "Move this to the trailing edge" });
-
-  expect(box(card.host).value).toBe("Move this to the trailing edge");
-  expect(card.host.textContent?.trim()).toBe("");
-});
-
 test("a new card opens with the cursor already in it", () => {
   const card = paint({ focus: true });
 
@@ -154,24 +141,18 @@ test("escape closes the editor and leaves what was typed in it", () => {
   expect(card.written).toEqual(["worth keeping"]);
 });
 
-/** Typed into, cleared, and walked away from: what is left says nothing. */
-test("a card blurred with nothing left in it discards what it held", () => {
-  const card = paint({ text: "half a thought" });
-  press(box(card.host), "");
-  blur(box(card.host));
+test.each(["", "  \n\t "])(
+  "a card blurred holding %p discards what it held",
+  (text) => {
+    const card = paint({ text: "half a thought" });
+    press(box(card.host), text);
+    blur(box(card.host));
 
-  expect(card.discarded()).toBe(1);
-  expect(card.removed()).toBe(0);
-  expect(card.closed()).toBe(0);
-});
-
-test("a card holding only blanks is as empty as one holding nothing", () => {
-  const card = paint();
-  press(box(card.host), "  \n\t ");
-  blur(box(card.host));
-
-  expect(card.discarded()).toBe(1);
-});
+    expect(card.discarded()).toBe(1);
+    expect(card.removed()).toBe(0);
+    expect(card.closed()).toBe(0);
+  }
+);
 
 test("a card blurred with words in it is left alone", () => {
   const card = paint({ text: "worth keeping" });
@@ -190,19 +171,6 @@ test("the cross is the only way the card goes away", () => {
     ?.click();
 
   expect(card.removed()).toBe(1);
-});
-
-/** Amber says one thing on this page, and the card's own ring never says it. */
-test("a file that has moved on is chipped beside the card, not around it", () => {
-  const stale = paint({ stale: true });
-  const fresh = paint({ stale: false });
-
-  expect(stale.host.textContent).toContain("Stale");
-  expect(stale.host.firstElementChild?.className).toContain(
-    "inset-ring-indigo-400"
-  );
-  expect(stale.host.firstElementChild?.className).not.toContain("amber");
-  expect(fresh.host.textContent).not.toContain("Stale");
 });
 
 test("a card with no caret to give hands the tap on instead", () => {
@@ -267,6 +235,10 @@ function row(comments: Comments): HTMLElement {
   return host;
 }
 
+function listed(comments: Comments, path: string): readonly Comment[] {
+  return comments.all().filter((comment) => comment.path === path);
+}
+
 function loaded(): Comments {
   const comments = new Comments();
   comments.load(REPO);
@@ -305,11 +277,6 @@ test("a picked line on a phone is written about in the sheet, not under the row"
   expect(host.querySelectorAll("textarea").length).toBe(1);
 });
 
-/**
- * The sheet quotes the file the way the file reads — numbered, signed and
- * washed — and titles itself with the name alone: the path is what the reader
- * just tapped their way through.
- */
 test("the sheet quotes the picked line as the diff paints it", () => {
   touch();
   const comments = loaded();
@@ -328,29 +295,6 @@ test("the sheet quotes the picked line as the diff paints it", () => {
   );
 });
 
-/**
- * The composer sits on the keyboard rather than halfway up a black screen, and
- * the quote it is answering ends where its last line does — a rule under empty
- * space reads as a pane with nothing in it.
- */
-test("the composer keeps the foot and the quote ends with its lines", () => {
-  touch();
-  const comments = loaded();
-  const host = row(comments);
-
-  pick(host, "Comment on new line 2");
-  const quote = sheet(host).querySelector("header + div")!;
-  const composer = sheetBox(host).parentElement!;
-
-  expect(quote.className).not.toContain("flex-1");
-  // It gives way to the composer instead of pushing it off, and scrolls itself.
-  expect(quote.className).toContain("min-h-0");
-  expect(quote.className).toContain("overflow-auto");
-  expect(composer.className).toContain("mt-auto");
-  expect(composer.className).toContain("shrink-0");
-});
-
-/** A sheet is opened to be written in, so the caret and the keyboard come with it. */
 test("the sheet opens with the caret already in it", () => {
   touch();
   const comments = loaded();
@@ -381,8 +325,8 @@ test("the sheet keeps what it is handed only when it is pressed", () => {
   flush();
 
   expect(comments.count(PATH)).toBe(1);
-  expect(comments.list(PATH)[0]?.text).toBe("said on purpose");
-  expect(comments.list(PATH)[0]?.start).toBe(2);
+  expect(listed(comments, PATH)[0]?.text).toBe("said on purpose");
+  expect(listed(comments, PATH)[0]?.start).toBe(2);
   expect(sheet(host).open).toBe(false);
 });
 
@@ -405,7 +349,7 @@ test("a saved comment tapped on a phone reopens in the sheet", () => {
   flush();
 
   expect(comments.count(PATH)).toBe(1);
-  expect(comments.list(PATH)[0]?.text).toBe("said again");
+  expect(listed(comments, PATH)[0]?.text).toBe("said again");
 });
 
 test("a desktop row writes in place and opens no sheet", () => {

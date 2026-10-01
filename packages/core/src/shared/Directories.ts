@@ -10,11 +10,11 @@ export type DirectoryEntry = {
 };
 
 export type DirectoryListing = {
-  /** What was read: absolute, resolved, and with `~` expanded. */
+  /** Absolute, resolved, `~` expanded. */
   readonly path: string;
-  /** Absent at the root of the filesystem, which is its own parent. */
+  /** Absent at the filesystem root. */
   readonly parent?: string;
-  /** The directories inside it, name-sorted, hidden ones included. */
+  /** Subdirectories only, name-sorted, hidden included. */
   readonly entries: readonly DirectoryEntry[];
 };
 
@@ -78,7 +78,7 @@ function refusal(error: unknown, path: string): string {
   }
 }
 
-/** Makes one directory inside an existing one. Never recursive: a parent that is missing is said so, not invented. */
+/** Not recursive: a missing parent is an error. */
 async function create(path: string): Promise<void> {
   const name = basename(Paths.expandHome(path));
   if (name === "" || name === "." || name === "..") {

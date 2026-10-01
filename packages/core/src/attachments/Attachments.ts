@@ -4,24 +4,22 @@ import { basename, extname } from "node:path";
 import type { StoredAttachment } from "./AttachmentStore";
 
 export type AttachmentPrompt = {
-  /** One line per file, appended to the prompt text. */
   readonly lines: readonly string[];
   readonly images: NonNullable<PromptOptions["images"]>;
 };
 
-/** One file a prompt carried, read back out of the text that carried it. */
 export type PromptAttachment = {
   readonly path: string;
   readonly isImage: boolean;
 };
 
 export type ParsedPrompt = {
-  /** The prompt with the marker lines removed: what a person actually said. */
+  /** The prompt with the marker lines removed. */
   readonly text: string;
   readonly files: readonly PromptAttachment[];
 };
 
-// Must keep matching every spelling `render` has ever produced: old session files still carry them.
+// Old session files carry older spellings; keep matching them.
 const MARKER = /^\[(image )?attachment:\s*(.+)]$/i;
 
 const STAMP = /-\d{10,}$/;

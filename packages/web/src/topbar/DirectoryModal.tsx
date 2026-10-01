@@ -18,11 +18,11 @@ import { followActive } from "../ui/scroll";
 type Row = {
   readonly path: string;
   readonly label: string;
-  /** The row that makes what was typed, rather than walking to something that is already there. */
+  /** Creates the typed folder instead of entering an existing one. */
   readonly create: boolean;
 };
 
-/** Where to work: the rows navigate, the button opens a new session in whatever the box names. */
+/** Rows navigate; the button starts a session in the directory the box names. */
 export function DirectoryModal(props: {
   readonly open: boolean;
   readonly onClose: () => void;
@@ -65,9 +65,7 @@ export function DirectoryModal(props: {
       setFailure("");
       setRefused("");
       if (untrack(typing) && box) {
-        // Only the selection, which is the element's and waits there for the
-        // caret `autofocus` brings: this runs while the dialog is still
-        // display:none, where a `focus()` of its own could not take.
+        // The dialog is still hidden here, so only select; `autofocus` focuses later.
         box.setSelectionRange(0, box.value.length);
       }
     }
@@ -76,7 +74,7 @@ export function DirectoryModal(props: {
   createEffect(
     () => ({ open: props.open, path: anchor(), store: props.store }),
     ({ open, path, store }) => {
-      // Bump before the early return, or an answer in flight when the modal closes seeds the next open.
+      // Bump even when closed, so an in-flight answer can't seed the next open.
       const mine = ++generation;
       if (!open) {
         return;
@@ -98,11 +96,7 @@ export function DirectoryModal(props: {
     }
   );
 
-  /**
-   * A `/` in the box re-anchors it, so a filter never holds one: what the
-   * create row makes is a single name inside the directory being browsed, and
-   * the `mkdir` behind it is non-recursive by construction.
-   */
+  // The filter never contains `/`, so this is always a direct child.
   const within = (name: string): string =>
     `${anchor().replace(/\/$/, "")}/${name}`;
 
@@ -158,13 +152,7 @@ export function DirectoryModal(props: {
     () => props.open
   );
 
-  /**
-   * The box's value is the whole of what the rows are: a step into a folder
-   * and a keystroke of filter both replace the list under the caret, and a
-   * caret that only clamped would land on a row nobody chose. Opening counts
-   * too: the box selects its whole path for retyping, and a caret left where
-   * the last visit parked it would be the one thing that did not start over.
-   */
+  // Any change to the box or reopening replaces the rows, so reset the selection.
   createEffect(
     () => ({ text: input(), open: props.open }),
     () => {
@@ -176,7 +164,11 @@ export function DirectoryModal(props: {
     filter() === "" ? listing()?.path : named()
   );
 
-  const commit = (path: string): void => {
+  const start = (): void => {
+    const path = target();
+    if (path === undefined) {
+      return;
+    }
     props.onClose();
     void props.store.openDirectory(path).catch(() => undefined);
   };
@@ -186,7 +178,7 @@ export function DirectoryModal(props: {
     setInput(`${path}/`);
   };
 
-  /** False at the root of the filesystem, which is its own parent. */
+  /** False at the filesystem root. */
   const stepOut = (): boolean => {
     const parent = listing()?.parent;
     if (parent === undefined) {
@@ -219,13 +211,10 @@ export function DirectoryModal(props: {
   const onKeyDown = (event: KeyboardEvent): void => {
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
-      const path = target();
-      if (path !== undefined) {
-        commit(path);
-      }
+      start();
       return;
     }
-    // Before the list is offered the key: bare ArrowUp is the caret's.
+    // Checked before the list sees ArrowUp.
     if ((event.altKey || event.metaKey) && event.key === "ArrowUp") {
       if (stepOut()) {
         event.preventDefault();
@@ -322,12 +311,7 @@ export function DirectoryModal(props: {
             aria-label="Start a new session in this directory"
             title="Start a new session in this directory (Ctrl+Enter)"
             class={ACTION}
-            onClick={() => {
-              const path = target();
-              if (path !== undefined) {
-                commit(path);
-              }
-            }}
+            onClick={start}
           >
             New Session
           </button>

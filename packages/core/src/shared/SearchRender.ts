@@ -3,9 +3,9 @@ import { Paths } from "./Paths";
 
 export const NO_MATCHES = "No matches.";
 
-export type SearchPathFormat = "relative" | "absolute";
+type SearchPathFormat = "relative" | "absolute";
 
-export type SearchPathOptions = {
+type SearchPathOptions = {
   readonly cwd: string;
   readonly pathFormat: SearchPathFormat;
 };
@@ -17,7 +17,7 @@ export type SearchList = {
   readonly truncated: boolean;
 };
 
-export type SubjectTitleOptions = {
+type SubjectTitleOptions = {
   readonly subject: string;
   readonly path: string | undefined;
   readonly suffix?: string | undefined;
@@ -75,7 +75,6 @@ function capList(lines: readonly string[], headLimit: number): SearchList {
 }
 
 export const SearchRender = {
-  NO_MATCHES,
   formatPath,
   subjectTitle,
   capList,

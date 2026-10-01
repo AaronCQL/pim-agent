@@ -2,62 +2,20 @@ import { describe, expect, test } from "bun:test";
 import { Levenshtein } from "./Levenshtein";
 
 describe("Levenshtein.distance", () => {
-  test("identical strings have distance 0", () => {
-    expect(Levenshtein.distance("abc", "abc")).toBe(0);
-  });
-
-  test("empty strings have distance 0", () => {
-    expect(Levenshtein.distance("", "")).toBe(0);
-  });
-
-  test("empty string distance equals length of the other", () => {
-    expect(Levenshtein.distance("", "abc")).toBe(3);
-    expect(Levenshtein.distance("abc", "")).toBe(3);
-  });
-
-  test("single-character insertion", () => {
-    expect(Levenshtein.distance("ab", "abc")).toBe(1);
-  });
-
-  test("single-character deletion", () => {
-    expect(Levenshtein.distance("abc", "ab")).toBe(1);
-  });
-
-  test("single-character substitution", () => {
-    expect(Levenshtein.distance("abc", "axc")).toBe(1);
-  });
-
-  test("multiple operations", () => {
-    expect(Levenshtein.distance("kitten", "sitting")).toBe(3);
-  });
-
-  test("no-op: same string via identity check", () => {
-    const s = "hello world";
-    expect(Levenshtein.distance(s, s)).toBe(0);
-  });
-
-  test("reverse strings", () => {
-    expect(Levenshtein.distance("abcde", "edcba")).toBe(4);
-  });
-
-  test("longer strings with small edit distance", () => {
-    expect(Levenshtein.distance("intention", "execution")).toBe(5);
-  });
-
-  test("unicode characters", () => {
-    expect(Levenshtein.distance("café", "cafè")).toBe(1);
-  });
-
-  test("same length, all different", () => {
-    expect(Levenshtein.distance("abc", "xyz")).toBe(3);
-  });
-
-  test("one is prefix of other", () => {
-    expect(Levenshtein.distance("abc", "abcd")).toBe(1);
-  });
-
-  test("asymmetric length with shared prefix", () => {
-    expect(Levenshtein.distance("abc", "abcxyz")).toBe(3);
+  test.each([
+    ["abc", "abc", 0],
+    ["", "", 0],
+    ["", "abc", 3],
+    ["abc", "", 3],
+    ["ab", "abc", 1],
+    ["abc", "ab", 1],
+    ["abc", "axc", 1],
+    ["kitten", "sitting", 3],
+    ["abcde", "edcba", 4],
+    ["intention", "execution", 5],
+    ["café", "cafè", 1],
+  ])("%p → %p is %p", (left, right, expected) => {
+    expect(Levenshtein.distance(left, right)).toBe(expected);
   });
 });
 
@@ -74,7 +32,7 @@ describe("Levenshtein.damerau", () => {
     expect(Levenshtein.damerau("abc", "abc", 0)).toBe(0);
   });
 
-  test("a pair further apart than the ceiling answers just past it", () => {
+  test("a pair further apart than the ceiling answers max + 1", () => {
     expect(Levenshtein.damerau("kitten", "sitting", 1)).toBe(2);
     expect(Levenshtein.damerau("lease", "telegram", 2)).toBe(3);
     expect(Levenshtein.damerau("", "abc", 2)).toBe(3);

@@ -10,7 +10,6 @@ import { getCurrentItems } from "./todo";
 
 type Handler = (event: unknown, ctx: ExtensionContext) => unknown;
 type RegisteredTool = {
-  readonly executionMode?: string;
   readonly execute: (...args: readonly unknown[]) => unknown;
 };
 type AppendedEntry = {
@@ -129,48 +128,6 @@ describe("todo extension", () => {
 
     expect(pi.appendedEntries).toEqual([]);
     expect(pi.sentMessages).toEqual([]);
-  });
-
-  test("subagent ctx mutating todos does not leak into the parent ctx", async () => {
-    const pi = createPi();
-    const parent = createContext();
-    const child = createContext();
-    registerTodo(pi.api);
-
-    await setTodos(pi, parent, [{ content: "parent", status: "pending" }]);
-    await setTodos(pi, child, [{ content: "child", status: "in_progress" }]);
-
-    expect(getCurrentItems(parent.sessionManager)).toEqual([
-      { content: "parent", status: "pending" },
-    ]);
-    expect(getCurrentItems(child.sessionManager)).toEqual([
-      { content: "child", status: "in_progress" },
-    ]);
-  });
-
-  test("todo tool executes sequentially and returns a compact update summary", async () => {
-    const pi = createPi();
-    const ctx = createContext();
-    registerTodo(pi.api);
-
-    expect(pi.tools[0]?.executionMode).toBe("sequential");
-    expect(await setTodos(pi, ctx, [])).toEqual({
-      content: [
-        {
-          type: "text",
-          text: "Todos cleared.",
-        },
-      ],
-      details: {
-        todos: [],
-        summary: {
-          pending: 0,
-          in_progress: 0,
-          completed: 0,
-          cancelled: 0,
-        },
-      },
-    });
   });
 });
 

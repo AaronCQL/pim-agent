@@ -171,9 +171,7 @@ function readSnapshot(value: unknown): WebViewSnapshot {
 function safeClose(view: WebViewLike): void {
   try {
     view.close();
-  } catch {
-    // close() throws if already closed.
-  }
+  } catch {}
 }
 
 function defaultFactory(): WebViewLike {

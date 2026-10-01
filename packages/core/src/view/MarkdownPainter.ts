@@ -13,14 +13,6 @@ import type {
 
 type Mode = "inline" | "block";
 
-/** How a block sits in a body; `embed` payloads must never be re-wrapped. */
-export type MarkdownFrame = "flow" | "embed" | "heading";
-
-export type MarkdownGroup = {
-  readonly frame: MarkdownFrame;
-  readonly lines: readonly string[];
-};
-
 export type PaintedTool = {
   readonly icon: string;
   readonly lines: readonly string[];
@@ -50,20 +42,13 @@ function paintInline(blocks: readonly ViewBlock[]): string {
     .join(" ");
 }
 
-function paintBody(blocks: readonly ViewBlock[]): MarkdownGroup[] {
-  return Painting.groupByFrame(blocks, Painting.FRAMES).map((group) => ({
-    frame: group.frame,
-    lines: group.blocks.flatMap((block) => paintBlock(block, "block")),
-  }));
-}
-
 function icon(toolIcon: ToolIcon | undefined): string {
   return toolIcon === undefined ? DEFAULT_ICON : ICONS[toolIcon];
 }
 
 function paintTool(view: ToolView): PaintedTool {
   const head = [view.title, view.summary ?? []]
-    .map((blocks) => paintInline(blocks))
+    .map(paintInline)
     .filter((text) => text !== "")
     .join(" ");
   const outline = outlined(view.body ?? []).flatMap((block) =>
@@ -76,7 +61,7 @@ function paintTool(view: ToolView): PaintedTool {
   };
 }
 
-/** A chat row carries a body's headings and any payload that fits a line; an embedded one needs a screen. */
+/** Body blocks shown in a chat row: headings and single-line payloads. */
 function outlined(blocks: readonly ViewBlock[]): readonly ViewBlock[] {
   return blocks.filter((block) => {
     const frame = Painting.FRAMES[block.kind];
@@ -308,7 +293,5 @@ export const MarkdownPainter = {
   escape,
   paint,
   paintInline,
-  paintBody,
-  icon,
   paintTool,
 };

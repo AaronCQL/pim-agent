@@ -98,5 +98,5 @@ const SUMMARY_BUILDERS: FrameBuilders = {
   flow: gutter(Renderer.GAPPED_PREFIX),
 };
 
-/** Turns painted body lines into the pi-tui components that frame them. */
+/** Renders view blocks into pi-tui components. */
 export const BodyRenderer = { render };
