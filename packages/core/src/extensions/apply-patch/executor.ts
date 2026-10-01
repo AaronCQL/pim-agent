@@ -345,6 +345,7 @@ function applyChunks(
     readonly start: number;
     readonly oldLen: number;
     readonly newLines: readonly string[];
+    readonly order: number;
   }> = [];
   let lineIndex = 0;
 
@@ -366,11 +367,12 @@ function applyChunks(
     }
 
     if (chunk.oldLines.length === 0) {
-      const insertionIdx = originalLines.length;
       replacements.push({
-        start: insertionIdx,
+        start:
+          chunk.changeContext === undefined ? originalLines.length : lineIndex,
         oldLen: 0,
         newLines: chunk.newLines,
+        order: replacements.length,
       });
       continue;
     }
@@ -409,11 +411,12 @@ function applyChunks(
       start: found[0]!,
       oldLen: pattern.length,
       newLines: newSlice,
+      order: replacements.length,
     });
     lineIndex = found[0]! + pattern.length;
   }
 
-  replacements.sort((a, b) => a.start - b.start);
+  replacements.sort((a, b) => a.start - b.start || a.order - b.order);
 
   const lines = [...originalLines];
   for (const { start, oldLen, newLines } of replacements.reverse()) {

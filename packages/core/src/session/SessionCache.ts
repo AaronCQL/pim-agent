@@ -60,6 +60,11 @@ export class SessionCache<T extends CachedSession> {
     }
     const evicted = this.entries.get(oldestKey)!;
     this.entries.delete(oldestKey);
-    void evicted.dispose();
+    evicted.dispose().catch((err: unknown) => {
+      console.warn(
+        `[pim] failed to dispose evicted session ${oldestKey}:`,
+        err
+      );
+    });
   }
 }

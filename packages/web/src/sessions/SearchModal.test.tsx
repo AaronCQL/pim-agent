@@ -472,6 +472,26 @@ describe("the search modal", () => {
     expect(spinning(host)).toBe(false);
   });
 
+  test("a new query clears the last one's failure while it waits", async () => {
+    const { host } = paint((query) => {
+      if (query === "lease") {
+        throw new Error("the socket went away");
+      }
+      return answer([TITLE_AND_CONTENT]);
+    });
+    type(host, "lease");
+    await until(() => {
+      flush();
+      return host.textContent?.includes("The search failed") === true;
+    }, "the refusal");
+
+    // Synchronous: the debounced call has not fired yet.
+    type(host, "leases");
+
+    expect(host.textContent).not.toContain("The search failed");
+    expect(spinning(host)).toBe(true);
+  });
+
   test("arrows move, Enter opens and Escape closes", async () => {
     const { host, switched, closes } = paint(() =>
       answer([TITLE_AND_CONTENT, CHATTY, ARCHIVED])

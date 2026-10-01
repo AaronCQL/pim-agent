@@ -120,6 +120,32 @@ describe("applyPatch", () => {
     expect(await readFile(path, "utf8")).toBe("foo\nBAR\nbaz\nQUX\n");
   });
 
+  test("a pure addition under a context anchor lands right after it", async () => {
+    const root = await tempRoot();
+    const path = join(root, "a.py");
+    await writeFile(
+      path,
+      "def foo():\n    pass\ndef bar():\n    pass\n",
+      "utf8"
+    );
+
+    await apply(wrap("*** Update File: a.py\n@@ def foo():\n+    x = 1"), root);
+
+    expect(await readFile(path, "utf8")).toBe(
+      "def foo():\n    x = 1\n    pass\ndef bar():\n    pass\n"
+    );
+  });
+
+  test("a pure addition with no anchor appends at EOF", async () => {
+    const root = await tempRoot();
+    const path = join(root, "e.txt");
+    await writeFile(path, "alpha\nbeta\n", "utf8");
+
+    await apply(wrap("*** Update File: e.txt\n@@\n+gamma"), root);
+
+    expect(await readFile(path, "utf8")).toBe("alpha\nbeta\ngamma\n");
+  });
+
   describe("conflict checks throw", () => {
     test("add existing file", async () => {
       const root = await tempRoot();

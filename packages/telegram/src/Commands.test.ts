@@ -441,16 +441,12 @@ test("/model reads, offers candidates, and says when nothing matches", async () 
   expect(ambiguous.api.sent[0]?.text).toBe(
     '⚠️ Multiple matches for "foo". Please choose one below or use /model with a more specific name.'
   );
-  expect(keyboard(ambiguous.api.sent[0]!.options)).toEqual([
-    [{ text: "openai/gpt-5", callback_data: "model|openai/gpt-5|1-main" }],
-    [
-      {
-        text: "openai/gpt-5-mini",
-        callback_data: "model|openai/gpt-5-mini|1-main",
-      },
-    ],
-    [],
+  const buttons = keyboard(ambiguous.api.sent[0]!.options);
+  expect(buttons.flat().map((b) => b.text)).toEqual([
+    "openai/gpt-5",
+    "openai/gpt-5-mini",
   ]);
+  expect(buttons[1]![0]!.callback_data).toMatch(/^model\|[a-z0-9]+\|1$/);
 
   const none = await run(
     fakeSession({
@@ -462,6 +458,33 @@ test("/model reads, offers candidates, and says when nothing matches", async () 
 
   const ok = await run(fakeSession(), "/model gpt");
   expect(ok.api.sent[0]?.text).toBe("<b>Model</b> → <code>openai/gpt-5</code>");
+});
+
+test("model buttons stay under 64 bytes and resolve by token", async () => {
+  const longId = `openrouter/${"x".repeat(80)}`;
+  const picked: string[] = [];
+  const session = fakeSession({
+    id: { chatId: -1001234567890, threadId: 987654 },
+    setModel: async (pattern) => {
+      picked.push(pattern);
+      return pattern === longId
+        ? { ok: true, id: longId }
+        : { ok: false, kind: "ambiguous", candidates: ["a/b", longId] };
+    },
+  });
+  const harness = await run(session, "/model x");
+  const data = keyboard(harness.api.sent[0]!.options)[1]![0]!.callback_data;
+  expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+
+  const cb = callbackCtx(data);
+  await harness.commands.handleCallback(cb.ctx);
+  expect(picked).toEqual(["x", longId]);
+  expect(harness.asked).toEqual([session.id]);
+
+  const stale = callbackCtx("model|nope|0");
+  await harness.commands.handleCallback(stale.ctx);
+  expect(stale.answered).toEqual([{ text: "Expired — run /model again" }]);
+  expect(picked).toHaveLength(2);
 });
 
 test("/compact announces before it works and edits the same message", async () => {

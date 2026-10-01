@@ -201,7 +201,7 @@ function renderTable(
   rows: ReadonlyArray<TableRow>,
   aligns: ReadonlyArray<Align | undefined>
 ): string {
-  if (rows.length < 2) {
+  if (rows.length === 0) {
     return "";
   }
   const [header, ...dataRows] = rows as [TableRow, ...TableRow[]];

@@ -34,6 +34,12 @@ const CB_EFFORT = "effort";
 const CB_LOGS = "logs";
 const CB_MODEL = "model";
 const CB_TEMPORARY = "temporary";
+const MODEL_PICKS_CAP = 100;
+
+type ModelPick = {
+  readonly sessionId: SessionId;
+  readonly candidates: readonly string[];
+};
 
 type BotCommand = { readonly command: string; readonly description: string };
 
@@ -175,6 +181,7 @@ export class Commands {
   private readonly config: TelegramConfig;
   private readonly api: Api;
   private readonly registry: SessionRegistry;
+  private readonly modelPicks: Map<string, ModelPick>;
 
   private static readonly COMMANDS: readonly CommandSpec[] = [
     {
@@ -261,6 +268,7 @@ export class Commands {
     this.config = config;
     this.api = api;
     this.registry = registry;
+    this.modelPicks = new Map();
   }
 
   public async handleCommand(
@@ -325,9 +333,14 @@ export class Commands {
     ctx: Filter<Context, "callback_query:data">,
     data: string
   ): Promise<void> {
-    const modelId = data.slice(data.indexOf("|") + 1, data.lastIndexOf("|"));
-    const keyPart = data.slice(data.lastIndexOf("|") + 1);
-    const session = this.registry.get(decodeId(keyPart));
+    const [, token = "", index = ""] = data.split("|");
+    const pick = this.modelPicks.get(token);
+    const modelId = pick?.candidates[Number(index)];
+    if (!pick || modelId === undefined) {
+      await ctx.answerCallbackQuery({ text: "Expired — run /model again" });
+      return;
+    }
+    const session = this.registry.get(pick.sessionId);
     await ctx.answerCallbackQuery({ text: `Model: ${modelId}` });
     try {
       const result = await session.setModel(modelId);
@@ -512,11 +525,14 @@ export class Commands {
   private async cmdModelWrite(session: Session, args: string): Promise<void> {
     const result = await session.setModel(args);
     if (!result.ok) {
-      const key = encodeId(session.id);
+      const token = this.rememberModelPick({
+        sessionId: session.id,
+        candidates: result.candidates,
+      });
       const kb = new InlineKeyboard();
-      for (const c of result.candidates) {
-        kb.text(c, `${CB_MODEL}|${c}|${key}`).row();
-      }
+      result.candidates.forEach((c, i) => {
+        kb.text(c, `${CB_MODEL}|${token}|${i}`).row();
+      });
       const header =
         result.kind === "ambiguous"
           ? `⚠️ Multiple matches for "${Markdown.escape(args)}". Please choose one below or use /model with a more specific name.`
@@ -528,6 +544,18 @@ export class Commands {
       session.id,
       `<b>Model</b> → <code>${Markdown.escape(result.id)}</code>`
     );
+  }
+
+  private rememberModelPick(pick: ModelPick): string {
+    const token = Math.random().toString(36).slice(2, 10);
+    this.modelPicks.set(token, pick);
+    if (this.modelPicks.size > MODEL_PICKS_CAP) {
+      const oldest = this.modelPicks.keys().next().value;
+      if (oldest !== undefined) {
+        this.modelPicks.delete(oldest);
+      }
+    }
+    return token;
   }
 
   private async cmdEffort(session: Session): Promise<void> {

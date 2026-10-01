@@ -79,13 +79,18 @@ function follow(
   };
 }
 
-/** Watches the parent directory, so the file need not exist yet. */
+/** Watches the parent directory, so the file need not exist yet. `onLook` sees every stat, changed or not. */
 function file(
   path: string,
   onChange: () => void,
-  pollMs: number = POLL_MS
+  pollMs: number = POLL_MS,
+  onLook?: () => void
 ): () => void {
-  const check = tracker(path, onChange);
+  const track = tracker(path, onChange);
+  const check = (): void => {
+    track();
+    onLook?.();
+  };
   return follow(dirname(path), basename(path), check, check, pollMs);
 }
 

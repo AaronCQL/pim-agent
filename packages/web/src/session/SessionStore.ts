@@ -1446,6 +1446,7 @@ export class SessionStore {
           draft.modelLabel = event.modelLabel ?? event.model;
           draft.thinking = event.thinking;
           draft.cost = event.cost;
+          const settled = draft.agent !== "idle" && event.status === "idle";
           draft.agent = event.status;
           draft.writable = event.writable;
           draft.repoBusy = event.repoBusy === true;
@@ -1462,6 +1463,12 @@ export class SessionStore {
           // Idle arrives after the turn's durable entries, which supersede live.
           if (event.status === "idle") {
             draft.live = [];
+          }
+          // A send whose durable text never matched (an expanded template) would otherwise linger.
+          if (settled) {
+            draft.optimistic = draft.optimistic.filter(
+              (pending) => pending.queued
+            );
           }
         });
         return;

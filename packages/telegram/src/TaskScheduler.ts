@@ -21,12 +21,17 @@ export class TaskScheduler {
   private readonly now: () => number;
   private timer: Timer | undefined;
   private inflight: Promise<void> | undefined;
+  private readonly running: Set<string>;
+  private readonly fires: Set<Promise<void>>;
 
   public constructor(opts: TaskSchedulerOptions) {
     this.configDir = opts.configDir;
     this.runTask = opts.runTask;
     this.pollIntervalMs = opts.pollIntervalMs ?? 10_000;
     this.now = opts.now ?? ((): number => Date.now());
+    this.inflight = undefined;
+    this.running = new Set();
+    this.fires = new Set();
   }
 
   public async start(): Promise<void> {
@@ -47,6 +52,7 @@ export class TaskScheduler {
     if (this.inflight) {
       await this.inflight;
     }
+    await Promise.allSettled(this.fires);
   }
 
   public async tick(): Promise<void> {
@@ -167,10 +173,9 @@ export class TaskScheduler {
   private async runTick(): Promise<void> {
     const all = await TaskStore.loadAll(this.configDir);
     const now = this.now();
-    const fires: Promise<void>[] = [];
 
     for (const task of all) {
-      if (task.status !== "active") {
+      if (task.status !== "active" || this.running.has(task.id)) {
         continue;
       }
       const nextMs = Date.parse(task.nextRun);
@@ -190,19 +195,31 @@ export class TaskScheduler {
         const advanced = advanceNextRun(task, now);
         if (advanced) {
           await TaskStore.save(this.configDir, advanced);
+          console.warn(
+            `[scheduler] task ${task.id} missed by >24h, advanced to ${advanced.nextRun}`
+          );
         } else {
           await TaskStore.remove(this.configDir, task.id);
+          console.warn(`[scheduler] task ${task.id} missed by >24h, dropped`);
         }
-        console.warn(
-          `[scheduler] task ${task.id} missed by >24h, advanced silently`
-        );
         continue;
       }
 
-      fires.push(this.fireAndReschedule(task, now));
+      this.startFire(task, now);
     }
+  }
 
-    await Promise.allSettled(fires);
+  private startFire(task: ScheduledTask, firedAt: number): void {
+    this.running.add(task.id);
+    const fire = this.fireAndReschedule(task, firedAt)
+      .catch((err: unknown) => {
+        console.error(`[scheduler] task ${task.id} reschedule failed:`, err);
+      })
+      .finally(() => {
+        this.running.delete(task.id);
+        this.fires.delete(fire);
+      });
+    this.fires.add(fire);
   }
 
   private async fireAndReschedule(
@@ -214,7 +231,11 @@ export class TaskScheduler {
     } catch (err) {
       console.error(`[scheduler] task ${task.id} runTask failed:`, err);
     }
-    const next = advanceNextRun(task, firedAt);
+    const current = await TaskStore.load(this.configDir, task.id);
+    if (!current) {
+      return;
+    }
+    const next = advanceNextRun(current, firedAt);
     if (next) {
       await TaskStore.save(this.configDir, next);
     } else {

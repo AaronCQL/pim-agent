@@ -292,8 +292,6 @@ export class ProbeClient {
       return Promise.resolve(hit);
     }
     return new Promise<ServerEvent>((resolve, reject) => {
-      const waiter = { test, resolve };
-      this.waiters.add(waiter);
       const timer = setTimeout(() => {
         this.waiters.delete(waiter);
         reject(
@@ -301,6 +299,14 @@ export class ProbeClient {
         );
       }, timeoutMs);
       timer.unref?.();
+      const waiter = {
+        test,
+        resolve: (event: ServerEvent) => {
+          clearTimeout(timer);
+          resolve(event);
+        },
+      };
+      this.waiters.add(waiter);
     });
   }
 

@@ -71,14 +71,28 @@ test("a burst of writes ends with the last of them seen", async () => {
 test("a change with nothing behind it fires once, not on every look", async () => {
   const path = join(root, "quiet.jsonl");
   await Bun.write(path, "one\n");
-  const fired = watchFile(path, NO_POLL_MS);
+  let fired = 0;
+  let looks = 0;
+  stops.push(
+    FileWatch.file(
+      path,
+      () => {
+        fired += 1;
+      },
+      NO_POLL_MS,
+      () => {
+        looks += 1;
+      }
+    )
+  );
 
   await Bun.write(path, "one\ntwo\n");
-  await until(() => fired() > 0, "the write");
-  const settled = fired();
-  await Bun.sleep(100);
+  await until(() => fired > 0, "the write");
+  const settled = fired;
+  const seen = looks;
+  await until(() => looks > seen, "a look after the write");
 
-  expect(fired()).toBe(settled);
+  expect(fired).toBe(settled);
 });
 
 test("a directory that cannot be watched yet is answered by the poll", async () => {

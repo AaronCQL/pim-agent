@@ -11,9 +11,16 @@ export type AttachmentEndpointDeps = {
   /** Defaults to `~/.pim/attachments`. */
   readonly root?: string;
   readonly maxBytes?: number;
+  /** How long an upload no prompt has taken is kept. */
+  readonly ttlMs?: number;
+  readonly now?: () => number;
 };
 
+type Pending = StoredAttachment & { readonly arrivedAt: number };
+
 const DEFAULT_MAX_BYTES = 25 * 1024 * 1024;
+
+const DEFAULT_TTL_MS = 60 * 60 * 1000;
 
 const PREFIX = "/attachment/";
 
@@ -38,11 +45,15 @@ export function attachmentUrl(path: string): string {
 export class AttachmentEndpoint {
   private readonly store: AttachmentStore;
   private readonly maxBytes: number;
-  private readonly bySession = new Map<string, Map<string, StoredAttachment>>();
+  private readonly ttlMs: number;
+  private readonly now: () => number;
+  private readonly bySession = new Map<string, Map<string, Pending>>();
 
   public constructor(deps: AttachmentEndpointDeps = {}) {
     this.store = new AttachmentStore(deps.root ?? defaultAttachmentsRoot());
     this.maxBytes = deps.maxBytes ?? DEFAULT_MAX_BYTES;
+    this.ttlMs = deps.ttlMs ?? DEFAULT_TTL_MS;
+    this.now = deps.now ?? Date.now;
   }
 
   public static owns(pathname: string): boolean {
@@ -146,7 +157,8 @@ export class AttachmentEndpoint {
       const stored = pending.get(id);
       if (stored) {
         pending.delete(id);
-        taken.push(stored);
+        const { arrivedAt: _, ...attachment } = stored;
+        taken.push(attachment);
       }
     }
     if (pending.size === 0) {
@@ -163,9 +175,24 @@ export class AttachmentEndpoint {
   }
 
   private remember(sessionId: string, stored: StoredAttachment): void {
-    const pending = this.bySession.get(sessionId) ?? new Map();
-    pending.set(stored.id, stored);
+    const now = this.now();
+    this.sweep(now);
+    const pending = this.bySession.get(sessionId) ?? new Map<string, Pending>();
+    pending.set(stored.id, { ...stored, arrivedAt: now });
     this.bySession.set(sessionId, pending);
+  }
+
+  private sweep(now: number): void {
+    for (const [sessionId, pending] of this.bySession) {
+      for (const [id, stored] of pending) {
+        if (now - stored.arrivedAt >= this.ttlMs) {
+          pending.delete(id);
+        }
+      }
+      if (pending.size === 0) {
+        this.bySession.delete(sessionId);
+      }
+    }
   }
 }
 

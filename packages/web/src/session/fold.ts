@@ -171,13 +171,17 @@ export function ingestDurable(
 ): void {
   applyDurable(target, event);
   if (event.type === "message" && event.role === "user") {
-    // Filter, not splice: a store patch may apply to a newer array.
-    const at = target.optimistic.findIndex((pending) =>
-      event.text.startsWith(pending.text)
+    // The server may prepend taken-back queued text. A message matching no row came from another
+    // surface, or was expanded from a template; the latter is cleared once the turn goes idle.
+    const at = target.optimistic.findIndex(
+      (pending) =>
+        event.text.startsWith(pending.text) ||
+        event.text.includes(`\n\n${pending.text}`)
     );
-    target.optimistic = target.optimistic.filter(
-      (_, index) => index !== (at === -1 ? 0 : at)
-    );
+    if (at !== -1) {
+      // Filter, not splice: a store patch may apply to a newer array.
+      target.optimistic = target.optimistic.filter((_, index) => index !== at);
+    }
   }
 }
 

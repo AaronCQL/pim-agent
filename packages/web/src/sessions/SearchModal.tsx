@@ -180,6 +180,8 @@ export function SearchModal(props: {
         setAnswer(undefined);
         return;
       }
+      // The last failure belonged to the previous query.
+      setFailure("");
       timer = setTimeout(() => {
         void store.searchSessions(query).then(
           (found) => {

@@ -105,6 +105,7 @@ export class SessionCatalogue {
         this.deps.cursors.prune(alive),
         this.deps.meta.prune(alive),
       ]);
+      this.forget(alive, new Set(summaries.map((summary) => summary.path)));
     }
     const scope = command.archived === true;
     // Filter before paging so out-of-scope rows don't use the page budget.
@@ -183,6 +184,21 @@ export class SessionCatalogue {
     this.activity.clear();
     this.settled.clear();
     this.index = this.newIndex();
+  }
+
+  private forget(alive: ReadonlySet<string>, paths: ReadonlySet<string>): void {
+    for (const map of [this.activity, this.settled]) {
+      for (const sessionId of map.keys()) {
+        if (!alive.has(sessionId)) {
+          map.delete(sessionId);
+        }
+      }
+    }
+    for (const path of this.digests.keys()) {
+      if (!paths.has(path)) {
+        this.digests.delete(path);
+      }
+    }
   }
 
   private newIndex(): SearchIndex {

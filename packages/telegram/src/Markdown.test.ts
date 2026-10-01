@@ -160,6 +160,12 @@ describe("toHtml", () => {
     );
   });
 
+  test("header-only table renders its header row", () => {
+    expect(Markdown.toHtml("| a | b |\n|---|---|")).toBe(
+      "<table><tr><th>a</th><th>b</th></tr></table>"
+    );
+  });
+
   test("table carries column alignment", () => {
     const md = "| L | C | R |\n|:--|:-:|--:|\n| a | b | c |";
     expect(Markdown.toHtml(md)).toBe(

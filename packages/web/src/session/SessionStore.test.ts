@@ -512,6 +512,54 @@ describe("the optimistic echo", () => {
     expect(rows(target)).toHaveLength(1);
   });
 
+  test("survives a user message another surface sent", () => {
+    const target = store();
+    feed(target, attached("s1"));
+    void target.prompt("mine");
+    flush();
+
+    feed(target, {
+      seq: 2,
+      type: "message",
+      messageId: "m1",
+      role: "user",
+      text: "from the terminal",
+      timestamp: 0,
+    });
+
+    expect(target.state.optimistic.map((row) => row.text)).toEqual(["mine"]);
+  });
+
+  test("one whose durable text was expanded is cleared once the turn goes idle", () => {
+    const target = store();
+    const state = (status: "idle" | "streaming") => ({
+      type: "session_state" as const,
+      writable: true,
+      cwd: "/repo",
+      model: "sonnet",
+      thinking: "medium",
+      cost: 0,
+      status,
+    });
+    feed(target, attached("s1"), state("idle"));
+    void target.prompt("/review");
+    flush();
+
+    feed(target, state("streaming"), {
+      seq: 2,
+      type: "message",
+      messageId: "m1",
+      role: "user",
+      text: "Review the staged changes.",
+      timestamp: 0,
+    });
+    expect(target.state.optimistic).toHaveLength(1);
+
+    feed(target, state("idle"));
+
+    expect(target.state.optimistic).toEqual([]);
+  });
+
   test("one queued into a running turn waits below it", () => {
     const target = store();
     feed(

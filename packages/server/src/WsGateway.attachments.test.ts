@@ -9,6 +9,7 @@ import { AttachmentStore } from "#core/attachments/AttachmentStore";
 import { SessionRegistry } from "#core/session/SessionRegistry";
 import { Tools } from "#core/shared/Tools";
 import { isDurableEvent } from "#protocol/ServerEvent";
+import { AttachmentEndpoint } from "./AttachmentEndpoint";
 import { ProbeClient } from "./ProbeClient";
 import { SendFileTool } from "./SendFileTool";
 import { WsGateway } from "./WsGateway";
@@ -404,4 +405,33 @@ test("no agent-local path ever reaches the client", async () => {
   expect(wire).toContain(CHART);
   expect(wire).not.toContain(join(cwd, CHART));
   expect(wire).not.toContain(attachmentsRoot);
+});
+
+test("an upload no prompt takes is forgotten after its ttl", async () => {
+  let now = 0;
+  const endpoint = new AttachmentEndpoint({
+    root: attachmentsRoot,
+    ttlMs: 1000,
+    now: () => now,
+  });
+  const upload = async (session: string): Promise<string> => {
+    const form = new FormData();
+    form.append("file", new Blob(["notes"]), "notes.txt");
+    const response = await endpoint.handle(
+      new Request(`http://pim/upload?session=${session}`, {
+        method: "POST",
+        body: form,
+      })
+    );
+    return ((await response.json()) as { id: string }).id;
+  };
+
+  const abandoned = await upload("a");
+  now = 1000;
+  const fresh = await upload("b");
+
+  expect(endpoint.take("a", [abandoned])).toEqual([]);
+  expect(endpoint.take("b", [fresh]).map((stored) => stored.id)).toEqual([
+    fresh,
+  ]);
 });

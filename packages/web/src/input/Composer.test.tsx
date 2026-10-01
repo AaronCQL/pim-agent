@@ -228,7 +228,7 @@ function uploads(store: SessionStore): Uploads {
 
 test("the picker closes for the token that was dismissed and opens on the next one", async () => {
   const store = offline();
-  answers(store, () => rows("greeter.ts"));
+  const seen = answers(store, () => rows("greeter.ts"));
   store.ingest(attached());
   const { host, input } = paint(store);
 
@@ -243,24 +243,33 @@ test("the picker closes for the token that was dismissed and opens on the next o
 
   type(input, "@gret");
   await until(() => options(host).length > 0, "the picker to re-open");
+  await until(
+    () => seen.some((command) => command.query === "gret"),
+    "the re-opened query to reach the server"
+  );
 
+  const sent = seen.length;
   type(input, "@gre ");
   flush();
   expect(options(host)).toHaveLength(0);
-  await Bun.sleep(5);
+  // Queued behind the zero picker debounce, so a query it let through has been sent by now.
+  await new Promise((resolve) => setTimeout(resolve, 0));
   flush();
+  expect(seen).toHaveLength(sent);
   expect(options(host)).toHaveLength(0);
 });
 
 test("a reply that arrives after a newer one never lands", async () => {
   const store = offline();
   const held = new Map<string, () => void>();
-  answers(store, async (command) => {
+  const replies = new Map<string, Promise<unknown>>();
+  answers(store, (command) => {
     const query = command.query as string;
-    await new Promise<void>((resolve) => {
+    const reply = new Promise<void>((resolve) => {
       held.set(query, resolve);
-    });
-    return rows(`${query}-row.ts`);
+    }).then(() => rows(`${query}-row.ts`));
+    replies.set(query, reply);
+    return reply;
   });
   store.ingest(attached());
   const { host, input } = paint(store);
@@ -275,7 +284,9 @@ test("a reply that arrives after a newer one never lands", async () => {
   expect(options(host)[0]?.textContent).toContain("ab-row.ts");
 
   held.get("a")!();
-  await Bun.sleep(5);
+  await replies.get("a");
+  // The rest of the reply's path to the picker is microtasks, all drained by the next macrotask.
+  await new Promise(setImmediate);
   flush();
   expect(options(host)).toHaveLength(1);
   expect(options(host)[0]?.textContent).toContain("ab-row.ts");
@@ -352,7 +363,6 @@ test("pasting files uploads them; pasting words is left to the browser", async (
 
   const textOnly = fire(input, "paste", { clipboardData: { files: [] } });
   expect(textOnly.defaultPrevented).toBe(false);
-  await Bun.sleep(5);
   expect(flow.started).toHaveLength(2);
 });
 
