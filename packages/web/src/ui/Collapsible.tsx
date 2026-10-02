@@ -2,7 +2,6 @@ import type { Element } from "solid-js";
 
 const CHEVRON = "i-griddy-icons:chevron-right-small-filled";
 
-/** What a caret does when the disclosure it stands on opens. */
 const TURN = "transition-transform group-open:rotate-90";
 
 export function Caret(props: { readonly class?: string }) {
@@ -14,7 +13,7 @@ export function Caret(props: { readonly class?: string }) {
   );
 }
 
-/** The gutter mark of a row that opens onto nothing. */
+/** Gutter mark for a row with no body. */
 export function Marker(props: { readonly class?: string }) {
   return (
     <Glyph
@@ -33,7 +32,7 @@ function Glyph(props: { readonly icon: string; readonly class: string }) {
   );
 }
 
-/** The rule under the gutter mark; `grip` marks it as a second handle on a `<summary>`. */
+/** The vertical rule under the gutter mark; `grip` makes it clickable inside a `<summary>`. */
 export function Spine(props: {
   readonly class?: string;
   readonly grip?: boolean;
@@ -48,7 +47,6 @@ export function Spine(props: {
   );
 }
 
-/** The one wrapper for hiding a payload behind a disclosure; nothing outside `ui/` writes `<details>` directly. */
 export function Collapsible(props: {
   readonly summary: Element;
   readonly caret?: string;

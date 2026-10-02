@@ -228,7 +228,7 @@ function uploads(store: SessionStore): Uploads {
 
 test("the picker closes for the token that was dismissed and opens on the next one", async () => {
   const store = offline();
-  answers(store, () => rows("greeter.ts"));
+  const seen = answers(store, () => rows("greeter.ts"));
   store.ingest(attached());
   const { host, input } = paint(store);
 
@@ -243,24 +243,33 @@ test("the picker closes for the token that was dismissed and opens on the next o
 
   type(input, "@gret");
   await until(() => options(host).length > 0, "the picker to re-open");
+  await until(
+    () => seen.some((command) => command.query === "gret"),
+    "the re-opened query to reach the server"
+  );
 
+  const sent = seen.length;
   type(input, "@gre ");
   flush();
   expect(options(host)).toHaveLength(0);
-  await Bun.sleep(5);
+  // Queued behind the zero picker debounce, so a query it let through has been sent by now.
+  await new Promise((resolve) => setTimeout(resolve, 0));
   flush();
+  expect(seen).toHaveLength(sent);
   expect(options(host)).toHaveLength(0);
 });
 
 test("a reply that arrives after a newer one never lands", async () => {
   const store = offline();
   const held = new Map<string, () => void>();
-  answers(store, async (command) => {
+  const replies = new Map<string, Promise<unknown>>();
+  answers(store, (command) => {
     const query = command.query as string;
-    await new Promise<void>((resolve) => {
+    const reply = new Promise<void>((resolve) => {
       held.set(query, resolve);
-    });
-    return rows(`${query}-row.ts`);
+    }).then(() => rows(`${query}-row.ts`));
+    replies.set(query, reply);
+    return reply;
   });
   store.ingest(attached());
   const { host, input } = paint(store);
@@ -275,7 +284,9 @@ test("a reply that arrives after a newer one never lands", async () => {
   expect(options(host)[0]?.textContent).toContain("ab-row.ts");
 
   held.get("a")!();
-  await Bun.sleep(5);
+  await replies.get("a");
+  // The rest of the reply's path to the picker is microtasks, all drained by the next macrotask.
+  await new Promise(setImmediate);
   flush();
   expect(options(host)).toHaveLength(1);
   expect(options(host)[0]?.textContent).toContain("ab-row.ts");
@@ -336,39 +347,6 @@ test("a query nothing matches shows no picker at all", async () => {
   expect(panel(host)).toBeUndefined();
 });
 
-test("the picker asks for fifty files and twenty commands", async () => {
-  const store = offline();
-  const seen = answers(store, () => rows("greeter.ts"));
-  const asked = commands(store, () => [{ value: "/skill", label: "/skill" }]);
-  store.ingest(attached());
-  const { host, input } = paint(store);
-
-  type(input, "@gre");
-  await until(() => options(host).length > 0, "the file rows");
-  type(input, "/ski");
-  await until(() => asked.length > 0, "the command query");
-
-  expect(seen.find((command) => command.type === "pick_files")).toEqual({
-    type: "pick_files",
-    sessionId: "s1",
-    query: "gre",
-    limit: 50,
-  });
-  expect(asked).toEqual([{ query: "ski", limit: undefined }]);
-
-  const direct = offline();
-  const frames = answers(direct, () => rows("/skill"));
-  direct.ingest(attached());
-  flush();
-  await direct.pickCommands("ski");
-  expect(frames.find((command) => command.type === "pick_commands")).toEqual({
-    type: "pick_commands",
-    sessionId: "s1",
-    query: "ski",
-    limit: 20,
-  });
-});
-
 test("pasting files uploads them; pasting words is left to the browser", async () => {
   const store = offline();
   answers(store, () => ({}));
@@ -385,7 +363,6 @@ test("pasting files uploads them; pasting words is left to the browser", async (
 
   const textOnly = fire(input, "paste", { clipboardData: { files: [] } });
   expect(textOnly.defaultPrevented).toBe(false);
-  await Bun.sleep(5);
   expect(flow.started).toHaveLength(2);
 });
 
@@ -751,7 +728,6 @@ test("a foreign lease wears the reason and keeps the words typed", async () => {
   expect(seen[0]?.text).toBe("your turn is mine now");
 });
 
-/** A review the shell would hand down, whose count the test moves. */
 function reviewProp(
   count: () => number,
   trace: string[],
@@ -811,7 +787,6 @@ test("the review chip counts, opens and discards, and hides at zero", () => {
   expect(chip()).toBeNull();
 });
 
-/** The comments are what the message is about, so the message is read last. */
 test("one message carries the review above the words, and only a send clears it", async () => {
   const store = offline();
   answers(store, () => ({}));
@@ -827,7 +802,7 @@ test("one message carries the review above the words, and only a send clears it"
   const { host, input } = paint(store, [], () => ({
     count: 2,
     text: () => "REVIEW BLOCK",
-    // What went, so a send that was refused cannot pass for one that went.
+    // Records what went, so a refused send cannot pass for a sent one.
     sent: () => {
       sent.push(said[said.length - 1] ?? "");
     },

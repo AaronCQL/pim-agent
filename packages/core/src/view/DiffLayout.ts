@@ -6,7 +6,7 @@ function detab(text: string): string {
   return text.replace(/\t/g, TAB);
 }
 
-// Highlight each side as one block, never line by line, or multi-line strings and comments mis-tokenise.
+/** Highlights each side as one block so multi-line strings and comments tokenise correctly. */
 function mapSides<T>(
   lines: readonly ToolDiffLine[],
   highlight: (block: string) => readonly T[]
@@ -17,7 +17,7 @@ function mapSides<T>(
   const newBlock: string[] = [];
 
   for (const line of lines) {
-    // A context line must hold a slot in both blocks to keep tokeniser state aligned.
+    // Context lines go into both sides.
     if (line.kind !== "added") {
       oldIndices.push(oldBlock.length);
       oldBlock.push(line.text);

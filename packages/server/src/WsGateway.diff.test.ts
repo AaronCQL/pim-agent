@@ -8,11 +8,7 @@ import { Proc } from "#core/shared/Proc";
 import { SessionRegistry } from "#core/session/SessionRegistry";
 import { ProbeClient } from "./ProbeClient";
 import { WsGateway } from "./WsGateway";
-
-/**
- * The change set of a session's repository, over the wire: what the diff
- * overlay lists, what it gets when it expands a row, and what it commits.
- */
+import { until } from "#core/shared/fixtures/wait";
 
 let tmp: string;
 let cwd: string;
@@ -22,7 +18,6 @@ let registry: SessionRegistry;
 let gateway: WsGateway;
 let probes: ProbeClient[] = [];
 let modelServer: ReturnType<typeof Bun.serve> | undefined;
-/** Set by a test to hold the one turn this file ever runs open until it says otherwise. */
 let gate: Promise<void> | undefined;
 
 function holdTurn(): () => void {
@@ -46,7 +41,7 @@ function chunk(delta: Record<string, unknown>, finish?: string): string {
   })}\n\n`;
 }
 
-/** Answers one word and then waits on `gate`, so a test can sit inside a running turn. */
+/** Answers one word, then waits on `gate`. */
 function startModelServer(): void {
   modelServer = Bun.serve({
     port: 0,
@@ -71,17 +66,6 @@ function startModelServer(): void {
       });
     },
   });
-}
-
-/** Polls, because a turn ends well after the event that announced its last word. */
-async function until(ready: () => boolean, what: string): Promise<void> {
-  const deadline = Date.now() + 20_000;
-  while (!ready()) {
-    if (Date.now() > deadline) {
-      throw new Error(`timed out waiting for ${what}`);
-    }
-    await Bun.sleep(1);
-  }
 }
 
 async function shaOf(): Promise<string> {

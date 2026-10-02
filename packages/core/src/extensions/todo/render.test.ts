@@ -2,12 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { AnsiPainter } from "../../view/AnsiPainter";
 import type { TodoItem } from "./schema";
-import {
-  formatWidgetTitle,
-  renderWidgetLines,
-  type TodoViewInput,
-  todoView,
-} from "./render";
+import { renderWidgetLines, type TodoViewInput, todoView } from "./render";
 import { makeDetails } from "./todo";
 
 const items: readonly TodoItem[] = [
@@ -29,10 +24,6 @@ describe("todo view model", () => {
 
     expect(view.label).toBe("Todo");
     expect(title(view)).toBe("1 done, 2 pending, 1 cancelled");
-  });
-
-  test("title shows cleared when the todo list is empty", () => {
-    expect(title(todoView(viewInput({ todos: [] })))).toBe("cleared");
   });
 
   test("title renders from partial args alone", () => {
@@ -75,25 +66,9 @@ describe("todo view model", () => {
     ).toEqual(["", expect.stringContaining("**Second half**")]);
   });
 
-  test("widget title bolds total and wraps status summary", () => {
-    const pendingItems: readonly TodoItem[] = [
-      { content: "One", status: "pending" },
-      { content: "Two", status: "pending" },
-      { content: "Three", status: "pending" },
-      { content: "Four", status: "pending" },
-    ];
-
-    expect(formatWidgetTitle(pendingItems, stubTheme)).toBe(
-      "**4 todos** (4 pending)"
-    );
-  });
-
   test("widget colours only status markers", () => {
     const lines = renderWidgetLines(items, stubTheme);
 
-    expect(formatWidgetTitle(items, stubTheme)).toBe(
-      "**4 todos** (1 done, 2 pending, 1 cancelled)"
-    );
     expect(lines).toEqual([
       "**4 todos** (1 done, 2 pending, 1 cancelled)",
       "□ Plan",

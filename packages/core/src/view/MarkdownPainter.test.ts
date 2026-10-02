@@ -234,8 +234,7 @@ describe("MarkdownPainter kv, link and notice", () => {
     ]);
   });
 
-  // Unlinked, unlike a `link`: the URL is relative to the web gateway, which
-  // is not the server this chat is served by.
+  // The URL is relative to the web gateway, not this chat's server.
   test("names an attachment without linking it", () => {
     expect(
       paint({
@@ -271,24 +270,6 @@ describe("MarkdownPainter kv, link and notice", () => {
     expect(paint({ kind: "notice", text: "no", severity: "error" })).toEqual([
       "❌ no",
     ]);
-  });
-});
-
-describe("MarkdownPainter.paintBody", () => {
-  test("groups runs by frame", () => {
-    const groups = MarkdownPainter.paintBody([
-      { kind: "text", text: "one" },
-      { kind: "file", path: "a.ts" },
-      { kind: "code", lang: "", text: "x" },
-      { kind: "section", label: "Next", content: [] },
-    ]);
-
-    expect(groups.map((group) => group.frame)).toEqual([
-      "flow",
-      "embed",
-      "heading",
-    ]);
-    expect(groups[0]?.lines).toEqual(["one", "<code>a.ts</code>"]);
   });
 });
 

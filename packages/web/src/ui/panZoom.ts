@@ -14,7 +14,7 @@ export type PanZoom = {
   readonly contentRef: (element: HTMLElement) => void;
   readonly view: () => View;
   readonly fitted: () => boolean;
-  /** Whether the last press was a tap on the backdrop: not the content, not a drag or a pinch. */
+  /** The last press was a tap (not a drag or pinch) off the content. */
   readonly tappedBackdrop: () => boolean;
   readonly onPointerDown: (event: PointerEvent) => void;
   readonly onPointerMove: (event: PointerEvent) => void;
@@ -32,7 +32,7 @@ function midpoint(a: Point, b: Point): Point {
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
 }
 
-/** Pan and zoom over content whose natural size is `size`, unknown until it has loaded. */
+/** `size` is the content's natural size, undefined until loaded. */
 export function createPanZoom(size: () => Size | undefined): PanZoom {
   let stage: HTMLElement | undefined;
   let content: HTMLElement | undefined;

@@ -72,13 +72,7 @@ const recordingLimiter = (): { limiter: RateLimiter; sleeps: number[] } => {
   return { limiter, sleeps };
 };
 
-/**
- * A client whose throttling is bookkeeping on a fake clock rather than wall
- * time. The keyless free tier allows 2 requests per 1100ms window and one
- * `search` spends three of them — initialize, initialized, tools/call — so
- * letting `ExaMcpClient` install its default limiter costs a real second in
- * every test that only cares about what comes back.
- */
+// A fake-clock limiter: the default one would sleep a real second per search.
 const parsingClient = (toolCallResponse: () => Response): ExaMcpClient =>
   new ExaMcpClient({
     rateLimiter: recordingLimiter().limiter,
@@ -94,8 +88,7 @@ test("throttles requests on the free tier (no api key)", async () => {
 
   await client.search({ query: "pim", numResults: 1 });
 
-  // initialize + initialized + tools/call all draw from the one-per-window
-  // budget, so the 2nd and 3rd requests wait.
+  // initialize, initialized and tools/call share one request per window.
   expect(sleeps).toEqual([1000, 1000]);
 });
 
@@ -113,37 +106,12 @@ test("does not throttle when an api key is provided", async () => {
 });
 
 test("parses Exa JSON results", async () => {
-  const client = parsingClient(() =>
-    Response.json({
-      jsonrpc: "2.0",
-      id: 2,
-      result: {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({
-              results: [
-                {
-                  title: "Pim docs",
-                  url: "https://example.test/pim",
-                  snippet: "A concise result.",
-                },
-              ],
-            }),
-          },
-        ],
-      },
-    })
-  );
+  const client = parsingClient(jsonToolResponse);
 
   await expect(
     client.search({ query: "pim agent", numResults: 3 })
   ).resolves.toEqual([
-    {
-      title: "Pim docs",
-      url: "https://example.test/pim",
-      snippet: "A concise result.",
-    },
+    { title: "t", url: "https://example.test/t", snippet: "s" },
   ]);
 });
 

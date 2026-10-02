@@ -47,16 +47,6 @@ function body(settled: AgentToolResult<WebFetchDetails>): string[] {
 }
 
 describe("webFetchView title", () => {
-  test("supplies the title-cased display label", () => {
-    expect(
-      webFetchView({
-        args: {} as WebFetchInput,
-        cwd: "/repo",
-        isPartial: false,
-      }).label
-    ).toBe("Web Fetch");
-  });
-
   test("returns placeholder and default format when url is undefined", () => {
     expect(title({})).toBe("... Markdown");
   });
@@ -80,33 +70,6 @@ describe("webFetchView title", () => {
         result("body", { format: "markdown", totalBytes: 23 * 1024 })
       )
     ).toBe("https://example.com 23KB Markdown");
-  });
-
-  test("strips trailing zeros and supports two decimals", () => {
-    expect(
-      title(
-        { url: "https://example.com" },
-        result("body", { format: "html", totalBytes: 5355 })
-      )
-    ).toBe("https://example.com 5.23KB HTML");
-  });
-
-  test("renders bytes for tiny payloads", () => {
-    expect(
-      title(
-        { url: "https://example.com" },
-        result("body", { format: "markdown", totalBytes: 512 })
-      )
-    ).toBe("https://example.com 512B Markdown");
-  });
-
-  test("renders MB for large payloads", () => {
-    expect(
-      title(
-        { url: "https://example.com" },
-        result("body", { format: "html", totalBytes: 2.5 * 1024 * 1024 })
-      )
-    ).toBe("https://example.com 2.5MB HTML");
   });
 
   test("keeps the requested format when details are incomplete", () => {

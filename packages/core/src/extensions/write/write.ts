@@ -4,7 +4,7 @@ import { FsErrors } from "../../shared/FsErrors";
 
 const CONTEXT_LINES = 3;
 
-// Diff.diffLines is O(n*d): above this only the diff is skipped, never the write.
+// Diffing is O(n*d); above this the diff is skipped, not the write.
 const MAX_DIFF_BYTES = 2 * 1024 * 1024;
 
 export type WriteOutcome = {

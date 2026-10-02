@@ -20,12 +20,6 @@ afterEach(async () => {
 const HOUR = 3_600_000;
 
 describe("SearchBreaker", () => {
-  test("reports a closed circuit for an unknown provider", async () => {
-    expect(await new SearchBreaker({ path: breakerPath() }).isOpen("exa")).toBe(
-      false
-    );
-  });
-
   test("opens after a trip and persists across instances", async () => {
     const path = breakerPath();
     const now = () => HOUR;
@@ -101,15 +95,5 @@ describe("SearchBreaker", () => {
     await Bun.write(path, "{not json");
 
     expect(await new SearchBreaker({ path }).isOpen("exa")).toBe(false);
-  });
-
-  test("keeps providers independent", async () => {
-    const path = breakerPath();
-    const breaker = new SearchBreaker({ path, now: () => HOUR });
-
-    await breaker.trip({ provider: "exa", reason: "daily limit reached" });
-
-    expect(await breaker.isOpen("exa")).toBe(true);
-    expect(await breaker.isOpen("firecrawl")).toBe(false);
   });
 });

@@ -84,10 +84,6 @@ function paint(open: () => boolean = () => true): HTMLElement {
   return host;
 }
 
-/**
- * Every promise the pane waits on is already resolved, so its work is done
- * within a handful of microtask turns: drain them and paint, no timer in it.
- */
 async function settle(): Promise<void> {
   for (let turn = 0; turn < 8; turn++) {
     await Promise.resolve();

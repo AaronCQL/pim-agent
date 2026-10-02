@@ -112,8 +112,7 @@ function backgroundsFor(theme: Theme): DiffBackgrounds {
 }
 
 function isLightTheme(theme: Theme): boolean {
-  const name = theme.name?.toLowerCase() ?? "";
-  return name === "light" || name.includes("light");
+  return theme.name?.toLowerCase().includes("light") ?? false;
 }
 
 function renderHunk(
@@ -174,10 +173,6 @@ function applyEmphasis(
   lineBg: string,
   emphBg: string
 ): string {
-  if (ranges.length === 0) {
-    return text;
-  }
-
   const starts = new Set<number>();
   const ends = new Set<number>();
 
@@ -191,6 +186,9 @@ function applyEmphasis(
   if (starts.size === 0) {
     return text;
   }
+
+  const marker = (pos: number): string =>
+    (ends.has(pos) ? lineBg : "") + (starts.has(pos) ? emphBg : "");
 
   let result = "";
   let visiblePos = 0;
@@ -209,16 +207,9 @@ function applyEmphasis(
       continue;
     }
 
-    if (ends.has(visiblePos) || starts.has(visiblePos)) {
-      if (i > segStart) {
-        result += text.slice(segStart, i);
-      }
-      if (ends.has(visiblePos)) {
-        result += lineBg;
-      }
-      if (starts.has(visiblePos)) {
-        result += emphBg;
-      }
+    const mark = marker(visiblePos);
+    if (mark !== "") {
+      result += text.slice(segStart, i) + mark;
       segStart = i;
     }
 
@@ -226,17 +217,7 @@ function applyEmphasis(
     i += 1;
   }
 
-  if (i > segStart) {
-    result += text.slice(segStart, i);
-  }
-  if (ends.has(visiblePos)) {
-    result += lineBg;
-  }
-  if (starts.has(visiblePos)) {
-    result += emphBg;
-  }
-
-  return result;
+  return result + text.slice(segStart) + marker(visiblePos);
 }
 
 function applyBackground(

@@ -9,14 +9,13 @@ import type {
   WebFetchFormat,
   WebFetchImageDetails,
   WebFetchInput,
-  WebFetchResolvedFormat,
   webFetchSchema,
 } from "./schema";
 
 type WebFetchViewInput = ToolViewInput<typeof webFetchSchema, WebFetchDetails>;
 
 type TitleOutcome = {
-  readonly format: WebFetchResolvedFormat;
+  readonly format: WebFetchFormat;
   readonly totalBytes: number;
 };
 
@@ -41,7 +40,7 @@ export function webFetchView({ args, result }: WebFetchViewInput): ToolView {
   };
 }
 
-/** Legacy sessions predate the tag, so anything untagged reads as a page. */
+/** Untagged (legacy) details are pages. */
 function imageDetailsOf(
   details: WebFetchDetails | undefined
 ): WebFetchImageDetails | undefined {
@@ -95,6 +94,6 @@ function formatDetail(
     : `${Format.bytesCompact(outcome.totalBytes)} ${label}`;
 }
 
-function formatLabel(format: WebFetchResolvedFormat): string {
+function formatLabel(format: WebFetchFormat): string {
   return format === "html" ? "HTML" : "Markdown";
 }

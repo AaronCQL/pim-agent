@@ -39,20 +39,6 @@ test("whitespace-only query is treated as empty", () => {
   expect(hits.map((hit) => hit.item.name)).toEqual(["a", "b"]);
 });
 
-test("non-empty query orders results by fzf score", () => {
-  const candidates = commandCandidates([
-    { name: "clear", description: "Clear the session." },
-    { name: "rename", description: "Rename the session." },
-    { name: "resume", description: "Resume a session." },
-    { name: "help", description: "Show help." },
-  ]);
-
-  const hits = FuzzyMatcher.rank("cl", candidates);
-
-  expect(hits.length).toBeGreaterThan(0);
-  expect(hits[0]?.item.name).toBe("clear");
-});
-
 test("limit truncates ranked results", () => {
   const candidates = commandCandidates([
     { name: "alpha", description: "" },

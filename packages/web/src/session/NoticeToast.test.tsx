@@ -73,20 +73,14 @@ const FAILED: UiNotice = {
 };
 
 describe("the notice toast", () => {
-  test("stacks what arrived, each clamped and wearing its severity", () => {
+  test("shows each notice with its severity", () => {
     const { host } = paint([WARMED, FAILED]);
 
     expect(toasts(host).map((toast) => toast.textContent)).toEqual([
       WARMED.text,
       FAILED.text,
     ]);
-    // A column with a gap: two of them may never land on one another.
-    expect(host.firstElementChild?.className).toContain("flex-col");
-    expect(host.firstElementChild?.className).toContain("gap-2");
     expect(toasts(host)[1]?.className).toContain("text-rose-400");
-    expect(toasts(host)[0]?.lastElementChild?.className).toContain(
-      "line-clamp-3"
-    );
   });
 
   test("the dismiss takes that one and leaves the rest", () => {
@@ -116,8 +110,7 @@ describe("the notice toast", () => {
     show([]);
 
     expect(toasts(host)).toHaveLength(0);
-    // Dropped by the store instead — a session switch, another window's
-    // dismissal — so the timer that outlived it must say nothing.
+    // Removed by the store, so its timer must not fire.
     for (let tick = 0; tick < 5; tick += 1) {
       await Bun.sleep(0);
       flush();

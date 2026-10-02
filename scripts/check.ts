@@ -1,69 +1,39 @@
 /**
- * Every quality gate this repo has, and the only place their arguments live.
+ * Every quality gate, and the only place their arguments live.
  *
  *   bun scripts/check.ts                 # the per-commit set
- *   bun scripts/check.ts pack            # a subset, including the CI-only ones
- *   bun scripts/check.ts agent --changed # ...with flags for the test runner
+ *   bun scripts/check.ts pack            # a subset, including CI-only tasks
+ *   bun scripts/check.ts agent --changed # flags go to the test runner
  *
- * Three rules earn this a script instead of a `&&` chain in package.json.
- *
- * `oxlint --fix` and `oxfmt` rewrite the same files, so they run first and in
- * that order — a reader racing them typechecks a half-written tree, and the
- * formatter has to see what oxlint fixed. Everything after them only reads,
- * so it runs at once.
- *
- * A bare run is the set an agent pays for after every commit, so a task worth
- * less than its seconds there is `ciOnly` and has to be named to run. CI names
- * them; see `.github/workflows/ci.yml`.
- *
- * Under `CI` the two rewriting tasks stop rewriting: nobody is there to commit
- * a repaired file, and the fix dies with the runner, so a green job would be
- * the only trace that the tree was ever wrong. There they report and fail
- * instead, which is the same information at the only time it can be acted on.
- *
- * A task that passes prints nothing. The whole run prints one line naming the
- * tasks that ran and how long they took, because silence is also what a
- * crashed runner, a mistyped selector and an empty task list look like, and a
- * reader cannot tell a gate that passed from one that never ran. Past that
- * line, everything on screen is one of the two things worth tokens — a task
- * that failed, or a file that got rewritten.
+ * Mutating tasks (lint, then format) run first, in order; readers then run in parallel.
+ * Under `CI`, lint and format only report. A green run prints one line.
  */
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-/** Set by every CI provider worth the name, and by GitHub Actions. */
 const CI = Bun.env.CI !== undefined && Bun.env.CI !== "false";
 
-// `agent` and `web` are started together below. Letting each claim every
-// reported CPU on a hosted runner starves their real gateway and WASM tests.
+// `agent` and `web` run together; full parallelism starves CI runners.
 const TEST_PARALLEL = CI ? "--parallel=1" : "--parallel";
 
-// Bun's 5s default is a unit test's budget; these suites drive a real gateway,
-// a real agent and real git. Their own waits give up at 15-20s with a name for
-// what they were waiting on, which the runner killing the test first hides.
+// Above the suites' own 15-20s waits, so those report what they waited on.
 const TEST_TIMEOUT = "--timeout=30000";
 
 type Task = {
   readonly name: string;
   readonly argv: readonly string[];
-  /** Rewrites files: runs before the readers, and never beside one. */
+  /** Rewrites files: runs before the readers, never beside one. */
   readonly mutates?: boolean;
-  /** Takes `bun test` flags, and must never legitimately run zero tests. */
+  /** Takes `bun test` flags; running zero tests is a failure. */
   readonly tests?: boolean;
-  /** Too slow to earn a place in the per-commit set: run it by name. */
+  /** Skipped unless named. */
   readonly ciOnly?: boolean;
-  /**
-   * Run before `argv`; its stdout is the list of files `argv` would rewrite,
-   * and an empty list skips `argv` entirely. Exists because oxfmt's
-   * `--list-different` and `--write` are mutually exclusive, so naming the
-   * damage and repairing it are two passes — and the clean case, which is
-   * nearly every case, is then the cheap pass alone with no file touched.
-   */
+  /** Lists the files `argv` would rewrite; an empty list skips `argv`. */
   readonly listArgv?: readonly string[];
 };
 
-/** Everything `format` owns, and nothing it merely happens to be able to parse. */
+// Never `.`: oxfmt would also reflow Markdown (breaking callouts) and data JSON.
 const FORMAT_PATHS = [
   "packages/**/*.{ts,tsx}",
   "bin/**/*.ts",
@@ -77,20 +47,11 @@ const FORMAT_PATHS = [
 const TASKS: readonly Task[] = [
   {
     name: "lint",
-    // Without `--max-warnings=0` oxlint exits 0 on warnings, so a chain of
-    // these stays green while printing complaints nobody has to act on.
-    // Without `--fix` it reports the same problems and exits non-zero, which
-    // is what CI wants: a diagnostic it can print, not a repair it discards.
     argv: ["oxlint", ".", ...(CI ? [] : ["--fix"]), "--max-warnings=0"],
     mutates: true,
   },
   {
     name: "format",
-    // Named globs, never a bare `.`: oxfmt will happily walk the whole tree,
-    // and it formats Markdown and JSON too. Under `proseWrap: never` that
-    // folds a `> [!TIP]` callout onto one line, which is not a restyling but
-    // a break — GitHub stops rendering it. Benchmark result JSON is data and
-    // is not ours to reflow either. So the scope is the source we own.
     listArgv: ["oxfmt", "--list-different", ...FORMAT_PATHS],
     argv: ["oxfmt", ...FORMAT_PATHS],
     mutates: true,
@@ -114,12 +75,7 @@ const TASKS: readonly Task[] = [
   },
   {
     name: "web",
-    // `--isolate` is why this cannot share a process with `agent`: happy-dom
-    // registers a whole environment into the globals, and pi keeps state at
-    // module scope, so a file that follows another sees the first one's
-    // document and its deleted temp directory. Nothing else is needed —
-    // `bunfig.toml` prunes this directory from a scan, not from a path named
-    // outright, which is what the argument below is.
+    // Needs `--isolate`: happy-dom globals and pi's module state leak between files.
     argv: [
       "bun",
       "test",
@@ -133,12 +89,7 @@ const TASKS: readonly Task[] = [
   },
   {
     name: "pack",
-    // Packs a real tarball, and `prepack` makes that a full Vite build — the
-    // only thing anywhere that runs Rolldown, UnoCSS and the Solid plugin, so
-    // it is what catches a stale `index.html` entry, an unresolvable lazy
-    // `import()`, or a moved stylesheet. All of that is a publish-time
-    // failure, not a per-commit one, hence `ciOnly`. Also stays out of the
-    // `agent` glob, which is why it is its own task at all.
+    // Packs a real tarball, which runs the full Vite build via `prepack`.
     argv: [
       "bun",
       "test",
@@ -164,9 +115,7 @@ function select(args: readonly string[]): {
   readonly tasks: readonly Task[];
   readonly forwarded: readonly string[];
 } {
-  // A selector is a bare word and a flag is not, but `-t pattern` puts a bare
-  // word after a flag — so the first flag ends the selectors and everything
-  // from there is the test runner's.
+  // The first flag ends the task names (`-t pattern` has a bare word after it).
   const firstFlag = args.findIndex((arg) => arg.startsWith("-"));
   const names = firstFlag === -1 ? args : args.slice(0, firstFlag);
   const forwarded = firstFlag === -1 ? [] : args.slice(firstFlag);
@@ -203,13 +152,7 @@ type Output = {
   readonly exitCode: number;
 };
 
-/**
- * The test runners' `TMPDIR`, removed once they exit. A suite's `afterEach`
- * cannot clean up after writes it has no handle on: pi's `ModelRuntime` fires
- * credential refreshes it never awaits, and its auth backend `mkdir -p`s the
- * agent dir and writes `auth.json` on every read — so a refresh landing after
- * the `rm` resurrects the tree. Only the runner's exit ends those writes.
- */
+/** The test runners' `TMPDIR`, removed after they exit: pi writes there from unawaited refreshes. */
 let testTmp: string | undefined;
 
 async function spawn(
@@ -218,9 +161,7 @@ async function spawn(
 ): Promise<Output> {
   const child = Bun.spawn([...argv], {
     cwd: ROOT,
-    // oxlint, oxfmt and tsc are `node_modules/.bin` shims that only `bun run`
-    // puts on PATH, and going through `bun run` would re-print every command
-    // as it starts.
+    // Puts the `node_modules/.bin` shims on PATH without `bun run`'s echo.
     env: {
       ...process.env,
       PATH: `${ROOT}/node_modules/.bin:${process.env.PATH}`,
@@ -246,8 +187,7 @@ async function run(task: Task, forwarded: readonly string[]): Promise<boolean> {
     task.tests && testTmp !== undefined ? { TMPDIR: testTmp } : {}
   );
 
-  // A path filter that stops matching anything reports as a pass. Only trust
-  // that on an unnarrowed run: `--changed` legitimately finds nothing.
+  // A path filter matching nothing passes; only flag it when no flags narrow the run.
   const ranNothing =
     task.tests && forwarded.length === 0 && !/Ran [1-9]\d* tests/.test(stderr);
 
@@ -265,17 +205,12 @@ async function run(task: Task, forwarded: readonly string[]): Promise<boolean> {
   return false;
 }
 
-/**
- * Name the damage, then repair it — and say what got repaired, since a file
- * rewritten under an agent's feet is worth its tokens. Under `CI` the second
- * phase is skipped and the naming alone is the verdict.
- */
+/** Lists the files to rewrite, then rewrites them (under `CI`, only lists and fails). */
 async function runTwoPhase(
   task: Task,
   listArgv: readonly string[]
 ): Promise<boolean> {
-  // Exit 1 is oxfmt's way of saying "these differ", which is the whole point
-  // of asking. Only a higher code is a formatter that could not read the tree.
+  // Exit 1 means "files differ"; only higher codes are errors.
   const listed = await spawn(listArgv);
   if (listed.exitCode > 1) {
     report(
@@ -321,9 +256,7 @@ function report(headline: string, body: string, rerun: string): void {
     .replace(/\n+$/, "")
     .split("\n")
     .filter((line) => !/^(::(end)?group::|\(pass\) |\s*$)/.test(line));
-  // Everything broken at once is not worth 2000 lines. Keep the first
-  // failures and the tail, which is where the runner says how many there
-  // were, and point at the command that prints the rest.
+  // Keep the head and the tail (where the runner prints its summary).
   const shown =
     lines.length <= MAX_LINES
       ? lines
@@ -353,8 +286,6 @@ if (testTmp !== undefined) {
   await rm(testTmp, { recursive: true, force: true });
 }
 
-// The one line a green run is allowed. Named tasks, not a count: on a narrowed
-// run it is also the receipt for what the selector actually chose.
 const elapsed = (Bun.nanoseconds() - started) / 1e9;
 process.stdout.write(
   `${ok ? "✓" : "✗"} ${tasks.map((task) => task.name).join(", ")} in ${elapsed.toFixed(1)}s\n`

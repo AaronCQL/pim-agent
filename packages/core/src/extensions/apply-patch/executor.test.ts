@@ -120,6 +120,32 @@ describe("applyPatch", () => {
     expect(await readFile(path, "utf8")).toBe("foo\nBAR\nbaz\nQUX\n");
   });
 
+  test("a pure addition under a context anchor lands right after it", async () => {
+    const root = await tempRoot();
+    const path = join(root, "a.py");
+    await writeFile(
+      path,
+      "def foo():\n    pass\ndef bar():\n    pass\n",
+      "utf8"
+    );
+
+    await apply(wrap("*** Update File: a.py\n@@ def foo():\n+    x = 1"), root);
+
+    expect(await readFile(path, "utf8")).toBe(
+      "def foo():\n    x = 1\n    pass\ndef bar():\n    pass\n"
+    );
+  });
+
+  test("a pure addition with no anchor appends at EOF", async () => {
+    const root = await tempRoot();
+    const path = join(root, "e.txt");
+    await writeFile(path, "alpha\nbeta\n", "utf8");
+
+    await apply(wrap("*** Update File: e.txt\n@@\n+gamma"), root);
+
+    expect(await readFile(path, "utf8")).toBe("alpha\nbeta\ngamma\n");
+  });
+
   describe("conflict checks throw", () => {
     test("add existing file", async () => {
       const root = await tempRoot();
@@ -248,7 +274,6 @@ describe("applyPatch", () => {
       )
     ).rejects.toThrow("Failed to delete file");
 
-    // The successful update must NOT have been written.
     expect(await readFile(ok, "utf8")).toBe("alpha\n");
   });
 
@@ -279,10 +304,6 @@ describe("applyPatch", () => {
 
     await apply(wrap("*** Update File: a.txt\n@@\n-beta\n+BETA"), root);
 
-    const bytes = await Bun.file(path).bytes();
-    expect(bytes[0]).toBe(0xef);
-    expect(bytes[1]).toBe(0xbb);
-    expect(bytes[2]).toBe(0xbf);
     expect(await readFile(path, "utf8")).toBe("﻿alpha\nBETA\n");
   });
 

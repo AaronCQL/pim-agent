@@ -8,11 +8,6 @@ function fit(path: string, columns: number, oldPath?: string): string {
   );
 }
 
-/**
- * A file list is read by the names in it, and a monorepo spends the head of
- * every path saying the same thing. So the room a narrow bar is short goes out
- * of the directories, from the far end, and the name survives whole.
- */
 describe("a path too wide for its bar", () => {
   const path = "packages/web/src/topbar/BranchMenu.test.tsx";
 
@@ -30,11 +25,6 @@ describe("a path too wide for its bar", () => {
     expect(fit(path, 20)).toBe("BranchMenu.test.tsx");
   });
 
-  /**
-   * Two rows of the same file are told apart by the end of the name as often
-   * as the start — `BranchMenu.tsx` against `BranchMenu.test.tsx` — so the last
-   * resort spends the middle.
-   */
   test("elides a name wider than the whole bar middle-out", () => {
     expect(fit(path, 12)).toBe("Branch…t.tsx");
   });
@@ -65,7 +55,6 @@ describe("a move too wide for its bar", () => {
     expect(fit(path, 40, old)).toBe("…/diff/{DiffOverlay.tsx ➝ DiffView.tsx}");
   });
 
-  /** The row's own `R` says it moved; the path it came from is one tap away. */
   test("falls back to the path it arrived at", () => {
     expect(fit(path, 24, old)).toBe("…/src/diff/DiffView.tsx");
   });

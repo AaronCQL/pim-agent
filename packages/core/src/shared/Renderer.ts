@@ -19,7 +19,7 @@ export type RenderContext = {
   readonly isError: boolean;
 };
 
-export type MarkerStatus = "warning" | "error" | "success";
+type MarkerStatus = "warning" | "error" | "success";
 
 export type PrefixSpec = {
   readonly prefix: string;
@@ -358,14 +358,12 @@ function renderErrorResult(args: {
 export const Renderer = {
   GAPPED_PREFIX,
   TIGHT_PREFIX,
-  markerColorFor,
   firstText,
   extractErrorText,
   toolTitleText,
   makeTitleBlock,
   renderToolCallTitle,
   makePrefixedBlock,
-  markdownLines,
   makeMarkdownBlock,
   renderErrorResult,
 };

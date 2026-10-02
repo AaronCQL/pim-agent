@@ -6,12 +6,10 @@ export type GlobMatch = {
   readonly mtime: number;
 };
 
-export type GlobScanOptions = FileScanOptions;
-
 export async function findFiles(
   root: string,
   pattern: string,
-  options: GlobScanOptions
+  options: FileScanOptions
 ): Promise<readonly GlobMatch[]> {
   const metadata = await FsErrors.statOrThrow(root);
 

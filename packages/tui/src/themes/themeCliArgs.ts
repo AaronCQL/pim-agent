@@ -12,7 +12,6 @@ const PI_COMMANDS: ReadonlySet<string> = new Set([
   "update",
 ]);
 
-/** Per-run `--theme` args: the only channel early enough for pim's themes to resolve. */
 export function themeCliArgs(argv: readonly string[]): readonly string[] {
   if (PI_COMMANDS.has(argv[0] ?? "")) {
     return [];

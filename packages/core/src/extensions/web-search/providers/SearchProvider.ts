@@ -18,7 +18,7 @@ export type SearchProvider = {
   search(input: ProviderSearchInput): Promise<readonly SearchResult[]>;
 };
 
-/** Quota or rate limit exhausted; only this error opens the breaker and sidelines a provider. */
+/** The only error that trips the breaker. */
 export class ProviderQuotaError extends Error {
   public readonly provider: string;
   public readonly retryAfterMs: number | undefined;
@@ -43,7 +43,7 @@ export class ProviderSearchError extends Error {
 
 const MAX_SNIPPET_LENGTH = 500;
 
-/** Caps a provider snippet; Firecrawl returns whole scraped pages where others return two lines. */
+/** Collapses whitespace and caps length; Firecrawl can return whole pages. */
 export function normalizeSnippet(value: string | undefined): string {
   const collapsed = (value ?? "").replaceAll(/\s+/gu, " ").trim();
 
@@ -52,7 +52,7 @@ export function normalizeSnippet(value: string | undefined): string {
     : collapsed;
 }
 
-export function parseRetryAfterMs(value: string | null): number | undefined {
+function parseRetryAfterMs(value: string | null): number | undefined {
   if (value === null) {
     return undefined;
   }

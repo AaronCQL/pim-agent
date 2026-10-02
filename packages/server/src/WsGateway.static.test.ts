@@ -4,12 +4,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 
 import { SessionRegistry } from "#core/session/SessionRegistry";
-import { DEFAULT_CLIENT_DIR, StaticClient } from "./StaticClient";
+import { StaticClient } from "./StaticClient";
 import { WsGateway } from "./WsGateway";
 
 const INDEX = "<!doctype html><title>pim</title><div id=app></div>";
 const SCRIPT = "console.log('pim');";
-/** Over the compression floor, and repetitive the way a real bundle is. */
+/** Above the compression threshold and repetitive, like a real bundle. */
 const BUNDLE = `${"export const paint = (block) => block.render();\n".repeat(400)}`;
 
 let tmp: string;
@@ -148,7 +148,7 @@ test("a file too small to be worth deflating is sent as it is", async () => {
   expect(await response.text()).toBe(SCRIPT);
 });
 
-// Straight at the client: `fetch` decodes what it reads, so only this sees the wire size.
+// Direct: `fetch` would decode it and hide the wire size.
 test("a repeat read is served the same bytes from the cache", async () => {
   const client = new StaticClient(clientDir);
   const request = new Request("http://client/assets/bundle-abc123.js", {
@@ -200,10 +200,4 @@ test("an unbuilt client answers with build instructions, not a crash", async () 
 
   expect(response.status).toBe(503);
   expect(await response.text()).toContain("bun run web:build");
-});
-
-test("the default client directory points at the web package bundle", () => {
-  expect(DEFAULT_CLIENT_DIR).toEndWith(
-    join("packages", "web", "dist", "client")
-  );
 });

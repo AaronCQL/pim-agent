@@ -1,7 +1,7 @@
 const utf8Bom = "\uFEFF";
 const utf8BomBytes = new Uint8Array([0xef, 0xbb, 0xbf]);
 
-/** How far in a NUL is still evidence of a binary file rather than text. */
+/** A NUL within this many leading bytes marks a file as binary. */
 const binarySniffBytes = 8192;
 
 function normalize(content: string): string {

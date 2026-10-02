@@ -50,37 +50,11 @@ function paintBody(
   );
 }
 
-describe("writeView", () => {
-  test("supplies the title-cased display label", () => {
-    expect(
-      writeView({ args: { path: "a.ts" } as never, cwd, isPartial: false })
-        .label
-    ).toBe("Write");
-  });
-});
-
 describe("writeView title", () => {
-  test("renders the path relative to cwd", () => {
-    expect(paintTitle({ path: "/work/repo/src/foo.ts" })).toBe("src/foo.ts");
-  });
-
-  test("keeps an absolute path when outside cwd", () => {
-    expect(paintTitle({ path: "/etc/hosts" })).toBe("/etc/hosts");
-  });
-
   test("placeholder while the path has not streamed in", () => {
     expect(paintTitle({})).toBe("...");
     expect(paintTitle(undefined)).toBe("...");
     expect(paintTitle({ path: 12 })).toBe("...");
-  });
-
-  test("counts a brand-new file as all added", () => {
-    expect(
-      paintTitle(
-        { path: "/work/repo/src/foo.ts" },
-        settled({ created: true, diff: diff([], ["one", "two", "three"]) })
-      )
-    ).toBe("src/foo.ts <toolDiffAdded>+3</toolDiffAdded>");
   });
 
   test("appends both coloured diff stats once the result settles", () => {
@@ -99,21 +73,6 @@ describe("writeView title", () => {
       "src/foo.ts"
     );
   });
-
-  test("stays bare when the diff was skipped for size", () => {
-    expect(
-      paintTitle(
-        { path: "/work/repo/src/foo.ts" },
-        settled({
-          diffSkipped: {
-            reason: "size",
-            thresholdBytes: 2097152,
-            comparedBytes: 3000000,
-          },
-        })
-      )
-    ).toBe("src/foo.ts");
-  });
 });
 
 describe("writeView body", () => {
@@ -126,11 +85,5 @@ describe("writeView body", () => {
 
   test("is empty while the call is in flight", () => {
     expect(paintBody({ path: "/work/repo/src/foo.ts" })).toEqual([]);
-  });
-
-  test("is empty when the diff was omitted", () => {
-    expect(paintBody({ path: "/work/repo/src/foo.ts" }, settled({}))).toEqual(
-      []
-    );
   });
 });

@@ -12,7 +12,7 @@ export function bashView({ args, result }: BashViewInput): ToolView {
   return {
     label: "Bash",
     icon: "terminal",
-    // `spans`, not `text`: a `text` title is split on newlines and rejoined with spaces.
+    // Not `text`: that would join a multi-line command onto one line.
     title: [
       {
         kind: "spans",

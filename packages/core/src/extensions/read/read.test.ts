@@ -178,24 +178,15 @@ describe("readFile", () => {
 });
 
 describe("buildReadRange", () => {
-  test("rejects end before start", () => {
-    expect(() => buildReadRange(5, 4)).toThrow(
-      "Read end line 4 must be >= start line 5."
-    );
-  });
-
-  test("rejects non-positive integers", () => {
-    expect(() => buildReadRange(0, undefined)).toThrow(
-      "Read start 0 must be a positive integer."
-    );
-    expect(() => buildReadRange(undefined, -1)).toThrow(
-      "Read end -1 must be a positive integer."
-    );
+  test.each([
+    [5, 4, "Read end line 4 must be >= start line 5."],
+    [0, undefined, "Read start 0 must be a positive integer."],
+    [undefined, -1, "Read end -1 must be a positive integer."],
+  ])("rejects start %p, end %p", (start, end, message) => {
+    expect(() => buildReadRange(start, end)).toThrow(message);
   });
 
   test("defaults start to 1", () => {
-    expect(buildReadRange(undefined, undefined)).toEqual({
-      start: 1,
-    });
+    expect(buildReadRange(undefined, undefined)).toEqual({ start: 1 });
   });
 });

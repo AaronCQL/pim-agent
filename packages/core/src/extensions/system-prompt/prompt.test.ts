@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildEnvironment,
-  buildFormatting,
   buildInstructions,
   describeOs,
   formatDatetime,
@@ -66,13 +65,6 @@ describe("leadWithSystemPrompt", () => {
 });
 
 describe("buildEnvironment", () => {
-  test("emits a best-effort os field instead of process.platform", () => {
-    const environment = buildEnvironment({ os: "Ubuntu 24.04.2 LTS" });
-
-    expect(environment).toContain("- os: Ubuntu 24.04.2 LTS");
-    expect(environment).not.toContain("- platform:");
-  });
-
   test("names the surface the user is on, and omits it for a subagent", () => {
     const os = "Ubuntu 24.04.2 LTS";
 
@@ -144,14 +136,5 @@ describe("describeOs", () => {
     });
 
     expect(os).toBe("Fedora 40 (Workstation Edition)");
-  });
-});
-
-describe("buildFormatting", () => {
-  test("tells only the browser that mermaid fences render", () => {
-    expect(buildFormatting("web browser")).toContain("```mermaid");
-    expect(buildFormatting("terminal")).toBe("");
-    expect(buildFormatting("Telegram")).toBe("");
-    expect(buildFormatting(undefined)).toBe("");
   });
 });

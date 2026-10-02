@@ -14,7 +14,6 @@ function Notice(props: {
   const dismiss = (): void => {
     props.onDismiss(props.notice.id);
   };
-  // A snapshot: how long this one lives is settled when it arrives.
   const timer = setTimeout(
     dismiss,
     untrack(() => props.dismissMs)
@@ -36,7 +35,7 @@ function Notice(props: {
   );
 }
 
-/** What an extension said with nobody waiting on it: over the transcript, never in front of it. */
+/** Unprompted extension notices. Each dismisses itself after `dismissMs`. */
 export function NoticeToast(props: {
   readonly notices: readonly UiNotice[];
   readonly desktop: boolean;

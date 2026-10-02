@@ -17,11 +17,6 @@ import type { Settings } from "./Settings";
 
 const TITLE = "text-xs font-bold uppercase tracking-widest text-neutral-500";
 
-/**
- * What this browser decides for itself — which machine it drives and what it
- * draws — and the one thing it decides for the whole install: which
- * extensions load, which is the server's state and is read back from it.
- */
 export function SettingsModal(props: {
   readonly open: boolean;
   readonly onClose: () => void;
@@ -43,7 +38,7 @@ export function SettingsModal(props: {
   const busy = (): number => props.store.runningIds().length;
   const pending = (): boolean => props.store.update.state.pending;
 
-  // Save, then reload: the socket and every URL are fixed at construction from one address.
+  // Reload, since the socket URL is fixed at construction.
   const apply = (url: string): void => {
     props.settings.setServerUrl(url);
     props.store.update.refresh();
@@ -183,7 +178,6 @@ function Status(props: {
   const host = (): string =>
     URL.parse(props.settings.gateway())?.host ?? props.settings.gateway();
   const state = (): { readonly tone: string; readonly text: string } => {
-    // Staleness rides on a working connection now, so it answers before it.
     if (props.store.update.state.stale) {
       return {
         tone: "text-amber-400",

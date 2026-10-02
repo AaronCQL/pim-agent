@@ -20,7 +20,7 @@ const TIMEOUT_MS = 20_000;
 
 const IMAGE_CONTENT_TYPE = /^image\//iu;
 
-/** The picture the URL really serves, or null for anything the page path should handle. */
+/** Null when the URL does not serve an image. */
 export async function fetchImage(
   input: ImageFetchInput
 ): Promise<NormalisedImage | null> {
@@ -49,7 +49,6 @@ export function imageContent(
   return [...Images.contentOf(image, Images.noteOf(image)), ...footer];
 }
 
-/** The fetch succeeded and the intent was ambiguous, so the model is told what it got, not refused. */
 export function noVisionNote(url: string, image: NormalisedImage): string {
   const saved = image.cachePath === null ? "" : `, saved to ${image.cachePath}`;
   return Images.noVisionNote(
@@ -72,7 +71,7 @@ export function imageDetails(
   };
 }
 
-/** A response whose own headers claim a picture; the bytes still have to agree. */
+/** A response whose headers claim an image; the bytes are sniffed later. */
 async function declaredImage(input: ImageFetchInput): Promise<Response | null> {
   let response: Response;
 
@@ -105,7 +104,7 @@ async function declaredImage(input: ImageFetchInput): Promise<Response | null> {
   return response;
 }
 
-/** Stops at the cap and at the first chunk that is not a picture, so neither is ever buffered whole. */
+/** Stops early on oversize or on bytes that don't sniff as an image. */
 async function readCapped(
   response: Response,
   url: string

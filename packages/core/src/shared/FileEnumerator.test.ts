@@ -4,10 +4,15 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { FileEnumerator } from "./FileEnumerator";
 
-const enumerate = (
-  root: string,
-  opts?: Parameters<typeof FileEnumerator.enumerate>[1]
-) => FileEnumerator.enumerate(root, opts);
+const { enumerate } = FileEnumerator;
+
+const writer =
+  (base: string) =>
+  (rel: string, content = ""): void => {
+    const abs = join(base, rel);
+    mkdirSync(join(abs, ".."), { recursive: true });
+    writeFileSync(abs, content);
+  };
 
 let root: string;
 let previousXdgConfigHome: string | undefined;
@@ -17,20 +22,10 @@ beforeAll(() => {
   previousXdgConfigHome = process.env.XDG_CONFIG_HOME;
   process.env.XDG_CONFIG_HOME = join(root, ".xdg");
 
-  const write = (rel: string, content = "") => {
-    const abs = join(root, rel);
-    mkdirSync(join(abs, ".."), { recursive: true });
-    writeFileSync(abs, content);
-  };
+  const write = writer(root);
 
-  // A .git here makes root a repository, so its .gitignore is honored.
   write(".git/HEAD", "ref");
-  write(".git/config", "cfg");
-  mkdirSync(join(root, ".git", "info"), { recursive: true });
-  writeFileSync(
-    join(root, ".git", "info", "exclude"),
-    "excluded-by-info.txt\n"
-  );
+  write(".git/info/exclude", "excluded-by-info.txt\n");
 
   write("a.ts", "a");
   write("src/index.ts", "i");
@@ -42,11 +37,9 @@ beforeAll(() => {
 
   write("excluded-by-info.txt", "x");
 
-  // Global git ignore, via $XDG_CONFIG_HOME/git/ignore.
   write(".xdg/git/ignore", "**/global-ignore.txt\n");
   write("global-ignore.txt", "g");
 
-  // Root .gitignore: ignore logs, but keep one log; anchored + scoped rules.
   write(
     ".gitignore",
     "node_modules/\n*.log\n!keep.log\n/root-only.txt\nsrc/*.gen\n"
@@ -59,10 +52,9 @@ beforeAll(() => {
   write("generated.gen", "root-gen");
   write("node_modules/pkg/index.js", "n");
 
-  // Nested .gitignore scoped to src/: ignore *.tmp there only.
   write("src/.gitignore", "*.tmp\n");
   write("src/scratch.tmp", "t");
-  write("root.tmp", "rt"); // not ignored — nested rule is scoped to src/
+  write("root.tmp", "rt");
 });
 
 afterAll(() => {
@@ -150,6 +142,12 @@ describe("FileEnumerator.enumerate", () => {
     expect(paths).not.toContain("src/scratch.tmp");
     expect(paths).toContain("root.tmp");
   });
+
+  it("applies the enclosing repo's rules when started in a subdirectory", async () => {
+    const paths = await enumerate(join(root, "src"));
+    expect(paths).toContain("index.ts");
+    expect(paths).not.toContain("generated.gen");
+  });
 });
 
 describe("FileEnumerator.enumerate repo-awareness", () => {
@@ -158,11 +156,7 @@ describe("FileEnumerator.enumerate repo-awareness", () => {
 
     beforeAll(() => {
       nonRepo = mkdtempSync(join(tmpdir(), "pim-nonrepo-"));
-      const write = (rel: string, content = "") => {
-        const abs = join(nonRepo, rel);
-        mkdirSync(join(abs, ".."), { recursive: true });
-        writeFileSync(abs, content);
-      };
+      const write = writer(nonRepo);
       write(".gitignore", "loose-ignored.txt\n");
       write("loose-ignored.txt", "x");
       write("normal.txt", "y");
@@ -171,8 +165,6 @@ describe("FileEnumerator.enumerate repo-awareness", () => {
     afterAll(() => rmSync(nonRepo, { recursive: true, force: true }));
 
     it("does not honor a .gitignore outside a git repository", async () => {
-      // Matches git/fd (and ripgrep's default): a .gitignore with no enclosing
-      // repo is inert, so the listed file is still enumerated.
       const paths = await enumerate(nonRepo);
       expect(paths).toContain("normal.txt");
       expect(paths).toContain("loose-ignored.txt");
@@ -184,11 +176,7 @@ describe("FileEnumerator.enumerate repo-awareness", () => {
 
     beforeAll(() => {
       outer = mkdtempSync(join(tmpdir(), "pim-outerrepo-"));
-      const write = (rel: string, content = "") => {
-        const abs = join(outer, rel);
-        mkdirSync(join(abs, ".."), { recursive: true });
-        writeFileSync(abs, content);
-      };
+      const write = writer(outer);
       mkdirSync(join(outer, ".git"), { recursive: true });
       write(".gitignore", "*.cross\n");
       write("outer.cross", "a");
@@ -217,15 +205,9 @@ describe("FileEnumerator.enumerate repo-awareness", () => {
 
     beforeAll(() => {
       repo = mkdtempSync(join(tmpdir(), "pim-negation-"));
-      const write = (rel: string, content = "") => {
-        const abs = join(repo, rel);
-        mkdirSync(join(abs, ".."), { recursive: true });
-        writeFileSync(abs, content);
-      };
+      const write = writer(repo);
       mkdirSync(join(repo, ".git"), { recursive: true });
-      // Modeled on flutter: `build/` ignored at the repo root, re-included by
-      // `!build/` in a deep .gitignore. Only works when all of a repo's rules
-      // are evaluated together (one matcher anchored at the repo root).
+      // Needs one matcher for the whole repo, anchored at its root.
       write(".gitignore", "build/\n");
       write("engine/src/.gitignore", "!build/\n");
       write("engine/src/build/find.py", "a");
@@ -252,11 +234,7 @@ describe("FileEnumerator.enumerate repo-awareness", () => {
 
     beforeAll(() => {
       repo = mkdtempSync(join(tmpdir(), "pim-dotneg-"));
-      const write = (rel: string, content = "") => {
-        const abs = join(repo, rel);
-        mkdirSync(join(abs, ".."), { recursive: true });
-        writeFileSync(abs, content);
-      };
+      const write = writer(repo);
       mkdirSync(join(repo, ".git"), { recursive: true });
       write(".gitignore", ".idea/\n");
       write("pkg/.gitignore", "!.idea/\n");

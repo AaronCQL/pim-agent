@@ -59,26 +59,19 @@ import {
 } from "./fold";
 import { Reload } from "./Reload";
 
-export type {
-  LiveMessage,
-  LiveTool,
-  PendingMessage,
-  SubagentTranscript,
-} from "./fold";
-export type { Unwritten, UnwrittenSummary } from "./Drafts";
+export type { LiveMessage, PendingMessage } from "./fold";
 
 export type ModelCatalogue = {
   readonly models: readonly ModelView[];
   readonly thinkingLevels: readonly string[];
 };
 
-/** Who holds this session's turn lease, when it is not us. */
 export type LeaseHolder = Extract<
   EphemeralEvent,
   { readonly type: "session_state" }
 >["heldBy"];
 
-/** A file the server is holding for the next message. */
+/** A file the server holds for the next message. */
 export type UploadedAttachment = {
   readonly id: string;
   readonly url: string;
@@ -86,22 +79,21 @@ export type UploadedAttachment = {
   readonly name: string;
 };
 
-/** Something an extension said, in Markdown; shown and then forgotten. */
+/** Markdown from an extension. */
 export type UiNotice = {
   readonly id: string;
   readonly severity: NoticeSeverity;
   readonly text: string;
-  /** The command that said it, like `/login`; absent means nobody asked for it. */
+  /** The command that produced it, like `/login`. Absent for unprompted notices. */
   readonly command?: string;
 };
 
-/** The dialog an extension is waiting on a human for. */
 export type UiRequest = Extract<
   EphemeralEvent,
   { readonly type: "ui_request" }
 >;
 
-/** What goes back for a `UiRequest`; a dismissal is `cancelled`. */
+/** A dismissal is `cancelled`. */
 export type UiAnswer = Omit<
   Extract<CommandDraft, { readonly type: "ui_response" }>,
   "type" | "sessionId" | "requestId"
@@ -118,9 +110,9 @@ export type SessionState = {
   thinking: string;
   cost: number;
   agent: SessionStatus;
-  /** False while another process holds this session's turn lease. */
+  /** False while another process holds the turn lease. */
   writable: boolean;
-  /** A session in the same directory is mid-turn, so nothing may move the repository under it. */
+  /** A session in the same directory is mid-turn, so git operations must wait. */
   repoBusy: boolean;
   heldBy: LeaseHolder;
   turnElapsedMs: number | undefined;
@@ -130,55 +122,49 @@ export type SessionState = {
   dirtyCount: number;
   ahead: number;
   behind: number;
-  /** Changes whenever the working copy does; what the change list re-reads on. */
+  /** Changes whenever the working copy does. */
   repoRevision: string;
   durable: DurableEvent[];
   live: LiveMessage[];
   optimistic: OptimisticMessage[];
   activity: Record<string, SessionStatus>;
-  /** Bumped whenever the server says the sessions on disk moved; a listing read before it is stale. */
+  /** Bumped when sessions on disk change. */
   catalogue: number;
-  /** Bumped whenever any window switches an extension; a roster read before it is stale. */
+  /** Bumped when any window toggles an extension. */
   extensions: number;
   loading: boolean;
   error: string | undefined;
   unread: Record<string, boolean>;
-  /** Out of the default listing until it is brought back; keyed by session. */
   archived: Record<string, boolean>;
-  /** The name somebody wrote for a session, `null` once cleared; absent where this client has heard nothing. */
+  /** `null` once cleared; absent when unknown. */
   names: Record<string, string | null>;
-  /** Pinned projects, keyed by absolute working directory rather than by session. */
+  /** Keyed by cwd. */
   pinned: Record<string, boolean>;
-  /** Where each pinned project sorts, 0 first; the server owns it, so a directory it has nothing for is absent. */
+  /** Keyed by cwd, 0 first. */
   pinRank: Record<string, number>;
-  /** Projects whose sidebar group stands unfolded, keyed by absolute working directory. */
+  /** Keyed by cwd. */
   expanded: Record<string, boolean>;
-  /** What a project is called instead of its base name, `null` once cleared; keyed by absolute working directory. */
+  /** Keyed by cwd; `null` once cleared. */
   labels: Record<string, string | null>;
   drafts: Record<string, string>;
   attachments: Record<string, readonly UploadedAttachment[]>;
   openings: Record<string, string>;
   unwritten: Unwritten | undefined;
   subagent: SubagentTranscript | undefined;
-  /** What a command this reader typed said back, stacked into one modal until it is closed. */
+  /** Notices from a command this client ran; shown in the modal. */
   notices: UiNotice[];
-  /** What an extension said with nobody waiting on it: a toast each, never the modal. */
+  /** Unprompted notices; shown as toasts. */
   toasts: UiNotice[];
-  /** The dialogs waiting on this reader, asked in the order they were raised; extensions nest them. */
+  /** Open dialogs, oldest first. */
   requests: UiRequest[];
 };
 
-/**
- * What one send drew into a row, so a send that never landed can be taken
- * back out of it. Not the row as a whole: a send into a running turn merges
- * into the queued row, so by the time the answer comes the row may be
- * standing for somebody else's words too.
- */
+/** One send's contribution to an optimistic row, which may also hold other merged sends. */
 type Undo = {
   readonly id: string;
   readonly text: string;
   readonly attachments: readonly AttachmentView[];
-  /** The session this send guessed the opening message of. */
+  /** The session whose opening message this send set. */
   readonly opened: string | undefined;
 };
 
@@ -191,16 +177,12 @@ export type SessionStoreOptions = {
   readonly reloadPage?: () => void;
 };
 
-/** The flags a row or a group draws from this store alone, each one a command away. */
 type FlagRecord = "archived" | "unread" | "pinned" | "expanded";
 
 const FILE_PICKER_LIMIT = 50;
 const COMMAND_PICKER_LIMIT = 20;
 
-/**
- * The inverse of the `"\n\n"` merge into a queued row: `text` without the one
- * `segment` a send put there, or `text` itself where it is no longer in it.
- */
+/** Removes one `"\n\n"`-joined `segment` from `text`; returns `text` unchanged if absent. */
 function withoutSegment(text: string, segment: string): string {
   if (text === segment) {
     return "";
@@ -230,10 +212,7 @@ const LOCAL_COMMANDS: readonly LocalCommand[] = [
   },
 ];
 
-/**
- * Everything the browser knows about one session, and the only place an
- * intent turns into a command.
- */
+/** Client state for one session; the only place an intent becomes a command. */
 export class SessionStore {
   public readonly client: WsClient;
   public readonly update: Reload;
@@ -246,12 +225,7 @@ export class SessionStore {
   private readonly drafts: Drafts;
   private readonly detachAttention: () => void;
   private readonly detachWake: () => void;
-  /**
-   * Keys a command of this client's still has a guess standing in for, as
-   * `record:key`. A listing the server computed before the command reached it
-   * would otherwise paint the row back the way it was, one frame before the
-   * broadcast puts it right again.
-   */
+  /** `record:key` of optimistic writes still awaiting an answer; listings must not overwrite them. */
   private readonly guessed = new Set<string>();
 
   public constructor(options: SessionStoreOptions) {
@@ -383,7 +357,7 @@ export class SessionStore {
     }
   }
 
-  /** This client's own unacknowledged messages: typed, not yet echoed back. */
+  /** Sent messages not yet echoed back. */
   public trailing(): readonly PendingMessage[] {
     return this.state.optimistic;
   }
@@ -401,15 +375,11 @@ export class SessionStore {
     return this.state.agent !== "idle";
   }
 
-  /** Another surface holds the turn lease, so every intent that would write is refused. */
-  public isHeld(): boolean {
+  private isHeld(): boolean {
     return !this.state.writable;
   }
 
-  /**
-   * Why this session takes no writing right now, in the words the composer
-   * wears; absent when it takes them. The other surface is mid-turn.
-   */
+  /** Composer text while another surface holds the turn. */
   public heldNotice(): string | undefined {
     if (!this.isHeld()) {
       return undefined;
@@ -421,12 +391,11 @@ export class SessionStore {
     return `Running ${where} — you can continue when this turn ends.`;
   }
 
-  /** Whether that session's agent is working, attached or not. */
   public isRunning(sessionId: string): boolean {
     return (this.state.activity[sessionId] ?? "idle") !== "idle";
   }
 
-  /** Every session heard to be working, sorted; a stable dependency. */
+  /** Sorted, so it is stable as a dependency. */
   public runningIds(): readonly string[] {
     return Object.keys(this.state.activity)
       .filter((sessionId) => this.isRunning(sessionId))
@@ -434,10 +403,8 @@ export class SessionStore {
   }
 
   /**
-   * Says the message. Into a running turn it joins whatever that turn is
-   * already holding rather than queueing behind it. Answers whether it went:
-   * a refusal and a held lease both leave the words unsaid, and whatever the
-   * caller was going to clear on the strength of the send still stands.
+   * Sends a message; during a running turn it merges into the queued row.
+   * Returns false if nothing was sent, so the caller keeps its input.
    */
   public async prompt(text: string): Promise<boolean> {
     const trimmed = text.trim();
@@ -455,7 +422,6 @@ export class SessionStore {
       await local.run(this).catch(() => undefined);
       return true;
     }
-    // The lease is the other surface's until its turn ends; the message keeps.
     if (this.isHeld()) {
       return false;
     }
@@ -463,8 +429,7 @@ export class SessionStore {
       ({ name, url, isImage }) => ({ name, url, isImage })
     );
     const busy = this.isBusy();
-    // Read inside the write: state settles later, so two sends in one tick
-    // must meet in the draft.
+    // Read inside the write so two sends in one tick see each other.
     let rowId = "";
     let opened: string | undefined;
     this.setState((draft) => {
@@ -521,20 +486,19 @@ export class SessionStore {
       });
       return false;
     }
-    // An extension command took no turn and wrote no entry, so nothing will
-    // ever arrive to reconcile the row this drew.
+    // An extension command writes no entry, so nothing will replace the row.
     if (response.dispatched === true) {
       this.rollback(undo);
     }
     return true;
   }
 
-  /** Stop the turn, and answer with the queued message that was never said. */
+  /** Stops the turn; resolves to the queued text that was never sent. */
   public cancel(): Promise<string> {
     return this.reclaim({ type: "cancel", sessionId: this.state.sessionId });
   }
 
-  /** Take the waiting message back to edit it, whole, leaving the turn running. */
+  /** Takes the queued text back for editing; the turn keeps running. */
   public dequeue(): Promise<string> {
     return this.reclaim({ type: "dequeue", sessionId: this.state.sessionId });
   }
@@ -551,15 +515,9 @@ export class SessionStore {
     return restored.join("\n\n");
   }
 
-  /**
-   * Answers one named dialog — the one the press was aimed at, which is not
-   * always the only one waiting. The request leaves here rather than on the
-   * `ui_request_done` that follows, so the control goes with the press; a
-   * refusal only ever means another window answered first.
-   */
+  /** Removes the dialog immediately rather than waiting for `ui_request_done`. */
   public answerRequest(requestId: string, answer: UiAnswer): void {
-    // Read inside the write: state settles later, so two presses in one tick
-    // would both find the dialog still standing.
+    // Read inside the write so a double press answers once.
     let asked = false;
     this.setState((draft) => {
       asked = draft.requests.some((request) => request.requestId === requestId);
@@ -573,11 +531,8 @@ export class SessionStore {
     this.sendAnswer(requestId, answer);
   }
 
-  /** Escape, the backdrop and the back gesture all land here, and a dialog left unanswered is a cancelled one. */
+  /** Closes the modal, cancelling every open dialog. */
   public closeCommand(): void {
-    // One panel, so one dismissal: a question waiting behind the one on
-    // screen goes off with it rather than being left for a ceiling to answer.
-    // One write for the lot: each would otherwise re-run the modal's memos.
     let shown: readonly string[] = [];
     this.setState((draft) => {
       shown = draft.requests.map((request) => request.requestId);
@@ -589,7 +544,7 @@ export class SessionStore {
     }
   }
 
-  /** A refusal here only ever means another window answered first, so it is dropped. */
+  /** A refusal means another window answered first, so it is ignored. */
   private sendAnswer(requestId: string, answer: UiAnswer): void {
     void this.client
       .send({
@@ -607,7 +562,6 @@ export class SessionStore {
     });
   }
 
-  /** Read one subagent's transcript, live if it is still running. */
   public async watch(callId: string): Promise<void> {
     this.setState((draft) => {
       draft.subagent = { callId, durable: [], live: [] };
@@ -615,9 +569,8 @@ export class SessionStore {
     await this.sendWatch(callId, 0);
   }
 
-  /** Drop the watch; the server keeps it until the socket closes or a re-attach. */
   public unwatch(): void {
-    // Untracked: callers include effect callbacks, and this reads a snapshot.
+    // Untracked: effects call this.
     const callId = untrack(() => this.state.subagent?.callId);
     if (callId === undefined) {
       return;
@@ -687,7 +640,6 @@ export class SessionStore {
     );
   }
 
-  /** What is inside a directory on the server; throws what it refused with. */
   public async listDirectory(path: string): Promise<DirectoryListing> {
     const response = await this.client.send({ type: "list_dirs", path });
     if (!response.success || !response.directory) {
@@ -696,7 +648,6 @@ export class SessionStore {
     return response.directory;
   }
 
-  /** Makes a directory on the server; throws what it refused with. */
   public async createDirectory(path: string): Promise<void> {
     const response = await this.client.send({ type: "create_dir", path });
     if (!response.success) {
@@ -704,7 +655,6 @@ export class SessionStore {
     }
   }
 
-  /** The cwd's branches, in the order the server ranks them. */
   public async listBranches(): Promise<readonly GitBranch[]> {
     const response = await this.client.send({
       type: "list_branches",
@@ -716,7 +666,7 @@ export class SessionStore {
     return response.branches;
   }
 
-  /** Every changed file of one diff base, carrying no hunks. */
+  /** Changed files without hunks; see `fileDiff`. */
   public async listChanges(base: DiffBase): Promise<ChangeList> {
     const response = await this.client.send({
       type: "list_changes",
@@ -729,7 +679,6 @@ export class SessionStore {
     return response.changes;
   }
 
-  /** One file's hunks, asked for only once a reader expands it. */
   public async fileDiff(path: string, base: DiffBase): Promise<FileDiff> {
     const response = await this.client.send({
       type: "file_diff",
@@ -743,7 +692,6 @@ export class SessionStore {
     return response.fileDiff;
   }
 
-  /** The file's own lines behind a gap, asked for only once a reader opens one. */
   public async readLines(
     path: string,
     base: DiffBase,
@@ -762,7 +710,7 @@ export class SessionStore {
     return response.fileLines;
   }
 
-  /** Stages and commits exactly these paths; answers the short sha git wrote. */
+  /** Stages and commits exactly `paths`; resolves to the short sha. */
   public async commit(
     message: string,
     paths: readonly string[]
@@ -779,11 +727,7 @@ export class SessionStore {
     return response.commit.sha;
   }
 
-  /**
-   * Re-reads the repository for a picture that may have aged — the tab coming
-   * back, a menu opening. `fetch` asks the remote first, which is the only
-   * thing that moves ahead and behind.
-   */
+  /** `fetch` also fetches the remote, which is what updates ahead/behind. */
   public async refreshGit(fetch = false): Promise<void> {
     const sessionId = this.attached();
     if (sessionId === "") {
@@ -814,7 +758,7 @@ export class SessionStore {
     return this.runGit({ type: "push", sessionId: this.attached() });
   }
 
-  /** Which session a command is about to name: a snapshot, never a dependency of whoever asked. */
+  /** Untracked, so callers do not subscribe to the session id. */
   private attached(): string {
     return untrack(() => this.state.sessionId);
   }
@@ -823,7 +767,7 @@ export class SessionStore {
     return this.demand(draft, "git refused the operation");
   }
 
-  /** Sends, and raises what the server refused with, so a caller can say so. */
+  /** Sends and throws if the server refuses. */
   private async demand(draft: CommandDraft, refusal: string): Promise<void> {
     const response = await this.client.send(draft);
     if (!response.success) {
@@ -862,16 +806,13 @@ export class SessionStore {
           delete draft.openings[session.sessionId];
         }
       }
-      // A pin belongs to a directory, and every row's directory is in here:
-      // the projects are counted off the same scope the page is cut from.
       for (const project of response?.projects ?? []) {
         this.seed(draft, "pinned", project.cwd, project.pinned === true);
         this.seed(draft, "expanded", project.cwd, project.expanded === true);
         if (!this.guessed.has(`labels:${project.cwd}`)) {
           draft.labels[project.cwd] = project.label ?? null;
         }
-        // Under the pin's own key: a rank is half of the same guess, and a
-        // listing computed before the pin reached the server carries neither.
+        // A rank belongs to the pin's guess.
         if (!this.guessed.has(`pinned:${project.cwd}`)) {
           if (project.pinRank === undefined) {
             delete draft.pinRank[project.cwd];
@@ -888,8 +829,6 @@ export class SessionStore {
     ) {
       this.drafts.setUnwritten(undefined);
     }
-    // The server's rows, unfolded: every flag on one is held in this store and
-    // read back through it, so a snapshot taken here would only go stale.
     return { sessions, projects: response?.projects ?? [] };
   }
 
@@ -905,13 +844,8 @@ export class SessionStore {
   }
 
   /**
-   * Ranked search over every session on disk, titles and what was said, which
-   * is the only honest one: a page of the sidebar is a fraction of the tree.
-   * An empty `query` is the warm call — it builds the index, answers no hits,
-   * and counts the whole scope, which is the number the empty state prints.
-   * Raises where a listing swallows: a listing that fails draws no rows and
-   * looks empty, which is nearly true, but a search that fails still owes the
-   * reader a scope, and `scanned: 0` would have it claim it searched nothing.
+   * Searches every session on disk. An empty `query` warms the index and
+   * returns only `scanned`. Throws on failure, unlike `listSessions`.
    */
   public async searchSessions(
     query: string,
@@ -946,12 +880,11 @@ export class SessionStore {
     return this.drafts.draftText(sessionId);
   }
 
-  /** The files waiting to go with a session's unsent message. */
   public attachmentsOf(sessionId: string): readonly UploadedAttachment[] {
     return this.state.attachments[sessionId] ?? [];
   }
 
-  /** Uploads the bytes, filed under the session current when the upload began. */
+  /** Files the upload under the session current when it started. */
   public async attachFile(file: File): Promise<UploadedAttachment> {
     const sessionId = this.state.sessionId;
     const form = new FormData();
@@ -984,7 +917,7 @@ export class SessionStore {
     return uploaded;
   }
 
-  /** Takes one back off the unsent message. The bytes stay on the server. */
+  /** The upload stays on the server. */
   public detachFile(sessionId: string, id: string): void {
     this.setState((draft) => {
       const kept = (draft.attachments[sessionId] ?? []).filter(
@@ -1002,10 +935,7 @@ export class SessionStore {
     this.drafts.setDraftText(text);
   }
 
-  /**
-   * The models this server can switch to and the levels the current one
-   * thinks at, cached for the connection's lifetime.
-   */
+  /** Cached until a request fails. */
   public listModels(): Promise<ModelCatalogue> {
     this.catalogue ??= this.client
       .send({ type: "list_models" })
@@ -1037,12 +967,7 @@ export class SessionStore {
     }
   }
 
-  /**
-   * Every extension this server can switch, held until one of them is: the
-   * `extensions_changed` broadcast drops it in every window, and the revision
-   * it bumps is what a reader waits on for the roster that replaces it.
-   * Raises what the server refused with, so a pane can say why it drew none.
-   */
+  /** Cached until `extensions_changed` or a failure. */
   public listExtensions(): Promise<readonly ExtensionEntry[]> {
     this.roster ??= this.client
       .send({ type: "list_extensions" })
@@ -1059,12 +984,7 @@ export class SessionStore {
     return this.roster;
   }
 
-  /**
-   * Switches one extension on or off, and raises what a refusal said so the
-   * row it was guessed on can be put back. The server answers before it
-   * applies the change, so the roster is dropped on the broadcast that
-   * follows rather than here.
-   */
+  /** The cached roster is dropped on the `extensions_changed` broadcast, not here. */
   public setExtension(id: string, value: boolean): Promise<void> {
     return this.demand(
       { type: "set_extension", extensionId: id, value },
@@ -1072,76 +992,48 @@ export class SessionStore {
     );
   }
 
-  /** True when the session has answered since anything last read it. */
   public isUnread(sessionId: string): boolean {
     return this.state.unread[sessionId] ?? false;
   }
 
-  /** True when the session has been put away, so the live listing leaves it out. */
   public isArchived(sessionId: string): boolean {
     return this.state.archived[sessionId] ?? false;
   }
 
-  /** True when that working directory is a pinned project. */
   public isPinned(cwd: string): boolean {
     return this.state.pinned[cwd] ?? false;
   }
 
-  /**
-   * The pinned projects in the order they are shown; the sidebar sorts by it
-   * and `movePin` moves within it. Off the flag, not off the ranks: the flag
-   * is what a pin is, and a rank is only where it sits, so a project heard of
-   * without one sorts last rather than falling out of the pinned altogether.
-   */
+  /** Pinned cwds in display order; a pin without a rank sorts last. */
   public pinOrder(): readonly string[] {
     return Object.keys(this.state.pinned)
       .filter((cwd) => this.isPinned(cwd))
       .sort((one, other) => this.pinRankOf(one) - this.pinRankOf(other));
   }
 
-  /** Where a pinned project sorts; a directory with no pin sorts after every one that has. */
   public pinRankOf(cwd: string): number {
     return this.state.pinRank[cwd] ?? Number.MAX_SAFE_INTEGER;
   }
 
-  /** True when that project's sidebar group stands unfolded. Folded is where one starts. */
   public isExpanded(cwd: string): boolean {
     return this.state.expanded[cwd] ?? false;
   }
 
-  /** What somebody called the project, absent when it goes by its directory's base name. */
   public projectLabel(cwd: string): string | undefined {
     return this.state.labels[cwd] ?? undefined;
   }
 
-  /**
-   * Names the project a listing groups under, leaving the directory itself
-   * alone; `null` puts it back to its base name. Guessed at once and taken
-   * back when the server refuses, as a session's own name is.
-   */
-  public async renameProject(cwd: string, name: string | null): Promise<void> {
-    const before = untrack(() => this.state.labels[cwd]);
-    await this.guess(
-      `labels:${cwd}`,
-      (state) => {
-        state.labels[cwd] = name;
-      },
-      (state) => {
-        if (before === undefined) {
-          delete state.labels[cwd];
-        } else {
-          state.labels[cwd] = before;
-        }
-      },
+  /** `null` reverts to the directory's base name. */
+  public renameProject(cwd: string, name: string | null): Promise<void> {
+    return this.guessName(
+      "labels",
+      cwd,
+      name,
       { type: "set_project_label", cwd, value: name },
       "the server refused the name"
     );
   }
 
-  /**
-   * Folds a project's group, or unfolds it. The server keeps it, so the fold
-   * survives a reload and every surface opens to the same sidebar.
-   */
   public setExpanded(cwd: string, value: boolean): Promise<void> {
     return this.flag(
       { type: "set_project_expanded", cwd, value },
@@ -1152,39 +1044,21 @@ export class SessionStore {
     );
   }
 
-  /** The name somebody wrote for the session, absent when it goes by its opening message. */
   public sessionName(sessionId: string): string | undefined {
     return this.state.names[sessionId] ?? undefined;
   }
 
-  /**
-   * Names the session through pi's own name, so the terminal's picker shows
-   * it too; `null` clears it back to its opening message. Guessed at once, so
-   * a rename queued behind a running turn shows on the row it was typed on
-   * rather than nowhere; taken back when the server refuses. Only the name
-   * itself is guessed — a cleared one falls back to a digest of the opening
-   * message, which the server holds and this client does not.
-   */
-  public async rename(sessionId: string, name: string | null): Promise<void> {
-    const before = untrack(() => this.state.names[sessionId]);
-    await this.guess(
-      `names:${sessionId}`,
-      (state) => {
-        state.names[sessionId] = name;
-      },
-      (state) => {
-        if (before === undefined) {
-          delete state.names[sessionId];
-        } else {
-          state.names[sessionId] = before;
-        }
-      },
+  /** Sets pi's session name; `null` clears it. */
+  public rename(sessionId: string, name: string | null): Promise<void> {
+    return this.guessName(
+      "names",
+      sessionId,
+      name,
       { type: "set_session_name", sessionId, value: name },
       "the server refused the name"
     );
   }
 
-  /** Puts the session away, out of the live listing, or brings it back. */
   public setArchived(sessionId: string, value: boolean): Promise<void> {
     return this.flag(
       { type: "set_session_archived", sessionId, value },
@@ -1195,7 +1069,6 @@ export class SessionStore {
     );
   }
 
-  /** Holds the session unread until it is answered; survives reading it. */
   public markUnread(sessionId: string, value: boolean): Promise<void> {
     return this.flag(
       { type: "set_session_unread", sessionId, value },
@@ -1206,7 +1079,6 @@ export class SessionStore {
     );
   }
 
-  /** Pins a working directory, not a session: every session in it sorts first. */
   public setPinned(cwd: string, value: boolean): Promise<void> {
     return this.flag(
       { type: "set_project_pinned", cwd, value },
@@ -1218,11 +1090,8 @@ export class SessionStore {
   }
 
   /**
-   * Swaps a pinned project with its neighbour and sends the whole order, so
-   * the row moves on the press rather than on the listing that follows it.
-   * The order is the server's, which can name a project this page has no rows
-   * for; a swap past one of those reads as a press that did nothing, and a
-   * second press moves on.
+   * Swaps a pinned project with its neighbour. The order may include projects
+   * not on this page, so a press can appear to do nothing.
    */
   public async movePin(cwd: string, delta: -1 | 1): Promise<void> {
     const order = [...this.pinOrder()];
@@ -1253,11 +1122,6 @@ export class SessionStore {
     }
   }
 
-  /**
-   * A flag the row draws from this store alone: guessed at once so the row
-   * answers the click, taken back when the server refuses, and confirmed by
-   * the broadcast that follows the command.
-   */
   private async flag(
     draft: CommandDraft,
     record: FlagRecord,
@@ -1279,11 +1143,32 @@ export class SessionStore {
     );
   }
 
-  /**
-   * Paints `apply` before the command goes out and `restore` if it is refused,
-   * holding `key` for as long as the answer is outstanding so a listing the
-   * server computed before the command reached it leaves the guess standing.
-   */
+  private async guessName(
+    record: "names" | "labels",
+    key: string,
+    value: string | null,
+    draft: CommandDraft,
+    refusal: string
+  ): Promise<void> {
+    const before = untrack(() => this.state[record][key]);
+    await this.guess(
+      `${record}:${key}`,
+      (state) => {
+        state[record][key] = value;
+      },
+      (state) => {
+        if (before === undefined) {
+          delete state[record][key];
+        } else {
+          state[record][key] = before;
+        }
+      },
+      draft,
+      refusal
+    );
+  }
+
+  /** Applies optimistically, restoring on refusal; `key` shields it from listings meanwhile. */
   private async guess(
     key: string,
     apply: (state: SessionState) => void,
@@ -1316,14 +1201,14 @@ export class SessionStore {
   }
 
   public async switchTo(sessionId: string): Promise<void> {
-    // Re-attaching replays from seq 0 onto a transcript this client keeps, doubling it.
+    // Re-attaching would replay onto the kept transcript and double it.
     if (sessionId === this.state.sessionId) {
       return;
     }
     await this.attach({ sessionId });
   }
 
-  /** Open a new chat, or return to the unwritten one already open. */
+  /** Reuses the open unwritten session if there is one. */
   public async newSession(): Promise<void> {
     const unwritten = this.state.unwritten;
     if (
@@ -1339,7 +1224,7 @@ export class SessionStore {
     await this.startDraft("");
   }
 
-  /** Work somewhere else, always in a new session: pi logs under the cwd. */
+  /** Always a new session, since pi stores sessions per cwd. */
   public async openDirectory(cwd: string): Promise<void> {
     const unwritten = this.state.unwritten;
     if (
@@ -1366,7 +1251,7 @@ export class SessionStore {
     }
   }
 
-  /** Send `cwd` as well as `like`: a restarted server cannot honour `like`. */
+  /** Sends `cwd` too, since a restarted server cannot resolve `like`. */
   private async startDraft(text: string, cwd?: string): Promise<void> {
     const like = this.state.sessionId;
     const where = cwd ?? this.state.cwd;
@@ -1400,19 +1285,15 @@ export class SessionStore {
     }
   }
 
-  /** What this browser resolves the gateway's own paths against: its uploads, and the pictures a tool view names. */
   public get httpUrl(): string {
     return this.client.httpUrl;
   }
 
-  private absolute(url: string): string {
-    return url.startsWith("/") ? `${this.httpUrl}${url}` : url;
-  }
-
-  private readonly toAbsolute = (url: string): string => this.absolute(url);
+  private readonly absolute = (url: string): string =>
+    url.startsWith("/") ? `${this.httpUrl}${url}` : url;
 
   public ingest(frame: ServerEvent): void {
-    const event = resolveUrls(frame, this.toAbsolute);
+    const event = resolveUrls(frame, this.absolute);
     this.update.ingest(event);
     if (isDurableEvent(event)) {
       this.setState((draft) => {
@@ -1424,7 +1305,7 @@ export class SessionStore {
       case "attached": {
         const previous = this.state.sessionId;
         this.setState((draft) => {
-          // A different session invalidates this client's ordinals; the same one resumes.
+          // The same session resumes; a different one starts over.
           if (draft.sessionId !== event.sessionId) {
             draft.durable = [];
             draft.optimistic = [];
@@ -1434,9 +1315,7 @@ export class SessionStore {
             draft.turnElapsedMs = undefined;
             draft.loading = event.head > 0;
           }
-          // Said before this attach, and possibly settled while the socket was
-          // down; the replay that follows re-announces every dialog still
-          // standing, this session's or the next one's.
+          // The replay re-sends any dialog still open.
           draft.notices = [];
           draft.toasts = [];
           draft.requests = [];
@@ -1444,7 +1323,7 @@ export class SessionStore {
           draft.cwd = event.cwd;
           draft.pimVersion = event.pimVersion;
           draft.piVersion = event.piVersion;
-          // The server re-sends the whole in-flight turn on attach; keeping live doubles it.
+          // The server re-sends the in-flight turn on attach.
           draft.live = [];
           draft.error = undefined;
         });
@@ -1470,7 +1349,7 @@ export class SessionStore {
             return;
           }
           for (const inner of event.events) {
-            applyChild(watched, resolveUrls(inner, this.toAbsolute));
+            applyChild(watched, resolveUrls(inner, this.absolute));
           }
         });
         return;
@@ -1485,8 +1364,6 @@ export class SessionStore {
             text: event.text,
             ...(event.command === undefined ? {} : { command: event.command }),
           };
-          // One modal for the whole dispatch: a login flow says something,
-          // asks, and says something else, and that is one panel.
           if (notice.command === undefined) {
             draft.toasts.push(notice);
           } else {
@@ -1496,14 +1373,9 @@ export class SessionStore {
         return;
       case "ui_request":
         this.setState((draft) => {
-          // Two dispatches nest, and a spontaneous handler may ask over
-          // either: each question waits its turn rather than evicting the
-          // one on screen.
           draft.requests.push(event);
         });
         return;
-      // Whoever answered it, the question is settled: another window, or the
-      // server answering for a reader who never arrived.
       case "ui_request_done":
         this.setState((draft) => {
           draft.requests = draft.requests.filter(
@@ -1521,8 +1393,6 @@ export class SessionStore {
           draft.unread[event.sessionId] = false;
         });
         return;
-      // A sidecar write moves no session file, so no listing is invalidated
-      // by it: these are the only word a held row gets.
       case "session_meta":
         this.setState((draft) => {
           if (event.name !== undefined) {
@@ -1538,7 +1408,6 @@ export class SessionStore {
         return;
       case "project_meta":
         this.setState((draft) => {
-          // A patch: a fold says nothing about the pin beside it, and vice versa.
           if (event.pinned !== undefined) {
             draft.pinned[event.cwd] = event.pinned;
           }
@@ -1562,8 +1431,6 @@ export class SessionStore {
           draft.catalogue += 1;
         });
         return;
-      // Somebody switched an extension, here or in another window: what this
-      // client holds is a roster of the settings as they were.
       case "extensions_changed":
         this.roster = undefined;
         this.setState((draft) => {
@@ -1572,13 +1439,14 @@ export class SessionStore {
         return;
       case "session_state":
         this.setState((draft) => {
-          // Last event of a replay, so the log is complete.
+          // Last event of a replay.
           draft.loading = false;
           draft.cwd = event.cwd;
           draft.model = event.model;
           draft.modelLabel = event.modelLabel ?? event.model;
           draft.thinking = event.thinking;
           draft.cost = event.cost;
+          const settled = draft.agent !== "idle" && event.status === "idle";
           draft.agent = event.status;
           draft.writable = event.writable;
           draft.repoBusy = event.repoBusy === true;
@@ -1592,9 +1460,15 @@ export class SessionStore {
           draft.ahead = event.ahead ?? 0;
           draft.behind = event.behind ?? 0;
           draft.repoRevision = event.repoRevision ?? "";
-          // The server says idle only after flushing the turn's entries; live is superseded.
+          // Idle arrives after the turn's durable entries, which supersede live.
           if (event.status === "idle") {
             draft.live = [];
+          }
+          // A send whose durable text never matched (an expanded template) would otherwise linger.
+          if (settled) {
+            draft.optimistic = draft.optimistic.filter(
+              (pending) => pending.queued
+            );
           }
         });
         return;
@@ -1622,7 +1496,7 @@ export class SessionStore {
     void this.sendWatch(watched.callId, 0);
   }
 
-  /** Takes one send's words back off the row it drew them into, and the row with them once nothing is left. */
+  /** Removes one send from its optimistic row, and the row once empty. */
   private rollback(undo: Undo): void {
     this.setState((draft) => {
       if (undo.opened !== undefined) {

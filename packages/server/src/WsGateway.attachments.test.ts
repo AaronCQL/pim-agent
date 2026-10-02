@@ -9,27 +9,21 @@ import { AttachmentStore } from "#core/attachments/AttachmentStore";
 import { SessionRegistry } from "#core/session/SessionRegistry";
 import { Tools } from "#core/shared/Tools";
 import { isDurableEvent } from "#protocol/ServerEvent";
+import { AttachmentEndpoint } from "./AttachmentEndpoint";
 import { ProbeClient } from "./ProbeClient";
 import { SendFileTool } from "./SendFileTool";
 import { WsGateway } from "./WsGateway";
 
 const REPLY = "got it";
-/**
- * What the web surface puts in every prompt's environment block, verbatim.
- * Copied rather than imported because it is a fact about the deployment and
- * not about any one tool: the surface says where the user is, and `send_file`
- * is one of the things that follow from the answer being "a browser".
- */
+/** The web surface's prompt environment block, copied verbatim. */
 const BROWSER_SURFACE = "- surface: web browser";
-/** What makes the model reach for `send_file` instead of just talking. */
 const ASK_TO_SEND = "send the chart";
 const CHART = "chart.png";
-/** A one-pixel PNG, small enough to inline. */
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
   "base64"
 );
-/** The client's own name for its bytes. It must never reach the server. */
+/** The client-side name; must never reach the server. */
 const CLIENT_FILE = "holiday-photo.png";
 
 let tmp: string;
@@ -64,8 +58,7 @@ function startModelServer(): void {
       }
       const body = await req.text();
       modelRequests.push(body);
-      // The ask is still in the history on the second request, so the
-      // tool's own answer is what says the call has already been made.
+      // The ask stays in history, so the tool result marks the call as made.
       const sending = body.includes(ASK_TO_SEND) && !body.includes("Sent ");
       const stream = new ReadableStream<Uint8Array>({
         start(controller) {
@@ -117,7 +110,7 @@ function idle(probe: ProbeClient, from: number): Promise<unknown> {
   );
 }
 
-/** Everything the agent and its clients can see, as one string. */
+/** Everything the agent and its clients can see. */
 async function history(probe: ProbeClient): Promise<string> {
   const sessionPath = registry.peek(probe.sessionId!)?.settings.sessionPath;
   const jsonl = sessionPath ? await Bun.file(sessionPath).text() : "";
@@ -167,9 +160,7 @@ beforeEach(async () => {
   registry = new SessionRegistry({
     defaults: { cwd, model: "test/echo" },
     agentDir,
-    // As `serve.ts` wires it: the tool writes into the same root the endpoint
-    // answers for, which is what makes a delivery fetchable at all, under the
-    // one sentence that tells the model where its user is.
+    // Wired like `serve.ts`: the tool writes into the root the endpoint serves.
     customTools: ({ cwd: sessionCwd, sessionId }) => [
       Tools.wrap(
         SendFileTool.build({
@@ -236,9 +227,7 @@ test("an uploaded non-image reaches the agent as a server path", async () => {
   await probe.promptWith("read this", [{ id: uploaded.id }]);
   await idle(probe, mark);
 
-  // The model is told a path, because a path is the only handle a tool can
-  // take; the client is told a file, because a path is the one thing a
-  // reader can do nothing with.
+  // The model gets a path; the client gets a file view.
   expect(modelRequests.join("\n")).toContain(uploaded.path);
   const user = probe.events.find(
     (event) => event.type === "message" && event.role === "user"
@@ -283,8 +272,7 @@ test("a crafted attachment url cannot climb out of its session", async () => {
   }
 });
 
-// The dev client is served from another port, so its upload is cross-origin
-// and only reaches the handler if the browser is told the origin is welcome.
+// The dev client runs on another port, so uploads are cross-origin.
 test("an upload from another origin is allowed", async () => {
   const probe = await connect();
   const form = new FormData();
@@ -319,9 +307,7 @@ test("no client-local path ever enters the conversation", async () => {
   ]);
   await idle(probe, mark);
 
-  // The name the reader gave the bytes is kept — it is the label they will
-  // be shown a week later — but nothing about where they were kept is: the
-  // client's directory is never sent, never stored, and never derivable.
+  // The file name survives; the client's directory never does.
   const seen = await history(probe);
   expect(seen).not.toContain(clientDir);
   expect(seen).toContain(document.path);
@@ -378,12 +364,6 @@ test("rejects an upload with no session and a traversing filename", async () => 
   expect(dirname(body.path)).toBe(join(attachmentsRoot, probe.sessionId!));
 });
 
-/**
- * The other direction: a file the *agent* hands over. It travels as a stored
- * copy behind a URL, exactly as an upload does — the browser has no
- * filesystem to be handed a path to, and the transcript that references the
- * delivery outlives whatever the agent does to the original next.
- */
 test("a file the agent sent is delivered as bytes the browser can fetch", async () => {
   const probe = await connect();
   const mark = probe.events.length;
@@ -403,10 +383,7 @@ test("a file the agent sent is delivered as bytes the browser can fetch", async 
     isImage: true,
   });
 
-  // A model that does not know where its user is has no reason to hand a file
-  // over rather than say where it wrote one — and on a terminal it would be
-  // right. The instruction is what makes the tool worth reaching for, so it
-  // has to be in the prompt the model actually answered.
+  // The environment block must be in the prompt the model answered.
   expect(modelRequests.join("\n")).toContain(BROWSER_SURFACE);
 
   const url = block?.kind === "attachment" ? block.url : "";
@@ -417,8 +394,7 @@ test("a file the agent sent is delivered as bytes the browser can fetch", async 
   );
 });
 
-// The agent's own filesystem is as private from the browser as the browser's
-// is from the agent. The name survives; the directory it was in does not.
+// The agent's directory never reaches the browser; only the name does.
 test("no agent-local path ever reaches the client", async () => {
   const probe = await connect();
   const mark = probe.events.length;
@@ -429,4 +405,33 @@ test("no agent-local path ever reaches the client", async () => {
   expect(wire).toContain(CHART);
   expect(wire).not.toContain(join(cwd, CHART));
   expect(wire).not.toContain(attachmentsRoot);
+});
+
+test("an upload no prompt takes is forgotten after its ttl", async () => {
+  let now = 0;
+  const endpoint = new AttachmentEndpoint({
+    root: attachmentsRoot,
+    ttlMs: 1000,
+    now: () => now,
+  });
+  const upload = async (session: string): Promise<string> => {
+    const form = new FormData();
+    form.append("file", new Blob(["notes"]), "notes.txt");
+    const response = await endpoint.handle(
+      new Request(`http://pim/upload?session=${session}`, {
+        method: "POST",
+        body: form,
+      })
+    );
+    return ((await response.json()) as { id: string }).id;
+  };
+
+  const abandoned = await upload("a");
+  now = 1000;
+  const fresh = await upload("b");
+
+  expect(endpoint.take("a", [abandoned])).toEqual([]);
+  expect(endpoint.take("b", [fresh]).map((stored) => stored.id)).toEqual([
+    fresh,
+  ]);
 });

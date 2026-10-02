@@ -4,7 +4,7 @@ const MATCHERS: ReadonlyArray<(a: string, b: string) => boolean> = [
   (a, b) => a.trim() === b.trim(),
 ];
 
-/** Locate `pattern` in `lines` at or after `start`, relaxing whitespace over three passes; `eof` searches flush against the end. */
+/** Match starts of `pattern` at or after `start`, relaxing whitespace each pass. `eof` only tries the last possible position. */
 export function seekSequenceMatches(
   lines: readonly string[],
   pattern: readonly string[],

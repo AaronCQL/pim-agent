@@ -62,25 +62,24 @@ function load(): Promise<Settings> {
   return loaded;
 }
 
-async function getExaApiKey(): Promise<string | undefined> {
-  return (
-    normalize(process.env["EXA_API_KEY"]) ??
-    normalize((await get("exa")).apiKey)
-  );
+function getExaApiKey(): Promise<string | undefined> {
+  return apiKey("EXA_API_KEY", "exa");
 }
 
-async function getJinaApiKey(): Promise<string | undefined> {
-  return (
-    normalize(process.env["JINA_API_KEY"]) ??
-    normalize((await get("jina")).apiKey)
-  );
+function getJinaApiKey(): Promise<string | undefined> {
+  return apiKey("JINA_API_KEY", "jina");
 }
 
-async function getFirecrawlApiKey(): Promise<string | undefined> {
-  return (
-    normalize(process.env["FIRECRAWL_API_KEY"]) ??
-    normalize((await get("firecrawl")).apiKey)
-  );
+function getFirecrawlApiKey(): Promise<string | undefined> {
+  return apiKey("FIRECRAWL_API_KEY", "firecrawl");
+}
+
+/** The env var wins over the settings file. */
+async function apiKey(
+  envName: string,
+  key: "exa" | "jina" | "firecrawl"
+): Promise<string | undefined> {
+  return normalize(process.env[envName]) ?? normalize((await get(key)).apiKey);
 }
 
 function normalize(value: string | undefined): string | undefined {

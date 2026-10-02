@@ -11,10 +11,6 @@ import type { ProjectView, SessionSummaryView } from "#protocol/ServerEvent";
 import { ProbeClient } from "./ProbeClient";
 import { WsGateway } from "./WsGateway";
 
-/**
- * What the sidebar writes down beside pi's sessions: archived, held unread,
- * pinned, named. No model ever answers here — none of it runs a turn.
- */
 let tmp: string;
 let agentDir: string;
 let previousAgentDir: string | undefined;
@@ -55,12 +51,7 @@ function pathOf(sessionId: string): string {
   return join(agentDir, "sessions", "written", `${sessionId}.jsonl`);
 }
 
-/**
- * Complete enough to be opened, not only listed — the usage the answer
- * carries is what pi totals the moment an agent adopts the file — and dated
- * `repliedAt`, so the page's modified-time order is the order these were
- * written in and not the order the disk clock saw them.
- */
+/** A complete, openable session file, with mtime set to `repliedAt`. */
 async function writeSession(
   id: string,
   repliedAt: string,
@@ -76,7 +67,7 @@ async function writeSession(
   });
 }
 
-/** A session nobody ever said anything in: pi's header and not one entry under it. */
+/** Pi's header with no entries. */
 async function writeEmptySession(
   id: string,
   createdAt: string,
@@ -106,7 +97,7 @@ function projectOf(
   return projects.find((project) => project.cwd === cwd);
 }
 
-/** The sidecar as it is on disk, which is the only place any of this survives. */
+/** The sidecar file as stored on disk. */
 async function stored(): Promise<{
   readonly sessions: Record<string, unknown>;
   readonly projects: Record<string, unknown>;
@@ -175,7 +166,7 @@ test("puts a session away, and hands it back on the archived scope", async () =>
   expect(ids(live)).not.toContain(ONE);
   expect(ids(live)).toContain(TWO);
 
-  // Not deleted — asked for by name, it is still there, and says so.
+  // Still available when asked for by id.
   const away = await probe.listSessions({ archived: true });
   expect(ids(away)).toEqual([ONE]);
   expect(away[0]?.archived).toBe(true);
@@ -187,7 +178,7 @@ test("puts a session away, and hands it back on the archived scope", async () =>
 });
 
 test("cuts the page after the archived are gone, not before", async () => {
-  // This probe's own session is written first, so it is the oldest of the four.
+  // This probe's session is the oldest of the four.
   const probe = await connect();
   await writeSession(ONE, SessionFixture.minutesAgo(3));
   await writeSession(TWO, SessionFixture.minutesAgo(2));
@@ -195,8 +186,7 @@ test("cuts the page after the archived are gone, not before", async () => {
 
   await probe.setArchived(THREE, true);
 
-  // Filtered first, the page is the two live sessions under the archived one.
-  // Cut first, it would be the one row left over from a page of two.
+  // Filter before paging, so both live sessions fit.
   expect(ids(await probe.listSessions({ limit: 2 }))).toEqual([TWO, ONE]);
 });
 
@@ -205,8 +195,7 @@ test("keeps a mark made by hand through a listing and a re-attach", async () => 
   const probe = await connect({ sessionId: ONE });
   expect((await probe.markUnread(ONE, true)).success).toBe(true);
 
-  // Twice: reading the catalogue is not reading the session, and a listing
-  // that consumed the mark would consume it before anybody saw the dot.
+  // Listing twice must not clear the mark.
   expect(SessionFixture.rowIn(await probe.listSessions(), ONE)?.unread).toBe(
     true
   );
@@ -215,13 +204,13 @@ test("keeps a mark made by hand through a listing and a re-attach", async () => 
   );
   probe.close();
 
-  // Nor is a reconnect from a tab nobody is looking at.
+  // Nor does a reconnect from a hidden tab.
   const hidden = await connect({ sessionId: ONE, attentive: false });
   expect(SessionFixture.rowIn(await hidden.listSessions(), ONE)?.unread).toBe(
     true
   );
 
-  // Coming back to it is: the read is the one thing that clears the mark.
+  // An attentive attach clears it.
   await hidden.attention(true);
   expect(
     SessionFixture.rowIn(await hidden.listSessions(), ONE)?.unread
@@ -236,8 +225,7 @@ test("names a session it has never opened, and gives its opening message back", 
     "say hello"
   );
 
-  // Whitespace collapsed the way pi stores it, and no stream anywhere: this
-  // session has only ever been a file to this server.
+  // Whitespace collapsed as pi stores it; the session was never opened.
   expect((await probe.rename(ONE, "  Parser   work ")).success).toBe(true);
   const named = SessionFixture.rowIn(await probe.listSessions(), ONE);
   expect(named?.title).toBe("Parser work");
@@ -280,22 +268,19 @@ test("tells every other connection what one of them changed", async () => {
   await one.setLabel(tmp, "Strings");
   await one.rename(ONE, "Parser work");
 
-  // No session file moved for three of these, so no `sessions_changed` will
-  // follow them: this is the only word the other window gets.
+  // Sidecar writes trigger no `sessions_changed`, so this broadcast is the only update.
   await until(() => heard().length === 6, "the six broadcasts", 20_000);
   expect(heard()).toEqual([
     { type: "session_meta", sessionId: ONE, archived: true },
     { type: "session_meta", sessionId: ONE, unread: true },
     { type: "project_meta", cwd: tmp, pinned: true },
-    // A patch, like the `session_meta` rows above it: the fold says nothing
-    // about the pin it was just given, so neither can clear the other.
+    // A patch: neither field clears the other.
     { type: "project_meta", cwd: tmp, expanded: true },
     { type: "project_meta", cwd: tmp, label: "Strings" },
     { type: "session_meta", sessionId: ONE, name: "Parser work" },
   ]);
 });
 
-/** The fold is the server's, so a second window opens to the sidebar the first one arranged. */
 test("a listing carries the fold each project was left at", async () => {
   await writeSession(ONE, SessionFixture.minutesAgo(1));
   const probe = await connect();
@@ -311,7 +296,6 @@ test("a listing carries the fold each project was left at", async () => {
   expect(opened.projects.map((project) => project.expanded)).toEqual([true]);
 });
 
-/** The name is the server's too, and it is a name for the sidebar alone: the directory keeps the one it has. */
 test("a listing carries the name each project was given", async () => {
   await writeSession(ONE, SessionFixture.minutesAgo(1));
   const probe = await connect();
@@ -344,7 +328,7 @@ test("refuses a name it cannot write, and changes nothing", async () => {
   expect(unknown.success).toBe(false);
   expect(unknown.error).toContain("unknown session");
 
-  // Held by the terminal, which may be halfway through a turn of its own.
+  // Held by the terminal.
   const lease = await SessionLease.acquire(pathOf(ONE), "tui");
   if (!lease.ok) {
     throw new Error("the lease was already held");
@@ -366,7 +350,7 @@ test("archives over a socket that never attached", async () => {
   await writeSession(ONE, SessionFixture.minutesAgo(1));
   const socket = new WebSocket(gateway.url);
   await new Promise((resolve) => socket.addEventListener("open", resolve));
-  // The broadcast reaches this socket too, and reaches it first.
+  // The broadcast reaches the sender first.
   const answer = new Promise<{ readonly success: boolean }>((resolve) => {
     socket.addEventListener("message", (event) => {
       const frame = JSON.parse(String(event.data)) as {
@@ -390,7 +374,7 @@ test("archives over a socket that never attached", async () => {
   const response = await answer;
   socket.close();
 
-  // Putting a row away is something a sidebar does to a session it is not in.
+  // Archive without attaching.
   expect(response.success).toBe(true);
   const probe = await connect();
   expect(ids(await probe.listSessions())).not.toContain(ONE);
@@ -402,7 +386,7 @@ test("forgets a session that is gone, and keeps the pins", async () => {
   await probe.setArchived(ONE, true);
   await probe.setPinned(tmp, true);
 
-  // The pin is the directory's, so it rides the project rather than the row.
+  // The pin belongs to the directory.
   const { sessions: away, projects } = await probe.catalogue({
     archived: true,
   });
@@ -413,7 +397,7 @@ test("forgets a session that is gone, and keeps the pins", async () => {
   await rm(pathOf(ONE));
   await probe.listSessions();
 
-  // And outlives every session that was ever in it.
+  // And outlives every session in it.
   const after = await stored();
   expect(after.sessions).toEqual({});
   expect(after.projects).toEqual({ [tmp]: { pinned: true } });
@@ -434,8 +418,7 @@ test("ranks the pinned projects, and tells every window when the order moves", a
   await probe.setPinned(one, true);
   await probe.setPinned(two, true);
 
-  // The newest pin is the top one, and the rank rides with the listing: a
-  // window that opens tomorrow needs no broadcast to sort them.
+  // The newest pin is first, and listings carry the rank.
   const ranked = (await probe.catalogue()).projects;
   expect(projectOf(ranked, two)?.pinRank).toBe(0);
   expect(projectOf(ranked, one)?.pinRank).toBe(1);
@@ -446,12 +429,11 @@ test("ranks the pinned projects, and tells every window when the order moves", a
   expect(projectOf(moved, two)?.pinRank).toBe(1);
   expect((await stored()).pins).toEqual([one, two]);
 
-  // Three words to the other window: both pins, and the move.
+  // Both pins, then the reorder.
   await until(() => orders().length === 3, "the pin broadcasts", 20_000);
   expect(orders()).toEqual([[one], [two, one], [one, two]]);
 
-  // An order is only ever where a pin sits, never whether it is one: naming a
-  // directory that is not pinned adds nothing.
+  // Unpinned directories in the order are ignored.
   await probe.setPinOrder([join(tmp, "never"), two, one]);
   expect((await stored()).pins).toEqual([two, one]);
 });
@@ -466,15 +448,14 @@ test("hands a pin back to a server that has been restarted under it", async () =
   await registry.disposeAll();
   await startGateway();
 
-  // Read off the sidecar rather than held in the process that was told: a
-  // phone opening the sidebar tomorrow is the case this is for.
+  // Read from the sidecar, not process memory.
   const restarted = await connect();
   const { sessions, projects } = await restarted.catalogue();
   expect(SessionFixture.rowIn(sessions, ONE)).toBeDefined();
   expect(projectOf(projects, tmp)?.pinned).toBe(true);
 });
 
-/** Sessions a minute apart, oldest first, so the last one written is the newest. */
+/** Sessions a minute apart, oldest first. */
 async function writeProject(
   cwd: string,
   from: number,
@@ -494,11 +475,10 @@ test("a session nobody ever spoke in is not a row, and is still one of its proje
   await writeEmptySession(TWO, SessionFixture.minutesAgo(1));
   const probe = await connect();
 
-  // All it could be called is a truncated uuid, so it is not offered at all.
+  // No title, so no row.
   const { sessions, projects } = await probe.catalogue();
   expect(ids(sessions)).toEqual([ONE]);
-  // Counted all the same: the count is the header scan's, and a client asking
-  // for more of this directory is owed the chance to find nothing new.
+  // Still counted.
   expect(projectOf(projects, tmp)).toEqual({ cwd: tmp, count: 2 });
 });
 
@@ -509,14 +489,12 @@ test("keeps a quiet project on the page beside a busy one", async () => {
   const recent = await writeProject(busy, 20, 6);
   const probe = await connect();
 
-  // Flat, the page is the busy directory and nothing else: the quiet project
-  // is six sessions from the top of a list four rows long.
+  // Without a cap the busy directory fills the page.
   expect(ids(await probe.listSessions({ limit: 4 }))).toEqual(
     recent.slice(0, 4)
   );
 
-  // Capped, the budget the busy one cannot spend goes to the project that has
-  // been sitting under it.
+  // With a cap the leftover budget reaches the quiet project.
   expect(ids(await probe.listSessions({ limit: 4, perProject: 2 }))).toEqual([
     ...recent.slice(0, 2),
     idFor(10),
@@ -531,8 +509,7 @@ test("spends a project's budget on rows a client can see, not on the ones it fil
   const probe = await connect();
   await probe.setArchived(THREE, true);
 
-  // Cut before the archived one was dropped, the budget goes on it and the
-  // project shows nothing; cut before the empty one was dropped, the same.
+  // Archived and empty sessions must not consume the budget.
   const { sessions, projects } = await probe.catalogue({ perProject: 1 });
   expect(ids(sessions)).toEqual([ONE]);
   expect(projectOf(projects, project)).toEqual({ cwd: project, count: 2 });
@@ -547,7 +524,7 @@ test("counts what a project holds, not what fitted on the page", async () => {
   expect(ids(sessions)).toEqual(recent.slice(0, 2));
   expect(projectOf(projects, project)).toEqual({ cwd: project, count: 5 });
 
-  // Put away, and the same directory is counted by the scope that is asking.
+  // Counted under the archived scope.
   await probe.setArchived(recent[0]!, true);
   expect(
     projectOf((await probe.catalogue({ perProject: 2 })).projects, project)
@@ -559,7 +536,6 @@ test("counts what a project holds, not what fitted on the page", async () => {
     )
   ).toEqual({ cwd: project, count: 1 });
 
-  // And the pin is the project's own, beside the count rather than on a row.
   await probe.setPinned(project, true);
   expect(
     projectOf((await probe.catalogue({ perProject: 2 })).projects, project)
@@ -575,8 +551,7 @@ test("lists a page wider than the gate its reads fan out through", async () => {
   ]);
   const probe = await connect();
 
-  // Two projects deeper than either gate, and every row arrives, once, in the
-  // order the last reply settled.
+  // Spans more than one read batch; every row arrives once, in settle order.
   const rows = await probe.listSessions({ limit: 100, perProject: 100 });
   expect(new Set(ids(rows))).toEqual(new Set([...first, ...second]));
   expect(ids(rows).length).toBe(first.length + second.length);

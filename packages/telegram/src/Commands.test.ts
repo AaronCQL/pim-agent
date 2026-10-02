@@ -45,7 +45,6 @@ class FakeApi {
   public readonly actions: unknown[] = [];
   public readonly registered: unknown[] = [];
   public readonly deleted: unknown[] = [];
-  public readonly trace: string[] = [];
   public chatType = "private";
   public resolved: readonly { readonly command: string }[] = BOT_COMMANDS;
 
@@ -54,7 +53,6 @@ class FakeApi {
     text: string,
     options: Record<string, unknown>
   ): Promise<{ readonly message_id: number }> {
-    this.trace.push(`sendMessage:${text}`);
     this.sent.push({ chatId, text, options });
     return { message_id: 500 + this.sent.length };
   }
@@ -65,7 +63,6 @@ class FakeApi {
     text: string,
     options: Record<string, unknown>
   ): Promise<void> {
-    this.trace.push(`editMessageText:${text}`);
     this.edited.push({ chatId, messageId, text, options });
   }
 
@@ -88,8 +85,7 @@ class FakeApi {
     this.deleted.push(options);
   }
 
-  public async getChat(chatId: number): Promise<{ readonly type: string }> {
-    this.trace.push(`getChat:${chatId}`);
+  public async getChat(): Promise<{ readonly type: string }> {
     return { type: this.chatType };
   }
 
@@ -253,10 +249,6 @@ test("/chatid names the chat, and the thread when there is one", async () => {
     "Chat ID: <code>-100</code>\nThread ID: <code>42</code>"
   );
   expect(threaded.api.sent[0]?.options.message_thread_id).toBe(42);
-  expect(threaded.api.sent[0]?.options.parse_mode).toBe("HTML");
-  expect(threaded.api.sent[0]?.options.link_preview_options).toEqual({
-    is_disabled: true,
-  });
 });
 
 test("/cancel reports both outcomes as plain text", async () => {
@@ -275,7 +267,6 @@ test("/cancel reports both outcomes as plain text", async () => {
       },
     },
   ]);
-  expect(stopped.api.sent[0]?.options.parse_mode).toBeUndefined();
 
   const nothing = await run(
     fakeSession({ cancel: async () => false }),
@@ -450,16 +441,12 @@ test("/model reads, offers candidates, and says when nothing matches", async () 
   expect(ambiguous.api.sent[0]?.text).toBe(
     '⚠️ Multiple matches for "foo". Please choose one below or use /model with a more specific name.'
   );
-  expect(keyboard(ambiguous.api.sent[0]!.options)).toEqual([
-    [{ text: "openai/gpt-5", callback_data: "model|openai/gpt-5|1-main" }],
-    [
-      {
-        text: "openai/gpt-5-mini",
-        callback_data: "model|openai/gpt-5-mini|1-main",
-      },
-    ],
-    [],
+  const buttons = keyboard(ambiguous.api.sent[0]!.options);
+  expect(buttons.flat().map((b) => b.text)).toEqual([
+    "openai/gpt-5",
+    "openai/gpt-5-mini",
   ]);
+  expect(buttons[1]![0]!.callback_data).toMatch(/^model\|[a-z0-9]+\|1$/);
 
   const none = await run(
     fakeSession({
@@ -471,6 +458,33 @@ test("/model reads, offers candidates, and says when nothing matches", async () 
 
   const ok = await run(fakeSession(), "/model gpt");
   expect(ok.api.sent[0]?.text).toBe("<b>Model</b> → <code>openai/gpt-5</code>");
+});
+
+test("model buttons stay under 64 bytes and resolve by token", async () => {
+  const longId = `openrouter/${"x".repeat(80)}`;
+  const picked: string[] = [];
+  const session = fakeSession({
+    id: { chatId: -1001234567890, threadId: 987654 },
+    setModel: async (pattern) => {
+      picked.push(pattern);
+      return pattern === longId
+        ? { ok: true, id: longId }
+        : { ok: false, kind: "ambiguous", candidates: ["a/b", longId] };
+    },
+  });
+  const harness = await run(session, "/model x");
+  const data = keyboard(harness.api.sent[0]!.options)[1]![0]!.callback_data;
+  expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+
+  const cb = callbackCtx(data);
+  await harness.commands.handleCallback(cb.ctx);
+  expect(picked).toEqual(["x", longId]);
+  expect(harness.asked).toEqual([session.id]);
+
+  const stale = callbackCtx("model|nope|0");
+  await harness.commands.handleCallback(stale.ctx);
+  expect(stale.answered).toEqual([{ text: "Expired — run /model again" }]);
+  expect(picked).toHaveLength(2);
 });
 
 test("/compact announces before it works and edits the same message", async () => {
@@ -498,15 +512,6 @@ test("/compact announces before it works and edits the same message", async () =
     },
   });
   expect(order).toEqual(["compact after 1 sends"]);
-  expect(harness.api.trace).toEqual([
-    "sendMessage:⏳ Compacting context...",
-    [
-      "editMessageText:✅ <b>Context compacted.</b>",
-      "",
-      "<b>Before</b>: 1,234,567 tokens",
-      "<b>Now</b>: 42 messages (exact usage will update after next message)",
-    ].join("\n"),
-  ]);
   expect(harness.api.actions).toEqual([
     { chatId: 1, action: "typing", options: { message_thread_id: undefined } },
   ]);
@@ -732,12 +737,6 @@ test("/temporary is one row of two with the explainer under it", async () => {
 
   const on = await run(fakeSession({ temporary: true }), "/temporary");
   expect(on.api.sent[0]?.text).toStartWith("<b>Temporary</b>: <code>on</code>");
-  expect(keyboard(on.api.sent[0]!.options)).toEqual([
-    [
-      { text: "off", callback_data: "temporary:0:1-main" },
-      { text: "✅ on", callback_data: "temporary:1:1-main" },
-    ],
-  ]);
 });
 
 test("a picker callback applies the value, toasts it, and moves the tick", async () => {

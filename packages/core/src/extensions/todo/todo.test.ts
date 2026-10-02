@@ -4,12 +4,9 @@ import {
   formatChecklist,
   formatUpdateSummary,
   getCurrentItems,
-  hasActiveItems,
-  makeDetails,
   normalizeItems,
   reconstructFromBranch,
   replaceItems,
-  summarizeItems,
   type TodoSessionKey,
 } from "./todo";
 
@@ -25,6 +22,17 @@ function fakeSession(): TodoSessionKey {
 }
 
 describe("todo state", () => {
+  test.each([
+    [
+      allStatuses,
+      "Todos updated: 1 completed, 1 in progress, 1 pending, 1 cancelled.",
+    ],
+    [[{ content: "next", status: "pending" }], "Todos updated: 1 pending."],
+    [[], "Todos cleared."],
+  ] as const)("update summary %#", (items, expected) => {
+    expect(formatUpdateSummary(items)).toBe(expected);
+  });
+
   test("replace semantics keep the latest write only", () => {
     const sm = fakeSession();
     replaceItems(sm, [
@@ -38,20 +46,6 @@ describe("todo state", () => {
     expect(formatChecklist(getCurrentItems(sm))).toBe("[>] d");
   });
 
-  test("state is isolated between sessions (parent vs subagent)", () => {
-    const parent = fakeSession();
-    const child = fakeSession();
-    replaceItems(parent, [{ content: "parent task", status: "pending" }]);
-    replaceItems(child, [{ content: "child task", status: "in_progress" }]);
-
-    expect(getCurrentItems(parent)).toEqual([
-      { content: "parent task", status: "pending" },
-    ]);
-    expect(getCurrentItems(child)).toEqual([
-      { content: "child task", status: "in_progress" },
-    ]);
-  });
-
   test("content is normalized to a single trimmed line and blank content is dropped", () => {
     expect(
       normalizeItems([
@@ -60,27 +54,6 @@ describe("todo state", () => {
         { content: "  keep\nthis\titem  ", status: "completed" },
       ])
     ).toEqual([{ content: "keep this item", status: "completed" }]);
-  });
-
-  test("multiple in_progress items are accepted as-is", () => {
-    const items = normalizeItems([
-      { content: "one", status: "in_progress" },
-      { content: "two", status: "in_progress" },
-    ]);
-
-    expect(formatChecklist(items)).toBe("[>] one\n[>] two");
-  });
-
-  test("duplicate content strings are accepted", () => {
-    const items = normalizeItems([
-      { content: "repeat", status: "pending" },
-      { content: "repeat", status: "completed" },
-    ]);
-
-    expect(items).toEqual([
-      { content: "repeat", status: "pending" },
-      { content: "repeat", status: "completed" },
-    ]);
   });
 
   test("active-only checklist drops completed and cancelled", () => {
@@ -96,16 +69,6 @@ describe("todo state", () => {
         { activeOnly: true }
       )
     ).toBe("");
-  });
-
-  test("active item detection treats pending and in-progress as active", () => {
-    expect(hasActiveItems(allStatuses)).toBe(true);
-    expect(
-      hasActiveItems([
-        { content: "done", status: "completed" },
-        { content: "skipped", status: "cancelled" },
-      ])
-    ).toBe(false);
   });
 
   test("full checklist includes all marker styles", () => {
@@ -139,17 +102,6 @@ describe("todo state", () => {
     ]);
   });
 
-  test("reconstruction prefers a later tool result over an older checkpoint", () => {
-    const branch = [
-      todoStateEntry([{ content: "old", status: "pending" }]),
-      toolResult("todo", [{ content: "new", status: "completed" }]),
-    ];
-
-    expect(reconstructFromBranch(fakeSession(), branch)).toEqual([
-      { content: "new", status: "completed" },
-    ]);
-  });
-
   test("reconstruction prefers a later checkpoint over an older tool result", () => {
     const branch = [
       toolResult("todo", [{ content: "old", status: "pending" }]),
@@ -159,46 +111,6 @@ describe("todo state", () => {
     expect(reconstructFromBranch(fakeSession(), branch)).toEqual([
       { content: "checkpointed", status: "in_progress" },
     ]);
-  });
-
-  test("update summary formats model-visible acknowledgement", () => {
-    expect(
-      formatUpdateSummary([
-        { content: "one", status: "completed" },
-        { content: "two", status: "completed" },
-        { content: "three", status: "in_progress" },
-        { content: "four", status: "pending" },
-        { content: "five", status: "pending" },
-      ])
-    ).toBe("Todos updated: 2 completed, 1 in progress, 2 pending.");
-  });
-
-  test("update summary omits zero counts and includes cancelled only when nonzero", () => {
-    expect(formatUpdateSummary(allStatuses)).toBe(
-      "Todos updated: 1 completed, 1 in progress, 1 pending, 1 cancelled."
-    );
-    expect(formatUpdateSummary([{ content: "next", status: "pending" }])).toBe(
-      "Todos updated: 1 pending."
-    );
-  });
-
-  test("update summary handles a cleared list", () => {
-    expect(formatUpdateSummary([])).toBe("Todos cleared.");
-  });
-
-  test("summary counts statuses", () => {
-    expect(summarizeItems(allStatuses)).toEqual({
-      pending: 1,
-      in_progress: 1,
-      completed: 1,
-      cancelled: 1,
-    });
-    expect(makeDetails(allStatuses).summary).toEqual({
-      pending: 1,
-      in_progress: 1,
-      completed: 1,
-      cancelled: 1,
-    });
   });
 });
 

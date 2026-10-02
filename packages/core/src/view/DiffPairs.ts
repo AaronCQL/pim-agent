@@ -1,6 +1,6 @@
 import type { ToolDiffHunk, ToolDiffLine } from "../shared/DiffLines";
 
-/** One row of a split view: the old side, the new side, or both. */
+/** One split-view row. */
 export type DiffPair = {
   readonly left?: ToolDiffLine;
   readonly right?: ToolDiffLine;
@@ -32,7 +32,7 @@ function pair(hunk: ToolDiffHunk): readonly DiffPair[] {
       continue;
     }
 
-    // A removal after an addition starts a new replacement rather than joining the last.
+    // A removal after an addition starts a new replacement block.
     if (added.length > 0) {
       zip();
     }

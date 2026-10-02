@@ -10,7 +10,6 @@ export type Cli = {
   readonly cwd?: string;
   readonly model?: string;
   readonly configDir?: string;
-  readonly printConfig: boolean;
 };
 
 export type TelegramConfig = {
@@ -40,7 +39,6 @@ function parseArgs(args: ReadonlyArray<string>): Cli {
   let cwd: string | undefined;
   let model: string | undefined;
   let configDir: string | undefined;
-  let printConfig = false;
 
   Argv.scan(args, (key, take) => {
     switch (key) {
@@ -59,15 +57,12 @@ function parseArgs(args: ReadonlyArray<string>): Cli {
       case "--config-dir":
         configDir = take();
         break;
-      case "--print-config":
-        printConfig = true;
-        break;
       case "--mode":
         take();
         break;
     }
   });
-  return { token, allow, cwd, model, configDir, printConfig };
+  return { token, allow, cwd, model, configDir };
 }
 
 async function load(cli: Cli): Promise<TelegramConfig> {

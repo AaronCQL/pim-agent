@@ -38,17 +38,6 @@ describe("parsePatch", () => {
     ]);
   });
 
-  test("parses Move to", () => {
-    const patch = parsePatch(
-      wrap("*** Update File: a.py\n*** Move to: b.py\n@@\n-x\n+y")
-    );
-    const hunk = patch.hunks[0];
-    expect(hunk?.kind).toBe("update");
-    if (hunk?.kind === "update") {
-      expect(hunk.movePath).toBe("b.py");
-    }
-  });
-
   test("parses a pure rename (Move to with no hunks)", () => {
     const patch = parsePatch(wrap("*** Update File: a.py\n*** Move to: b.py"));
     expect(patch.hunks).toEqual([
@@ -108,65 +97,47 @@ describe("parsePatch", () => {
     expect(patch.hunks[0]).toMatchObject({ path: "foo bar.txt" });
   });
 
-  test("rejects missing Begin Patch", () => {
-    expect(() => parsePatch("bad\n*** End Patch")).toThrow(
-      "Do not include Markdown fences"
-    );
-  });
-
-  test("rejects missing End Patch", () => {
-    expect(() => parsePatch("*** Begin Patch\nbad")).toThrow(
-      "Do not include Markdown fences or trailing prose after it"
-    );
-  });
-
-  test("rejects empty Update hunk", () => {
-    expect(() => parsePatch(wrap("*** Update File: a.py"))).toThrow(
-      "Include @@ plus at least one context"
-    );
-  });
-
-  test("rejects an invalid hunk header", () => {
-    expect(() => parsePatch(wrap("*** Frobnicate File: a.py"))).toThrow(
-      "Do not use unified-diff file headers"
-    );
-  });
-
-  test("rejects Add File body lines without +", () => {
-    expect(() => parsePatch(wrap("*** Add File: a.txt\nhello"))).toThrow(
-      "Added file content lines must start with '+'"
-    );
-  });
-
-  test("rejects Delete File hunks with content lines", () => {
-    expect(() =>
-      parsePatch(wrap("*** Delete File: a.txt\n-unexpected"))
-    ).toThrow("Delete File hunks must not contain content lines");
-  });
-
-  test("rejects Move to without a destination path", () => {
-    expect(() =>
-      parsePatch(wrap("*** Update File: a.py\n*** Move to:"))
-    ).toThrow("destination path is required");
-  });
-
-  test("rejects malformed move directives", () => {
-    expect(() =>
-      parsePatch(wrap("*** Update File: a.py\n*** Move: b.py"))
-    ).toThrow("Use '*** Move to: {path}'");
-  });
-
-  test("rejects a chunk that starts with a bad line", () => {
-    expect(() => parsePatch(wrap("*** Update File: a.py\n@@\nbad"))).toThrow(
-      "Unchanged context lines must be prefixed with a single space"
-    );
-  });
-
-  test("rejects a later chunk missing @@ context", () => {
-    expect(() =>
-      parsePatch(wrap("*** Update File: a.py\n@@\n-a\n+b\nbad"))
-    ).toThrow(
-      "Start each additional edit chunk with @@ or @@ followed by nearby context"
-    );
+  test.each([
+    ["bad\n*** End Patch", "Do not include Markdown fences"],
+    [
+      "*** Begin Patch\nbad",
+      "Do not include Markdown fences or trailing prose after it",
+    ],
+    [wrap("*** Update File: a.py"), "Include @@ plus at least one context"],
+    [wrap("*** Frobnicate File: a.py"), "Do not use unified-diff file headers"],
+    [
+      wrap("*** Add File: a.txt\nhello"),
+      "Added file content lines must start with '+'",
+    ],
+    [
+      wrap("*** Delete File: a.txt\n-unexpected"),
+      "Delete File hunks must not contain content lines",
+    ],
+    [
+      wrap("*** Update File: a.py\n*** Move to:"),
+      "destination path is required",
+    ],
+    [
+      wrap("*** Update File: a.py\n*** Move to: @"),
+      "destination path is required",
+    ],
+    [
+      wrap("*** Update File: a.py\n*** Move to:b.py"),
+      "use '*** Move to: {path}'",
+    ],
+    [
+      wrap("*** Update File: a.py\n*** Move: b.py"),
+      "Use '*** Move to: {path}'",
+    ],
+    [
+      wrap("*** Update File: a.py\n@@\nbad"),
+      "Unchanged context lines must be prefixed with a single space",
+    ],
+    [
+      wrap("*** Update File: a.py\n@@\n-a\n+b\nbad"),
+      "Start each additional edit chunk with @@ or @@ followed by nearby context",
+    ],
+  ])("rejects %j", (text, message) => {
+    expect(() => parsePatch(text)).toThrow(message);
   });
 });

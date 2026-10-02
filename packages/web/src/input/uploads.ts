@@ -10,7 +10,6 @@ export type Uploads = {
   readonly reset: () => void;
 };
 
-/** The upload half of the composer: local previews, the last failure, and the fan-out that starts them. */
 export function createUploads(store: SessionStore): Uploads {
   const [failed, setFailed] = createSignal("");
   const [uploading, setUploading] = createSignal<readonly AttachmentTile[]>([]);

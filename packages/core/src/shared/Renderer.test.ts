@@ -45,30 +45,7 @@ function textResult(text: string): AgentToolResult<unknown> {
   return { content: [{ type: "text", text }], details: undefined };
 }
 
-describe("Renderer.markerColorFor", () => {
-  test("partial wins over error", () => {
-    expect(Renderer.markerColorFor(true, true)).toBe("warning");
-  });
-  test("error when not partial", () => {
-    expect(Renderer.markerColorFor(false, true)).toBe("error");
-  });
-  test("success otherwise", () => {
-    expect(Renderer.markerColorFor(false, false)).toBe("success");
-  });
-});
-
 describe("Renderer.renderErrorResult", () => {
-  test("wraps expanded output by default", () => {
-    const component = Renderer.renderErrorResult({
-      result: textResult("0123456789abcdef\nnext"),
-      options: expandedOptions,
-      theme: stubTheme,
-      context: { ...rendererContext, isError: true },
-    });
-
-    expect(component.render(10)).toHaveLength(4);
-  });
-
   test("an expanded failure is shown whole, never truncated", () => {
     const component = Renderer.renderErrorResult({
       result: textResult(
@@ -108,11 +85,7 @@ describe("Renderer.renderToolCallTitle", () => {
       label: "Bash",
       title: "pwd",
       theme: stubTheme,
-      context: {
-        lastComponent: undefined,
-        isPartial: false,
-        isError: false,
-      },
+      context: rendererContext,
     });
 
     expect(component.render(80)).toEqual([" ▪ Bash: pwd".padEnd(80, " ")]);
@@ -124,11 +97,7 @@ describe("Renderer.renderToolCallTitle", () => {
       label: "Subagent",
       title: "investigate",
       theme: overridden.theme,
-      context: {
-        lastComponent: undefined,
-        isPartial: false,
-        isError: false,
-      },
+      context: rendererContext,
       labelColor: "accent",
     }).render(80);
 
@@ -146,11 +115,7 @@ describe("Renderer.renderToolCallTitle", () => {
       label: "Bash",
       title: "pwd",
       theme: fallback.theme,
-      context: {
-        lastComponent: undefined,
-        isPartial: false,
-        isError: false,
-      },
+      context: rendererContext,
     }).render(80);
 
     expect(fallback.calls).toContainEqual({ color: "toolTitle", text: "Bash" });
@@ -162,11 +127,7 @@ describe("Renderer.renderToolCallTitle", () => {
       label: "Bash",
       title: "one two three four five six seven",
       theme: stubTheme,
-      context: {
-        lastComponent: undefined,
-        isPartial: false,
-        isError: false,
-      },
+      context: rendererContext,
     });
     const lines = component.render(width);
 

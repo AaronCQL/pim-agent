@@ -36,7 +36,10 @@ function expandHome(value: string): string {
 
 function abbreviateHome(path: string): string {
   const home = homedir();
-  return home && path.startsWith(home) ? `~${path.slice(home.length)}` : path;
+  if (!home || !(path === home || path.startsWith(home + sep))) {
+    return path;
+  }
+  return `~${path.slice(home.length)}`;
 }
 
 function displayRelative(path: string, cwd: string): string {

@@ -17,19 +17,18 @@ export type CommentSide = "old" | "new";
 export type Comment = {
   readonly id: string;
   readonly path: string;
-  /** Absent for a comment on the file rather than any line of it. */
+  /** Absent for a file-level comment. */
   readonly side?: CommentSide;
   readonly start?: number;
   readonly end?: number;
-  /** The first line as it read when written; what survives a renumbering. */
+  /** The first line's text when written. */
   readonly quote?: string;
-  /** The file's `fingerprint` when written; a change makes the comment outdated. */
+  /** The file's fingerprint when written; a mismatch means outdated. */
   readonly fingerprint: string;
   readonly text: string;
   readonly createdAt: number;
 };
 
-/** What a new comment is made against: a run of lines on one side, or the file itself. */
 export type CommentAnchor = {
   readonly path: string;
   readonly fingerprint: string;
@@ -42,18 +41,16 @@ export type CommentAnchor = {
 const NO_IDS: readonly string[] = [];
 const NONE: readonly Comment[] = [];
 
-/** What a reader has written against a working copy's changes, kept in this browser. */
+/** Diff comments per working copy, persisted to localStorage. */
 export class Comments {
-  /** Per id, so a keystroke wakes the one card it was typed into. */
+  // Split into keyed stores so an edit only wakes the rows it touches.
   private readonly byId: Store<Record<string, Comment>>;
   private readonly setById: StoreSetter<Record<string, Comment>>;
-  /** Per path, so a row tracks its own file's comments and no other row's. */
   private readonly lists: Store<Record<string, readonly string[]>>;
   private readonly setLists: StoreSetter<Record<string, readonly string[]>>;
-  /** Per anchored spot: a long diff would otherwise put a reader on one list per row. */
   private readonly anchors: Store<Record<string, readonly string[]>>;
   private readonly setAnchors: StoreSetter<Record<string, readonly string[]>>;
-  /** Every line a comment covers, so a gutter is painted without scanning them all. */
+  /** Every line any comment covers. */
   private readonly covered: Store<Record<string, boolean>>;
   private readonly setCovered: StoreSetter<Record<string, boolean>>;
   private readonly everything: Accessor<readonly Comment[]>;
@@ -89,7 +86,7 @@ export class Comments {
     this.setEverything = setEverything;
   }
 
-  /** Adopts a working copy's comments; nothing is ever forgotten on the way. */
+  /** Switches to a working copy's comments; others are kept. */
   public load(cwd: string): void {
     if (this.where === cwd) {
       return;
@@ -98,20 +95,11 @@ export class Comments {
     this.publish(this.kept[cwd] ?? NONE);
   }
 
-  public list(path: string): readonly Comment[] {
-    return this.lookup(this.lists[path] ?? NO_IDS);
-  }
-
-  /** How many comments one file holds; its list only moves when its own ids do. */
   public count(path: string): number {
     return (this.lists[path] ?? NO_IDS).length;
   }
 
-  /**
-   * The ids anchored to one line of one side, or to the file itself when no
-   * line is named. An id outlives every edit of the comment it names, so the
-   * card a reader is typing into is never rebuilt under them.
-   */
+  /** Ids hanging at a line, or file-level ones when no line is given. Stable across edits. */
   public ids(
     path: string,
     side?: CommentSide,
@@ -120,31 +108,20 @@ export class Comments {
     return this.anchors[anchorKey(path, side, line)] ?? NO_IDS;
   }
 
-  /** The comments anchored to one line of one side, in the order they were written. */
-  public at(path: string, side: CommentSide, line: number): readonly Comment[] {
-    return this.lookup(this.ids(path, side, line));
-  }
-
-  /** Whether a saved comment covers a line, which is what its gutter is painted for. */
   public holds(path: string, side: CommentSide, line: number): boolean {
     return this.covered[anchorKey(path, side, line)] === true;
   }
 
-  /** One comment as it reads now; a card holds an id and asks for the rest. */
   public one(id: string): Comment | undefined {
     return this.byId[id];
   }
 
-  /** Every comment on this working copy, in the order they were written. */
+  /** In creation order. */
   public all(): readonly Comment[] {
     return this.everything();
   }
 
-  /**
-   * Makes a comment of what a reader picked out and the first thing they typed
-   * into it, and answers with the id that edits it. Nothing is stored before
-   * that first character: an editor walked away from never existed.
-   */
+  /** Returns the new comment's id. */
   public create(anchor: CommentAnchor, text: string): string {
     const now = Date.now();
     this.sequence += 1;
@@ -179,7 +156,6 @@ export class Comments {
     );
   }
 
-  /** Widens a line comment's range to take in another line of the same side. */
   public extend(id: string, line: number): void {
     this.mutate((list) =>
       list.map((comment) =>
@@ -202,12 +178,6 @@ export class Comments {
 
   public clear(): void {
     this.mutate(() => NONE);
-  }
-
-  private lookup(ids: readonly string[]): readonly Comment[] {
-    return ids
-      .map((id) => this.byId[id])
-      .filter((comment) => comment !== undefined);
   }
 
   private mutate(
@@ -248,7 +218,7 @@ export class Comments {
     });
   }
 
-  // One write a tick: a keystroke is a write, and a typist makes many of them.
+  // At most one write per microtask.
   private persist(): void {
     if (this.writing) {
       return;
@@ -259,18 +229,17 @@ export class Comments {
       try {
         localStorage.setItem(KEY, JSON.stringify(this.kept));
       } catch {
-        // Private mode or a full quota; the comments still hold for this tab.
+        // Private mode or full quota: keep them in memory only.
       }
     });
   }
 }
 
-/** The comments the shell holds; absent wherever a diff is painted with no gutter to tap. */
+/** Undefined where diffs are read-only. */
 export const ReviewComments = createContext<() => Comments | undefined>(
   () => undefined
 );
 
-/** How many comments, in words, wherever a count is spoken rather than shown. */
 export function comments(count: number): string {
   return Format.count(count, "comment");
 }
@@ -279,11 +248,7 @@ function anchorKey(path: string, side?: CommentSide, line?: number): string {
   return `${path}\n${side ?? ""}:${line ?? ""}`;
 }
 
-/**
- * A comment hangs under the last line it holds, not the first: a card pinned
- * to the start of a range would be read in the middle of the lines it speaks
- * about, which is where a reader is still looking for code.
- */
+/** A comment hangs under the last line of its range. */
 function spotKey(comment: Comment): string {
   return anchorKey(comment.path, comment.side, comment.end);
 }
@@ -319,7 +284,7 @@ function group(
   return groups;
 }
 
-// Only the keys whose answer moved are written, so one comment wakes one row.
+// Writes only changed keys.
 function sync<T>(
   draft: Record<string, T>,
   next: ReadonlyMap<string, T>,

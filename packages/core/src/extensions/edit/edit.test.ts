@@ -196,8 +196,6 @@ describe("editFile", () => {
 
     await editFile(path, [{ oldString: "beta", newString: "delta" }]);
 
-    const bytes = await Bun.file(path).bytes();
-    expect(Array.from(bytes.slice(0, 3))).toEqual([0xef, 0xbb, 0xbf]);
     expect(await readFile(path, "utf8")).toBe("\uFEFFalpha\ndelta");
   });
 
@@ -238,18 +236,17 @@ describe("editFile", () => {
     const path = join(root, "notes.txt");
     await writeFile(path, "0\n", "utf8");
 
-    const concurrent = await Promise.all([
+    await Promise.all([
       editFile(path, [{ oldString: "0", newString: "0\n1" }]),
       editFile(path, [{ oldString: "0", newString: "0\n2" }]),
       editFile(path, [{ oldString: "0", newString: "0\n3" }]),
     ]);
 
     const final = await readFile(path, "utf8");
-    expect(final).toContain("0");
-    expect(concurrent).toHaveLength(3);
+    expect(final.trim().split("\n").toSorted()).toEqual(["0", "1", "2", "3"]);
   });
 
-  test("buildDiff splits distant edits into separate hunks", async () => {
+  test("splits distant edits into separate hunks", async () => {
     const root = await tempRoot();
     const path = join(root, "notes.txt");
     const lines = Array.from(

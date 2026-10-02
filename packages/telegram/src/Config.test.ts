@@ -57,7 +57,6 @@ describe("Config.parseArgs", () => {
       cwd: "/work",
       model: "sonnet",
       configDir: "/c",
-      printConfig: false,
     });
   });
 
@@ -69,12 +68,6 @@ describe("Config.parseArgs", () => {
     ]);
     expect(cli.token).toBe("abc");
     expect(cli.allow).toBe("1");
-  });
-
-  test("--print-config is a boolean flag", () => {
-    const cli = Config.parseArgs(["--print-config", "--token", "t"]);
-    expect(cli.printConfig).toBe(true);
-    expect(cli.token).toBe("t");
   });
 
   test("ignores unknown positional args and unknown flags", () => {
@@ -106,7 +99,6 @@ describe("Config.load precedence", () => {
       token: "cli-tok",
       allow: "2,3",
       configDir: tmp,
-      printConfig: false,
     });
     expect(cfg.token).toBe("cli-tok");
     expect(cfg.allow).toEqual([2, 3]);
@@ -121,7 +113,6 @@ describe("Config.load precedence", () => {
     );
     const cfg = await Config.load({
       configDir: tmp,
-      printConfig: false,
     });
     expect(cfg.token).toBe("env-tok");
     expect(cfg.allow).toEqual([9]);
@@ -134,7 +125,6 @@ describe("Config.load precedence", () => {
     );
     const cfg = await Config.load({
       configDir: tmp,
-      printConfig: false,
     });
     expect(cfg.token).toBe("file-tok");
     expect(cfg.allow).toEqual([1, 2]);
@@ -144,21 +134,20 @@ describe("Config.load precedence", () => {
   test("PIM_HOME_DIR resolves the config directory", async () => {
     process.env.PIM_HOME_DIR = tmp;
     process.env.PIM_TELEGRAM_BOT_TOKEN = "t";
-    const cfg = await Config.load({ printConfig: false });
+    const cfg = await Config.load({});
     expect(cfg.configDir).toBe(join(tmp, "telegram"));
   });
 
   test("throws when no token from any source", async () => {
-    await expect(
-      Config.load({ configDir: tmp, printConfig: false })
-    ).rejects.toThrow(/token required/i);
+    await expect(Config.load({ configDir: tmp })).rejects.toThrow(
+      /token required/i
+    );
   });
 
   test("missing config.json is not an error", async () => {
     const cfg = await Config.load({
       token: "t",
       configDir: tmp,
-      printConfig: false,
     });
     expect(cfg.allow).toEqual([]);
   });
@@ -169,7 +158,6 @@ describe("Config.load precedence", () => {
         token: "t",
         allow: "1,abc",
         configDir: tmp,
-        printConfig: false,
       })
     ).rejects.toThrow(/Invalid chat ID/);
   });
@@ -179,43 +167,28 @@ describe("Config.load precedence", () => {
       token: "t",
       allow: " 1 , ,2 ",
       configDir: tmp,
-      printConfig: false,
     });
     expect(cfg.allow).toEqual([1, 2]);
   });
 
-  test("accepts allow as a single number in config.json", async () => {
+  test.each<[string, unknown, number[]]>([
+    ["a single number", 12345, [12345]],
+    ["a comma-separated string", "1, 2 ,3", [1, 2, 3]],
+    ["a mixed-type array", [1, "2", 3], [1, 2, 3]],
+  ])("accepts allow as %s in config.json", async (_, allow, expected) => {
     await Bun.write(
       join(tmp, "config.json"),
-      JSON.stringify({ token: "t", allow: 12345 })
+      JSON.stringify({ token: "t", allow })
     );
-    const cfg = await Config.load({ configDir: tmp, printConfig: false });
-    expect(cfg.allow).toEqual([12345]);
-  });
-
-  test("accepts allow as a comma-separated string in config.json", async () => {
-    await Bun.write(
-      join(tmp, "config.json"),
-      JSON.stringify({ token: "t", allow: "1, 2 ,3" })
-    );
-    const cfg = await Config.load({ configDir: tmp, printConfig: false });
-    expect(cfg.allow).toEqual([1, 2, 3]);
-  });
-
-  test("accepts allow as a mixed-type array in config.json", async () => {
-    await Bun.write(
-      join(tmp, "config.json"),
-      JSON.stringify({ token: "t", allow: [1, "2", 3] })
-    );
-    const cfg = await Config.load({ configDir: tmp, printConfig: false });
-    expect(cfg.allow).toEqual([1, 2, 3]);
+    const cfg = await Config.load({ configDir: tmp });
+    expect(cfg.allow).toEqual(expected);
   });
 
   test("malformed config.json surfaces a clear error", async () => {
     await Bun.write(join(tmp, "config.json"), "{not json");
-    await expect(
-      Config.load({ token: "t", configDir: tmp, printConfig: false })
-    ).rejects.toThrow(/Failed to parse/);
+    await expect(Config.load({ token: "t", configDir: tmp })).rejects.toThrow(
+      /Failed to parse/
+    );
   });
 });
 
@@ -231,7 +204,6 @@ describe("Config.save + Fs.writeAtomic", () => {
     await Config.save(cfg);
     const reloaded = await Config.load({
       configDir: tmp,
-      printConfig: false,
     });
     expect(reloaded.token).toBe("tok");
     expect(reloaded.allow).toEqual([1, 2]);

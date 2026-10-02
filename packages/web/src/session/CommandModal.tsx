@@ -15,10 +15,8 @@ import { CopyButton } from "../ui/CopyButton";
 import { Modal } from "../ui/Modal";
 import type { SessionStore, UiAnswer, UiRequest } from "./SessionStore";
 
-/** What to call a panel nothing in it names: an extension that asked unprompted. */
 const UNNAMED = "Command";
 
-/** What the dialog is waiting for, under whatever the same command has already said. */
 function Ask(props: {
   readonly request: UiRequest;
   readonly onAnswer: (answer: UiAnswer) => void;
@@ -132,19 +130,13 @@ function Ask(props: {
   );
 }
 
-/**
- * Where an extension's own words land: everything one command said, in the
- * order it said it, and the question it is waiting on under them.
- */
+/** A command's notices, followed by its oldest open dialog. */
 export function CommandModal(props: { readonly store: SessionStore }) {
   const notices = () => props.store.state.notices;
-  // One question at a time, oldest first; the rest keep the panel open.
   const request = (): UiRequest | undefined => props.store.state.requests[0];
   const open = createMemo(
     (): boolean => notices().length > 0 || request() !== undefined
   );
-  // Whoever opened the panel names it; a question asked over another command's
-  // words is still that command's panel.
   const title = createMemo(
     (): string => notices()[0]?.command ?? request()?.command ?? UNNAMED
   );

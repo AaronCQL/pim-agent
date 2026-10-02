@@ -65,7 +65,6 @@ function lowered(marks: readonly string[]): string[] {
   return [...new Set(marks.map((mark) => mark.toLowerCase()))].sort();
 }
 
-/** Every mark a whole answer draws, on the title and in every snippet. */
 function everyMark(answer: SearchAnswer): readonly string[] {
   return answer.hits.flatMap((hit) => [
     ...marked(hit.title ?? "", hit.titleRanges),
@@ -101,21 +100,13 @@ test("answers a session no page budget would have reached", async () => {
   expect(answer.scanned).toBe(SESSIONS);
 });
 
-test("one row per session, however many messages matched", async () => {
+test("one row per session, however many messages and the title matched", async () => {
   const answer = await index.search("lease");
 
   expect(ids(answer).filter((id) => id === "lease-turn")).toHaveLength(1);
   expect(hitOf(answer, "lease-turn").total).toBe(3);
   expect(hitOf(answer, "lease-turn").snippets).toHaveLength(2);
-});
-
-test("a session matching by title and by content appears once", async () => {
-  const answer = await index.search("lease");
-  const hit = hitOf(answer, "lease-turn");
-
-  expect(hit.titleRanges.length).toBeGreaterThan(0);
-  expect(hit.snippets.length).toBeGreaterThan(0);
-  expect(ids(answer)).toEqual([...new Set(ids(answer))]);
+  expect(hitOf(answer, "lease-turn").titleRanges.length).toBeGreaterThan(0);
 });
 
 test("a correctly spelled query never reaches for its neighbours", async () => {
@@ -206,22 +197,17 @@ test("a title's ranges are cut to the clamp, not to the message", async () => {
   expect(hit.title).toEndWith("…");
   expectRanges(hit.title!, hit.titleRanges);
   expect(marked(hit.title!, hit.titleRanges)).toEqual(["Throughput"]);
-  // A window opened on the message's first word has no run-up to mark.
   expect(hit.snippets[0]!.text).toStartWith("Throughput on the render path");
   expect(hit.snippets[0]!.cutHead).toBeUndefined();
 });
 
-test("a window opened mid-message says so, and runs past what a row can draw", async () => {
+test("a snippet opened mid-message is flagged and is 100 characters long", async () => {
   const snippet = hitOf(await index.search("encoder"), "long-opening")
     .snippets[0]!;
 
-  // Four tokens of run-up, marked as cut, because `text-overflow` cannot
-  // ellipsise the start of a line.
   expect(snippet.cutHead).toBe(true);
   expect(snippet.text).not.toStartWith("Throughput");
   expect(snippet.text).toStartWith("cannot tell whether the encoder");
-  // Past the run-up the window stops measuring in words: it carries more than
-  // the widest row has room for, and the row's own ellipsis does the cutting.
   expect(snippet.text).toHaveLength(100);
 });
 
@@ -332,8 +318,7 @@ test("a session the agent never answered is dated by when it started", async () 
 test("an appended turn is queryable without re-reading the file", async () => {
   await index.search("");
   const quiet = summaryOf("quiet-note");
-  // Byte-for-byte as long as the line it replaces: a tail read resumes at an
-  // offset, so a fixture that moved one would prove nothing about the offset.
+  // Same byte length, so only a tail read past the old offset sees the change.
   await SearchCorpus.edit(
     quiet,
     (text) =>

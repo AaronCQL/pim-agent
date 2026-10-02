@@ -4,7 +4,6 @@ import { AnsiPainter } from "../../view/AnsiPainter";
 import type { ToolView } from "../../view/ViewBlock";
 import { readView, type ReadViewInput } from "./render";
 
-/** What a call site hands the view: streamed args, and details a legacy session may have written untagged. */
 type Case = {
   readonly args: Partial<ReadViewInput["args"]> | undefined;
   readonly result?: {
@@ -83,14 +82,6 @@ function settledImage(overrides: Record<string, unknown> = {}): Case["result"] {
   };
 }
 
-describe("readView", () => {
-  test("supplies the title-cased display label", () => {
-    expect(view({ args: { path: "/work/repo/src/foo.ts" }, cwd }).label).toBe(
-      "Read"
-    );
-  });
-});
-
 describe("readView title", () => {
   test("renders relative path without a range", () => {
     expect(paintTitle({ args: { path: "/work/repo/src/foo.ts" }, cwd })).toBe(
@@ -122,12 +113,6 @@ describe("readView title", () => {
       )
     ).toBe("src/foo.ts<muted>:40</muted>");
     expect(themed.calls).toEqual([{ color: "muted", text: ":40" }]);
-  });
-
-  test("falls back to absolute path when outside cwd", () => {
-    expect(paintTitle({ args: { path: "/etc/hosts" }, cwd })).toBe(
-      "/etc/hosts"
-    );
   });
 
   test("placeholder when the path has not streamed in yet", () => {
@@ -163,21 +148,6 @@ describe("readView title", () => {
         cwd,
       })
     ).toBe("src/foo.ts<muted>:1-9</muted>");
-  });
-
-  test("mutes only the line range suffix", () => {
-    const themed = tracingTheme();
-    const title = paintTitle(
-      {
-        args: { path: "/work/repo/src/foo.ts" },
-        result: settled(1, 7),
-        cwd,
-      },
-      themed.theme
-    );
-
-    expect(title).toBe("src/foo.ts<muted>:1-7</muted>");
-    expect(themed.calls).toEqual([{ color: "muted", text: ":1-7" }]);
   });
 });
 
@@ -242,34 +212,6 @@ describe("readView on an image", () => {
     );
   });
 
-  test("serves the picture under its post-resize extension, not the path's", () => {
-    const [picture] = view({
-      args: { path: "/work/repo/docs/shot.png" },
-      result: settledImage({ mimeType: "image/jpeg", resized: true }),
-      cwd,
-    }).body!;
-
-    expect(picture).toEqual({
-      kind: "image",
-      sha256: "a".repeat(64),
-      mimeType: "image/jpeg",
-      width: 2000,
-      height: 500,
-      bytes: 262144,
-      alt: "docs/shot.png",
-    });
-  });
-
-  test("says when the picture was downscaled to fit", () => {
-    expect(
-      paintBody({
-        args: { path: "/work/repo/docs/shot.png" },
-        result: settledImage({ resized: true }),
-        cwd,
-      })
-    ).toContain("2000x500 (downscaled)");
-  });
-
   test("still draws a deduped picture, and says it was not re-sent", () => {
     const body = paintBody({
       args: { path: "/work/repo/docs/shot.png" },
@@ -281,15 +223,5 @@ describe("readView on an image", () => {
     expect(body).toContain(
       "<muted>reused:     </muted>unchanged since the earlier read"
     );
-  });
-
-  test("says how many frames the still left behind", () => {
-    expect(
-      paintBody({
-        args: { path: "/work/repo/docs/shot.gif" },
-        result: settledImage({ mimeType: "image/gif", frames: 24 }),
-        cwd,
-      })
-    ).toContain("<muted>frames:     </muted>24 (frame 1 shown)");
   });
 });

@@ -1,23 +1,17 @@
 import { PimSettings } from "../../shared/PimSettings";
 import type { ReadImageDetails } from "./schema";
 
-/** What the file looked like when its picture was last sent to the model. */
-export type ImageStamp = {
+type ImageStamp = {
   readonly mtimeMs: number;
   readonly size: number;
 };
 
 type Sent = ImageStamp & { readonly details: ReadImageDetails };
 
-/**
- * The pictures already in this conversation, so a screenshot loop pays the
- * resize once. One instance per extension factory, which is one per session;
- * a resumed session starts empty and re-sends every image once.
- */
+/** Images already sent this session, keyed by path. A resumed session starts empty. */
 export class ImageMemory {
   private readonly sent = new Map<string, Sent>();
 
-  /** The settings flag is the escape hatch, so it is read only once a picture repeats. */
   async recall(
     path: string,
     stamp: ImageStamp

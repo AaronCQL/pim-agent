@@ -26,7 +26,6 @@ function formatElapsed(ms: number): string {
       : `${seconds}s`;
 }
 
-/** How full the context window reads, as a verdict each frontend colours. */
 export type ContextFill = "ok" | "warn" | "full";
 
 function contextFill(percent: number): ContextFill {
@@ -46,7 +45,7 @@ function scaleBytes(total: number): readonly [string, string] {
   return [value.toFixed(2).replace(/\.?0+$/u, ""), unit];
 }
 
-/** A byte count as a person reads it, unit spaced: `40 bytes`, `240 KB`, `1.5 MB`. */
+/** `40 bytes`, `240 KB`, `1.5 MB`. */
 function bytes(total: number): string {
   if (total < 1024) {
     return `${total} bytes`;
@@ -55,7 +54,7 @@ function bytes(total: number): string {
   return `${value} ${unit}`;
 }
 
-/** The same count where a title has no room for the space: `40B`, `240KB`, `1.5MB`. */
+/** `40B`, `240KB`, `1.5MB`. */
 function bytesCompact(total: number): string {
   if (total < 1024) {
     return `${total}B`;

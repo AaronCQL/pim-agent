@@ -12,30 +12,29 @@ import { BodyRenderer } from "../view/BodyRenderer";
 import type { ToolView } from "../view/ViewBlock";
 
 export type ToolViewInput<TParams extends TSchema, TDetails> = {
-  /** Partially streamed while the call is in flight; treat fields as optional. */
+  /** Partial while streaming; treat fields as optional. */
   readonly args: Static<TParams>;
-  /** A streaming snapshot rather than the final result while `isPartial`. */
+  /** A snapshot, not the final result, while `isPartial`. */
   readonly result?: AgentToolResult<TDetails>;
   readonly isPartial: boolean;
   readonly cwd: string;
 };
 
-/** What a call to this tool can do to the host machine; declaring nothing means `unbounded`. */
-export type ToolEffect<TParams extends TSchema = TSchema> =
+/** What a call can do to the host machine. */
+type ToolEffect<TParams extends TSchema = TSchema> =
   | { readonly kind: "readOnly" }
   | {
       readonly kind: "writesPaths";
-      /** Paths as the model wrote them; throwing means "unknown" and is treated as `unbounded`. */
+      /** Paths as the model wrote them. Throwing is treated as `unbounded`. */
       readonly paths: (args: Static<TParams>) => readonly string[];
     }
   | { readonly kind: "unbounded" };
 
-/** `ToolEffect` with its parameter type erased, for name-keyed lookup. */
-export type ErasedToolEffect = ToolEffect<TSchema> & {
+type ErasedToolEffect = ToolEffect<TSchema> & {
   readonly paths?: (args: unknown) => readonly string[];
 };
 
-/** Pi's tool definition plus pim's view model, which must be pure over `(args, result, cwd)` to replay. */
+/** `toViewModel` must be pure over `(args, result, cwd)` so sessions can replay. */
 export type PimToolDefinition<
   TParams extends TSchema,
   TDetails = unknown,
@@ -46,13 +45,14 @@ export type PimToolDefinition<
   readonly effect?: ToolEffect<TParams>;
 };
 
-/** A registered `toViewModel` with its parameter types erased, for name-keyed lookup. */
-export type ToolViewFactory = (input: {
+type ViewCall = {
   readonly args: unknown;
   readonly result?: AgentToolResult<unknown>;
   readonly isPartial: boolean;
   readonly cwd: string;
-}) => ToolView;
+};
+
+type ToolViewFactory = (input: ViewCall) => ToolView;
 
 type ViewRenderState<TDetails> = {
   viewResult?: AgentToolResult<TDetails>;
@@ -73,20 +73,12 @@ type JsonSchema = {
 const viewFactories = new Map<string, ToolViewFactory>();
 const effects = new Map<string, ErasedToolEffect>();
 
-/** What a registered tool declared it can do; absent reads as `unbounded`. */
+/** Undefined means `unbounded`. */
 function effectOf(toolName: string): ErasedToolEffect | undefined {
   return effects.get(toolName);
 }
 
-function baseView(
-  toolName: string,
-  call: {
-    readonly args: unknown;
-    readonly result?: AgentToolResult<unknown>;
-    readonly isPartial: boolean;
-    readonly cwd: string;
-  }
-): ToolView {
+function baseView(toolName: string, call: ViewCall): ToolView {
   return (
     viewFactories.get(toolName)?.(call) ?? genericView(toolName, call.args)
   );
@@ -95,7 +87,7 @@ function baseView(
 const branchesOf = (schema?: JsonSchema): readonly JsonSchema[] | undefined =>
   schema?.anyOf ?? schema?.oneOf;
 
-/** The view for one call, with a generic fallback for a tool that registered none. */
+/** Falls back to a generic view for tools without a view model. */
 function viewOf(input: {
   readonly name: string;
   readonly args: unknown;
@@ -116,11 +108,7 @@ function viewOf(input: {
 
 function errorView(
   name: string,
-  call: {
-    readonly args: unknown;
-    readonly isPartial: boolean;
-    readonly cwd: string;
-  },
+  call: Omit<ViewCall, "result">,
   result: AgentToolResult<unknown> | undefined
 ): ToolView {
   const view = baseView(name, call);
@@ -135,7 +123,7 @@ function errorView(
   };
 }
 
-/** Wrap a tool definition so pi's validator errors are rewritten before reaching the model. */
+/** Registers pim-only fields and rewrites pi's validation errors into clearer ones. */
 function wrap<TParams extends TSchema, TDetails = unknown, TState = unknown>(
   def: PimToolDefinition<TParams, TDetails, TState>
 ): ToolDefinition<TParams, TDetails, TState> {
@@ -192,7 +180,6 @@ function register<
   pi.registerTool(wrap(def));
 }
 
-/** Rewrite a `validateToolArguments` error string into a clearer form. */
 function rewriteValidationError(
   toolName: string,
   schema: JsonSchema,
@@ -271,7 +258,7 @@ function synthesizeRenderers<TParams extends TSchema, TDetails, TState>(
       def.renderResult ??
       ((result, options, theme, context) => {
         const state = context.state as ViewRenderState<TDetails>;
-        // Defer the redraw: invalidating re-entrantly makes pi paint the body twice.
+        // Deferred: a re-entrant invalidate makes pi paint the body twice.
         if (!options.isPartial && state.viewResult === undefined) {
           state.viewResult = result;
           queueMicrotask(() => context.invalidate());

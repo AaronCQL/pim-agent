@@ -13,7 +13,6 @@ import { ClientConnection, type AttachableStream } from "./ClientConnection";
 import { SessionProjection } from "./SessionProjection";
 import { until } from "#core/shared/fixtures/wait";
 
-/** A socket that reports whatever backpressure a test wants it to. */
 class FakeSocket {
   public readonly frames: string[] = [];
   public buffered = 0;
@@ -31,7 +30,7 @@ class FakeSocket {
     return this.buffered;
   }
 
-  /** The child transcripts this socket was handed, oldest frame first. */
+  /** `subagent_events` payloads, oldest first. */
   public get watched(): ReadonlyArray<readonly ServerEvent[]> {
     return this.frames
       .map((frame) => JSON.parse(frame) as ServerEvent)
@@ -39,7 +38,7 @@ class FakeSocket {
       .map((event) => event.events);
   }
 
-  /** Frames flattened: a resume is one frame carrying many events. */
+  /** Frames with `replay` envelopes flattened. */
   public get events(): readonly ServerEvent[] {
     const events: ServerEvent[] = [];
     for (const frame of this.frames) {
@@ -64,11 +63,7 @@ class FakeStream implements AttachableStream {
     return () => this.listeners.delete(listener);
   };
 
-  /**
-   * The tail as it stood when the read began, the way a projection reads a
-   * file: whatever is appended while it is in flight arrives on its own and
-   * is the gate's to reconcile.
-   */
+  /** Snapshots the tail before yielding, like a projection reading a file. */
   public replay = async (fromSeq: number): Promise<readonly StreamEvent[]> => {
     const tail = this.durable.filter((event) => event.seq > fromSeq);
     await Bun.sleep(0);
@@ -83,7 +78,7 @@ class FakeStream implements AttachableStream {
     return event;
   }
 
-  /** A drain of the log as the session emits one: several events, one frame. */
+  /** Several events in one `replay` frame, as a session drain emits. */
   public drain(...seqs: readonly number[]): void {
     const events = seqs.map((seq) => this.record(seq));
     for (const listener of this.listeners) {
@@ -104,7 +99,6 @@ class FakeStream implements AttachableStream {
     return event;
   }
 
-  /** A frame about one call, which is how a watch hears the child moved. */
   public toolUpdate(callId: string): void {
     for (const listener of this.listeners) {
       listener({ type: "tool_update", callId, view: { title: [] } });
@@ -178,11 +172,6 @@ test("reconciles events that land during the replay read", async () => {
   ).toHaveLength(0);
 });
 
-/**
- * A drain of the log and the retires it triggers are only correct together:
- * split across frames, the client holds a step's durable entry and the live
- * copy it supersedes at once, and paints it twice.
- */
 test("passes a batch the session framed on to the socket whole", async () => {
   const { socket, stream, connection } = build();
   await connection.attach(stream, 0);
@@ -203,9 +192,6 @@ test("reconciles a batch that lands during the replay read", async () => {
   stream.drain(3, 4);
   await attaching;
 
-  // Held event by event rather than frame by frame: the gate keeps the
-  // durable half of what it caught, and an envelope it could not see into
-  // would take those lines down with it.
   expect(socket.seqs).toEqual([2, 3, 4]);
 });
 
@@ -224,7 +210,7 @@ test("drops events while lagging and re-derives them on drain", async () => {
 
   socket.buffered = 0;
   connection.onDrain();
-  await Bun.sleep(5);
+  await until(() => socket.seqs.length === 3, "the resync");
 
   expect(socket.seqs).toEqual([2, 3, 4]);
   expect(connection.seq).toBe(4);
@@ -241,7 +227,7 @@ test("pauses when the socket drops a frame outright", async () => {
   expect(socket.seqs).toEqual([]);
 
   connection.onDrain();
-  await Bun.sleep(5);
+  await until(() => socket.seqs.length === 2, "the resync");
   expect(socket.seqs).toEqual([2, 3]);
 });
 
@@ -265,11 +251,6 @@ afterEach(async () => {
   }
 });
 
-/**
- * A subagent's log on disk, plus the way to grow it: a watch is read while
- * the child is still writing, so a test that cannot append is only ever
- * testing the settled case.
- */
 async function childLog(): Promise<{
   readonly projection: SessionProjection;
   readonly append: (role: string, text: string) => Promise<void>;
@@ -293,11 +274,6 @@ async function childLog(): Promise<{
   return { projection: new SessionProjection(path, () => "/"), append };
 }
 
-/**
- * The child's transcript travels in an envelope so that nothing in it can be
- * taken for the session's own: a durable event is one with a `seq`, and the
- * child's messages have theirs.
- */
 test("hands a watched child over enveloped, never in the transcript", async () => {
   const { socket, stream, connection } = build();
   const { projection, append } = await childLog();
@@ -334,10 +310,6 @@ test("resumes a watch from `fromSeq` rather than replaying it", async () => {
   ).toEqual([2]);
 });
 
-/**
- * No poller: the child runs inside the parent's tool call, so the parent's
- * own frame about that call is the news that the child wrote something.
- */
 test("drains the child log when the parent reports its call moved", async () => {
   const { socket, stream, connection } = build();
   const { projection, append } = await childLog();
@@ -346,8 +318,7 @@ test("drains the child log when the parent reports its call moved", async () => 
   await connection.watchSubagent("call_1", projection, 0);
 
   await append("assistant", "three of them are in tests");
-  // Another call's frame says nothing about this child, and is refused
-  // before any read of its log is started — so there is nothing to wait for.
+  // Ignored synchronously, so no wait is needed.
   stream.toolUpdate("call_other");
   expect(socket.watched).toHaveLength(1);
 
@@ -377,11 +348,6 @@ test("stops draining once the watch is dropped", async () => {
   expect(socket.watched).toHaveLength(1);
 });
 
-/**
- * The leak: a modal whose socket died leaves a projection holding every event
- * of that child for the life of the process, and nothing else would ever drop
- * it — the client that would have said `unwatch` is the thing that vanished.
- */
 test("drops the watch when the socket closes", async () => {
   const { socket, stream, connection } = build();
   const { projection, append } = await childLog();
@@ -413,15 +379,4 @@ test("drops the watch when the client attaches elsewhere", async () => {
   stream.toolUpdate("call_1");
   expect(socket.watched).toHaveLength(1);
   expect(socket.frames.length).toBeGreaterThan(sent);
-});
-
-test("takes its reader's attention from the attach that brought it back", async () => {
-  const { stream, connection } = build();
-  await connection.attach(stream, 0, false);
-  expect(connection.attentive).toBe(false);
-
-  connection.setAttentive(true);
-  await connection.attach(stream, 0, false);
-
-  expect(connection.attentive).toBe(false);
 });

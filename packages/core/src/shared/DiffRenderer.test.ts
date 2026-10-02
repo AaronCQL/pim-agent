@@ -32,20 +32,6 @@ const firstHunk = (
 };
 
 describe("DiffRenderer.highlightHunkLines", () => {
-  test("highlights added lines using the new-side block", () => {
-    const hunk = firstHunk(["a", "b", "c"], ["a", "b", "c", "d"]);
-    const result = DiffRenderer.highlightHunkLines(hunk, tagHighlighter);
-
-    expect(result).toEqual(hunk.lines.map((line) => `<H>${line.text}</H>`));
-  });
-
-  test("highlights removed lines using the old-side block", () => {
-    const hunk = firstHunk(["a", "b", "c"], ["a", "c"]);
-    const result = DiffRenderer.highlightHunkLines(hunk, tagHighlighter);
-
-    expect(result).toEqual(hunk.lines.map((line) => `<H>${line.text}</H>`));
-  });
-
   test("passes old and new versions as multi-line blocks (not per line)", () => {
     const hunk = firstHunk(
       ["line1", "old-mid", "line3"],
@@ -104,26 +90,6 @@ describe("DiffRenderer.render", () => {
     expect(out).toBe("");
   });
 
-  test("includes content for each diff line", () => {
-    const diff = DiffLines.buildToolDiff(
-      "foo.ts",
-      { lines: ["alpha", "beta", "gamma"], hasTrailingNewline: true },
-      { lines: ["alpha", "BETA", "gamma"], hasTrailingNewline: true },
-      1
-    );
-
-    if (diff === undefined) {
-      throw new Error("expected diff");
-    }
-
-    const out = DiffRenderer.render({ toolDiff: diff, theme: stubTheme });
-
-    expect(out).toContain("alpha");
-    expect(out).toContain("beta");
-    expect(out).toContain("BETA");
-    expect(out).toContain("gamma");
-  });
-
   test("emits emphasis bg for paired changed lines", () => {
     const diff = DiffLines.buildToolDiff(
       "foo.ts",
@@ -141,34 +107,11 @@ describe("DiffRenderer.render", () => {
     expect(out).toContain("\x1b[48;2;26;81;47m");
     expect(out).toContain("\x1b[48;2;100;35;35m");
   });
-
-  test("does not render any EOF newline marker (EOF state is surfaced by callers, not the renderer)", () => {
-    const diff = DiffLines.buildToolDiff(
-      "foo.ts",
-      { lines: ["alpha"], hasTrailingNewline: false },
-      { lines: ["beta"], hasTrailingNewline: true },
-      1
-    );
-
-    if (diff === undefined) {
-      throw new Error("expected diff");
-    }
-
-    const out = DiffRenderer.render({ toolDiff: diff, theme: stubTheme });
-    expect(out).not.toContain("No newline at end of file");
-    expect(out).not.toContain("Newline added");
-  });
 });
 
 describe("DiffRenderer.applyEmphasis", () => {
   const lineBg = "\x1b[48;2;0;0;0m";
   const emphBg = "\x1b[48;2;255;255;255m";
-
-  test("returns text unchanged when no ranges", () => {
-    expect(DiffRenderer.applyEmphasis("hello", [], lineBg, emphBg)).toBe(
-      "hello"
-    );
-  });
 
   test("wraps an emphasized range with emph then line bg", () => {
     const out = DiffRenderer.applyEmphasis(

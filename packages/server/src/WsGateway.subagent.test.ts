@@ -26,23 +26,15 @@ let registry: SessionRegistry;
 let gateway: WsGateway;
 let probes: ProbeClient[] = [];
 
-/** Which session the tool writes its child log under; set once a probe has one. */
+/** Parent session the tool writes its child log under. */
 let parentSessionId = "";
-/** The two points the tool parks at, while a test is holding it there. */
 let parked: Parked | undefined;
-/**
- * Shut by a test that wants the call open before its child log exists, which
- * is the window between the row a client paints and the tool's first write.
- */
+/** Close it to hold the call open before the child log exists. */
 let unwritten: Gate | undefined;
 
 const spawnSchema = Type.Object({ task: Type.String() });
 
-/**
- * A subagent, reduced to what a watch can see of one: a child log written
- * under the parent's session and call id, and an update per entry — which is
- * the only signal the server gets that the child has written anything.
- */
+/** A fake subagent: writes a child log and sends a tool update per entry. */
 function spawnTool(): PimToolDefinition<
   typeof spawnSchema,
   { entries: number }
@@ -66,8 +58,7 @@ function spawnTool(): PimToolDefinition<
         content: [{ type: "text" as const, text: CHILD_ANSWER }],
         details: { entries: 2 },
       };
-      // Reported before the park below, so the answer is on the wire while
-      // the call is still open — which is the whole of what a live watch is.
+      // Report before parking, so the answer is sent while the call is open.
       onUpdate?.(result);
       await parked?.settling.shut;
       return result;
@@ -75,10 +66,7 @@ function spawnTool(): PimToolDefinition<
   };
 }
 
-/**
- * Appends to the child's log at the path the server derives, with pi's header
- * as its first line — so its entries carry the ordinals a real child's would.
- */
+/** Appends to the child log at the server-derived path, header first. */
 async function writeChild(
   callId: string,
   role: string,
@@ -125,7 +113,7 @@ function chunk(delta: Record<string, unknown>, finish?: string): string {
   })}\n\n`;
 }
 
-/** Calls `spawn` on the first request of a turn, answers on the second. */
+/** Calls `spawn` on the first request, answers on the second. */
 function startModelServer(): void {
   modelServer = Bun.serve({
     port: 0,
@@ -182,7 +170,7 @@ async function connect(): Promise<ProbeClient> {
   return probe;
 }
 
-/** The child transcripts this probe was handed, oldest envelope first. */
+/** `subagent_events` payloads, oldest first. */
 function watched(probe: ProbeClient): ReadonlyArray<readonly ServerEvent[]> {
   return probe.events
     .filter((event) => event.type === "subagent_events")
@@ -209,16 +197,16 @@ function idle(probe: ProbeClient, from: number): Promise<ServerEvent> {
 type Gate = { readonly shut: Promise<void>; readonly open: () => void };
 
 type Parked = {
-  /** Waited on before the child writes its answer down. */
+  /** Awaited before the child writes its answer. */
   readonly answering: Gate;
-  /** Waited on after the parent has reported that answer, before it returns. */
+  /** Awaited after the parent reports the answer, before returning. */
   readonly settling: Gate;
 };
 
 type Held = {
-  /** Lets the child answer and the parent report it, the call still open. */
+  /** Lets the child answer; the call stays open. */
   readonly answer: () => void;
-  /** Lets the call return, which is what settles the parent's row. */
+  /** Lets the call return. */
   readonly settle: () => void;
 };
 
@@ -230,20 +218,13 @@ function gate(): Gate {
   return { shut, open };
 }
 
-/**
- * Parks the tool either side of the child's answer, so a test can watch a run
- * that is still open at both of them. Two parks and not one: what a live
- * drain has to be told apart from is the drain that happens when the call
- * settles, and the only frame that cannot be that one is a frame the client
- * already has while the call is still running.
- */
+/** Parks the tool before and after the child's answer, so a live drain is distinguishable from the settle drain. */
 function holdChild(): Held {
   const held: Parked = { answering: gate(), settling: gate() };
   parked = held;
   return { answer: held.answering.open, settle: held.settling.open };
 }
 
-/** Holds the tool short of writing the child's log at all. */
 function holdFirstWrite(): () => void {
   const held = gate();
   unwritten = held;
@@ -261,8 +242,7 @@ beforeEach(async () => {
   previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   previousPimHome = process.env.PIM_HOME_DIR;
   process.env.PI_CODING_AGENT_DIR = agentDir;
-  // Child logs are derived under this root, so a test run must never write
-  // into the developer's own `~/.pim/subagents`.
+  // Never write into the developer's `~/.pim/subagents`.
   process.env.PIM_HOME_DIR = join(tmp, "pim");
   await Bun.write(
     join(agentDir, "models.json"),
@@ -293,8 +273,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  // A tool still parked would hold the turn, and the session cannot be
-  // disposed while one is running.
+  // Release parked tools so the session can be disposed.
   parked?.answering.open();
   parked?.settling.open();
   parked = undefined;
@@ -329,8 +308,7 @@ test("watches a running child, and keeps it out of the parent transcript", async
   await probe.waitFor((event) => event.type === "tool_update", { from: mark });
 
   expect((await probe.watchSubagent(CALL_ID)).success).toBe(true);
-  // The header is line 1 of the child's log and projects to nothing, so its
-  // first message is seq 2 — the ordinal is the physical line, always.
+  // The header is line 1, so the first message is seq 2.
   expect(seqsOf(watched(probe)[0] ?? [])).toEqual([2]);
   expect(textsOf(watched(probe)[0] ?? [])).toEqual([TASK]);
 
@@ -342,9 +320,7 @@ test("watches a running child, and keeps it out of the parent transcript", async
     { from: mark }
   );
 
-  // Live: the child's answer is in the reader's hands while the parent's call
-  // is still open, so the envelope cannot have come from a drain of a settled
-  // log — there is no result for that call to have been drained beside.
+  // Arrived while the call is still open, so it came from a live drain.
   expect(seqsOf(watched(probe)[1] ?? [])).toEqual([3]);
   expect(
     probe.events.some(
@@ -355,10 +331,9 @@ test("watches a running child, and keeps it out of the parent transcript", async
   held.settle();
   await idle(probe, mark);
 
-  // And settling adds nothing: everything the child wrote was sent as it was
-  // written, so the end of the call has nothing left to hand over.
+  // Settling adds nothing.
   expect(watched(probe)).toHaveLength(2);
-  // The parent's transcript never holds the child's words, whatever they are.
+  // The child's words never enter the parent transcript.
   expect(
     probe.events
       .filter(isDurableEvent)
@@ -378,13 +353,6 @@ test("resumes a watch from `fromSeq` rather than replaying it", async () => {
   expect(textsOf(watched(probe)[0] ?? [])).toEqual([CHILD_ANSWER]);
 });
 
-/**
- * The row a reader clicks is painted from the `tool_call`, and the child's
- * log is written by the tool that call started — so on any machine slow
- * enough there is a window where the affordance is on screen and the file is
- * not on disk. A watch taken in that window is the ordinary case, not a
- * forged id: it waits, and the child's first line reaches it when it lands.
- */
 test("a watch opened before the child's first line still reads it", async () => {
   const probe = await connect();
   const held = holdChild();
@@ -426,18 +394,12 @@ test("stops sending a child's events once it is unwatched", async () => {
   expect((await probe.unwatchSubagent(CALL_ID)).success).toBe(true);
   held.answer();
   held.settle();
-  // The turn ending is the control: everything the child wrote is on disk and
-  // every frame about it has been sent by the time the session goes idle.
+  // Once idle, everything has been sent.
   await idle(probe, mark);
 
   expect(watched(probe)).toHaveLength(1);
 });
 
-/**
- * The path is derived from ids, so an id that is a path is the whole attack.
- * Traversal and absolute are refused by the charset; a well-formed id for a
- * run that never happened is refused by the file not being there.
- */
 test.each([
   ["../../../etc/passwd", "no subagent log"],
   ["/etc/passwd", "no subagent log"],
@@ -455,11 +417,6 @@ test.each([
   expect(watched(probe)).toHaveLength(0);
 });
 
-/**
- * A watch is not a second attach: it reads a child of the one session this
- * connection is on, so naming another session is refused rather than served
- * out of that session's directory.
- */
 test("refuses a watch on a session the client is not attached to", async () => {
   const watcher = await connect();
   const mark = watcher.events.length;
@@ -480,7 +437,6 @@ test("refuses a watch on a session the client is not attached to", async () => {
   expect(watched(other)).toHaveLength(0);
 });
 
-/** A child log is not a session: nothing may resume it or list it. */
 test("keeps child logs out of the session catalogue", async () => {
   const probe = await connect();
   const mark = probe.events.length;

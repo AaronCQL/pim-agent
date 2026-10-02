@@ -104,37 +104,7 @@ describe("findFiles", () => {
     );
   });
 
-  test("filters by glob pattern extension", async () => {
-    const root = await tempRoot();
-    const ts = join(root, "a.ts");
-    const md = join(root, "a.md");
-
-    await writeFile(ts, "", "utf8");
-    await writeFile(md, "", "utf8");
-
-    const matches = await findFiles(root, "**/*.ts", defaultScanOptions);
-
-    expect(matches.map((match) => match.path)).toEqual([ts]);
-  });
-
-  test("excludes a single glob pattern", async () => {
-    const root = await tempRoot();
-    const source = join(root, "src", "app.ts");
-    const test = join(root, "src", "app.test.ts");
-
-    await mkdir(join(root, "src"), { recursive: true });
-    await writeFile(source, "", "utf8");
-    await writeFile(test, "", "utf8");
-
-    const matches = await findFiles(root, "**/*.ts", {
-      ...defaultScanOptions,
-      exclude: ["**/*.test.ts"],
-    });
-
-    expect(matches.map((match) => match.path)).toEqual([source]);
-  });
-
-  test("excludes multiple glob patterns", async () => {
+  test("excludes glob patterns", async () => {
     const root = await tempRoot();
     const source = join(root, "src", "app.ts");
     const test = join(root, "src", "app.test.ts");

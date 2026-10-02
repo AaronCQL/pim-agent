@@ -5,11 +5,7 @@ function unchanged(gap: DiffGap): string {
   return `${gap.count.toLocaleString()} ${gap.count === 1 ? "line" : "lines"} unchanged`;
 }
 
-/**
- * The lines between two hunks, offered rather than merely marked: clicking
- * reads the file's own text around the gap and puts it on the page, a step at
- * a time until nothing of the gap is left.
- */
+/** The unchanged lines between hunks; clicking reveals them a step at a time. */
 export function GapRow(props: {
   readonly gap: DiffGap;
   readonly width: number;

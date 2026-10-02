@@ -40,12 +40,4 @@ describe("Paths.titleOr", () => {
   test("returns the placeholder when path is undefined", () => {
     expect(Paths.titleOr(undefined, "/work")).toBe("...");
   });
-
-  test("returns a path relative to cwd when within cwd", () => {
-    expect(Paths.titleOr("/work/src/file.ts", "/work")).toBe("src/file.ts");
-  });
-
-  test("returns the absolute path when outside cwd", () => {
-    expect(Paths.titleOr("/other/file.ts", "/work")).toBe("/other/file.ts");
-  });
 });

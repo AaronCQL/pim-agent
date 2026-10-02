@@ -9,19 +9,16 @@ import { InProcessFilePickerSuggestionEngine } from "./InProcessFilePickerSugges
 import type { PickerItem } from "./PickerItem";
 
 export type PickerServiceDeps = {
-  /** Read per query: a session's cwd can move between turns. */
+  /** Read per query; the cwd can change between turns. */
   readonly cwd: () => string;
   readonly agentDir: string;
-  /** Extension-registered commands, available only while an agent is built. */
+  /** Source of extension commands; undefined until an agent is built. */
   readonly agent?: () => AgentSession | undefined;
 };
 
 const DEFAULT_LIMIT = 50;
 
-/**
- * The `.agents/skills` roots pi reads and `loadSkills` does not: every one from
- * the cwd up to the repository root, plus the user's own.
- */
+/** `.agents/skills` dirs from cwd up to the repo root, plus `~/.agents/skills`; `loadSkills` skips these. */
 function agentsSkillDirs(cwd: string): string[] {
   const dirs: string[] = [];
   let dir = resolve(cwd);
@@ -37,7 +34,6 @@ function agentsSkillDirs(cwd: string): string[] {
   return dirs;
 }
 
-/** Answers one session's picker queries against the machine the agent runs on. */
 export class PickerService {
   private readonly deps: PickerServiceDeps;
   private fileCache:

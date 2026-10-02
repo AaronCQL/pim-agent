@@ -8,6 +8,7 @@ import { SessionLease, type LeaseHandle } from "#core/session/SessionLease";
 import type { ServerEvent } from "#protocol/ServerEvent";
 import { ProbeClient } from "./ProbeClient";
 import { WsGateway } from "./WsGateway";
+import { until } from "#core/shared/fixtures/wait";
 
 const REPLY = "hello from the gateway";
 
@@ -63,13 +64,7 @@ async function connect(): Promise<ProbeClient> {
   return probe;
 }
 
-/**
- * The end of this probe's turn, and not merely an event that says "idle": a
- * `session_state` the git watcher pushes on its first read can land after
- * `from` yet before the prompt has started work, still saying idle because
- * the session still was. The host's live status settles it — see the twin of
- * this helper in `WsGateway.test.ts`.
- */
+/** Waits for the turn to end; see the twin in `WsGateway.test.ts`. */
 async function idle(probe: ProbeClient, from: number): Promise<ServerEvent> {
   let cursor = from;
   for (;;) {
@@ -86,12 +81,7 @@ async function idle(probe: ProbeClient, from: number): Promise<ServerEvent> {
   }
 }
 
-/**
- * The lease this process takes as the terminal would: the record names another
- * frontend, so the daemon reading it sees a holder that is not itself. Waits
- * for it the way the terminal does, because the daemon gives its own back a
- * moment after the turn it ran reads as settled.
- */
+/** Takes the lease as the terminal would, so the daemon sees a foreign holder. */
 async function takeAsTui(sessionPath: string): Promise<LeaseHandle> {
   const result = await SessionLease.waitFor(sessionPath, "tui", {
     pollMs: 1,
@@ -112,7 +102,7 @@ function pathOf(sessionId: string): string {
   return path;
 }
 
-/** One line, as the terminal's pi would have appended it: this process runs no agent for it and hears no event about it. */
+/** Appends a line as the terminal's pi would; this process hears no agent event for it. */
 async function appendEntry(
   path: string,
   id: string,
@@ -131,7 +121,7 @@ async function appendEntry(
   );
 }
 
-/** A whole session file written by a process this server knows nothing about; pi puts the file on disk with the opening message already in it, and a file without one is not a session anybody can see. */
+/** Writes a whole session file from "another process", opening message included. */
 async function writeForeignSession(id: string, cwd: string): Promise<string> {
   const dir = join(agentDir, "sessions", "foreign");
   await mkdir(dir, { recursive: true });
@@ -167,24 +157,12 @@ function freeState(probe: ProbeClient, from: number): Promise<ServerEvent> {
   );
 }
 
-async function until(ready: () => boolean, what: string): Promise<void> {
-  const deadline = Date.now() + 20_000;
-  while (!ready()) {
-    if (Date.now() > deadline) {
-      throw new Error(`timed out waiting for ${what}`);
-    }
-    await Bun.sleep(1);
-  }
-}
-
-/** Every user message the log has, in the order pi wrote it. */
 function said(probe: ProbeClient): readonly string[] {
   return probe.events.flatMap((event) =>
     event.type === "message" && event.role === "user" ? [event.text] : []
   );
 }
 
-/** Every assistant message the log has, in the order pi wrote it. */
 function replied(probe: ProbeClient): readonly string[] {
   return probe.events.flatMap((event) =>
     event.type === "message" && event.role === "assistant" ? [event.text] : []
@@ -222,8 +200,7 @@ beforeEach(async () => {
     port: 0,
     readCursorsPath: join(tmp, "read.json"),
     sessionMetaPath: join(tmp, "sessions.json"),
-    // Out of reach: what a foreign write reaches this server by has to be the
-    // file watch, and a line arriving a second late is a line that was missed.
+    // Too slow to mask a missed file-watch event.
     pollMs: 60_000,
   });
   gateway.start();
@@ -250,10 +227,6 @@ afterEach(async () => {
   await rm(tmp, { recursive: true, force: true });
 });
 
-/**
- * The session is idle either way, so nothing about the agent says the terminal
- * has it: only the lease file does, and a client is told without asking.
- */
 test("says a foreign lease has the session, and gives it back on release", async () => {
   const probe = await connect();
   const first = probe.events.length;
@@ -271,7 +244,7 @@ test("says a foreign lease has the session, and gives it back on release", async
     frontend: "tui",
     pid: process.pid,
   });
-  // The agent is doing nothing; unwritable is about the file, not the turn.
+  // Unwritable is about the file, not the turn.
   expect(held.type === "session_state" && held.status).toBe("idle");
 
   const released = probe.events.length;
@@ -280,11 +253,6 @@ test("says a foreign lease has the session, and gives it back on release", async
   expect(free.type === "session_state" && free.heldBy).toBeUndefined();
 });
 
-/**
- * `writable` is an affordance, never the enforcement: a client that ignores it
- * waits for the lease inside the server and its message lands whole,
- * afterwards, in one linear conversation.
- */
 test("holds a message sent anyway until the lease comes free", async () => {
   const probe = await connect();
   const first = probe.events.length;
@@ -293,17 +261,13 @@ test("holds a message sent anyway until the lease comes free", async () => {
 
   const sessionId = probe.sessionId!;
   const host = registry.peek(sessionId)!;
-  // Marked before the lease moves: taking it pushes a `session_state` of its
-  // own, and `waitFor` awaits enough for that push to land while it is still
-  // running. A mark taken afterwards misses it, and nothing pushes it again —
-  // the daemon parking behind the same holder renders the very same state.
+  // Mark before taking the lease, or its `session_state` push is missed.
   const mark = probe.events.length;
   const lease = await takeAsTui(pathOf(sessionId));
 
   await probe.prompt("say hello again");
   await heldState(probe, mark);
-  // The daemon asked for the lease and was refused, so the turn is parked
-  // rather than running against a file the terminal is holding.
+  // The daemon's turn is parked behind the foreign lease.
   await until(
     () => !host.leaseState.writable,
     "the daemon to park behind the lease"
@@ -312,18 +276,12 @@ test("holds a message sent anyway until the lease comes free", async () => {
   expect(said(probe)).toEqual(["say hello"]);
 
   await lease.release();
-  // Un-greying is a `session_state` of its own, so the reply is what to wait
-  // on: an idle state arrives the moment the lease frees, before the turn runs.
+  // Wait on the reply: an idle state arrives before the turn runs.
   await until(() => replied(probe).length === 2, "the parked turn to land");
   expect(said(probe)).toEqual(["say hello", "say hello again"]);
   expect(replied(probe).map((text) => text.trim())).toEqual([REPLY, REPLY]);
 });
 
-/**
- * The turn belongs to another process, so no agent event fires here and the
- * file is the only witness. It has to reach the open thread as it is written,
- * rather than the next time the client reattaches.
- */
 test("carries a turn the terminal wrote into a thread already open", async () => {
   const probe = await connect();
   const first = probe.events.length;
@@ -351,7 +309,7 @@ test("carries a turn the terminal wrote into a thread already open", async () =>
   );
   await lease.release();
 
-  // One linear conversation, each line exactly once.
+  // Each line exactly once.
   expect(said(probe)).toEqual(["say hello", "typed in the terminal"]);
   expect(replied(probe).map((text) => text.trim())).toEqual([
     REPLY,
@@ -359,11 +317,6 @@ test("carries a turn the terminal wrote into a thread already open", async () =>
   ]);
 });
 
-/**
- * A session the terminal starts is a file this server never hears about. The
- * list has to learn of it on its own: a user who has to click around to see
- * their new session is a user who thinks it was lost.
- */
 test("tells clients about a session another process started", async () => {
   const probe = await connect();
   const mark = probe.events.length;

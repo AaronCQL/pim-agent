@@ -14,7 +14,6 @@ export type FormatChecklistOptions = {
   readonly activeOnly?: boolean;
 };
 
-/** Identity key for the per-session state slot. */
 export type TodoSessionKey = ExtensionContext["sessionManager"];
 
 const itemsBySession = new WeakMap<TodoSessionKey, TodoItem[]>();
@@ -67,7 +66,7 @@ export function hasActiveItems(items: readonly TodoItem[]): boolean {
   return items.some(isActive);
 }
 
-export function summarizeItems(items: readonly TodoItem[]): TodoSummary {
+function summarizeItems(items: readonly TodoItem[]): TodoSummary {
   const summary: TodoSummary = {
     pending: 0,
     in_progress: 0,
@@ -129,32 +128,26 @@ function findLatestTodoItems(branch: readonly unknown[]): TodoItem[] {
 }
 
 function extractTodoItems(entry: unknown): TodoItem[] | undefined {
+  const holder = todoHolder(entry);
+  return isRecord(holder) && Array.isArray(holder.todos)
+    ? normalizeUnknownItems(holder.todos)
+    : undefined;
+}
+
+/** The todo tool result's details, or a compaction checkpoint's data. */
+function todoHolder(entry: unknown): unknown {
   if (!isRecord(entry)) {
     return undefined;
   }
-  if (entry.type === "message") {
-    const message = entry.message;
-    if (
-      !isRecord(message) ||
-      message.role !== "toolResult" ||
-      message.toolName !== "todo"
-    ) {
-      return undefined;
-    }
-    const details = message.details;
-    if (!isRecord(details) || !Array.isArray(details.todos)) {
-      return undefined;
-    }
-    return normalizeUnknownItems(details.todos);
-  }
   if (entry.type === "custom" && entry.customType === TODO_STATE_CUSTOM_TYPE) {
-    const data = entry.data;
-    if (!isRecord(data) || !Array.isArray(data.todos)) {
-      return undefined;
-    }
-    return normalizeUnknownItems(data.todos);
+    return entry.data;
   }
-  return undefined;
+  const message = entry.type === "message" ? entry.message : undefined;
+  return isRecord(message) &&
+    message.role === "toolResult" &&
+    message.toolName === "todo"
+    ? message.details
+    : undefined;
 }
 
 function normalizeUnknownItems(items: readonly unknown[]): TodoItem[] {

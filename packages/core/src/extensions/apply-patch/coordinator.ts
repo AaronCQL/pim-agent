@@ -1,7 +1,7 @@
 const EDIT_TOOL = "edit";
 const APPLY_PATCH_TOOL = "apply_patch";
 
-/** Reconcile the single `edit`/`apply_patch` slot; returns `active` by reference when nothing changes. */
+/** Keeps at most one of `edit`/`apply_patch` active. Returns `active` itself when nothing changes. */
 export function computeActiveTools(
   available: readonly string[],
   active: readonly string[],

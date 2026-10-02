@@ -15,12 +15,7 @@ import { WsGateway } from "./WsGateway";
 
 const REPLY = "on it";
 
-/**
- * A real extension, loaded off disk by pi's own resource loader: the dispatch
- * under test is `extensionRunner.getCommand`, which only a genuine
- * registration answers for. `probe-record` writes its answer down because
- * `notify` has nowhere to land once the last client has gone.
- */
+/** A real extension loaded by pi, so `extensionRunner.getCommand` sees it. `probe-record` writes answers to disk since `notify` has nowhere to go without clients. */
 function extensionSource(recordPath: string): string {
   return `
 export default (pi) => {
@@ -69,7 +64,7 @@ function chunk(delta: Record<string, unknown>, finish?: string): string {
   })}\n\n`;
 }
 
-/** Holds the turn open until the test releases it; `afterEach` releases one a failure skipped. */
+/** `afterEach` releases it if a test fails first. */
 function holdTurn(): () => void {
   gate = new Promise<void>((resolve) => {
     openGate = resolve;
@@ -126,7 +121,6 @@ function notices(
   return probe.events.filter((event) => event.type === "ui_notice");
 }
 
-/** The notice a command raised, waited for rather than slept on. */
 async function noticed(probe: ProbeClient, from = 0): Promise<string> {
   const event = await probe.waitFor(
     (candidate) => candidate.type === "ui_notice",
@@ -173,8 +167,7 @@ beforeEach(async () => {
     port: 0,
     readCursorsPath: join(tmp, "read.json"),
     sessionMetaPath: join(tmp, "sessions.json"),
-    // The ceiling stays at its production three minutes, so only the grace can
-    // settle a dialog inside a suite that runs in seconds.
+    // The ceiling stays at 3 minutes, so only the grace can settle a dialog here.
     detachGraceMs: 0,
   });
   gateway.start();
@@ -202,17 +195,16 @@ test("dispatches a registered command instead of prompting with it", async () =>
   const probe = await connect();
   const mark = probe.events.length;
 
-  // Untrimmed, as a client that does not trim would send it: pi dispatches on
-  // the text this server hands it, so the check has to read what pi will.
+  // Untrimmed: pi trims before dispatching, so the gateway must too.
   const answer = await probe.prompt(" /probe-notice hello");
 
   expect(answer.success).toBe(true);
   expect(answer.dispatched).toBe(true);
   expect(await noticed(probe, mark)).toBe("probe heard: hello");
-  // No user entry, no turn: the model was never called and nothing was written.
+  // No user entry, no turn.
   expect(registry.peek(probe.sessionId!)?.status).toBe("idle");
   expect(probe.events.filter(isDurableEvent)).toEqual([]);
-  // And nothing on disk either: a client arriving afterwards is replayed nothing.
+  // Nothing on disk either.
   const later = await connect(probe.sessionId!);
   expect(later.events.filter(isDurableEvent)).toEqual([]);
 });
@@ -226,16 +218,11 @@ test("says what a command notified to every client attached to the session", asy
 
   expect(await noticed(first, marks[0])).toBe("probe heard: both");
   expect(await noticed(second, marks[1])).toBe("probe heard: both");
-  // Named: the user typed it, so it belongs in that command's modal rather than a toast.
+  // Tagged with the command that raised it.
   expect(notices(second).at(-1)?.command).toBe("/probe-notice");
   expect(notices(second).at(-1)?.severity).toBe("info");
 });
 
-/**
- * §1b: merging a command into the steer queue made the joined string start
- * with the *earlier* message, so pi never saw the `/` and sent the command to
- * the model as English — and swallowed the queued message doing it.
- */
 test("dispatches mid-turn without eating the message already queued", async () => {
   const release = holdTurn();
   const probe = await connect();
@@ -274,15 +261,9 @@ test("sends an unregistered slash to the model verbatim", async () => {
   expect(said.type === "message" && said.text).toBe("/nope");
 });
 
-/**
- * The picker offers extension commands only while an agent exists, so a
- * command typed at a session whose agent has been let go is someone working
- * from memory — and it still has to dispatch rather than reach the model.
- */
 test("builds the agent for a command typed at a cold session", async () => {
   const probe = await connect();
-  // Pi writes the session file at the first assistant message, and a host let
-  // go before that reopens nothing: it starts a second session instead.
+  // Pi writes the session file at the first assistant message; before that, reopening creates a new session.
   await probe.prompt("say hello");
   const host = registry.peek(probe.sessionId!)!;
   await until(
@@ -335,8 +316,7 @@ test("carries a dialog to the client and the answer back to the extension", asyn
   );
   expect(notices(probe).at(-1)?.text).toBe("probe confirmed: true");
 
-  // The request is settled, so the same answer sent twice is refused rather
-  // than applied to whatever asks next.
+  // Already settled, so a repeat is refused.
   const again = await probe.send({
     type: "ui_response",
     sessionId: probe.sessionId!,
@@ -361,12 +341,6 @@ test("refuses an answer to a request nobody is waiting on", async () => {
   expect(refused.error).toContain("made-up");
 });
 
-/**
- * The gateway watches every stream it builds for `session_state`, and while it
- * did that as a subscriber the stream counted it as a reader: no session was
- * ever detached, so the grace never started and a dialog the last client
- * walked away from held its extension for the whole ceiling.
- */
 test("answers a dialog the last client walked away from", async () => {
   const probe = await connect();
   const mark = probe.events.length;

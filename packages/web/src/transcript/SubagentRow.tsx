@@ -7,12 +7,11 @@ import { RowLabel } from "../view/ToolCard";
 import { caretClass } from "../view/tokens";
 import type { ToolRow } from "./rows";
 
-/** The tool row that opens a conversation instead of a payload: a button, not a disclosure. */
 export function SubagentRow(props: {
   readonly row: ToolRow;
   readonly onOpen: (callId: string) => void;
 }) {
-  // A run that threw kept no details, so its accounting is a mid-flight snapshot.
+  // A failed run's summary is a stale mid-run snapshot.
   const stats = createMemo(() =>
     props.row.isError ? "" : summaryText(props.row.view)
   );
@@ -48,8 +47,6 @@ export function SubagentRow(props: {
       >
         <span class="block truncate text-rose-400">
           failed
-          {/* Read in JSX: the `Show` callback runs untracked, so a reason
-              interpolated into a string would never reach the page. */}
           <Show when={failure()}>{(reason) => <> · {reason()}</>}</Show>
         </span>
       </Show>

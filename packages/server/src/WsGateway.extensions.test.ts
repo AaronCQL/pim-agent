@@ -12,12 +12,6 @@ import type { ResponseEvent } from "#protocol/ServerEvent";
 import { ProbeClient } from "./ProbeClient";
 import { WsGateway } from "./WsGateway";
 
-/**
- * The extension roster over the wire, read against a temp agent dir: pi's own
- * resolver answers for the file planted below, so nothing here reads the
- * extensions this machine actually has.
- */
-
 usePimHome("pim-extensions-gateway-home-");
 
 let tmp: string;
@@ -53,7 +47,7 @@ function entryFor(
   return entries.find((entry) => entry.id === id);
 }
 
-/** Occupies a host's turn queue until the test lets go, the way a turn would. */
+/** Occupies a host's turn queue until released. */
 function holdQueue(host: SessionHost): Promise<void> {
   const held = new Promise<void>((resolve) => {
     releaseQueue = resolve;
@@ -126,7 +120,7 @@ test("answers with the pim allowlist and the extensions in the agent dir", async
   expect(
     entries.filter((entry) => entry.group === "pim").map((entry) => entry.id)
   ).toEqual(["pim:todo"]);
-  // The roster is the allowlist, not pim's roster: a tool extension is not switchable from here.
+  // Tool extensions are not switchable here.
   expect(entries.some((entry) => entry.id === "pim:bash")).toBe(false);
   expect(entryFor(entries, plantedId)).toMatchObject({
     label: "probe",
@@ -176,7 +170,6 @@ test("refuses an unknown extension and keeps answering afterwards", async () => 
 
   expect(refused.success).toBe(false);
   expect(refused.error).toContain("pi:/nope/missing.ts");
-  // Nothing was switched, so nothing was announced.
   expect(
     probe.events.some((event) => event.type === "extensions_changed")
   ).toBe(false);
@@ -195,7 +188,7 @@ test("drops a live session's agent behind the turn it is running", async () => {
     value: false,
   });
 
-  // Queued behind the work holding the session, rather than taken from under it.
+  // Waits behind the running work instead of interrupting it.
   expect(host.agentSession).toBeDefined();
   releaseQueue?.();
   await holding;

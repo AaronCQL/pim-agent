@@ -64,19 +64,8 @@ export default function (pi: ExtensionAPI): void {
         };
       }
 
-      return {
-        content: [{ type: "text", text: outcome.text }],
-        details: {
-          kind: "page",
-          url: outcome.url,
-          title: outcome.title,
-          format: outcome.format,
-          returnedBytes: outcome.returnedBytes,
-          totalBytes: outcome.totalBytes,
-          truncated: outcome.truncated,
-          path: outcome.path,
-        },
-      };
+      const { text, ...details } = outcome;
+      return { content: [{ type: "text", text }], details };
     },
     toViewModel: webFetchView,
   });

@@ -39,7 +39,6 @@ afterEach(async () => {
   mock.restore();
 });
 
-/** The modal alone, which is where the install's one button now lives. */
 function paint(): HTMLElement {
   const host = mountPoint();
   dispose = render(
@@ -154,11 +153,6 @@ test("the shell paints progress and a dismissible result outside the modal", () 
   expect(host.querySelector('[role="status"]')).toBeNull();
 });
 
-/**
- * A tab left open across a release is painting a build the server no longer
- * runs. The toast names both halves and asks for a refresh — no button of its
- * own, since the browser's own reload is the thing it is asking for.
- */
 test("a tab from another build is told which half is behind", () => {
   store.dispose();
   store = new SessionStore({ url: harness.url });

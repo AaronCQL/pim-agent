@@ -32,6 +32,16 @@ async function loadAll(
   );
 }
 
+async function load(
+  configDir: string,
+  id: string
+): Promise<ScheduledTask | undefined> {
+  return Fs.readJsonOrEmpty<ScheduledTask | undefined>(
+    path(configDir, id),
+    undefined
+  );
+}
+
 async function save(configDir: string, task: ScheduledTask): Promise<void> {
   await Fs.writeAtomic(path(configDir, task.id), JSON.stringify(task, null, 2));
 }
@@ -64,4 +74,4 @@ function path(configDir: string, id: string): string {
   return join(dir(configDir), `${id}.json`);
 }
 
-export const TaskStore = { loadAll, save, remove, makeId };
+export const TaskStore = { loadAll, load, save, remove, makeId };

@@ -164,7 +164,7 @@ class RelativeRankingIndex {
         substringHits.push(candidate);
       }
 
-      // Only prefix hits may end the scan early: a late prefix must not lose to an earlier substring.
+      // Only prefix hits end the scan, so a late prefix hit still beats substrings.
       if (prefixHits.length >= limitSize) {
         break;
       }

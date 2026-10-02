@@ -6,18 +6,13 @@ import { Check } from "../ui/Check";
 import { QUIET } from "../ui/classes";
 import { Spinner } from "../ui/Spinner";
 
-/** Only the groups a reader has to be told apart by name; pim's own need none. */
+/** pim's own group has no heading. */
 const TITLES: Partial<Record<ExtensionGroup, string>> = {
   user: "Installed",
   project: "Project",
 };
 
-/**
- * The extensions this install loads, switched here and read back from the
- * server: a switch in another window arrives as `extensions_changed`, which
- * drops the roster this one is drawn from. Mounted only while the pane is
- * open, so opening it is what asks.
- */
+/** Reloads the roster whenever the store's `extensions` changes (e.g. on `extensions_changed`). */
 export function Extensions(props: { readonly store: SessionStore }) {
   const [rows, setRows] = createSignal<readonly ExtensionEntry[]>([]);
   const [loading, setLoading] = createSignal(false);
@@ -55,8 +50,7 @@ export function Extensions(props: { readonly store: SessionStore }) {
     );
   };
 
-  // Folded in the order the roster arrives in, so the server stays the only
-  // place the groups are ordered and one it adds is drawn, not dropped.
+  // Groups keep server order; unknown groups are still drawn.
   const shown = createMemo(() => {
     const groups = new Map<ExtensionGroup, ExtensionEntry[]>();
     for (const entry of rows()) {

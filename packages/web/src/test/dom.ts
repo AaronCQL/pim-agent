@@ -1,7 +1,7 @@
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
-// Import this first: Solid and micromark reach for a global `document` as they evaluate.
-// Keep the native network globals: happy-dom's `AbortSignal` fails native `fetch`'s identity check.
+// Import first: Solid and micromark read `document` at load time.
+// Keep native network globals: happy-dom's `AbortSignal` breaks native `fetch`.
 const NETWORK_GLOBALS = [
   "fetch",
   "WebSocket",

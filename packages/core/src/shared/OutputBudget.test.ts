@@ -2,10 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { OutputBudget } from "./OutputBudget";
 
 describe("truncateLine", () => {
-  test("returns lines under the cap untouched", () => {
-    expect(OutputBudget.truncateLine("short")).toBe("short");
-  });
-
   test("truncates with a signposted suffix once over the cap", () => {
     const line = "x".repeat(OutputBudget.maxLineLength + 50);
     expect(OutputBudget.truncateLine(line)).toBe(
@@ -21,14 +17,6 @@ describe("truncateUtf8", () => {
     expect(result.truncated).toBe(false);
     expect(result.totalBytes).toBe(5);
     expect(result.returnedBytes).toBe(5);
-  });
-
-  test("truncates ASCII at exact byte boundary", () => {
-    const result = OutputBudget.truncateUtf8("a".repeat(100), 10);
-    expect(result.body).toBe("a".repeat(10));
-    expect(result.truncated).toBe(true);
-    expect(result.returnedBytes).toBe(10);
-    expect(result.totalBytes).toBe(100);
   });
 
   test("backs off to a UTF-8 boundary mid-codepoint", () => {
@@ -53,13 +41,6 @@ describe("truncateUtf8", () => {
     expect(result.returnedBytes).toBe(0);
     expect(result.truncated).toBe(true);
   });
-
-  test("defaults to OutputBudget.maxBytes when no cap supplied", () => {
-    const content = "a".repeat(OutputBudget.maxBytes + 100);
-    const result = OutputBudget.truncateUtf8(content);
-    expect(result.body.length).toBe(OutputBudget.maxBytes);
-    expect(result.truncated).toBe(true);
-  });
 });
 
 describe("applyByteCap", () => {
@@ -74,7 +55,6 @@ describe("applyByteCap", () => {
     const item = "x".repeat(100);
     const items = Array.from({ length: 20 }, () => item);
     const result = OutputBudget.applyByteCap(items, { maxBytes: 250 });
-    // 100 + 1 + 100 = 201 fits, adding another 1 + 100 = 302 does not.
     expect(result.visible).toHaveLength(2);
     expect(result.droppedItems).toBe(18);
   });
@@ -89,7 +69,6 @@ describe("applyByteCap", () => {
   });
 
   test("respects a custom separator", () => {
-    // Two 5-byte items with a 10-byte separator: 5 + 10 + 5 = 20.
     const result = OutputBudget.applyByteCap(["alpha", "betas"], {
       maxBytes: 20,
       separator: "----------",

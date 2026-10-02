@@ -5,7 +5,7 @@ import { DiffExpand, type DiffGap } from "./DiffExpand";
 
 const PATH = "src/alpha.ts";
 
-/** A file of `count` numbered lines, so every line says which one it is. */
+/** `count` lines reading `line 1`, `line 2`, ... */
 function file(count: number): string {
   return `${Array.from({ length: count }, (_, at) => `line ${at + 1}`).join("\n")}\n`;
 }
@@ -29,7 +29,7 @@ function hunksOf(from: string, to: string): readonly ToolDiffHunk[] {
   );
 }
 
-/** Two hunks in a 200-line file: one at the top, one near the bottom. */
+/** Edits at lines 10 and 150 of a 200-line file. */
 function twoHunks(): readonly ToolDiffHunk[] {
   return hunksOf(file(200), edited(200, [10, 150]));
 }

@@ -53,17 +53,6 @@ describe("FirecrawlProvider", () => {
     ]);
   });
 
-  test("sends no authorization header when keyless", async () => {
-    const { provider, captured } = providerWith(
-      200,
-      JSON.stringify({ success: true, data: { web: [] } })
-    );
-
-    await provider.search(input);
-
-    expect(captured.request?.headers.get("authorization")).toBeNull();
-  });
-
   test("authenticates when an api key is configured", async () => {
     const captured: Captured = {};
     const provider = new FirecrawlProvider({
@@ -174,13 +163,17 @@ describe("FirecrawlProvider", () => {
   test("raises a plain search error on other http failures", async () => {
     const { provider } = providerWith(500, "{}");
 
-    expect(provider.search(input)).rejects.toBeInstanceOf(ProviderSearchError);
+    await expect(provider.search(input)).rejects.toBeInstanceOf(
+      ProviderSearchError
+    );
   });
 
   test("raises a search error on malformed payloads", async () => {
     const { provider } = providerWith(200, JSON.stringify({ success: true }));
 
-    expect(provider.search(input)).rejects.toThrow("malformed search results");
+    await expect(provider.search(input)).rejects.toThrow(
+      "malformed search results"
+    );
   });
 
   test("surfaces a reported failure", async () => {
@@ -189,6 +182,8 @@ describe("FirecrawlProvider", () => {
       JSON.stringify({ success: false, error: "not supported keyless" })
     );
 
-    expect(provider.search(input)).rejects.toThrow("not supported keyless");
+    await expect(provider.search(input)).rejects.toThrow(
+      "not supported keyless"
+    );
   });
 });

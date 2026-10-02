@@ -36,7 +36,7 @@ import { createViewportHeight } from "./ui/viewport";
 export function App() {
   const settings = new Settings();
   const store = new SessionStore({ url: settings.gateway() });
-  // Connect in the effect phase: `connect()` writes state, illegal in a component body.
+  // `connect()` writes state, which a component body may not do.
   onSettled(() => {
     void store.connect().catch(() => undefined);
     return () => {
@@ -47,7 +47,6 @@ export function App() {
   return <Shell store={store} settings={settings} />;
 }
 
-/** The three regions: sidebar, topbar, and the transcript — or the change set — with the composer floating over its foot. */
 export function Shell(props: {
   readonly store: SessionStore;
   readonly settings: Settings;
@@ -74,7 +73,6 @@ export function Shell(props: {
       comments.load(cwd);
     }
   );
-  // The icon is the discoverable way in; this is for the fingers that already know.
   onSettled(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
@@ -89,11 +87,11 @@ export function Shell(props: {
   });
   const pin = createBottomPin();
   const [overlay, setOverlay] = createSignal(0);
-  // An object rather than the string, so taking back the same words twice is two recalls.
+  // An object, so recalling the same text twice still fires.
   const [recalled, setRecalled] = createSignal<{ text: string }>();
 
   const review = (): void => {
-    // A second arm behind one release leaves an entry that swallows the next Back.
+    // Arming twice would leave a history entry that swallows the next Back.
     if (untrack(reviewing)) {
       return;
     }
@@ -122,13 +120,11 @@ export function Shell(props: {
     });
   };
 
-  /** Back to the transcript, at its end: where both a session switch and a sent message land. */
   const navigate = (): void => {
     converse();
     pin.jump();
   };
 
-  /** A review is over the moment it is sent, and the moment it is thrown away. */
   const clearReview = (): void => {
     comments.clear();
   };
@@ -155,12 +151,7 @@ export function Shell(props: {
       !reviewing() && !props.store.state.loading && !hasTranscript()
   );
 
-  /**
-   * How much of the transcript's foot the composer covers. Nothing under the
-   * splash, where the composer lies over the whole pane rather than its foot:
-   * charging its height there pads an empty transcript past its own scroller
-   * and raises a scrollbar over nothing.
-   */
+  /** Composer height over the transcript; 0 on the splash, which would otherwise show a needless scrollbar. */
   const inset = createMemo((): number => (showSplash() ? 0 : overlay()));
 
   const viewportHeight = createViewportHeight();
@@ -173,7 +164,6 @@ export function Shell(props: {
         "[overflow-anchor:none]": pin.pinned(),
       }}
     >
-      {/* First in a reversed column is the foot of the transcript. */}
       <Fade height={inset()} />
       <div
         class="mx-auto min-h-full w-full max-w-3xl flex-none space-y-[--line] p-3 leading-[--line]"
@@ -225,7 +215,7 @@ export function Shell(props: {
               setSidebar(false);
             }}
           >
-            {/* Only the live host is mounted: two Sidebars would each query the server. */}
+            {/* Mount one Sidebar only; each queries the server. */}
             <Show when={!desktop()}>
               <Sidebar
                 store={props.store}

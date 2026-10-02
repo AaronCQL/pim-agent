@@ -3,13 +3,12 @@ import { plugin } from "bun";
 import { afterEach } from "bun:test";
 import { dirname, join } from "node:path";
 
-// Solid's JSX compile and browser dev builds for `bun test`: the `node` condition's
-// `template` throws, and Bun's runtime plugins silently ignore `onResolve`.
+// Compiles Solid JSX and loads Solid's browser dev builds: the `node` build's
+// `template` throws, and Bun's runtime plugins ignore `onResolve`.
 const DOM_BUILDS = {
   "solid-js": "dist/solid.dev.js",
   "@solidjs/web": "dist/web.dev.js",
-  // Pinned by name: solid-js's dev build imports it bare, and the resolver
-  // would hand back the production build, with the diagnostics compiled out.
+  // solid-js imports it bare, which would resolve to the production build.
   "@solidjs/signals": "dist/dev.js",
 } as const;
 
@@ -17,7 +16,7 @@ plugin({
   name: "solid",
   setup(build) {
     build.onLoad({ filter: /\.tsx$/ }, async (args) => ({
-      // Oxc only rewrites JSX, so Bun still strips types: loader `ts`, not `js`.
+      // Oxc only rewrites JSX; Bun still strips the types.
       loader: "ts",
       contents: transform(await Bun.file(args.path).text(), {
         filename: args.path,
@@ -26,7 +25,6 @@ plugin({
       }).code,
     }));
     for (const [specifier, entry] of Object.entries(DOM_BUILDS)) {
-      // Resolved off the package's own `package.json`, which every condition agrees on.
       const path = join(
         dirname(Bun.resolveSync(`${specifier}/package.json`, import.meta.dir)),
         entry
@@ -43,11 +41,10 @@ plugin({
 const diagnostics: string[] = [];
 const { DEV } = await import("solid-js");
 if (DEV === undefined) {
-  // The production build reports nothing, so a suite loading it passes deaf.
   throw new Error("solid-js resolved to a build with no diagnostics");
 }
 DEV.diagnostics.subscribe((event) => {
-  // Attribution codes measure cost rather than defects, and land on `info`.
+  // `info` codes measure cost, not defects.
   if (event.severity === "info") {
     return;
   }

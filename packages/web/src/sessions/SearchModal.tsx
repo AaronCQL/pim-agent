@@ -22,39 +22,31 @@ import { Modal } from "../ui/Modal";
 import { followActive } from "../ui/scroll";
 import { Spinner } from "../ui/Spinner";
 
-/** Shorter than this and a query is a keystroke rather than a question, so it never leaves the browser. */
+/** Shorter queries are never sent. */
 const MIN_QUERY = 2;
 
 const DEBOUNCE_MS = 100;
 
-/**
- * A line drawn from a window onto something longer, with the server's marks on
- * it. Only the head says whether it was cut: `text-overflow` can ellipsise the
- * end of a line and not the start, so the tail is the box's to cut and the
- * head is the server's.
- */
+/** Highlighted text. Only a cut head is flagged; CSS truncates the tail. */
 type Marks = {
   readonly text: string;
   readonly ranges: readonly SearchRange[];
   readonly cutHead?: true;
 };
 
-/** One matched session, cut to what the row shows of it. */
 type Row = {
   readonly hit: SearchHitView;
   readonly heading: Marks;
-  /** The one line under the heading: the best matching message, or the opening ask when the name is all that matched. */
+  /** Best matching message not already in the heading, else the opening message. */
   readonly said?: Marks;
 };
 
-/** What the list holds: a search that never happened, an unasked question, one in flight, one nothing answered, or the rows. */
 type Phase = "failed" | "prompt" | "waiting" | "empty" | "hits";
 
 function scopeOf(scanned: number): string {
   return `${Format.count(scanned, "session")}, including archived`;
 }
 
-/** The index building, or a query in flight: the same ring either way. */
 function Waiting() {
   return (
     <p class="flex justify-center">
@@ -63,7 +55,6 @@ function Waiting() {
   );
 }
 
-/** Nothing to list yet: the promise the feature rests on, and the count that lets a reader check it. */
 function Prompt(props: { readonly ready: boolean; readonly scanned: number }) {
   return (
     <li class="space-y-1 px-2 py-6 text-center text-neutral-400">
@@ -75,7 +66,6 @@ function Prompt(props: { readonly ready: boolean; readonly scanned: number }) {
   );
 }
 
-/** A windowed line, with the ellipsis for the run-up the window left behind. */
 function Excerpt(props: { readonly marks: Marks }) {
   return (
     <>
@@ -93,11 +83,6 @@ function marksOf(snippet: SearchSnippet): Marks {
   };
 }
 
-/**
- * What stands between two facts on the meta line. Two stops below the facts it
- * parts, because a separator painted as brightly as its operands stops parting
- * them and becomes a third fact.
- */
 function Dot() {
   return (
     <span class="shrink-0 text-neutral-600" aria-hidden="true">
@@ -106,16 +91,7 @@ function Dot() {
   );
 }
 
-/**
- * A session with no title is one nobody named that opens with no message of
- * its own, so what it matched on is a truer name for it than any word made up
- * here; failing even that, the id, as the sidebar does.
- *
- * The line beneath it is the best matching message the heading is not already
- * saying — an unnamed session is named by its opening ask, and a window onto
- * that same ask under it would be the row saying one thing twice — falling
- * back to the opening ask itself for a row the name alone matched.
- */
+/** Heading is the title, else the first snippet, else the short id. */
 function rowOf(hit: SearchHitView): Row {
   const promoted = hit.title === undefined ? hit.snippets[0] : undefined;
   const heading =
@@ -140,12 +116,11 @@ function rowOf(hit: SearchHitView): Row {
   };
 }
 
-/** Ranked search over every session on disk — the only honest one, because a page of the sidebar is a fraction of the tree. */
+/** Server-side search over every session, not just the listed ones. */
 export function SearchModal(props: {
   readonly open: boolean;
   readonly onClose: () => void;
   readonly store: SessionStore;
-  /** Fires when a hit is opened, for whatever has to get out of the way. */
   readonly onNavigate?: () => void;
   readonly debounceMs?: number;
 }) {
@@ -186,8 +161,7 @@ export function SearchModal(props: {
       }
       setInput("");
       setFailure("");
-      // The empty query is the warm call: it builds the index while the first
-      // keystrokes are still being typed, and counts what the modal promises.
+      // Empty query warms the index and returns the session count.
       void store.searchSessions("").then(took, refused);
     }
   );
@@ -206,6 +180,8 @@ export function SearchModal(props: {
         setAnswer(undefined);
         return;
       }
+      // The last failure belonged to the previous query.
+      setFailure("");
       timer = setTimeout(() => {
         void store.searchSessions(query).then(
           (found) => {
@@ -237,8 +213,6 @@ export function SearchModal(props: {
   );
 
   const phase = createMemo((): Phase => {
-    // A search that did not happen owns the whole body: every other state
-    // here names a scope, and there is none to name.
     if (failure() !== "") {
       return "failed";
     }
@@ -419,8 +393,6 @@ export function SearchModal(props: {
                       <span
                         class={{
                           "i-griddy-icons:chevron-right size-4 shrink-0": true,
-                          // The glyph never swaps: only its brightness says
-                          // which row is picked, so the eye stays on the text.
                           "text-neutral-300":
                             index() === navigation.activeIndex(),
                           "text-neutral-500":
@@ -462,7 +434,6 @@ export function SearchModal(props: {
   );
 }
 
-/** One key, or one pair of them, and what it does to the list. */
 function Legend(props: {
   readonly icons: readonly string[];
   readonly verb: string;

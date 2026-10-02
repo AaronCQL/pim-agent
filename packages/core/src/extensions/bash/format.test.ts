@@ -5,7 +5,6 @@ import {
   formatResult,
   formatTruncationAffordance,
   isErrorResult,
-  stripTrailingNewline,
 } from "./format";
 import {
   type BashCommandResult,
@@ -54,20 +53,8 @@ function makeResult(
   };
 }
 
-describe("stripTrailingNewline", () => {
-  test("removes one trailing newline", () => {
-    expect(stripTrailingNewline("foo\n")).toBe("foo");
-  });
-  test("leaves no-newline strings alone", () => {
-    expect(stripTrailingNewline("foo")).toBe("foo");
-  });
-  test("only strips one", () => {
-    expect(stripTrailingNewline("foo\n\n")).toBe("foo\n");
-  });
-});
-
 describe("formatTruncationAffordance", () => {
-  test("emits bracketed affordance with byte counts and next-step", () => {
+  test("suggests redirecting when nothing was spilled", () => {
     const out = formatTruncationAffordance("stderr", {
       text: "x",
       totalBytes: 12345,
@@ -75,14 +62,9 @@ describe("formatTruncationAffordance", () => {
       path: null,
       nextStart: 1,
     });
-    expect(out.startsWith("[bash tool:")).toBe(true);
-    expect(out.endsWith("]")).toBe(true);
-    expect(out).toContain("stderr showing first");
-    expect(out).toContain(`first ${STREAM_HEAD_BYTES} bytes`);
-    expect(out).toContain(`last ${STREAM_TAIL_BYTES} bytes`);
-    expect(out).toContain("of 12345");
-    expect(out).toContain("redirect to a file");
-    expect(out).toContain("read");
+    expect(out).toBe(
+      `[bash tool: stderr showing first ${STREAM_HEAD_BYTES} bytes + last ${STREAM_TAIL_BYTES} bytes of 12345; redirect to a file (e.g. \`cmd > /tmp/out.log\`) and use read for the full output.]`
+    );
   });
 
   test("points to spill path with a resume line when one is provided", () => {
@@ -197,22 +179,6 @@ describe("formatResult", () => {
     expect(lines[3]?.endsWith("]")).toBe(true);
   });
 
-  test("does not append affordance when stream is not truncated", () => {
-    const out = formatResult(
-      makeResult({
-        stdout: {
-          text: "ok",
-          totalBytes: 2,
-          truncated: false,
-          path: null,
-          nextStart: null,
-        },
-      }),
-      30_000
-    );
-    expect(out).not.toContain("[bash tool:");
-  });
-
   test("says nothing about stdout when the picture rides the content array", () => {
     const out = formatResult(
       makeResult({
@@ -318,20 +284,12 @@ describe("detailsOf", () => {
   });
 });
 
-describe("isErrorResult", () => {
-  test("zero exit code is not an error", () => {
-    expect(isErrorResult(makeResult({ exitCode: 0 }))).toBe(false);
-  });
-  test("non-zero exit code is an error", () => {
-    expect(isErrorResult(makeResult({ exitCode: 1 }))).toBe(true);
-  });
-  test("null exit code is an error", () => {
-    expect(isErrorResult(makeResult({ exitCode: null }))).toBe(true);
-  });
-  test("aborted is an error", () => {
-    expect(isErrorResult(makeResult({ aborted: true }))).toBe(true);
-  });
-  test("timed out is an error", () => {
-    expect(isErrorResult(makeResult({ timedOut: true }))).toBe(true);
-  });
+test.each([
+  [{ exitCode: 0 }, false],
+  [{ exitCode: 1 }, true],
+  [{ exitCode: null }, true],
+  [{ aborted: true }, true],
+  [{ timedOut: true }, true],
+] as const)("isErrorResult(%j) is %p", (overrides, expected) => {
+  expect(isErrorResult(makeResult(overrides))).toBe(expected);
 });

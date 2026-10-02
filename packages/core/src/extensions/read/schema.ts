@@ -27,7 +27,7 @@ export type ReadRange = {
   readonly end?: number;
 };
 
-export type ReadTextDetails = {
+type ReadTextDetails = {
   readonly kind: "text";
   readonly absolutePath: string;
   readonly totalLines: number;
@@ -42,7 +42,7 @@ export type ReadTextDetails = {
 export type ReadImageDetails = ImageDetails & {
   readonly kind: "image";
   readonly absolutePath: string;
-  /** Sent earlier in this conversation and unchanged since, so only the note went to the model. */
+  /** Only a note was sent; the image went out earlier. */
   readonly deduped?: boolean;
 };
 

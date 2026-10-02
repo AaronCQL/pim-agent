@@ -21,9 +21,7 @@ const THEME = {
   noteBorderColor: "#525252",
 };
 
-// Past this a label wraps, which mermaid decides by comparing a measured width
-// to it with `===`: a fractional device scale misses, and the label is clipped
-// instead. Wide enough never to be reached, labels break at `<br/>` alone.
+// Effectively disables wrapping: mermaid's `===` width check clips labels at fractional scales.
 const UNWRAPPED = { wrappingWidth: 10_000 };
 
 let loading: Promise<MermaidApi> | undefined;
@@ -41,7 +39,7 @@ async function load(): Promise<MermaidApi> {
     flowchart: UNWRAPPED,
     state: UNWRAPPED,
   });
-  // Labels are measured as they are laid out, so the face must be in first.
+  // Labels are measured at layout, so the font must be loaded first.
   await document.fonts.ready;
   return mermaid;
 }
@@ -54,14 +52,14 @@ function mermaid(): Promise<MermaidApi> {
   return loading;
 }
 
-/** A rendered diagram and the size mermaid laid it out at, in CSS pixels. */
+/** Width and height are in CSS pixels. */
 export type Drawing = {
   readonly svg: SVGSVGElement;
   readonly width: number;
   readonly height: number;
 };
 
-/** `source` drawn as SVG; rejects with mermaid's message when it will not parse. */
+/** Rejects with mermaid's message when `source` does not parse. */
 async function render(source: string): Promise<Drawing> {
   const api = await mermaid();
   rendered += 1;

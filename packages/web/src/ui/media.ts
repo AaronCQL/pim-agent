@@ -1,12 +1,12 @@
 import { createSignal, onCleanup } from "solid-js";
 
-/** `md`, the one breakpoint that decides drawer or column. */
+/** `md`: sidebar is a column above it, a drawer below. */
 export const DESKTOP = "(min-width: 48rem)";
 
-/** A precise, hovering pointer — the closest a browser comes to "is there a physical keyboard?". */
+/** Best proxy for a physical keyboard. */
 export const KEYBOARD = "(hover: hover) and (pointer: fine)";
 
-/** A media query as a signal, `true` where there is no media engine. */
+/** `true` without `matchMedia`. */
 export function createMediaQuery(query: string): () => boolean {
   const list = globalThis.matchMedia?.(query);
   const [matches, setMatches] = createSignal(list?.matches ?? true);

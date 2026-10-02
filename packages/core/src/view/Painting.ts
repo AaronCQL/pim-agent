@@ -22,7 +22,7 @@ function dispatch<TOut, TArgs extends readonly unknown[]>(
   return painter(block, ...args);
 }
 
-/** How a block sits in its container: `embed` must not be restyled or re-wrapped, `tight` paints its own leading column. */
+/** `embed` is never restyled or re-wrapped; `tight` paints its own leading column. */
 export type BlockFrame = "flow" | "embed" | "tight" | "heading";
 
 const FRAMES = {
@@ -41,7 +41,7 @@ const FRAMES = {
   notice: "flow",
 } as const satisfies Record<ViewBlock["kind"], BlockFrame>;
 
-/** What a block is to the tool that emitted it: its result, or the chrome around one. */
+/** Whether a block is the tool's result or the chrome around it. */
 export type BlockWeight = "payload" | "chrome";
 
 const WEIGHT = {
@@ -107,12 +107,12 @@ function linkLabel(block: {
     : block.label;
 }
 
-/** What a painter that cannot draw the picture says instead: `[image 1200×800 png · 240 KB]`. */
+/** Text fallback, e.g. `[image 1200×800 png · 240 KB]`. */
 function imageSummary(block: BlockOf<"image">): string {
   return `[image ${block.width}×${block.height} ${ImageMime.extensionOf(block.mimeType)} · ${Format.bytes(block.bytes)}]`;
 }
 
-/** The picture plus what it cannot show about itself; `extra` is whatever only the calling tool knows. */
+/** The image block plus a kv block of its details; `extra` is appended to the pairs. */
 function imageBlocks(
   details: ImageDetails,
   alt: string,

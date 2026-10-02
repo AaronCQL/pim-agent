@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { DaemonUnit, SupersededUnits } from "./DaemonUnit";
+import { SupersededUnits } from "./DaemonUnit";
 import { Supervisor, type Install, type Unit } from "./Supervisor";
 
 const at: Install = {
@@ -35,11 +35,14 @@ afterEach(async () => {
   await rm(home, { recursive: true, force: true });
 });
 
-async function installUnit(unit: Unit, platform: NodeJS.Platform) {
+async function installUnit(
+  unit: Unit,
+  platform: NodeJS.Platform,
+  text = ""
+): Promise<void> {
   const path = Supervisor.unitFile(unit, { platform, home });
   await mkdir(join(path, ".."), { recursive: true });
-  await writeFile(path, "");
-  return path;
+  await writeFile(path, text);
 }
 
 describe("systemdUnit", () => {
@@ -52,18 +55,8 @@ describe("systemdUnit", () => {
     expect(text).toContain(
       "Environment=PATH=/opt/bun/bin:/usr/local/bin:/usr/bin:/bin"
     );
-  });
-
-  test("marks the process supervised, so exiting is a restart", () => {
-    expect(Supervisor.systemdUnit(telegram, at)).toContain(
-      "Environment=PIM_SUPERVISED=1"
-    );
-  });
-
-  test("a tool command killed for memory does not stop the unit", () => {
-    expect(Supervisor.systemdUnit(telegram, at)).toContain(
-      "OOMPolicy=continue\n"
-    );
+    expect(text).toContain("Environment=PIM_SUPERVISED=1");
+    expect(text).toContain("OOMPolicy=continue\n");
   });
 
   test("appends the unit's extra arguments after the mode", () => {
@@ -87,10 +80,7 @@ describe("launchdPlist", () => {
         "  </array>",
       ].join("\n")
     );
-  });
-
-  test("marks the process supervised, so exiting is a restart", () => {
-    expect(Supervisor.launchdPlist(telegram, at)).toContain(
+    expect(text).toContain(
       [
         "    <key>PIM_SUPERVISED</key>",
         "    <string>1</string>",
@@ -100,10 +90,7 @@ describe("launchdPlist", () => {
   });
 
   test("appends the unit's extra arguments after the mode", () => {
-    const text = Supervisor.launchdPlist(web, at);
-    expect(text).toContain("<string>com.aaroncql.pim-web</string>");
-    expect(text).toContain("Library/Logs/pim-web.log</string>");
-    expect(text).toContain(
+    expect(Supervisor.launchdPlist(web, at)).toContain(
       [
         "    <string>--mode</string>",
         "    <string>web</string>",
@@ -145,12 +132,6 @@ describe("superseding the per-surface units", () => {
     });
 
     expect(found.map((unit) => unit.mode)).toEqual(["telegram"]);
-  });
-
-  test("the merged unit is not one of the units it supersedes", () => {
-    expect(SupersededUnits.map((unit) => unit.mode)).not.toContain(
-      DaemonUnit.mode
-    );
   });
 
   test("systemd removal stops before it disables, and reloads after the file is gone", () => {
@@ -195,9 +176,7 @@ describe("installedArgs", () => {
     ["linux" as const, () => Supervisor.systemdUnit(daemon, at)],
     ["darwin" as const, () => Supervisor.launchdPlist(daemon, at)],
   ])("reads back the argv it wrote into a %s unit", async (platform, write) => {
-    const path = Supervisor.unitFile(daemon, { platform, home });
-    await mkdir(join(path, ".."), { recursive: true });
-    await writeFile(path, write());
+    await installUnit(daemon, platform, write());
 
     expect(await Supervisor.installedArgs(daemon, { platform, home })).toEqual([
       "--mode",

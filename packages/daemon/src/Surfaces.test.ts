@@ -4,8 +4,8 @@ import { Surfaces, type SurfaceName } from "./Surfaces";
 
 type Case = readonly [string, ReadonlyArray<SurfaceName>];
 
-test("a bare daemon serves both surfaces", () => {
-  expect(Surfaces.parse(["--mode", "daemon"])).toEqual(["web", "telegram"]);
+test.each([[["--mode", "daemon"]], [[]]])("%p serves both surfaces", (args) => {
+  expect(Surfaces.parse(args)).toEqual(["web", "telegram"]);
 });
 
 test.each<Case>([
@@ -44,7 +44,3 @@ test.each(["", "browser", "web,browser"])(
     );
   }
 );
-
-test("the interactive terminal, which names no mode, is not a surface list", () => {
-  expect(Surfaces.parse([])).toEqual(["web", "telegram"]);
-});

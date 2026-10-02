@@ -3,14 +3,12 @@ import "../test/dom";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { flush } from "solid-js";
 
-import { Comments, type CommentAnchor } from "./Comments";
-
-/**
- * A comment is typed by a human, so nothing here ever throws one away: a file
- * that has moved on renders outdated, and only a deliberate `remove` deletes.
- * Nothing is stored before the first keystroke either — a selection walked
- * away from was never a comment.
- */
+import {
+  Comments,
+  type CommentAnchor,
+  type Comment,
+  type CommentSide,
+} from "./Comments";
 
 const KEY = "pim.diff.comments";
 const REPO = "/home/dev/repo";
@@ -24,6 +22,22 @@ afterEach(() => {
   localStorage.clear();
 });
 
+function listed(comments: Comments, path: string): readonly Comment[] {
+  return comments.all().filter((comment) => comment.path === path);
+}
+
+function at(
+  comments: Comments,
+  path: string,
+  side: CommentSide,
+  line: number
+): readonly Comment[] {
+  return comments
+    .ids(path, side, line)
+    .map((id) => comments.one(id))
+    .filter((comment) => comment !== undefined);
+}
+
 function loaded(cwd = REPO): Comments {
   const comments = new Comments();
   comments.load(cwd);
@@ -31,7 +45,7 @@ function loaded(cwd = REPO): Comments {
   return comments;
 }
 
-/** The batched write lands in a microtask, so wait for one rather than for time. */
+/** Waits for the batched localStorage write. */
 function settle(): Promise<void> {
   return new Promise<void>((resolve) => {
     queueMicrotask(resolve);
@@ -45,7 +59,7 @@ function stored(): Record<string, readonly { text: string }[]> {
   >;
 }
 
-/** Storage that counts, or refuses, every write it is handed. */
+/** Counts `setItem` calls, optionally throwing a quota error. */
 async function withStorage(refuse: boolean, run: () => void): Promise<number> {
   const real = localStorage;
   let writes = 0;
@@ -104,7 +118,7 @@ test("a comment is made of a range and the first thing typed into it", () => {
   comments.create(anchor(12), "move this to the trailing edge");
   flush();
 
-  const [comment] = comments.list(PATH);
+  const [comment] = listed(comments, PATH);
   expect(comment?.text).toBe("move this to the trailing edge");
   expect(comment?.side).toBe("new");
   expect(comment?.start).toBe(12);
@@ -114,17 +128,6 @@ test("a comment is made of a range and the first thing typed into it", () => {
   expect(comments.count("other.ts")).toBe(0);
 });
 
-test("a range arrives with its first keystroke, whole", () => {
-  const comments = loaded();
-  comments.create(anchor(12, 18), "all of this");
-  flush();
-
-  expect(comments.list(PATH)[0]?.start).toBe(12);
-  expect(comments.list(PATH)[0]?.end).toBe(18);
-  expect(comments.count(PATH)).toBe(1);
-});
-
-/** The ids are what a row lists, so an edit must leave them exactly as they lay. */
 test("a keystroke moves the comment and nothing else", () => {
   const comments = loaded();
   const id = comments.create(anchor(12), "m");
@@ -161,7 +164,7 @@ test("a comment outlives the tab that wrote it", async () => {
   await settle();
 
   const reopened = loaded();
-  expect(reopened.list(PATH)[0]?.text).toBe("still here");
+  expect(listed(reopened, PATH)[0]?.text).toBe("still here");
   expect(reopened.count(PATH)).toBe(1);
   expect(reopened.all().length).toBe(1);
 });
@@ -173,10 +176,10 @@ test("removing is the only way a comment goes away", async () => {
   flush();
   await settle();
 
-  expect(comments.list(PATH)).toEqual([]);
+  expect(listed(comments, PATH)).toEqual([]);
   expect(comments.count(PATH)).toBe(0);
   expect(stored()[REPO]).toBeUndefined();
-  expect(loaded().list(PATH)).toEqual([]);
+  expect(listed(loaded(), PATH)).toEqual([]);
 });
 
 test("a burst of keystrokes is one write, not one write each", async () => {
@@ -202,18 +205,7 @@ test("a full quota is not an error a keystroke can raise", async () => {
   flush();
 
   expect(writes).toBe(1);
-  expect(comments.list(PATH)[0]?.text).toBe("typed into a full disk");
-});
-
-/** The file moved on; the comment still names the code, so it stays. */
-test("a comment whose file has changed is kept, fingerprint and all", async () => {
-  const comments = loaded();
-  comments.create(anchor(12, 12, "f1"), "outdated but read");
-  await settle();
-
-  const reopened = loaded();
-  expect(reopened.list(PATH)[0]?.fingerprint).toBe("f1");
-  expect(reopened.list(PATH)[0]?.text).toBe("outdated but read");
+  expect(listed(comments, PATH)[0]?.text).toBe("typed into a full disk");
 });
 
 test("another working copy's comments are held apart, and neither prunes the other", async () => {
@@ -223,7 +215,7 @@ test("another working copy's comments are held apart, and neither prunes the oth
 
   comments.load("/home/dev/other");
   flush();
-  expect(comments.list(PATH)).toEqual([]);
+  expect(listed(comments, PATH)).toEqual([]);
   expect(comments.all()).toEqual([]);
   comments.create(anchor(3), "in the other one");
   flush();
@@ -231,7 +223,7 @@ test("another working copy's comments are held apart, and neither prunes the oth
 
   comments.load(REPO);
   flush();
-  expect(comments.list(PATH).map((held) => held.text)).toEqual([
+  expect(listed(comments, PATH).map((held) => held.text)).toEqual([
     "in this repo",
   ]);
   expect(Object.keys(stored())).toEqual([REPO, "/home/dev/other"]);
@@ -243,8 +235,8 @@ test("a selection widened after the fact takes in the new line", () => {
   comments.extend(id, 18);
   flush();
 
-  expect(comments.list(PATH)[0]?.start).toBe(12);
-  expect(comments.list(PATH)[0]?.end).toBe(18);
+  expect(listed(comments, PATH)[0]?.start).toBe(12);
+  expect(listed(comments, PATH)[0]?.end).toBe(18);
   expect(comments.count(PATH)).toBe(1);
 });
 
@@ -254,8 +246,8 @@ test("a range taken upwards still runs from its first line to its last", () => {
   comments.extend(id, 12);
   flush();
 
-  expect(comments.list(PATH)[0]?.start).toBe(12);
-  expect(comments.list(PATH)[0]?.end).toBe(18);
+  expect(listed(comments, PATH)[0]?.start).toBe(12);
+  expect(listed(comments, PATH)[0]?.end).toBe(18);
 });
 
 test("a comment on the file itself has no side and no line to widen", () => {
@@ -264,7 +256,7 @@ test("a comment on the file itself has no side and no line to widen", () => {
   comments.extend(id, 12);
   flush();
 
-  const [comment] = comments.list(PATH);
+  const [comment] = listed(comments, PATH);
   expect(comment?.side).toBeUndefined();
   expect(comment?.start).toBeUndefined();
   expect(comment?.end).toBeUndefined();
@@ -283,28 +275,25 @@ test("a line answers with its own comments, and its own side's", () => {
   );
   flush();
 
-  expect(comments.at(PATH, "new", 12).map((held) => held.text)).toEqual([
+  expect(at(comments, PATH, "new", 12).map((held) => held.text)).toEqual([
     "on the new side",
   ]);
-  expect(comments.at(PATH, "old", 12).length).toBe(1);
-  expect(comments.at(PATH, "new", 13)).toEqual([]);
+  expect(at(comments, PATH, "old", 12).length).toBe(1);
+  expect(at(comments, PATH, "new", 13)).toEqual([]);
   expect(comments.count(PATH)).toBe(2);
   expect(comments.count("other.ts")).toBe(1);
 });
 
-/** Widening moves the card down to the new last line, so it is never read in
-    the middle of the lines it speaks about. */
 test("a widened comment hangs under the last line it reaches", () => {
   const comments = loaded();
   const id = comments.create(anchor(12), "still here");
   comments.extend(id, 18);
   flush();
 
-  expect(comments.at(PATH, "new", 18).length).toBe(1);
-  expect(comments.at(PATH, "new", 12)).toEqual([]);
+  expect(at(comments, PATH, "new", 18).length).toBe(1);
+  expect(at(comments, PATH, "new", 12)).toEqual([]);
 });
 
-/** The card carries no range label, so the painted gutters are what say how far it reaches. */
 test("every line of a range is held, and no line beside it", () => {
   const comments = loaded();
   const id = comments.create(anchor(12, 14), "three lines");

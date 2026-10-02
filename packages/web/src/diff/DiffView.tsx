@@ -31,19 +31,17 @@ const LAYOUTS = [
   { value: "unified", label: "Unified" },
 ] as const satisfies readonly MenuOption[];
 
-/** The chip wears the chosen row's own label rather than the value stored behind it. */
 function labelOf(options: readonly MenuOption[], value: string): string {
   return options.find((option) => option.value === value)?.label ?? value;
 }
 
-/** How many rows are painted at once; the next page is a button, never a scroll handler. */
+/** Rows painted per page. */
 const PAGE = 500;
 
-/** Every file the chosen base says has changed, each opening onto its hunks. */
 export function DiffView(props: {
   readonly diff: DiffStore;
   readonly settings: Settings;
-  /** What the composer floating over the foot covers, so the last row clears it. */
+  /** Height of the composer overlaying the bottom, in px. */
   readonly inset: number;
   readonly onClose: () => void;
 }) {
@@ -79,11 +77,9 @@ export function DiffView(props: {
 
   const shown = createMemo(() => props.diff.files().slice(0, visible()));
 
-  /** How many files the change set holds, however many of them are painted. */
   const all = createMemo(() => props.diff.files().length);
 
-  // The receipt is read back in the pane the commit emptied, so the modal is
-  // only kept open by a refusal.
+  // Only a failed commit keeps the modal open.
   const commit = (paths: readonly string[]): void => {
     void props.diff.commit(paths).then(() => {
       if (untrack(() => props.diff.state.failure) === undefined) {
@@ -159,14 +155,7 @@ export function DiffView(props: {
         </Show>
       </header>
 
-      {/* Isolated: the file bars inside stack against each other and the hunks
-          they scroll over, and never against the composer floating over the
-          foot of the same pane. */}
       <div ref={measure} class="isolate min-h-0 flex-1 overflow-y-auto">
-        {/* The foot the composer covers is padded here rather than on the
-            scroller: a stickily positioned box is held within its containing
-            block, and padding down there would hold the fade that much above
-            the edge it belongs on. */}
         <div style={{ "padding-bottom": `${props.inset}px` }}>
           <Show when={props.diff.state.error}>
             {(message) => (

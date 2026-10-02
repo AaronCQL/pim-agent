@@ -39,15 +39,15 @@ export default function (pi: ExtensionAPI): void {
         throw new Error("Glob aborted before execution.");
       }
 
-      const limit = headLimit ?? GLOB_HEAD_LIMIT_MAX;
-      const resolvedPathFormat = pathFormat ?? DEFAULT_PATH_FORMAT;
-      const absolutePath = Paths.resolve(path ?? ".", ctx.cwd);
-      const matches = await findFiles(absolutePath, pattern, {
+      const scan = {
         exclude,
         includeDotfiles: includeDotfiles ?? false,
         includeIgnored: includeIgnored ?? false,
-      });
-      const outcome = renderFiles(matches, limit, {
+      };
+      const resolvedPathFormat = pathFormat ?? DEFAULT_PATH_FORMAT;
+      const absolutePath = Paths.resolve(path ?? ".", ctx.cwd);
+      const matches = await findFiles(absolutePath, pattern, scan);
+      const outcome = renderFiles(matches, headLimit ?? GLOB_HEAD_LIMIT_MAX, {
         cwd: ctx.cwd,
         pathFormat: resolvedPathFormat,
       });
@@ -67,9 +67,7 @@ export default function (pi: ExtensionAPI): void {
         details: {
           absolutePath,
           pattern,
-          exclude,
-          includeDotfiles: includeDotfiles ?? false,
-          includeIgnored: includeIgnored ?? false,
+          ...scan,
           pathFormat: resolvedPathFormat,
           fileCount: matches.length,
           totalItems: outcome.totalItems,

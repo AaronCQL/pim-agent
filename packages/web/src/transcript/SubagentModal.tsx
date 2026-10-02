@@ -8,7 +8,6 @@ import { Body } from "../view/Blocks";
 import { buildRows, extendRows, type ToolRow } from "./rows";
 import { Transcript } from "./Transcript";
 
-/** A subagent's run, read-only, over the conversation that asked for it. */
 export function SubagentModal(props: { readonly store: SessionStore }) {
   const watched = () => props.store.state.subagent;
   const durable = createMemo(() => buildRows(props.store.state.durable));
@@ -19,8 +18,6 @@ export function SubagentModal(props: { readonly store: SessionStore }) {
     if (callId === undefined) {
       return undefined;
     }
-    // `extendRows` reconciles the live and settled views of the call, so this
-    // header is not a third opinion.
     const found = extendRows(durable(), [], props.store.state.live).find(
       (candidate) => candidate.id === callId
     );

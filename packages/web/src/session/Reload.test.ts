@@ -20,7 +20,6 @@ const URL = "ws://127.0.0.1:4319";
 const KEY = `pim.reload:${URL}`;
 const DISMISS_MS = 10_000;
 const TARGET = { sessionId: "s1", cwd: "/repo" };
-/** A server running the very build this bundle came from: nothing to nudge. */
 const ATTACHED: ServerEvent = {
   type: "attached",
   ...TARGET,
@@ -28,7 +27,6 @@ const ATTACHED: ServerEvent = {
   pimVersion: version,
   piVersion: "0.9.0",
 };
-/** The same server one release along, which this page was not built from. */
 const STALE_ATTACHED: ServerEvent = {
   ...ATTACHED,
   type: "attached",
@@ -108,11 +106,6 @@ test("ordinary reconnects and attaches during an update never claim a completed 
   update.dispose();
 });
 
-/**
- * A build the page did not come from is a nudge, never a lockout: the only
- * tab that navigates on its own is one that asked for the restart, and the
- * rest are told which half is behind and left connected.
- */
 test("a server on another build reloads only an intentional restart, and never loops", () => {
   const navigate = mock(() => {});
   const update = new Reload(URL, navigate);
@@ -126,8 +119,7 @@ test("a server on another build reloads only an intentional restart, and never l
   const fresh = new Reload(URL, navigate);
   fresh.ingest(STALE_ATTACHED);
   flush();
-  // The page reloaded once and came back to the same mismatch: say so and
-  // stop, rather than navigating into the same bundle again.
+  // Reloaded into the same mismatch: notify instead of looping.
   expect(navigate).toHaveBeenCalledTimes(1);
   expect(fresh.state.pending).toBe(false);
   expect(fresh.state.stale).toBe(true);
@@ -138,7 +130,6 @@ test("a server on another build reloads only an intentional restart, and never l
   fresh.refresh();
   expect(navigate).toHaveBeenCalledTimes(2);
 
-  // And a server that catches up clears the mark without a reload.
   const synced = new Reload(URL, navigate);
   synced.ingest(STALE_ATTACHED);
   synced.ingest(ATTACHED);
@@ -155,7 +146,6 @@ test("a dropped socket does not re-raise a nudge the reader dismissed", () => {
   flush();
   expect(update.state.notice).toBeUndefined();
 
-  // A phone waking up re-attaches to the same mismatch it was already told about.
   update.connection("reconnecting");
   update.connection("open");
   update.ingest(STALE_ATTACHED);
@@ -173,8 +163,6 @@ test("other tabs show broadcast progress but never acquire navigation intent", (
   update.ingest(RESTARTING);
   update.connection("reconnecting");
   update.connection("open");
-  // The restart someone else asked for landed on a newer server than this
-  // page was built from, which is the whole reason to tell this tab anything.
   update.ingest(STALE_ATTACHED);
   flush();
   expect(navigate).not.toHaveBeenCalled();
@@ -193,7 +181,6 @@ test("a bystander whose build the restart did not move is left in peace", () => 
   update.ingest(ATTACHED);
   flush();
   expect(navigate).not.toHaveBeenCalled();
-  // The spinner stops, but nothing asks for a reload that would change nothing.
   expect(update.state.pending).toBe(false);
   expect(update.state.notice).toBeUndefined();
   jest.advanceTimersByTime(180_000);
@@ -229,7 +216,6 @@ test("an unsupervised server asks for a manual restart and reports skips", () =>
   update.ingest({
     ...RESTARTING,
     phase: "stranded",
-    // A note cannot soften this one: the restart itself is still owed.
     skipped: [{ label: "git pull", reason: "dirty tree", blocking: false }],
   });
   flush();

@@ -18,7 +18,6 @@ let requestedUrls: string[] = [];
 const realFetch = globalThis.fetch;
 const sessionId = { chatId: 4242 } as unknown as SessionId;
 
-/** Enough of grammy's context for `toPrompt`, with a stubbed file host. */
 function context(
   message: Record<string, unknown>,
   filePath = "photos/file_7.jpg"

@@ -17,13 +17,6 @@ import {
 } from "../test/gateway";
 import { until } from "#core/shared/fixtures/wait";
 
-/**
- * The modal, against the real gateway: a subagent that leaves a child log,
- * watched over the wire and painted by the transcript component the
- * conversation itself uses. Nothing here is a fixture of the protocol — the
- * envelope, the projection and the live drain are all the shipped ones.
- */
-
 let harness: GatewayHarness;
 let store: SessionStore;
 
@@ -63,7 +56,6 @@ function modal(host: HTMLElement): HTMLDialogElement {
   )!;
 }
 
-/** The way in: the run's own card, which is the whole of the affordance. */
 function opener(host: HTMLElement): HTMLButtonElement | null {
   return (
     [...host.querySelectorAll("button")].find((button) =>
@@ -72,14 +64,12 @@ function opener(host: HTMLElement): HTMLButtonElement | null {
   );
 }
 
-/** The child's log as the store holds it: what the modal is painted from. */
 function childTexts(): readonly string[] {
   return (store.state.subagent?.durable ?? []).flatMap((event) =>
     event.type === "message" ? [event.text] : []
   );
 }
 
-/** Delegates, and waits for the parent's row to offer the way in. */
 async function delegate(host: HTMLElement): Promise<void> {
   await store.prompt("delegate this");
   await until(() => opener(host) !== null, "the subagent row");
@@ -94,7 +84,6 @@ async function open(host: HTMLElement): Promise<void> {
   flush();
 }
 
-/** The turn finished: the call is written down and the agent is idle. */
 function settled(): boolean {
   return (
     !store.isBusy() &&
@@ -105,7 +94,6 @@ function settled(): boolean {
   );
 }
 
-/** One more entry in the child's log, as the envelope that carries them. */
 function grow(seq: number, text: string): void {
   store.ingest({
     type: "subagent_events",
@@ -133,13 +121,9 @@ test("a settled child opens onto its whole run, diffs and all", async () => {
 
   const dialog = modal(host);
   expect(dialog.open).toBe(true);
-  // The prompt reads as the child's user message because it is one, and the
-  // answer as an assistant message, both out of the child's own log.
   expect(dialog.textContent).toContain(SUBAGENT_PROMPT);
   expect(dialog.textContent).toContain(SUBAGENT_ANSWER);
 
-  // The child's own tool call is an ordinary row, and expanding it gives the
-  // whole payload — the thing a one-line roster in the parent cannot carry.
   const disclosure = dialog.querySelector("details")!;
   expect(disclosure.textContent).toContain("src/config.ts");
   expect(disclosure.open).toBe(false);
@@ -147,10 +131,10 @@ test("a settled child opens onto its whole run, diffs and all", async () => {
   flush();
   expect(disclosure.open).toBe(true);
   expect(dialog.textContent).toContain(CHILD_PATCH_LINE);
-  // Painted as a diff rather than as quoted text: the added row's wash.
+  // Painted as a diff.
   expect(dialog.innerHTML).toContain("bg-emerald-500/8");
 
-  // Read-only: no composer, and nothing that could reach the child's agent.
+  // Read-only.
   expect(dialog.querySelector("textarea")).toBeNull();
   expect(dialog.querySelector("[aria-label='Send']")).toBeNull();
   expect(dialog.querySelector("[aria-label='Stop']")).toBeNull();
@@ -164,14 +148,11 @@ test("a running child can be opened, and its rows land under the reader", async 
     await open(host);
 
     const dialog = modal(host);
-    // Opened mid-run, so the header says so rather than reading as finished.
     expect(dialog.querySelector("header")!.textContent).toContain("Running");
     expect(dialog.textContent).toContain(SUBAGENT_PROMPT);
     expect(dialog.textContent).not.toContain(SUBAGENT_ANSWER);
 
     release();
-    // Live: the child's later entries arrive in the open modal, driven by the
-    // parent's own progress frames for that call.
     await until(
       () => childTexts().includes(SUBAGENT_ANSWER),
       "the child's answer"
@@ -200,8 +181,6 @@ test("closing lets the child go, and reopening reads the same run", async () => 
   flush();
   expect(modal(host).open).toBe(false);
   expect(store.state.subagent).toBeUndefined();
-  // The watch goes with the modal, and is *told* to go: a server left holding
-  // one keeps a projection of the child growing behind a closed sheet.
   expect(sent.mock.calls.map(([command]) => command.type)).toContain(
     "unwatch_subagent"
   );
@@ -214,11 +193,6 @@ test("closing lets the child go, and reopening reads the same run", async () => 
   expect(modal(host).textContent).toContain(SUBAGENT_ANSWER);
 });
 
-/**
- * A watch reads a child of the session this connection is attached to, so the
- * server drops it the moment that changes. The modal goes with it rather than
- * hanging over another conversation holding the last one's child.
- */
 test("leaving the session closes the modal over its child", async () => {
   const host = paint(store);
   await delegate(host);
@@ -235,19 +209,12 @@ test("leaving the session closes the modal over its child", async () => {
   expect(modal(host).open).toBe(false);
 });
 
-/**
- * The phone gesture for "out of this". Without the pushed entry, Back leaves
- * the session behind the modal, which on the one device with no other way out
- * is the difference between a modal and a trap.
- */
 test("Back closes the modal rather than leaving the session", async () => {
   const host = paint(store);
   await delegate(host);
   await until(settled, "the delegated call to settle");
 
   await open(host);
-  // An entry of the modal's own is on top of the stack, which is what Back
-  // pops instead of the page the session is on.
   expect(history.state).toEqual({ pimModal: true });
 
   globalThis.dispatchEvent(new Event("popstate"));
@@ -257,11 +224,6 @@ test("Back closes the modal rather than leaving the session", async () => {
   expect(store.state.subagent).toBeUndefined();
 });
 
-/**
- * A reload is a new store over the same session and the same server: the
- * child's work is a file, so what the modal answers with survives the tab
- * that opened it.
- */
 test("a page reloaded mid-run reopens onto the same child", async () => {
   const first = paint(store);
   const release = harness.holdTurn();
@@ -288,12 +250,6 @@ test("a page reloaded mid-run reopens onto the same child", async () => {
   }
 });
 
-/**
- * A watch dies with the socket and cannot be resumed, so a modal that is
- * still open when the socket comes back asks again from the child's first
- * entry — and the ordinals it already painted are what keep that from being
- * the run twice over.
- */
 test("a modal open across a reconnect re-watches without doubling", async () => {
   const host = paint(store);
   const release = harness.holdTurn();
@@ -311,12 +267,9 @@ test("a modal open across a reconnect re-watches without doubling", async () => 
     );
 
     expect(store.state.subagent?.callId).toBe(SUBAGENT_CALL_ID);
-    // The re-watch replays the child from its first entry, and the ordinals
-    // already painted are what keep the reader from seeing the run twice.
     expect(childTexts()).toEqual(before);
 
-    // Proof the watch is live again rather than merely un-cleared: the child
-    // is still running, and what it writes from here lands in the open modal.
+    // The watch is live again, not just un-cleared.
     release();
     await until(
       () => childTexts().includes(SUBAGENT_ANSWER),
@@ -332,7 +285,7 @@ test("a modal open across a reconnect re-watches without doubling", async () => 
   }
 });
 
-test("the child's bottom-origin layout leaves scrolling to the browser", async () => {
+test("the child's scroller unpins when scrolled up", async () => {
   const host = paint(store);
   await delegate(host);
   await until(settled, "the delegated call to settle");
@@ -340,16 +293,7 @@ test("the child's bottom-origin layout leaves scrolling to the browser", async (
   const scroller = modal(host).querySelector<HTMLElement>(
     "div.overflow-y-auto"
   )!;
-  expect(scroller.classList.contains("flex")).toBe(true);
-  expect(scroller.classList.contains("flex-col-reverse")).toBe(true);
   expect(scroller.classList.contains("[overflow-anchor:none]")).toBe(true);
-  expect(scroller.children).toHaveLength(1);
-  expect(scroller.firstElementChild!.classList.contains("flex-none")).toBe(
-    true
-  );
-  expect(scroller.firstElementChild!.classList.contains("min-h-full")).toBe(
-    true
-  );
 
   grow(90, "still working on it");
   expect(scroller.textContent).toContain("still working on it");

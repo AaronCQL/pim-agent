@@ -14,13 +14,11 @@ import { followActive } from "./scroll";
 export type ComboboxNavigation = {
   readonly activeIndex: Accessor<number>;
   /**
-   * The pointer's way in. Wire it to `mousemove`, never `mouseenter`: moving
-   * the active row scrolls it into view, that scroll slides a row under a
-   * still cursor, and the boundary event it fires would undo the keypress
-   * that scrolled. Motion is the only pointer event a hand has to author.
+   * Wire to `mousemove`, never `mouseenter`: scrolling the active row into
+   * view slides a row under a still cursor, and `mouseenter` would undo the key.
    */
   readonly setActiveIndex: (index: number) => void;
-  /** True when the key belonged to the list and the caller must not act on it. */
+  /** True when the list consumed the key. */
   readonly onKeyDown: (event: KeyboardEvent) => boolean;
 };
 
@@ -29,16 +27,11 @@ export type ComboboxNavigationOptions = {
   readonly open: () => boolean;
   readonly onSelect: (index: number) => void;
   readonly onDismiss: () => void;
-  /** Which rows the caret may rest on; a list without it has no dead rows. */
+  /** Defaults to every row. */
   readonly enabled?: (index: number) => boolean;
 };
 
-/**
- * Keyboard navigation for the `@` and `/` pickers: wrap at both ends, Enter
- * and Tab commit, ESC dismisses. An active index below zero is a list with no
- * row under the caret at all, which is how a menu opens: nothing is lit until
- * a key or the pointer says which row.
- */
+/** Wraps at both ends; Enter/Tab commit, Escape dismisses. An index below zero means no active row. */
 export function createComboboxNavigation(
   options: ComboboxNavigationOptions
 ): ComboboxNavigation {
@@ -58,11 +51,10 @@ export function createComboboxNavigation(
     if (count === 0) {
       return;
     }
-    // Updater form, not read-then-write: Solid 2 applies writes on a microtask, so two keys in one task would move from the same row.
+    // Updater form: Solid 2 batches writes, so two keys in one task would both read the old row.
     setActiveIndex((previous) => {
-      // From nothing, the first step lands on an end rather than beside one.
       let at = previous >= 0 ? previous : delta > 0 ? -1 : 0;
-      // Bounded by the count: a list where every row is dead must not spin.
+      // Bounded so an all-disabled list cannot loop forever.
       for (let step = 0; step < count; step += 1) {
         at = (at + delta + count) % count;
         if (usable(at)) {
@@ -86,7 +78,6 @@ export function createComboboxNavigation(
         move(-1);
         break;
       case event.key === "Home":
-        // Both ends are a step from nowhere, so both skip what they must.
         setActiveIndex(-1);
         move(1);
         break;
@@ -122,23 +113,17 @@ export type ComboboxItem = {
   readonly label: string;
   readonly description?: string;
   readonly tag?: string;
-  /** The row in force, distinct from the active row the keyboard is standing on. */
+  /** The current value, not the active row. */
   readonly selected?: boolean;
-  /** Listed but not offered: the caret steps over it and neither a click nor Enter takes it. */
+  /** Shown but skipped by the keyboard and unclickable. */
   readonly disabled?: boolean;
 };
 
 const ROW = "flex items-baseline gap-1ch rounded-lg px-2 py-1";
 
-/** The filter box a panel puts above its rows. */
 export const SEARCH =
   "w-full rounded-lg bg-neutral-900 px-2 py-1 outline-none ring-1 ring-neutral-700 placeholder:text-neutral-500 focus:ring-neutral-600";
 
-/**
- * The row under the caret is the brighter one: that contrast is the whole of
- * what "highlighted" means here. A list with something in force keeps three
- * readings, so the white stays the chosen row's rather than the caret's.
- */
 function tone(item: ComboboxItem, active: boolean): string {
   if (item.disabled === true) {
     return "text-neutral-600";
@@ -151,22 +136,20 @@ function tone(item: ComboboxItem, active: boolean): string {
     : "text-neutral-300";
 }
 
-/** The list half; the active row and the keys that move it belong to `createComboboxNavigation`. */
+/** Pair with `createComboboxNavigation`, which owns the active row. */
 export function Combobox(props: {
   readonly open: boolean;
   readonly items: readonly ComboboxItem[];
   readonly activeIndex: number;
   readonly onSelect: (index: number) => void;
   readonly onActivate: (index: number) => void;
-  /** The pointer left the rows: a menu unlights, a picker whose Enter needs a target says nothing. */
   readonly onLeave?: () => void;
   readonly anchor: () => HTMLElement;
-  /** The pointer that summoned it, for a menu opened by gesture rather than by its trigger. */
+  /** Pointer position, for a menu opened by gesture. */
   readonly at?: () => Point | undefined;
   readonly match?: boolean;
   readonly min?: number;
   readonly place?: "above" | "below";
-  /** Omitted where an empty list means no popover at all. */
   readonly emptyLabel?: string;
   readonly header?: Element;
 }) {
@@ -214,12 +197,10 @@ export function Combobox(props: {
                 {...(dead() ? { "aria-disabled": "true" } : {})}
                 class={`${ROW} ${dead() ? "cursor-default" : "cursor-pointer"} ${active() ? ROW_ACTIVE : ""} ${tone(item, active())}`}
                 onMouseMove={() => {
-                  // A dead row under the pointer lights nothing: leaving the
-                  // row above lit would point at the wrong verb.
                   props.onActivate(dead() ? -1 : index());
                 }}
                 onMouseDown={(event: MouseEvent) => {
-                  // Commit before the input loses focus, or the caret the completion is applied at is gone.
+                  // Keep focus in the input, or its caret position is lost.
                   event.preventDefault();
                   if (dead()) {
                     return;

@@ -1,7 +1,6 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { appendFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendFile } from "node:fs/promises";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 
 import { EventLog } from "./EventLog";
@@ -17,7 +16,6 @@ afterEach(async () => {
   await rm(tmp, { recursive: true, force: true });
 });
 
-/** Header on line 1, so `entryCount` entries leave the head at `entryCount + 1`. */
 async function writeSession(entryCount: number): Promise<string> {
   const path = join(tmp, "session.jsonl");
   const lines = [
@@ -60,7 +58,6 @@ test("a line pi did not append is foreign", () => {
   expect(WriteMark.foreignSince(mark, { head: 7, entries: 5 })).toBe(true);
 });
 
-/** pi names the file before it writes one, so the first write is header plus every buffered entry. */
 test("the whole of a file that did not exist at the mark is pi's own", () => {
   expect(
     WriteMark.foreignSince(WriteMark.UNREAD, { head: 5, entries: 4 })

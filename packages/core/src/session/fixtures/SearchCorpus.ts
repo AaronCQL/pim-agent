@@ -3,14 +3,6 @@ import { join } from "node:path";
 
 import type { SessionSummary } from "../SessionRegistry";
 
-/**
- * A sessions tree of real pi JSONL, with a vocabulary chosen so every claim in
- * the search plan has something to bite on: an identifier to split
- * (`SessionLease`), a word whose one-edit neighbours are all present and must
- * stay out of its results (`lease` against `least`, `leave`, `please`), a
- * transposition target (`gateway`), a token rare enough to be dropped
- * (`quokka`), and a session old enough to sit outside any page budget.
- */
 export type CorpusTurn = {
   readonly role: "user" | "assistant";
   readonly text: string;
@@ -28,6 +20,11 @@ const PIM = "/home/dev/pim-agent";
 const MMORPG = "/home/dev/mmorpg";
 const NOTES = "/home/dev/notes";
 
+/**
+ * Vocabulary is deliberate: an identifier to split (`SessionLease`), one-edit
+ * neighbours that must not match (`lease` vs `least`, `leave`, `please`), a
+ * transposition target (`gateway`) and a rare word to drop (`quokka`).
+ */
 const SESSIONS: readonly CorpusSession[] = [
   {
     sessionId: "attachment",
@@ -255,7 +252,7 @@ function textOf(session: CorpusSession): string {
   return header + named + turns.join("");
 }
 
-/** Writes the tree under `root` and answers the summaries a registry would list. */
+/** Writes the tree under `root` and returns its summaries. */
 async function write(root: string): Promise<readonly SessionSummary[]> {
   const summaries: SessionSummary[] = [];
   for (const session of SESSIONS) {
@@ -273,7 +270,7 @@ async function write(root: string): Promise<readonly SessionSummary[]> {
   return summaries;
 }
 
-/** Restats on every call, so an appended turn is visible to the next refresh, and a deleted file leaves the listing. */
+/** Restats on every call, so edits and deletions show up. */
 function lister(
   summaries: readonly SessionSummary[]
 ): () => Promise<readonly SessionSummary[]> {
@@ -292,12 +289,11 @@ function lister(
   };
 }
 
-/** One more turn, as pi would have written it. */
 function lineOf(summary: SessionSummary, turn: CorpusTurn, ordinal = 900): string {
   return turnLine(summary.sessionId, summary.createdAt, ordinal, turn);
 }
 
-/** Rewrites a session file and moves its mtime on, whatever the clock's resolution. */
+/** Rewrites a session file and bumps its mtime by a second. */
 async function edit(
   summary: SessionSummary,
   change: (text: string) => string

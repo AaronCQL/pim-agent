@@ -1,20 +1,16 @@
 import { mkdir, utimes } from "node:fs/promises";
 import { join } from "node:path";
 
-/**
- * The pieces a session listing is read off, for the tests that need a session
- * on disk no prompt could have produced.
- */
 export type SessionDraft = {
   readonly agentDir: string;
   readonly id: string;
   readonly cwd: string;
   readonly repliedAt: string;
-  /** A message typed in after the answer, which no prompt can produce. */
+  /** Adds a user message after the answer. */
   readonly saidAt?: string;
-  /** The provider record pi totals the moment an agent adopts the file. */
+  /** Adds provider usage to the answer. */
   readonly usage?: boolean;
-  /** Dates the file by its reply, so modified-time order is writing order. */
+  /** Sets the file mtime to `repliedAt`. */
   readonly dated?: boolean;
 };
 
@@ -63,7 +59,7 @@ function pathOf(agentDir: string, id: string): string {
   return join(agentDir, "sessions", "written", `${id}.jsonl`);
 }
 
-/** A session pi could have written: one question, one answer, both at `repliedAt`. */
+/** One question and one answer, both at `repliedAt`. */
 async function write(draft: SessionDraft): Promise<void> {
   const path = pathOf(draft.agentDir, draft.id);
   await mkdir(join(draft.agentDir, "sessions", "written"), { recursive: true });
@@ -94,7 +90,7 @@ async function write(draft: SessionDraft): Promise<void> {
   }
 }
 
-/** A whole-second ISO timestamp `n` minutes before now. */
+/** ISO timestamp `n` minutes before now. */
 function minutesAgo(n: number): string {
   return new Date(Date.now() - n * 60_000).toISOString();
 }

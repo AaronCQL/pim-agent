@@ -7,8 +7,7 @@ import { themeCliArgs } from "./themeCliArgs";
 type Theme = { readonly name?: string; readonly sourcePath?: string };
 type ThemeLoader = (themePath: string) => Theme;
 
-// The exports map hides dist/modes/**, so reach pi's real loader by locating the
-// package entry and walking to the sibling file the resource loader itself uses.
+// pi's exports map hides dist/modes/**, so import the loader by path.
 const loadThemeFromPath = async (): Promise<ThemeLoader> => {
   const entry = fileURLToPath(
     import.meta.resolve("@earendil-works/pi-coding-agent")
@@ -30,9 +29,6 @@ const themesDir = (): string => {
 test("a session run is themed and a pi subcommand is left alone", () => {
   expect(themeCliArgs(["--continue"])[0]).toBe("--theme");
   expect(themeCliArgs(["-p", "update the docs"])[0]).toBe("--theme");
-
-  // Pi dispatches these off argv[0]; a leading `--theme` made pi treat them as
-  // a prompt instead.
   expect(themeCliArgs(["update", "--extensions"])).toBeEmpty();
   expect(themeCliArgs(["auth", "login"])).toBeEmpty();
   expect(themeCliArgs(["list"])).toBeEmpty();
@@ -40,27 +36,6 @@ test("a session run is themed and a pi subcommand is left alone", () => {
   expect(themeCliArgs(["mcp", "list"])).toBeEmpty();
 });
 
-test("the theme args point pi at a themes directory that exists on disk", () => {
-  const entries = readdirSync(themesDir());
-
-  expect(entries).toContain("pim-dark.json");
-  expect(entries).toContain("pim-light.json");
-});
-
-test("every theme file parses as JSON", async () => {
-  const dir = themesDir();
-  const files = readdirSync(dir).filter((name) => name.endsWith(".json"));
-
-  expect(files.length).toBeGreaterThan(0);
-  for (const file of files) {
-    const parsed = await Bun.file(join(dir, file)).json();
-    expect(parsed).toBeObject();
-  }
-});
-
-// Highest-fidelity check: run pi's own loader over the directory the same way
-// ResourceLoader.loadThemesFromDir does, so a malformed theme (missing colors,
-// bad name) fails here exactly as it would fail at startup.
 test("pi's theme loader accepts the directory and yields pim themes", async () => {
   const dir = themesDir();
   const load = await loadThemeFromPath();

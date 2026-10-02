@@ -1,7 +1,6 @@
 import { isAbsolute } from "node:path";
 import { expect, test } from "bun:test";
 
-import { SupersededUnits } from "#core/shared/DaemonUnit";
 import { WebOptions } from "#server/WebOptions";
 import { Config } from "#telegram/Config";
 import { DaemonInstall, type Installed } from "./DaemonInstall";
@@ -9,12 +8,10 @@ import { Surfaces, type SurfaceName } from "./Surfaces";
 
 type Case = readonly [string, ReadonlyArray<SurfaceName>];
 
-/** What the daemon will read back out of its own unit file at boot. */
 function frozen(argv: ReadonlyArray<string>): ReadonlyArray<string> {
   return DaemonInstall.unit(argv).args;
 }
 
-/** A daemon already installed with `argv`, as the next install reads it back. */
 function serving(argv: ReadonlyArray<string>): Installed {
   const args = frozen(argv);
   return {
@@ -23,15 +20,7 @@ function serving(argv: ReadonlyArray<string>): Installed {
   };
 }
 
-test("one unit replaces the two this install supersedes", () => {
-  expect(DaemonInstall.unit(["--mode", "daemon"]).mode).toBe("daemon");
-  expect(SupersededUnits.map((unit) => unit.mode)).toEqual(["web", "telegram"]);
-});
-
 test("the flags an install was given are frozen into the unit", () => {
-  // A documentation address rather than `0.0.0.0`: binding this server to
-  // every interface is the one thing it must never do, so it is not the
-  // example a reader copies out of here.
   const args = frozen([
     "--mode",
     "daemon",
@@ -64,9 +53,7 @@ test("a relative cwd is resolved before it is frozen", () => {
   expect(WebOptions.parse(frozen(["--cwd", "."])).cwd).toBe(process.cwd());
 });
 
-// The two surfaces read one argv, and both would answer to `--cwd`: the bot's
-// default directory is its own, and comes from its config file.
-test("the web surface's cwd is frozen where the bot cannot mistake it for its own", () => {
+test("the web surface's cwd is frozen as --web-cwd so the bot ignores it", () => {
   const args = frozen(["--mode", "daemon", "--cwd", "/srv/web"]);
 
   expect(args).toContain("--web-cwd");
@@ -102,15 +89,6 @@ test("a telegram-only install freezes no port, hostname or client directory", ()
   ]);
 });
 
-test("the unit's description names the surfaces it serves", () => {
-  expect(DaemonInstall.unit(["--mode", "telegram"]).description).toBe(
-    "Pim daemon (telegram)"
-  );
-});
-
-// `--mode web --install` and `--mode telegram --install` were the two flows the
-// README documented, run months apart. One unit now serves both, so the second
-// must not silently stop being the first.
 test("installing one surface keeps the one the daemon already serves", () => {
   const installed = serving(["--mode", "web", "--hostname", "100.64.0.1"]);
   const merged = DaemonInstall.unit(["--mode", "telegram"], installed).args;
@@ -140,8 +118,6 @@ test("a flag the re-install names outranks the one frozen before it", () => {
   expect(cli.port).toBe("8080");
 });
 
-// The cutover: two units are already running, and their flags are all the
-// install has to go on unless the operator names new ones.
 test("the merged unit inherits what the per-surface units were installed with", () => {
   const installed: Installed = {
     surfaces: ["web", "telegram"],

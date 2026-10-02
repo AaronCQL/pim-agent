@@ -20,7 +20,6 @@ import { SessionLease } from "./SessionLease";
 import { SessionName } from "./SessionName";
 import type { SessionUi } from "./SessionUi";
 
-/** A session as pi stores it: one JSONL file under a cwd-encoded directory. */
 export type SessionSummary = {
   readonly sessionId: string;
   readonly cwd: string;
@@ -31,9 +30,9 @@ export type SessionSummary = {
 
 export type SessionRegistryDeps = {
   readonly defaults: { readonly cwd: string; readonly model?: string };
-  /** The process-wide pi installation; one is built here when a caller has none to share. */
+  /** Defaults to a new runtime over `agentDir`. */
   readonly runtime?: AgentRuntime;
-  /** Where auth, models, settings and sessions live; must agree with pi's own `getAgentDir()`. */
+  /** Must match pi's `getAgentDir()`. */
   readonly agentDir?: string;
   readonly capacity?: number;
   readonly customTools?: (
@@ -41,20 +40,19 @@ export type SessionRegistryDeps = {
   ) => readonly ToolDefinition[];
   /** Appended to every session's system prompt. */
   readonly systemInstruction?: () => Promise<string | undefined>;
-  /** Where this frontend's human is reading. */
   readonly surface?: Surface;
 };
 
 export type SessionCreateOptions = {
   readonly cwd?: string;
-  /** Open the new session like this one: model, chosen thinking level, and cwd when none is given. */
+  /** Copies model, thinking level and (if `cwd` is unset) cwd from this host. */
   readonly like?: SessionHost;
 };
 
-/** A session tree is thousands of files and each header is one open; fanning out over all of them at once is how a listing runs the process out of descriptors. */
+/** Concurrent header reads, to avoid running out of file descriptors. */
 const HEADER_READS = 32;
 
-/** Live sessions keyed on pi's session UUID; the catalogue is pi's sessions directory, read on demand. */
+/** Live sessions keyed by pi's session id, plus listing of pi's sessions directory. */
 export class SessionRegistry {
   private readonly deps: SessionRegistryDeps;
   private readonly runtime: AgentRuntime;
@@ -68,10 +66,8 @@ export class SessionRegistry {
   }
 
   /**
-   * Where the extensions of every host built from here speak. It belongs to the
-   * registry rather than each caller because `create` binds an agent eagerly,
-   * and pi freezes a session's UI mode at that bind. Resolved per call: a
-   * host outlives the stream that speaks for it.
+   * UI sink for hosts built after this call. Lives here because `create` binds
+   * the agent eagerly and pi fixes the UI at bind time.
    */
   public setUi(ui: (host: SessionHost) => SessionUi | undefined): void {
     this.ui = ui;
@@ -89,7 +85,7 @@ export class SessionRegistry {
     await this.runtime.init();
   }
 
-  /** Sessions on disk, newest first; reads only each file's header line. */
+  /** Newest first; reads only each file's header. */
   public async list(cwd?: string): Promise<readonly SessionSummary[]> {
     const summaries = (
       await Pool.mapPooled(
@@ -104,15 +100,13 @@ export class SessionRegistry {
     return summaries.sort((a, b) => b.modifiedAt - a.modifiedAt);
   }
 
-  /** The live host for `sessionId`, if one is currently loaded. */
   public peek(sessionId: string): SessionHost | undefined {
     return this.hosts.peek(sessionId);
   }
 
   /**
-   * Rename a session through pi's own session name, so its `/resume` picker shows
-   * it too; `null` clears it. A live session is renamed by its agent, a closed one
-   * by appending to its file under the turn lease. Answers with the name pi kept.
+   * Sets pi's session name; `null` clears it. A closed session's file is
+   * appended to under the turn lease. Returns the stored name.
    */
   public async setName(
     sessionId: string,
@@ -127,8 +121,7 @@ export class SessionRegistry {
       throw new Error(`unknown session: ${sessionId}`);
     }
     const next = SessionName.normalise(name);
-    // Reopening is a plain read today, but a pi that migrates the file rewrites it.
-    // The lease is only ever held for a whole turn, so a rename refuses rather than queues.
+    // Fails fast instead of waiting out a whole turn.
     return await SessionLease.hold(
       summary.path,
       "daemon",
@@ -141,7 +134,6 @@ export class SessionRegistry {
     );
   }
 
-  /** Every model this machine has credentials for, qualified as `SessionHost.setModel` takes them. */
   public models(): readonly ModelChoice[] {
     return this.runtime.models();
   }
@@ -164,7 +156,7 @@ export class SessionRegistry {
     );
   }
 
-  /** Start a new session; the agent is built eagerly because pi assigns the UUID and file. */
+  /** Builds the agent eagerly: pi assigns the session id. */
   public async create(
     options: SessionCreateOptions = {}
   ): Promise<SessionHost> {
@@ -189,11 +181,7 @@ export class SessionRegistry {
     await this.hosts.disposeAll();
   }
 
-  /**
-   * One session by id. Pi names a file for the id it carries, so the usual
-   * answer is one glob and one header; resolving it by listing would read the
-   * header of every session on disk to throw all but one away.
-   */
+  /** Tries files named for the id first, then falls back to a full listing. */
   private async find(sessionId: string): Promise<SessionSummary | undefined> {
     for (const path of await this.paths(`*/*${sessionId}.jsonl`)) {
       const summary = await readSummary(path);
@@ -201,7 +189,6 @@ export class SessionRegistry {
         return summary;
       }
     }
-    // A file named something else entirely: the id is the header's, not the name's.
     return (await this.list()).find(
       (summary) => summary.sessionId === sessionId
     );
@@ -224,8 +211,6 @@ export class SessionRegistry {
 
   private buildHost(label: string, settings: HostSettings): SessionHost {
     const ui = this.ui;
-    // Named so the sink can reach back for the host it belongs to; the closure
-    // only ever runs once construction has returned.
     const host: SessionHost = new SessionHost({
       label: `session ${label}`,
       settings,
@@ -235,7 +220,6 @@ export class SessionRegistry {
       modelRegistry: this.runtime.modelRegistry,
       settingsManagerFor: (cwd) => this.runtime.settingsManagerFor(cwd),
       persistSettings: async () => {},
-      // The terminal can hold the same file open, so every mutation goes through the turn lease.
       lease: "daemon",
       customTools: this.deps.customTools,
       ...(this.deps.systemInstruction === undefined

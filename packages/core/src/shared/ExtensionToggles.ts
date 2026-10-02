@@ -2,7 +2,7 @@ import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 import { PimSettings } from "./PimSettings";
 
-// Pi's `enabled` filter covers disk paths only, never inline factories: pim owns this roster.
+// Pi's `enabled` filter skips inline factories, so pim keeps its own roster.
 const EXTENSIONS = {
   _init: "Splash screen, runtime guard, /clear",
   "apply-patch": "apply_patch tool",
@@ -34,8 +34,7 @@ const DEFAULT_DISABLED: readonly PimExtensionName[] = ["todo", "tps"];
 
 const REQUIRED: readonly PimExtensionName[] = ["_init", "pim", "session-lease"];
 
-// Hardcoded, never derived: the browser switches these and nothing else, under
-// the label it gives them — the terminal menu names them by key, this does not.
+// The only toggles the browser shows.
 const WEB = [{ name: "todo", label: "Todo Tool" }] as const satisfies readonly {
   name: PimExtensionName;
   label: string;
@@ -53,7 +52,7 @@ function describe(name: PimExtensionName): string {
   return EXTENSIONS[name];
 }
 
-// Gate inside the factory, not around the roster: pi re-invokes factories on `ctx.reload()`.
+// Checked inside the factory because pi re-runs factories on `ctx.reload()`.
 function gate(
   name: PimExtensionName,
   factory: ExtensionFactory
@@ -79,7 +78,6 @@ async function isDisabled(name: string): Promise<boolean> {
   return !enabled(name, toggles);
 }
 
-// Serialized: each call is a read-modify-write of the same record.
 async function setDisabled(name: string, isOff: boolean): Promise<void> {
   if (!isKnown(name)) {
     throw new Error(`Unknown pim extension "${name}"`);
@@ -128,7 +126,6 @@ export const ExtensionToggles = {
   NAMES,
   WEB,
   isRequired,
-  isKnown,
   describe,
   gate,
   disabled,

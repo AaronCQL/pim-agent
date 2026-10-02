@@ -9,7 +9,7 @@ import type { JinaReaderClient } from "./JinaReaderClient";
 import {
   WEB_FETCH_INLINE_BYTES,
   type WebFetchFormat,
-  type WebFetchResolvedFormat,
+  type WebFetchPageDetails,
 } from "./schema";
 import type { WebViewFetchClient } from "./WebViewFetchClient";
 
@@ -19,16 +19,8 @@ export type WebFetchPage = {
   readonly content: string;
 };
 
-export type WebFetchPageOutcome = {
-  readonly kind: "page";
+export type WebFetchPageOutcome = WebFetchPageDetails & {
   readonly text: string;
-  readonly title: string;
-  readonly url: string;
-  readonly format: WebFetchResolvedFormat;
-  readonly returnedBytes: number;
-  readonly totalBytes: number;
-  readonly truncated: boolean;
-  readonly path: string | null;
 };
 
 export type WebFetchOutcome = WebFetchPageOutcome | WebFetchImageOutcome;
@@ -73,7 +65,7 @@ export function validatePublicUrl(value: string): string {
 
 export async function formatOutcome(
   page: WebFetchPage,
-  format: WebFetchResolvedFormat
+  format: WebFetchFormat
 ): Promise<WebFetchPageOutcome> {
   const { body, returnedBytes, totalBytes, truncated } =
     OutputBudget.truncateUtf8(page.content, WEB_FETCH_INLINE_BYTES);
@@ -120,7 +112,7 @@ export type ExecuteFetchInput = {
   readonly url: string;
   readonly format: WebFetchFormat;
   readonly signal?: AbortSignal;
-  /** Only the image probe takes it; the readers own their own transports. */
+  /** Used only by the image probe. */
   readonly fetch?: HttpFetch;
 };
 

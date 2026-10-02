@@ -1,4 +1,3 @@
-/** A visible document holding the focus: the reader is looking at this tab. */
 function attentive(): boolean {
   const view = globalThis.document as Document | undefined;
   return (
@@ -7,11 +6,7 @@ function attentive(): boolean {
   );
 }
 
-/**
- * Reports attention now and on every change to it, and returns the disposer
- * that takes the listeners back off. Outside a browser the reader is assumed
- * present, and nothing is listened for.
- */
+/** Reports whether the tab is visible and focused, now and on change. Always true outside a browser. */
 export function watchAttention(onChange: (value: boolean) => void): () => void {
   onChange(attentive());
   const view = globalThis.document as Document | undefined;

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 
 import { SessionCache } from "./SessionCache";
 
@@ -60,4 +60,19 @@ test("disposing all leaves nothing cached to dispose twice", async () => {
   expect(entry.disposed).toBe(true);
   expect(cache.size).toBe(0);
   expect(cache.peek("a")).toBeUndefined();
+});
+
+test("a failed eviction dispose is warned about, not thrown", async () => {
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  const cache = new SessionCache<Entry>(1);
+  const failing = new Entry(1);
+  failing.dispose = () => Promise.reject(new Error("boom"));
+  cache.adopt("a", failing);
+
+  cache.adopt("b", new Entry(2));
+  await Promise.resolve();
+  await Promise.resolve();
+
+  expect(warn).toHaveBeenCalledTimes(1);
+  warn.mockRestore();
 });

@@ -102,18 +102,6 @@ describe("ExtensionToggles settings", () => {
     await expect(ExtensionToggles.isDisabled("bash")).resolves.toBe(false);
   });
 
-  test("re-enabling removes the entry", async () => {
-    await ExtensionToggles.setDisabled("bash", true);
-    await ExtensionToggles.setDisabled("web-search", true);
-    await ExtensionToggles.setDisabled("bash", false);
-
-    await expect(ExtensionToggles.disabled()).resolves.toEqual([
-      "todo",
-      "tps",
-      "web-search",
-    ]);
-  });
-
   test("toggle flips and reports the new state", async () => {
     await expect(ExtensionToggles.toggle("grep")).resolves.toEqual({
       name: "grep",

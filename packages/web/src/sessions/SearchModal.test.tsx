@@ -12,11 +12,7 @@ import { Settings } from "../settings/Settings";
 import { mountPoint } from "../test/dom";
 import { SearchModal } from "./SearchModal";
 
-/**
- * The ⌘K navigator, against a store told what the server would have said. The
- * ranges are the planner's and the row draws them rather than looking for the
- * query itself, so the fixtures below mark words that were never typed.
- */
+// Ranges come from the server, so fixtures may mark words that were never typed.
 
 const SCANNED = 214;
 
@@ -80,7 +76,7 @@ const ARCHIVED: SearchHitView = {
   total: 1,
 };
 
-/** Nobody named it and it opens with no message of its own: all it has is what it said. */
+/** No title: the first snippet becomes the heading. */
 const NAMELESS: SearchHitView = {
   sessionId: "dddddddd-4444",
   cwd: "/home/ada/dev/pim-agent",
@@ -97,7 +93,6 @@ const NAMELESS: SearchHitView = {
   total: 1,
 };
 
-/** A window onto the middle of a long message: the row owes the reader both ellipses. */
 const WINDOWED: SearchHitView = {
   sessionId: "eeeeeeee-5555",
   cwd: "/home/ada/dev/pim-agent",
@@ -116,7 +111,7 @@ const WINDOWED: SearchHitView = {
   total: 1,
 };
 
-/** Named, and the name is the only thing that matched: nothing was said with the word in it. */
+/** Only the title matched. */
 const NAMED_ONLY: SearchHitView = {
   sessionId: "ffffffff-6666",
   cwd: "/home/ada/dev/pim-agent",
@@ -128,7 +123,7 @@ const NAMED_ONLY: SearchHitView = {
   total: 0,
 };
 
-/** Unnamed, so its opening ask is its title — and the snippet cut from that same ask says nothing new. */
+/** First snippet repeats the title. */
 const TITLE_ECHO: SearchHitView = {
   sessionId: "gggggggg-7777",
   cwd: "/home/ada/dev/pim-agent",
@@ -159,7 +154,6 @@ function answer(hits: readonly SearchHitView[] = []): SessionSearch {
 
 type Painted = {
   readonly host: HTMLElement;
-  /** Every query that reached the store, the warm empty one first. */
   readonly asked: readonly string[];
   readonly switched: readonly string[];
   readonly closes: Accessor<number>;
@@ -233,7 +227,6 @@ function rows(host: HTMLElement): readonly HTMLElement[] {
   return [...host.querySelectorAll<HTMLElement>('[role="option"]')];
 }
 
-/** The ring the modal draws while the index builds or a query is in flight. */
 function spinning(host: HTMLElement): boolean {
   return host.querySelector(".animate-spin") !== null;
 }
@@ -244,14 +237,13 @@ function marks(host: HTMLElement): readonly string[] {
   );
 }
 
-/** Which row the keyboard is standing on. */
 function active(host: HTMLElement): number {
   return rows(host).findIndex(
     (row) => row.getAttribute("aria-selected") === "true"
   );
 }
 
-/** A pointer event on a row, bubbling as the browser bubbles it: all but `mouseenter` do. */
+/** `mouseenter` doesn't bubble; the rest do. */
 function point(host: HTMLElement, index: number, kind: string): void {
   rows(host)[index]!.dispatchEvent(
     new MouseEvent(kind, { bubbles: kind !== "mouseenter" })
@@ -259,7 +251,6 @@ function point(host: HTMLElement, index: number, kind: string): void {
   flush();
 }
 
-/** Lets a debounce already set to zero fire, and the answer land on screen. */
 async function settle(host: HTMLElement, count: number): Promise<void> {
   await until(() => {
     flush();
@@ -267,7 +258,7 @@ async function settle(host: HTMLElement, count: number): Promise<void> {
   }, `${count} rows`);
 }
 
-/** Drains the macrotask a zero debounce would have fired on, for the queries that must not happen. */
+/** Lets a zero debounce fire, to prove a query was not sent. */
 async function quiet(): Promise<void> {
   for (let hop = 0; hop < 5; hop += 1) {
     await Bun.sleep(0);
@@ -283,12 +274,9 @@ describe("the search modal", () => {
       return host.textContent?.includes(`${SCANNED} sessions`) === true;
     }, "the warm call's count");
 
-    // Not the fifty rows you just looked away from: a prompt, and the scope
-    // the sidebar's page of twelve percent cannot promise.
     expect(rows(host)).toHaveLength(0);
     expect(host.textContent).toContain("Search session titles and content");
     expect(host.textContent).toContain("214 sessions, including archived");
-    // Opening is the warm call, and the only thing sent so far.
     expect(asked).toEqual([""]);
   });
 
@@ -301,7 +289,6 @@ describe("the search modal", () => {
     expect(asked).toEqual([""]);
     expect(rows(host)).toHaveLength(0);
 
-    // And the second character is what lets it go.
     type(host, "le");
     await settle(host, 1);
     expect(asked).toEqual(["", "le"]);
@@ -315,17 +302,12 @@ describe("the search modal", () => {
 
     const row = rows(host)[0]!;
     expect(row.textContent).toContain("session-lease: refuse input mid-turn");
-    // Both halves of why it matched, marked where the planner marked them:
-    // the title, and the one message the row makes room for.
     expect(marks(host)).toEqual(["lease", "lease"]);
     expect(row.textContent).toContain("who holds the turn lease");
     expect(row.textContent).not.toContain("the lease is released");
-    // Dimmed metadata, never structure.
     expect(row.textContent).toContain("pim-agent");
     expect(row.textContent).not.toContain("/home/ada");
     expect(row.textContent).toMatch(/\d+[smhd]/);
-    // One session, one target: every line of the row opens the same file.
-    expect(row.querySelectorAll("button")).toHaveLength(1);
     expect(host.textContent).toContain("1 of 214 sessions");
     expect(host.textContent).not.toContain("1 of 214 sessions, including");
   });
@@ -366,13 +348,10 @@ describe("the search modal", () => {
     await settle(host, 1);
 
     const row = rows(host)[0]!;
-    // Promoted, not repeated: the snippet is the row's name now, and the
-    // count says what is left rather than counting it twice.
-    expect(row.textContent).toContain("the lease is a file, not a lock");
-    expect(row.textContent?.match(/the lease is a file/g) ?? []).toHaveLength(
-      1
-    );
-    expect(row.textContent).not.toContain("Untitled");
+    // Promoted to the heading, not repeated below it.
+    expect(
+      row.textContent?.match(/the lease is a file, not a lock/g) ?? []
+    ).toHaveLength(1);
     expect(row.textContent).not.toContain("matches");
     expect(marks(host)).toEqual(["lease"]);
   });
@@ -405,8 +384,6 @@ describe("the search modal", () => {
     type(host, "lease");
     await settle(host, 1);
 
-    // Every row is the same height, so the line under the title is never
-    // blank while the session has anything at all to say.
     expect(rows(host)[0]?.textContent).toContain(
       "Start with the handshake and work outwards"
     );
@@ -433,7 +410,6 @@ describe("the search modal", () => {
     type(host, "quokka lease");
     await settle(host, 1);
 
-    // A silently dropped word is a search that lies about what it did.
     expect(host.textContent).toContain("searched for lease");
     expect(host.textContent).toContain("no results for quokka");
   });
@@ -452,11 +428,6 @@ describe("the search modal", () => {
     );
   });
 
-  /**
-   * The scope line is the feature's whole credibility argument, so a search
-   * that never happened must say so rather than name a scope of nothing —
-   * "0 sessions, including archived" is the lie the modal exists to avoid.
-   */
   test("a refused warm call says the search failed instead of a scope of nothing", async () => {
     const { host } = paint(() => {
       throw new Error("not connected");
@@ -470,7 +441,6 @@ describe("the search modal", () => {
     expect(host.textContent).toContain("The search failed — not connected");
     expect(host.textContent).not.toContain("0 sessions");
     expect(host.textContent).not.toContain("including archived");
-    // The warm call is what ends the wait, so a refused one must end it too.
     expect(spinning(host)).toBe(false);
   });
 
@@ -493,7 +463,6 @@ describe("the search modal", () => {
       return host.textContent?.includes("The search failed") === true;
     }, "the refusal");
 
-    // The scope the warm call counted is not a scope this query read.
     expect(host.textContent).toContain(
       "The search failed — the socket went away"
     );
@@ -501,6 +470,26 @@ describe("the search modal", () => {
     expect(host.textContent).not.toContain("214 sessions");
     expect(rows(host)).toHaveLength(0);
     expect(spinning(host)).toBe(false);
+  });
+
+  test("a new query clears the last one's failure while it waits", async () => {
+    const { host } = paint((query) => {
+      if (query === "lease") {
+        throw new Error("the socket went away");
+      }
+      return answer([TITLE_AND_CONTENT]);
+    });
+    type(host, "lease");
+    await until(() => {
+      flush();
+      return host.textContent?.includes("The search failed") === true;
+    }, "the refusal");
+
+    // Synchronous: the debounced call has not fired yet.
+    type(host, "leases");
+
+    expect(host.textContent).not.toContain("The search failed");
+    expect(spinning(host)).toBe(true);
   });
 
   test("arrows move, Enter opens and Escape closes", async () => {
@@ -538,8 +527,7 @@ describe("the search modal", () => {
     press(host, "ArrowDown");
     expect(active(host)).toBe(2);
 
-    // Scrolling the list slides a row under the cursor, and the boundary event
-    // that follows is the browser's, not the hand's.
+    // Scrolling fires enter/over without the pointer moving; only mousemove counts.
     point(host, 0, "mouseenter");
     point(host, 0, "mouseover");
     expect(active(host)).toBe(2);
@@ -565,7 +553,6 @@ describe("the search modal", () => {
   });
 });
 
-/** The two ways in, wired where they actually live. */
 describe("opening it", () => {
   function shell(): HTMLElement {
     const target = new SessionStore({

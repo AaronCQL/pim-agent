@@ -45,7 +45,6 @@ function register(): {
   return { command: command! };
 }
 
-/** Drives the real `SettingsList` the command hands to `ctx.ui.custom`. */
 function createCtx(
   keys: readonly string[],
   mode = "tui"
@@ -136,15 +135,6 @@ describe("menuItems", () => {
     });
     expect(items.find((i) => i.id === "tps")?.currentValue).toBe("disabled");
     expect(items.find((i) => i.id === "bash")?.currentValue).toBe("enabled");
-  });
-
-  test("leaves required extensions out of the list", async () => {
-    const items = await menuItems();
-
-    for (const name of ExtensionToggles.REQUIRED) {
-      expect(items.find((i) => i.id === name)).toBeUndefined();
-    }
-    expect(items.every((i) => i.values !== undefined)).toBe(true);
   });
 });
 

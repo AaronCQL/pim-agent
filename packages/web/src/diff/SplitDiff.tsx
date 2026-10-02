@@ -30,7 +30,7 @@ import { GapRow } from "./GapRow";
 
 type Tokens = ReadonlyMap<ToolDiffLine, readonly Token[] | undefined>;
 
-/** The numbered lines nearest a filler on its own side: what a range over it runs between. */
+/** The nearest numbered lines above and below a row on its side. */
 type Bridge = { readonly above?: number; readonly below?: number };
 
 const DIVIDER = "border-l border-neutral-850";
@@ -39,11 +39,7 @@ function lineOf(pair: DiffPair, side: DiffSide): ToolDiffLine | undefined {
   return side === "old" ? pair.left : pair.right;
 }
 
-/**
- * What lies either side of each row in one column, skipping the fillers, which
- * have no number to be asked about: a filler both its neighbours are held by is
- * inside the range rather than beside it, and wears the wash with them.
- */
+/** Lets a filler between two held lines show as held too. */
 function bridges(
   pairs: readonly DiffPair[],
   side: DiffSide
@@ -67,12 +63,7 @@ function bridges(
   }));
 }
 
-/**
- * Old beside new in one grid, so no scroll or wrap can pull the two columns
- * apart. The two text columns are `minmax(0, 1fr)`: each pane keeps half the
- * width whatever its longest line, which a long line then wraps inside rather
- * than widening its side of the pair.
- */
+/** One grid for both sides so the columns stay aligned; long lines wrap within their half. */
 export function SplitDiff(props: {
   readonly path: string;
   readonly hunks: readonly ToolDiffHunk[];
@@ -114,7 +105,7 @@ export function SplitDiff(props: {
   );
 }
 
-export function SplitHunk(props: {
+function SplitHunk(props: {
   readonly hunk: ToolDiffHunk;
   readonly lang: string | undefined;
   readonly width: number;
@@ -126,7 +117,6 @@ export function SplitHunk(props: {
     new: bridges(pairs(), "new"),
   }));
 
-  // One tokenisation per side of the hunk, keyed by the line it belongs to.
   const tokens = createMemo<Tokens>(() => {
     const mapped = DiffLayout.mapSides(props.hunk.lines, (block) =>
       Highlight.tokenize(block, props.lang)
@@ -165,13 +155,7 @@ export function SplitHunk(props: {
   );
 }
 
-/**
- * The comments of one pair, each in the text column of the side it was written
- * on: a remark about the old line has no business under the new one. The
- * gutter cells are never hatched — a hatch says this side has no line there,
- * and a comment row is not a line — but they do carry the wash of the line the
- * card hangs off, so the hold reads as one block down to the words in it.
- */
+/** Each side's cards sit under that side; gutters carry the held wash but no hatch. */
 function CommentRow(props: {
   readonly pair: DiffPair;
   readonly anchors: DiffAnchors;
@@ -209,12 +193,10 @@ function SplitCell(props: {
   readonly anchors?: DiffAnchors;
 }) {
   const kind = (): ToolDiffLineKind => props.line?.kind ?? "context";
-  // Each half counts in its own file: the old side numbers the old, the new the new.
   const number = (): number | undefined => lineNumberOf(props.line, props.side);
   const held = (line: number | undefined): boolean =>
     props.anchors?.stateOf(props.side, line) === "held";
-  // A filler is numberless, so nothing holds it on its own account; a range
-  // that runs past it on both sides does, and the gutter says so unbroken.
+  // A filler is held when the lines on both sides of it are.
   const state = (): AnchorState => {
     const inside =
       props.line === undefined
@@ -222,15 +204,10 @@ function SplitCell(props: {
         : held(number());
     return inside ? "held" : "idle";
   };
-  // A half the other side has no counterpart for: shaded, never an empty line.
-  // Only the text column is hatched — see the note on the class — so the
-  // gutter of a filler is left on the page, numberless and untinted.
   const row = (): string =>
     props.line === undefined ? DIFF_FILLER_CLASS : DIFF_ROW_CLASSES[kind()];
   const frame = (target: boolean): string =>
     `${diffGutterClass(kind(), state(), target)} ${props.side === "new" ? DIVIDER : ""}`;
-  // A filler has no line to point at, and a diff painted with no anchors has
-  // nothing to point with: either way the cell is text rather than a target.
   const target = ():
     | { readonly line: ToolDiffLine; readonly anchors: DiffAnchors }
     | undefined => {
@@ -262,10 +239,6 @@ function SplitCell(props: {
         }
       >
         {(held) => (
-          // A button centres its own label, which on a line long enough to wrap
-          // floats the number down the middle of the rows it belongs to. Laid
-          // out as a flex box instead, the number sits on the first of them
-          // while the cell still stretches, so the tint runs the whole height.
           <DiffGutter
             line={held().line}
             side={props.side}

@@ -4,11 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PimSettings } from "./PimSettings";
 
-/**
- * Every test gets its own home, and so its own settings file: a test that
- * writes a key is otherwise the reason the test reading defaults passes or
- * fails, which is decided by the order they happen to run in.
- */
+// Each test gets its own home so writes don't leak between tests.
 const VARS = [
   "EXA_API_KEY",
   "JINA_API_KEY",

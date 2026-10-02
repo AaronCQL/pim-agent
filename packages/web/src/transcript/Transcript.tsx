@@ -29,11 +29,7 @@ type RowMap = {
   }>;
 };
 
-/**
- * The whole conversation: durable rows extended with this client's unechoed
- * messages and the turn in flight. Keyed by row id, since the trailing rows
- * are rebuilt on every delta and an unkeyed `<For>` would remount them.
- */
+// Keyed by row id: trailing rows are rebuilt on every delta.
 export function Transcript(props: {
   readonly events: readonly DurableEvent[];
   readonly trailing?: readonly PendingMessage[];
@@ -49,7 +45,7 @@ export function Transcript(props: {
   const groups = createMemo(() =>
     groupRuns(rows().filter((row) => draws(row, hidden())))
   );
-  // Built once per mount: stable identities keep `<Dynamic>` from remounting rows.
+  // Stable identities keep `<Dynamic>` from remounting rows.
   const painters: RowMap = {
     message: (message) => (
       <MessageBubble
@@ -86,7 +82,7 @@ export function Transcript(props: {
 
 type Group = { readonly id: string; readonly rows: readonly Row[] };
 
-// Filtered rather than skipped while painting: a hidden row still ends a run of calls.
+// A hidden row must not split a run of tool calls, so filter before grouping.
 function draws(row: Row, hidden: boolean): boolean {
   return !(
     hidden &&
@@ -125,7 +121,6 @@ function MessageBubble(props: {
         <article class="min-w-0 space-y-[--line]">
           <Show when={!props.hidden && props.row.thinking}>
             {(thinking) => (
-              // Thinking cannot grow once the answer starts, so it is flushed then.
               <div class="font-300 italic opacity-60">
                 <Markdown
                   text={thinking()}

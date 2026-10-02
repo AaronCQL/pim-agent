@@ -6,32 +6,26 @@ import { Proc, type ProcOptions, type ProcResult } from "./Proc";
 
 export type GitState = {
   readonly branch: string | null;
-  /** Paths `git status` lists as changed; zero is a clean tree. */
   readonly dirtyCount: number;
   readonly ahead: number;
   readonly behind: number;
-  /**
-   * Changes whenever the repository's content does: the commit at head, every
-   * path git calls changed, and what each of those paths now holds. A count
-   * cannot see an edit to a file already dirty; this can.
-   */
+  /** Hash of HEAD, the changed paths and their stats; also moves when an already-dirty file is edited again. */
   readonly revision: string;
 };
 
-/** One local branch, as `listBranches` ranks and labels it. */
 export type GitBranch = {
   readonly name: string;
   readonly current: boolean;
-  /** The branch `origin/HEAD` points at, or the first of `main`/`master`/`trunk` that exists. */
+  /** `origin/HEAD`'s target, else the first of `main`/`master`/`trunk` that exists. */
   readonly isDefault: boolean;
-  /** Its last commit, in epoch seconds. */
+  /** Last commit time, epoch seconds. */
   readonly updatedAt: number;
   readonly ahead: number;
   readonly behind: number;
-  /** It tracked a remote branch that has since been deleted, so its work has usually landed. */
+  /** Its upstream branch was deleted. */
   readonly gone: boolean;
   readonly merged: boolean;
-  /** Checked out in another worktree, where git will refuse to take it from. */
+  /** Checked out in another worktree. */
   readonly worktree: boolean;
 };
 
@@ -41,7 +35,7 @@ export type GitOutcome =
 
 export type CommitRequest = {
   readonly message: string;
-  /** Exactly what is committed; a rename contributes both of its names. */
+  /** Exactly what is committed; a rename lists both names. */
   readonly paths: readonly string[];
 };
 
@@ -81,7 +75,7 @@ const COMMIT_TIMEOUT_MS = 120_000;
 
 const ERROR_LIMIT = 400;
 
-/** No surface behind a daemon can answer a credential prompt, so every network call must fail instead of waiting on one. */
+/** Fail instead of waiting on a credential prompt nobody can answer. */
 const NETWORK_ENV: Readonly<Record<string, string | undefined>> = {
   GIT_TERMINAL_PROMPT: "0",
   GIT_ASKPASS: undefined,
@@ -90,7 +84,7 @@ const NETWORK_ENV: Readonly<Record<string, string | undefined>> = {
   GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? "ssh -o BatchMode=yes",
 };
 
-/** A commit runs hooks and may sign, neither of which may open an editor on a machine nobody is sitting at. */
+/** Hooks and signing must never open an editor. */
 const COMMIT_OPTIONS: ProcOptions = {
   env: { GIT_EDITOR: "true" },
   timeoutMs: COMMIT_TIMEOUT_MS,
@@ -109,17 +103,13 @@ function git(
 }
 
 function network(cwd: string, args: readonly string[]): Promise<ProcResult> {
-  return Proc.run(["git", ...args], {
-    cwd,
-    env: NETWORK_ENV,
-    timeoutMs: NETWORK_TIMEOUT_MS,
-  });
+  return git(cwd, args, { env: NETWORK_ENV, timeoutMs: NETWORK_TIMEOUT_MS });
 }
 
-/** Which field of a porcelain-v2 entry holds the path it is about. */
+/** Index of the path field in each porcelain-v2 entry type. */
 const PATH_FIELD: Readonly<Record<string, number>> = { "1": 8, "2": 9, u: 10 };
 
-/** Beyond this many changed paths the count alone stands for the worktree. */
+/** Only the first this-many changed paths are stat'd into the revision. */
 const SAMPLE_LIMIT = 500;
 
 function pathOf(line: string): string {
@@ -135,7 +125,6 @@ function pathOf(line: string): string {
   return line.split(" ").slice(field).join(" ").split("\t")[0] ?? "";
 }
 
-/** What a changed path holds now, cheaply enough to read on every poll. */
 function worktreeSample(cwd: string): (path: string) => string {
   return (path) => {
     const stats = statSync(join(cwd, path), { throwIfNoEntry: false });
@@ -205,7 +194,6 @@ function parseTrack(text: string): {
   };
 }
 
-/** What one `for-each-ref` line says; `rank` adds the two facts that need the whole list. */
 type Ref = Omit<GitBranch, "isDefault" | "merged">;
 
 function parseRefs(text: string): readonly Ref[] {
@@ -228,7 +216,7 @@ function parseRefs(text: string): readonly Ref[] {
 
 const MOVING = "checkout: moving from ";
 
-/** When each branch was last checked out, newest first, so a branch worked on without committing still ranks. */
+/** Last checkout time per branch, from the reflog. */
 function parseVisits(text: string): ReadonlyMap<string, number> {
   const visits = new Map<string, number>();
   for (const line of Lines.split(text)) {
@@ -285,7 +273,7 @@ async function remoteOf(cwd: string): Promise<string | undefined> {
   return remotes.length === 1 ? remotes[0] : undefined;
 }
 
-/** What the remote calls its trunk; absent when no remote names one. */
+/** The remote's default branch, if it names one. */
 async function remoteHead(cwd: string): Promise<string | undefined> {
   const remote = await remoteOf(cwd);
   if (remote === undefined) {
@@ -315,7 +303,7 @@ async function mergedInto(
   return new Set(code === 0 ? Lines.split(stdout) : []);
 }
 
-/** Every local branch, trunk first and the rest by the last time they were committed to or checked out. */
+/** Local branches: default first, then by last commit or checkout. */
 async function listBranches(cwd: string): Promise<readonly GitBranch[]> {
   const [refs, log, remote] = await Promise.all([
     git(cwd, ["for-each-ref", "--format", BRANCH_FORMAT, "refs/heads/"]),
@@ -337,10 +325,7 @@ async function listBranches(cwd: string): Promise<readonly GitBranch[]> {
   );
 }
 
-/**
- * What a failed `git` said, in one line: its own words where it had any, the
- * caller's fallback where it had none, and the timeout where it never answered.
- */
+/** git's own error text, else `fallback`, or `timeout` when it timed out. */
 function failure(
   result: ProcResult,
   fallback: string,
@@ -369,16 +354,12 @@ async function checkout(cwd: string, branch: string): Promise<GitOutcome> {
   );
 }
 
-/** A path git is allowed to be pointed at: inside the repository, and named relative to it. */
+/** True for an empty, absolute or `..` path. */
 function escapes(path: string): boolean {
   return path === "" || isAbsolute(path) || path.split(/[/\\]/).includes("..");
 }
 
-/**
- * Commits exactly `paths` and nothing else: everything else changed stays
- * dirty, and an unrelated path someone had staged stays staged. Untracked
- * paths are added first, or a path-limited commit of one finds no such file.
- */
+/** Commits exactly `paths`; other changes, staged or not, are left alone. */
 async function commit(
   cwd: string,
   request: CommitRequest
@@ -397,13 +378,8 @@ async function commit(
       error: `${outside === "" ? "an empty path" : outside} is not a path inside this repository`,
     };
   }
-  /**
-   * `git add` refuses a pathspec that matches nothing on disk, and a staged
-   * rename's old name matches nothing: it is gone from both the worktree and
-   * the index. A deletion is the same. `git commit -- <paths>` reads those two
-   * off HEAD and the index by itself, so only the paths still on disk are
-   * worth adding, and a pick made entirely of them needs no `add` at all.
-   */
+  // Add only paths on disk: `git add` rejects deleted paths and a rename's old
+  // name, and `git commit -- <paths>` handles those itself.
   const onDisk = await Promise.all(
     request.paths.map((path) => Bun.file(join(cwd, path)).exists())
   );
@@ -457,7 +433,7 @@ async function pull(cwd: string): Promise<GitOutcome> {
   );
 }
 
-/** The remote branch HEAD tracks, or undefined when the branch is local-only or HEAD is detached. */
+/** Undefined when the branch has no upstream or HEAD is detached. */
 async function upstreamOf(cwd: string): Promise<string | undefined> {
   const { code, stdout } = await git(cwd, [
     "rev-parse",
@@ -469,7 +445,7 @@ async function upstreamOf(cwd: string): Promise<string | undefined> {
   return code === 0 && name !== "" ? name : undefined;
 }
 
-/** Publishes the branch, adopting the remote as its upstream the first time it is pushed. */
+/** Sets the upstream on the first push. */
 async function push(cwd: string): Promise<GitOutcome> {
   const [head, upstream] = await Promise.all([
     git(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]),
@@ -500,7 +476,7 @@ async function push(cwd: string): Promise<GitOutcome> {
 async function fetchStatus(cwd: string): Promise<GitState> {
   try {
     const { code, stdout } = await git(cwd, [
-      // Or the chip's own read takes `index.lock` and fails the checkout beside it.
+      // Avoids taking `index.lock`, which would fail a concurrent checkout.
       "--no-optional-locks",
       "status",
       "--porcelain=v2",
@@ -512,7 +488,6 @@ async function fetchStatus(cwd: string): Promise<GitState> {
   }
 }
 
-/** The cwd's git state, for the TUI footer and the web's branch menu. */
 export const Git = {
   EMPTY,
   parseStatus,

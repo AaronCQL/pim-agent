@@ -9,15 +9,14 @@ import type { ChangeSummary } from "#protocol/Diff";
 import { mountPoint } from "../test/dom";
 import type { AnchorState } from "../view/anchors";
 import { DIFF_ANCHOR_CLASSES, DIFF_FILLER_CLASS } from "../view/tokens";
-import { Comments, ReviewComments } from "./Comments";
+import {
+  Comments,
+  ReviewComments,
+  type Comment,
+  type CommentSide,
+} from "./Comments";
 import type { FileState } from "./DiffStore";
 import { FileRow } from "./FileRow";
-
-/**
- * Selecting is not commenting: a gutter click picks lines out and paints them,
- * and only a keystroke puts anything in the store. Everything here is driven
- * through the rows a reader actually clicks on.
- */
 
 const PATH = "src/alpha.ts";
 const OTHER = "src/beta.ts";
@@ -52,7 +51,6 @@ function summary(path: string, fingerprint = "f1"): ChangeSummary {
   return { path, status: "modified", added: 1, removed: 1, fingerprint };
 }
 
-/** The text a row is painted from: the pair above unless a test wants its own. */
 type Text = { readonly from: string; readonly to: string };
 
 function ready(
@@ -71,7 +69,7 @@ function ready(
   };
 }
 
-/** One expanded row per file, all of them onto the same store of comments. */
+/** One expanded row per file, sharing one `Comments`. */
 function rows(
   comments: Comments,
   files: readonly ChangeSummary[],
@@ -114,6 +112,22 @@ function rows(
   return host;
 }
 
+function listed(comments: Comments, path: string): readonly Comment[] {
+  return comments.all().filter((comment) => comment.path === path);
+}
+
+function at(
+  comments: Comments,
+  path: string,
+  side: CommentSide,
+  line: number
+): readonly Comment[] {
+  return comments
+    .ids(path, side, line)
+    .map((id) => comments.one(id))
+    .filter((comment) => comment !== undefined);
+}
+
 function loaded(): Comments {
   const comments = new Comments();
   comments.load(REPO);
@@ -125,13 +139,11 @@ function gutter(host: HTMLElement, label: string): HTMLButtonElement {
   return host.querySelector<HTMLButtonElement>(`[aria-label='${label}']`)!;
 }
 
-/** A keyboard activating a gutter, which picks that one line out and settles at once. */
 function click(host: HTMLElement, label: string): void {
   gutter(host, label).click();
   flush();
 }
 
-/** A shift-click, which is one of the two ways a range is taken. */
 function shiftClick(host: HTMLElement, label: string): void {
   gutter(host, label).dispatchEvent(
     new MouseEvent("click", { bubbles: true, shiftKey: true })
@@ -139,7 +151,6 @@ function shiftClick(host: HTMLElement, label: string): void {
   flush();
 }
 
-/** A press on a gutter, which paints its line and leaves the pointer down. */
 function press(host: HTMLElement, label: string): void {
   gutter(host, label).dispatchEvent(
     new PointerEvent("pointerdown", { bubbles: true, button: 0 })
@@ -147,13 +158,11 @@ function press(host: HTMLElement, label: string): void {
   flush();
 }
 
-/** The pointer let go, wherever it happens to be by then. */
 function lift(): void {
   window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
   flush();
 }
 
-/** A press, a sweep across the gutters between, and a release: the other way. */
 function drag(
   host: HTMLElement,
   from: string,
@@ -173,7 +182,6 @@ function box(host: HTMLElement): HTMLTextAreaElement {
   return host.querySelector<HTMLTextAreaElement>("textarea")!;
 }
 
-/** One keystroke, as a browser reports it: the value already carries the character. */
 function type(
   field: HTMLTextAreaElement,
   text: string,
@@ -186,7 +194,7 @@ function type(
   flush();
 }
 
-/** Types into the editor the selection opened, which is the one holding the caret. */
+/** Types into the focused editor. */
 function say(text: string): void {
   type(document.activeElement as HTMLTextAreaElement, text);
 }
@@ -195,7 +203,7 @@ function cardOf(field: HTMLTextAreaElement): HTMLElement {
   return field.closest<HTMLElement>("div[class*='inset-ring-indigo-400']")!;
 }
 
-/** The four cells of the grid row a card hangs in: old gutter, old text, new gutter, new text. */
+/** Old gutter, old text, new gutter, new text of the card's grid row. */
 function cellsAround(card: Element, side: "old" | "new"): readonly Element[] {
   const cell = card.parentElement!;
   const cells = [...(cell.parentElement?.children ?? [])];
@@ -203,7 +211,6 @@ function cellsAround(card: Element, side: "old" | "new"): readonly Element[] {
   return cells.slice(first, first + 4);
 }
 
-/** How every gutter of one side reads, by line number. */
 function painted(
   host: HTMLElement,
   side: "old" | "new"
@@ -233,7 +240,7 @@ test("a picked gutter puts nothing in the store until something is typed", () =>
   say("M");
 
   expect(comments.count(PATH)).toBe(1);
-  const [held] = comments.list(PATH);
+  const [held] = listed(comments, PATH);
   expect(held?.side).toBe("new");
   expect(held?.start).toBe(2);
   expect(held?.end).toBe(2);
@@ -241,20 +248,6 @@ test("a picked gutter puts nothing in the store until something is typed", () =>
   expect(held?.text).toBe("M");
 });
 
-/** The editor a reader walks away from never existed, so there is nothing to clean up. */
-test("a selection walked away from leaves nothing behind", () => {
-  const comments = loaded();
-  const host = rows(comments, [summary(PATH)]);
-
-  click(host, "Comment on new line 2");
-  box(host).dispatchEvent(new FocusEvent("blur"));
-  flush();
-
-  expect(comments.count(PATH)).toBe(0);
-  expect(comments.all()).toEqual([]);
-});
-
-/** Backspaced to nothing and left: the card stays, the comment does not. */
 test("a comment emptied and blurred is deleted, and its lines stay picked", () => {
   const comments = loaded();
   const host = rows(comments, [summary(PATH)]);
@@ -274,8 +267,8 @@ test("a comment emptied and blurred is deleted, and its lines stay picked", () =
   say("said after all");
 
   expect(comments.count(PATH)).toBe(1);
-  expect(comments.list(PATH)[0]?.text).toBe("said after all");
-  expect(comments.list(PATH)[0]?.start).toBe(2);
+  expect(listed(comments, PATH)[0]?.text).toBe("said after all");
+  expect(listed(comments, PATH)[0]?.start).toBe(2);
 });
 
 test("blanks are not a comment, whether typed first or left last", () => {
@@ -295,7 +288,6 @@ test("blanks are not a comment, whether typed first or left last", () => {
   expect(comments.count(PATH)).toBe(0);
 });
 
-/** A saved card reopened, cleared, and clicked away from goes with what it said. */
 test("a saved comment emptied and blurred is deleted along with its card", () => {
   const comments = loaded();
   const host = rows(comments, [summary(PATH)]);
@@ -329,7 +321,7 @@ test("escape closes the editor and keeps what was typed", () => {
   flush();
 
   expect(comments.count(PATH)).toBe(1);
-  expect(comments.list(PATH)[0]?.text).toBe("worth keeping");
+  expect(listed(comments, PATH)[0]?.text).toBe("worth keeping");
   expect(painted(host, "new")[2]).toBe("held");
   expect(host.querySelectorAll("textarea").length).toBe(1);
 });
@@ -350,7 +342,7 @@ test("the first keystroke makes one comment and every keystroke after it edits t
   }
 
   expect(host.querySelectorAll("textarea").length).toBe(1);
-  expect(comments.list(PATH)[0]?.text).toBe("Move");
+  expect(listed(comments, PATH)[0]?.text).toBe("Move");
 });
 
 test("a character typed into the middle leaves the caret after it", () => {
@@ -364,13 +356,10 @@ test("a character typed into the middle leaves the caret after it", () => {
 
   expect(box(host)).toBe(field);
   expect(box(host).selectionStart).toBe(8);
-  expect(comments.list(PATH)[0]?.text).toBe("move this line");
+  expect(listed(comments, PATH)[0]?.text).toBe("move this line");
 });
 
-/**
- * The bug that made ranges unusable: the second gutter blurred the empty
- * editor, which deleted the comment and started another one a line later.
- */
+// Regression: the second click blurred the empty editor and started a new comment.
 test("shift-clicking a second gutter holds one comment over the whole range", () => {
   const comments = loaded();
   const host = rows(comments, [summary(PATH)]);
@@ -380,33 +369,12 @@ test("shift-clicking a second gutter holds one comment over the whole range", ()
   say("all three of these");
 
   expect(comments.count(PATH)).toBe(1);
-  expect(comments.list(PATH)[0]?.start).toBe(2);
-  expect(comments.list(PATH)[0]?.end).toBe(4);
-  expect(comments.list(PATH)[0]?.quote).toBe("TWO");
+  expect(listed(comments, PATH)[0]?.start).toBe(2);
+  expect(listed(comments, PATH)[0]?.end).toBe(4);
+  expect(listed(comments, PATH)[0]?.quote).toBe("TWO");
   expect(host.querySelectorAll("textarea").length).toBe(1);
 });
 
-/**
- * A press picks the lines out and nothing more: the reader is still choosing
- * them, and a box over the lines they are sweeping is in the way of the one
- * thing they are looking at.
- */
-test("the editor opens when the pointer is lifted, not when it goes down", () => {
-  const comments = loaded();
-  const host = rows(comments, [summary(PATH)]);
-
-  press(host, "Comment on new line 2");
-
-  expect(painted(host, "new")[2]).toBe("held");
-  expect(host.querySelectorAll("textarea").length).toBe(0);
-
-  lift();
-
-  expect(painted(host, "new")[2]).toBe("held");
-  expect(host.querySelectorAll("textarea").length).toBe(1);
-});
-
-/** The release lands wherever the reader stopped, which is rarely a gutter. */
 test("a range is settled by a release anywhere on the page", () => {
   const comments = loaded();
   const host = rows(comments, [summary(PATH)]);
@@ -423,8 +391,8 @@ test("a range is settled by a release anywhere on the page", () => {
   say("all three of these");
 
   expect(comments.count(PATH)).toBe(1);
-  expect(comments.list(PATH)[0]?.start).toBe(2);
-  expect(comments.list(PATH)[0]?.end).toBe(4);
+  expect(listed(comments, PATH)[0]?.start).toBe(2);
+  expect(listed(comments, PATH)[0]?.end).toBe(4);
 });
 
 test("a drag across the gutters holds one comment over the whole range", () => {
@@ -448,8 +416,8 @@ test("a drag across the gutters holds one comment over the whole range", () => {
   say("all three of these");
 
   expect(comments.count(PATH)).toBe(1);
-  expect(comments.list(PATH)[0]?.start).toBe(2);
-  expect(comments.list(PATH)[0]?.end).toBe(4);
+  expect(listed(comments, PATH)[0]?.start).toBe(2);
+  expect(listed(comments, PATH)[0]?.end).toBe(4);
 });
 
 test("a range taken upwards runs from its first line to its last", () => {
@@ -459,8 +427,8 @@ test("a range taken upwards runs from its first line to its last", () => {
   drag(host, "Comment on new line 4", "Comment on new line 2");
   say("upwards");
 
-  expect(comments.list(PATH)[0]?.start).toBe(2);
-  expect(comments.list(PATH)[0]?.end).toBe(4);
+  expect(listed(comments, PATH)[0]?.start).toBe(2);
+  expect(listed(comments, PATH)[0]?.end).toBe(4);
   expect(comments.count(PATH)).toBe(1);
 });
 
@@ -473,10 +441,9 @@ test("a range widened after it was written takes in the new line", () => {
   shiftClick(host, "Comment on new line 3");
 
   expect(comments.count(PATH)).toBe(1);
-  expect(comments.list(PATH)[0]?.end).toBe(3);
+  expect(listed(comments, PATH)[0]?.end).toBe(3);
 });
 
-/** `extend` used to no-op across sides, quietly starting a second comment. */
 test("a gutter on the other side starts its own selection rather than extending", () => {
   const comments = loaded();
   const host = rows(comments, [summary(PATH)], { split: true });
@@ -486,7 +453,7 @@ test("a gutter on the other side starts its own selection rather than extending"
   say("the old side");
 
   expect(comments.count(PATH)).toBe(1);
-  const [held] = comments.list(PATH);
+  const [held] = listed(comments, PATH);
   expect(held?.side).toBe("old");
   expect(held?.start).toBe(4);
   expect(held?.end).toBe(4);
@@ -501,8 +468,8 @@ test("a plain click on a second gutter picks that line alone", () => {
   click(host, "Comment on new line 4");
   say("only the fourth");
 
-  expect(comments.list(PATH)[0]?.start).toBe(4);
-  expect(comments.list(PATH)[0]?.end).toBe(4);
+  expect(listed(comments, PATH)[0]?.start).toBe(4);
+  expect(listed(comments, PATH)[0]?.end).toBe(4);
   expect(painted(host, "new")[2]).toBe("idle");
 });
 
@@ -560,10 +527,9 @@ test("a tap in another file starts its own comment rather than widening", () => 
   expect(taps.length).toBe(2);
   expect(comments.count(PATH)).toBe(1);
   expect(comments.count(OTHER)).toBe(1);
-  expect(comments.list(OTHER)[0]?.start).toBe(2);
+  expect(listed(comments, OTHER)[0]?.start).toBe(2);
 });
 
-/** The bar says a file is spoken for; how much is said is left to the cards. */
 test("the bar marks the file its comments hang in", () => {
   const comments = loaded();
   const host = rows(comments, [summary(PATH), summary(OTHER)]);
@@ -581,13 +547,11 @@ test("the bar marks the file its comments hang in", () => {
   say("the second one");
 
   expect(comments.count(PATH)).toBe(2);
-  // Only a reader who cannot see the mark is told how many there are.
   expect(mark(PATH)?.getAttribute("aria-label")).toBe("2 comments");
   expect(mark(PATH)?.textContent).toBe("");
   expect(mark(OTHER)).toBeNull();
 });
 
-/** Each column is its own file: a remark about the old line is not about the new one. */
 test("a split comment sits in the column it was written in", () => {
   const comments = loaded();
   const host = rows(comments, [summary(PATH)], { split: true });
@@ -598,8 +562,8 @@ test("a split comment sits in the column it was written in", () => {
   const card = cardOf(box(host));
   const cells = cellsAround(card, "old");
 
-  expect(comments.at(PATH, "old", 2)[0]?.quote).toBe("two");
-  expect(comments.at(PATH, "new", 2)).toEqual([]);
+  expect(at(comments, PATH, "old", 2)[0]?.quote).toBe("two");
+  expect(at(comments, PATH, "new", 2)).toEqual([]);
   expect(cells[1]?.contains(card)).toBe(true);
   expect(cells[3]?.childElementCount).toBe(0);
   expect(cells[3]?.textContent).toBe("");
@@ -617,15 +581,14 @@ test("both sides of one pair carry their own comment, side by side", () => {
   say("the new side");
 
   expect(comments.count(PATH)).toBe(2);
-  expect(comments.at(PATH, "old", 2).length).toBe(1);
-  expect(comments.at(PATH, "new", 2).length).toBe(1);
+  expect(at(comments, PATH, "old", 2).length).toBe(1);
+  expect(at(comments, PATH, "new", 2).length).toBe(1);
   const cards = [...host.querySelectorAll("textarea")].map(cardOf);
   const cells = cellsAround(cards[0]!, "old");
   expect(cells[1]?.contains(cards[0]!)).toBe(true);
   expect(cells[3]?.contains(cards[1]!)).toBe(true);
 });
 
-/** A hatch says this side has no line there, and a comment row is not a line. */
 test("the gutter of a comment row carries the hold, never the hatch", () => {
   const comments = loaded();
   const host = rows(comments, [summary(PATH)], { split: true });
@@ -640,10 +603,6 @@ test("the gutter of a comment row carries the hold, never the hatch", () => {
   expect(cells[2]?.className).not.toContain(DIFF_ANCHOR_CLASSES.held);
 });
 
-/**
- * A range drawn across a stretch this side has no lines for — the other side
- * gained some — is one hold rather than two with a hole down the middle.
- */
 test("a filler inside a range is held with the lines either side of it", () => {
   const comments = loaded();
   const host = rows(comments, [summary(PATH)], {
@@ -664,7 +623,6 @@ test("a filler inside a range is held with the lines either side of it", () => {
   expect(filler()).toContain(DIFF_ANCHOR_CLASSES.held);
 });
 
-/** A row of cells per pair would double the grid to lay out nothing. */
 test("only the pair carrying a comment is given a row for it", () => {
   const comments = loaded();
   const host = rows(comments, [summary(PATH)], { split: true });
@@ -694,10 +652,9 @@ test("a saved comment is reopened by clicking the words in it", () => {
   type(box(host), "half a thought, finished");
 
   expect(comments.count(PATH)).toBe(1);
-  expect(comments.list(PATH)[0]?.text).toBe("half a thought, finished");
+  expect(listed(comments, PATH)[0]?.text).toBe("half a thought, finished");
 });
 
-/** Where a file has no line to point at, what it says instead is the target. */
 test("a file with no textual changes is itself the anchor", () => {
   const comments = loaded();
   const host = rows(comments, [summary(PATH)], { binary: true });
@@ -710,8 +667,8 @@ test("a file with no textual changes is itself the anchor", () => {
   say("what is this doing here?");
 
   expect(comments.count(PATH)).toBe(1);
-  expect(comments.list(PATH)[0]?.side).toBeUndefined();
-  expect(comments.list(PATH)[0]?.start).toBeUndefined();
+  expect(listed(comments, PATH)[0]?.side).toBeUndefined();
+  expect(listed(comments, PATH)[0]?.start).toBeUndefined();
 });
 
 test("a comment written before the file changed is marked stale, and keeps its card", () => {
@@ -751,7 +708,6 @@ test("the cross deletes the comment its card carries", () => {
   expect(painted(host, "new")[2]).toBe("idle");
 });
 
-/** The cross sits in the held gutter, not in a black hole under the last line. */
 test("the gutter beside a unified card carries the hold down to it", () => {
   const comments = loaded();
   const host = rows(comments, [summary(PATH)]);

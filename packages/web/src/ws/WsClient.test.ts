@@ -75,7 +75,6 @@ afterEach(async () => {
   await harness.stop();
 });
 
-/** Everything the live bucket has streamed, in order, as one string. */
 function liveText(store: SessionStore): string {
   return store.state.live.map((message) => message.text).join("");
 }
@@ -108,7 +107,6 @@ test("streams a whole turn into the timeline", async () => {
   expect(
     store.state.durable.some((event) => event.type === "tool_result")
   ).toBe(true);
-  // The in-flight bucket is emptied by the durable message that supersedes it.
   expect(store.state.live).toEqual([]);
 });
 
@@ -116,8 +114,6 @@ test("the optimistic echo is replaced by the durable user message", async () => 
   const store = await connect();
 
   const sent = store.prompt("say hello");
-  // Store writes land on a microtask in Solid 2; `flush` is how a test sees
-  // the echo at the instant the user would.
   flush();
   expect(store.state.optimistic.map((one) => one.text)).toEqual(["say hello"]);
   expect(store.trailing()).toHaveLength(1);
@@ -134,16 +130,8 @@ test("the optimistic echo is replaced by the durable user message", async () => 
   expect(users[0]?.type === "message" && users[0].text).toBe("say hello");
 });
 
-/**
- * What pi is holding for the turn, straight off the session behind the wire.
- *
- * Only ever stable while the turn is parked mid stream, which is why the
- * tests that read it open with a prompt that asks for no tool. pi hands this
- * queue to the turn at a turn boundary and a tool result is one, so a steer
- * queued across a tool call can be observed here and then delivered a moment
- * later — leaving nothing to take back, and failing whichever assertion came
- * second.
- */
+// What pi is holding for the turn. Only stable while the turn is parked
+// mid-stream: pi drains it at tool boundaries.
 function queuedOn(store: SessionStore): readonly string[] {
   const agent = harness.registry.peek(store.state.sessionId)?.agentSession;
   return [
@@ -152,16 +140,7 @@ function queuedOn(store: SessionStore): readonly string[] {
   ];
 }
 
-/**
- * The rows this client is holding for the running turn: what the reader can
- * still take back.
- *
- * Not the whole of `trailing()`, which also holds the message that opened the
- * turn until its durable echo lands — an unqueued row, cleared by the server
- * rather than by anything a steer does, and on its own schedule. Asserting on
- * the bucket entire makes every test below race that echo for a row none of
- * them are about.
- */
+// Queued rows only; the opening message clears on its own schedule.
 function heldBack(store: SessionStore): readonly string[] {
   return store
     .trailing()
@@ -177,14 +156,10 @@ test("a message typed into a running turn steers it", async () => {
 
   await store.prompt("and mention the weather");
   flush();
-  // The steer is drawn as said-but-unheard the moment it is typed. The wire
-  // agrees: pi is holding it for the turn in flight rather than for the next.
   expect(heldBack(store)).toEqual(["and mention the weather"]);
   await until(() => queuedOn(store).length === 1, "pi to queue the steer");
   expect(queuedOn(store)).toEqual(["and mention the weather"]);
 
-  // A second one does not queue behind the first: both sides join them into
-  // the one message the reader can still take back whole.
   await store.prompt("and the tide");
   await until(
     () => queuedOn(store)[0]?.includes("tide") === true,
@@ -218,8 +193,6 @@ test("stopping hands the queued message back to the box it came from", async () 
 
   expect(restored).toBe("never mind");
   flush();
-  // It was never said, so it leaves the transcript rather than sitting there
-  // forever waiting for an echo that is never coming.
   expect(store.state.optimistic.map((one) => one.text)).not.toContain(
     "never mind"
   );
@@ -236,18 +209,13 @@ test("taking the queued message back leaves the turn running", async () => {
   const restored = await store.dequeue();
 
   expect(restored).toBe("on second thoughts");
-  // Unlike a stop: the reader is editing what they said, not calling the
-  // agent off the work it is doing.
   expect(store.isBusy()).toBe(true);
   expect(queuedOn(store)).toEqual([]);
   flush();
-  // The steer is gone from the transcript too. The message that opened the
-  // turn is not: taking a steer back is not a reason to unpaint it.
   expect(heldBack(store)).toEqual([]);
   release();
 });
 
-/** The ids of every tool row the transcript would draw, live and durable. */
 function toolRows(store: SessionStore): readonly string[] {
   return toRows(store.state.durable, store.trailing(), store.state.live)
     .filter((row) => row.kind === "tool")
@@ -257,9 +225,6 @@ function toolRows(store: SessionStore): readonly string[] {
 test("in-flight tool rows merge with the durable ones on callId", async () => {
   const store = await connect();
   await store.prompt("use a tool please");
-  // A call is sighted three times — as the step's `toolCalls`, as its own
-  // `tool_result`, and in the live bucket while it runs — and any two of
-  // those may be on screen at once.
   await until(() => toolRows(store).length > 0, "a tool row");
   expect(new Set(toolRows(store)).size).toBe(toolRows(store).length);
 
@@ -272,12 +237,7 @@ test("a finished step goes durable while the next one is still live", async () =
   const store = await connect();
   const release = harness.holdTurn();
   await store.prompt("use a tool please");
-  // Two arrivals, and they come by different routes: the next step streams
-  // out of the agent in-process, while the step that ended and the result
-  // that closed it reach the client through pi's JSONL. The file lags the
-  // stream under load, so waiting on the prose alone would read the bucket a
-  // beat before the finished step had left it — and the whole point of the
-  // test is what is in the bucket once both have landed.
+  // The written step arrives via JSONL, which lags the live stream, so wait for both.
   await until(
     () =>
       liveText(store).trim() !== "" &&
@@ -285,9 +245,6 @@ test("a finished step goes durable while the next one is still live", async () =
     "the second step to stream, and the first to be written"
   );
 
-  // Pi wrote the tool step the moment it ended, so it is a durable row and
-  // not a live one: only the step still being streamed is in the bucket, or
-  // the transcript would hold both and draw the prose twice.
   const [step] = store.state.durable.filter(
     (event) => event.type === "message" && event.role === "assistant"
   );
@@ -295,14 +252,10 @@ test("a finished step goes durable while the next one is still live", async () =
   expect(step?.type === "message" && step.thinking?.trim()).toBe(REASONING);
   expect(step?.type === "message" && step.toolCalls?.length).toBe(1);
   expect(store.state.live).toHaveLength(1);
-  // The call is settled from the durable row and the live one alike: the
-  // client does not wait for pi to append the result before the row stops
-  // spinning.
   expect(liveTools(store)).toEqual([]);
 
   release();
   await idle(store);
-  // Every step is durable now, so nothing is left live to draw twice.
   expect(store.state.live).toEqual([]);
 });
 
@@ -310,8 +263,6 @@ test("loses and duplicates nothing across a gateway restart", async () => {
   const store = await connect();
   const sessionId = store.state.sessionId;
 
-  // One finished turn first, so the resume cursor under test is a real
-  // ordinal rather than zero.
   await store.prompt("say hello");
   await idle(store);
   expect(store.client.seq).toBeGreaterThan(0);
@@ -340,8 +291,6 @@ test("loses and duplicates nothing across a gateway restart", async () => {
   const final = after.filter((event) => event.type === "message").at(-1);
   expect(final?.type === "message" && final.text.trim()).toBe(REPLY);
 
-  // The proof that nothing was lost: a client that reads the log from the
-  // start sees exactly what the reconnecting one accumulated.
   const fresh = await connect({ sessionId });
   await until(
     () => fresh.state.durable.length >= after.length,
@@ -354,24 +303,19 @@ test("re-attaching does not replay the in-flight text twice", async () => {
   const release = harness.holdTurn();
   const store = await connect();
   await store.prompt("say hello");
-  // The whole reply, not a prefix of one: the turn is held open past its last
-  // token, so every token is on its way and waiting for all of them is what
-  // makes the text this client holds at the drop the same on any machine.
+  // Wait for the whole reply so the text at the drop is deterministic.
   await until(
     () => liveText(store).trim() === REPLY,
     "the held step to stream its reply"
   );
   const streamed = liveText(store);
 
-  // The socket, not the server: the turn stays live behind it, so the resume
-  // is answered out of the server's in-flight turn rather than by the next
-  // token — which, the reply having finished streaming, is not coming.
+  // Cut the socket, not the server, so the resume comes from the in-flight turn.
   cutSocket(store.client);
   await until(() => store.state.connection === "reconnecting", "the drop");
   await until(() => store.state.connection === "open", "the reconnect");
   await until(() => liveText(store) !== "", "the coalesced snapshot");
 
-  // Once, and whole: the same text it held before the drop.
   expect(liveText(store)).toBe(streamed);
   release();
   await idle(store);
@@ -385,7 +329,6 @@ test("the file picker is answered by the server and completes a token", async ()
   expect(items?.length).toBeGreaterThan(0);
   expect(items?.[0]?.value).toContain("greeter.ts");
 
-  // Nothing was ranked here: one query out, at most `limit` rows back.
   const direct = await store.pickFiles("greeter", 10);
   expect(direct.map((item) => item.value)).toEqual(
     (items ?? []).map((item) => item.value)
@@ -408,8 +351,6 @@ test("switching sessions swaps the log and keeps the socket", async () => {
   expect(store.client.seq).toBe(0);
   const second = store.state.sessionId;
 
-  // A session pi has not written a header for yet is not in the catalogue,
-  // which is right: there is nothing there to resume.
   const { sessions: listed } = await store.listSessions();
   expect(listed.map((row) => row.sessionId)).toContain(first);
   expect(listed.every((row) => row.cwd === harness.tmp)).toBe(true);
@@ -432,8 +373,6 @@ test("a turn is marked on the list of a client that is reading elsewhere", async
 
   const watcher = await connect();
   expect(watcher.state.sessionId).not.toBe(sessionId);
-  // Where a client that has just loaded learns about a session it has never
-  // been attached to: the catalogue, once.
   await watcher.listSessions();
   expect(watcher.isRunning(sessionId)).toBe(false);
 
@@ -461,15 +400,11 @@ test("an upload reaches the transcript as a file, not as a path", async () => {
   const said = store.state.durable.find(
     (event) => event.type === "message" && event.role === "user"
   );
-  // The marker the agent was told about is the server's path to the bytes,
-  // and neither half of it belongs on screen.
   expect(said?.type === "message" && said.text).toBe("look at this");
   expect(said?.type === "message" && said.attachments).toEqual([
     { name: "notes.txt", url: stored.url, isImage: false },
   ]);
   expect(JSON.stringify(store.state.durable)).not.toContain(harness.tmp);
-  // The row is empty once it is sent: the server is holding those bytes for
-  // a message that has gone.
   expect(store.attachmentsOf(store.state.sessionId)).toEqual([]);
 
   const fetched = await fetch(stored.url);
@@ -484,7 +419,6 @@ test("the model catalogue is asked for once and switching it lands on state", as
     { id: "test/echo", label: "echo", provider: "test" },
   ]);
   expect(first.thinkingLevels).toBeArray();
-  // Cached for the connection: the catalogue is a property of the machine.
   expect(await store.listModels()).toBe(first);
 
   await store.setModel("test/echo");
@@ -494,9 +428,6 @@ test("the model catalogue is asked for once and switching it lands on state", as
 test("a new chat is the browser's alone until pi writes its first line", async () => {
   const store = await connect();
   const first = store.state.sessionId;
-  // The session a fresh tab is given is a new chat like any other: nothing
-  // has been written to it, so nothing but this browser knows it exists —
-  // and with an empty composer there is nothing to draw a row with either.
   expect(store.unwrittenSummary()).toBeUndefined();
   expect(
     (await store.listSessions()).sessions.map((row) => row.sessionId)
@@ -510,14 +441,11 @@ test("a new chat is the browser's alone until pi writes its first line", async (
   });
   expect(store.localTitle(first)).toBe("say hello");
 
-  // Asking for a new chat while holding one is a request to go back to it.
   await store.newSession();
   expect(store.state.sessionId).toBe(first);
 
   await store.prompt("say hello");
   flush();
-  // Sent: the box is empty and the row keeps its place, named by the message
-  // that went out, for as long as the directory cannot answer for it.
   expect(store.draftText(first)).toBe("");
   expect(store.unwrittenSummary()).toEqual({
     sessionId: first,
@@ -529,16 +457,11 @@ test("a new chat is the browser's alone until pi writes its first line", async (
   const { sessions: listed } = await store.listSessions();
   flush();
   expect(listed.map((row) => row.sessionId)).toContain(first);
-  // A second row for a session the listing has would be the same
-  // conversation twice.
   expect(store.unwrittenSummary()).toBeUndefined();
-  // And it is still named by its opening message: the listing answers for it
-  // now, but the name does not flicker back to an id while pi is mid-turn.
   expect(listed.find((row) => row.sessionId === first)?.title).toBe(
     "say hello"
   );
 
-  // A conversation, so a new chat is a new session now.
   await store.newSession();
   await until(() => store.state.sessionId !== first, "a second session");
   expect(store.state.unwritten?.sessionId).toBe(store.state.sessionId);
@@ -550,17 +473,12 @@ test("a session sent to and left keeps its name against the real listing", async
 
   await store.prompt("say hello");
   flush();
-  // Straight into another chat, without waiting for the reply. Everything
-  // that could name the first session is now somewhere else: the transcript
-  // holds the session being read, the unwritten record holds the new one,
-  // and pi has not been given long enough to have a log worth scanning.
   await store.newSession();
   await until(() => store.state.sessionId !== first, "a second session");
   flush();
 
   const { sessions: listed } = await store.listSessions();
   flush();
-  // Exactly what the sidebar paints, in the order it asks the questions.
   const row = listed.find((entry) => entry.sessionId === first);
   expect(row?.title ?? store.localTitle(first)).toBe("say hello");
 });
@@ -575,17 +493,12 @@ test("`/clear` opens a session beside the one it was typed into", async () => {
   await until(() => store.state.sessionId !== first, "the cleared session");
   flush();
 
-  // A fresh context, not a lost one: the conversation is still on disk and
-  // still named, which is what a browser can offer that a terminal cannot.
   expect(store.state.durable).toEqual([]);
   expect(store.state.cwd).toBe(harness.tmp);
   const { sessions: listed } = await store.listSessions();
   expect(listed.find((row) => row.sessionId === first)?.title).toBe(
     "say hello"
   );
-  // The words asked for a session rather than saying anything, so they are
-  // spent: left in the box they would name the session on the next switch,
-  // and come back into the composer with it.
   expect(store.draftText(first)).toBe("");
 });
 
@@ -598,8 +511,6 @@ test("the command picker merges `/clear` into the server's own rows", async () =
 
   const all = await store.pickCommands("");
 
-  // One list from two sources: the skills live on the machine the agent runs
-  // on, `/clear` only means anything in this browser.
   expect(all.map((item) => item.value)).toContain("/skill:deploy");
   expect(all.map((item) => item.value)).toContain("/clear");
   expect((await store.pickCommands("cle"))[0]?.value).toBe("/clear");
@@ -617,11 +528,8 @@ test("a directory that cannot be opened leaves the session being read alone", as
 
   expect(store.state.sessionId).toBe(first);
   expect(store.state.error).toContain("does not exist");
-  // Nothing was replaced, so the unsent message is still where it was typed.
   expect(store.draftText(first)).toBe("half a thought");
 
-  // And the socket is still carrying the session it was: a refused attach
-  // must not close the gate the frames of this conversation come through.
   await store.prompt("say hello");
   await idle(store);
   expect(store.state.durable.length).toBeGreaterThan(0);
@@ -632,16 +540,13 @@ type Frame = Record<string, unknown> & {
   readonly id: string;
 };
 
-/**
- * A server that answers every frame and keeps it. The gateway is the wrong
- * instrument for what a client *declares*: it answers the same way whether the
- * field arrived or not.
- */
+// Records every frame. The real gateway answers the same whether a field
+// arrived or not, so it cannot test what a client sends.
 class FrameRecorder {
   private readonly frames: Frame[] = [];
   private readonly sockets = new Set<ServerWebSocket<unknown>>();
   private readonly server: ReturnType<typeof Bun.serve>;
-  /** Frames slipped in ahead of the next `attached`, which is the window a client gates on. */
+  // Frames sent before the next `attached`.
   public readonly ahead: ServerEvent[] = [];
 
   public constructor() {
@@ -675,7 +580,7 @@ class FrameRecorder {
     return this.frames.filter((frame) => frame.type === type);
   }
 
-  /** Hangs up on the client without stopping the server, so it reconnects. */
+  // Closes the client's sockets without stopping the server.
   public drop(): void {
     for (const socket of this.sockets) {
       socket.close();
@@ -735,8 +640,6 @@ test("a broadcast that lands inside the attach window is not dropped", async () 
   const one = client(server, (event) => {
     seen.push(event);
   });
-  // Everything the server says to every connection, rather than to this
-  // session: none of it is the old session's, and none of it comes again.
   server.ahead.push(
     { type: "session_meta", sessionId: "s2", archived: true },
     { type: "project_meta", cwd: "/repo", pinned: true },
@@ -745,8 +648,6 @@ test("a broadcast that lands inside the attach window is not dropped", async () 
     { type: "pins_changed", order: ["/repo"] },
     { type: "session_activity", sessionId: "s2", status: "thinking" },
     { type: "update_state", phase: "step", label: "fetching" },
-    // Answered by a server that could not read the attach frame, so it has
-    // no attach to be inside of.
     { type: "error", message: "malformed frame" }
   );
 
@@ -771,8 +672,6 @@ test("the attached session's own frames wait for the attach to settle", async ()
   const one = client(server, (event) => {
     seen.push(event);
   });
-  // The session being left, still streaming: painting any of it would put the
-  // old conversation into the new one's transcript.
   server.ahead.push(
     { type: "message_start", role: "assistant", messageId: "m1" },
     { type: "text_delta", messageId: "m1", delta: "stale" },
@@ -803,7 +702,6 @@ test("a hidden tab stays hidden across a reconnect", async () => {
 
   server.drop();
   await until(() => server.of("attach").length === 2, "the reconnect");
-  // The frame that would otherwise consume the turn this tab is not watching.
   expect(server.of("attach").at(-1)?.attentive).toBe(false);
 });
 
@@ -832,7 +730,6 @@ test("attention declared while the socket is down rides the next attach", async 
   await one.connect();
 
   expect(server.of("attach").at(-1)?.attentive).toBe(false);
-  // Nothing was queued behind the socket: the attach frame said it instead.
   expect(server.of("attention")).toEqual([]);
 });
 

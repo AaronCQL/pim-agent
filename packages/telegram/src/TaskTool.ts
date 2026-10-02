@@ -13,7 +13,7 @@ import {
   type TaskToolInput,
 } from "./TaskSchema";
 
-export type TaskToolDeps = {
+type TaskToolDeps = {
   readonly scheduler: TaskScheduler;
   readonly sessionId: SessionId;
 };

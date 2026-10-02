@@ -53,11 +53,8 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     const theme = ctx.ui.theme;
     const renderKey = (key: string, muted: string | undefined): string => {
       const padding = " ".repeat(Math.max(0, keyCol - key.length));
-      if (!muted) {
-        return theme.fg("mdCode", key + padding);
-      }
-      const idx = key.indexOf(muted);
-      if (idx === -1) {
+      const idx = muted ? key.indexOf(muted) : -1;
+      if (!muted || idx === -1) {
         return theme.fg("mdCode", key + padding);
       }
       return (

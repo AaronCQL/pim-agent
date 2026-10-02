@@ -5,13 +5,13 @@ import type {
 
 import type { NoticeSeverity } from "../view/ViewBlock";
 
-/** The slice of pi's dialog options a surface without a terminal can honour; the rest is countdown chrome. */
+/** The subset of pi's dialog options a non-terminal surface honours. */
 export type UiAsk = {
   readonly timeout?: number;
   readonly signal?: AbortSignal;
 };
 
-/** Where an extension's own words go. Four of pi's thirty methods: the ones that address a human rather than a terminal. */
+/** The parts of pi's `ExtensionUIContext` a non-terminal surface implements. */
 export type SessionUi = {
   readonly notify: (text: string, severity: NoticeSeverity) => void;
   readonly select: (
@@ -31,17 +31,11 @@ export type SessionUi = {
   ) => Promise<string | undefined>;
 };
 
-/** Everything off the terminal paints with; also what pi's border getters hand back. */
 const IDENTITY = (text: string): string => text;
 
-/**
- * pi keeps its own `theme` instance to itself, and nothing off the terminal has
- * colours to paint with. `satisfies` covers the whole public surface — `keyof`
- * skips the private fields the cast is for — so a method pi adds is a type
- * error here rather than a throw inside somebody's event handler.
- */
 const DEFAULT_COLOR = { kind: "indexed", index: 7 } as const;
 
+/** `satisfies` checks every public member, so a method pi adds is a type error here. */
 const PLAIN_THEME = {
   fg: (_color: string, text: string) => text,
   bg: (_color: string, text: string) => text,
@@ -56,7 +50,6 @@ const PLAIN_THEME = {
   getThinkingBorderColor: () => IDENTITY,
   getBashModeBorderColor: () => IDENTITY,
   appearance: "dark",
-  // No terminal to report a palette; every token reads as the default foreground.
   colors: new Proxy({}, { get: () => DEFAULT_COLOR }) as Theme["colors"],
   style: IDENTITY,
 } satisfies { [K in keyof Theme]: Theme[K] } as unknown as Theme;
@@ -67,7 +60,7 @@ function severityOf(
   return kind === "warning" ? "warn" : (kind ?? "info");
 }
 
-/** A dialog an extension awaits goes unanswered rather than ever throwing at it. */
+/** A failing sink answers `undefined` instead of throwing. */
 async function settle<T>(
   ask: () => Promise<T> | undefined
 ): Promise<T | undefined> {
@@ -80,13 +73,10 @@ async function settle<T>(
 }
 
 /**
- * Widens the sink onto pi's `ExtensionUIContext`, no-opping everything a
- * terminal owns exactly as pi's own RPC mode does. `sink` is read per call, so
- * an agent rebuilt under a host keeps whatever its host was last handed.
+ * Adapts a sink to pi's `ExtensionUIContext`; terminal-only methods are no-ops,
+ * as in pi's RPC mode. `sink` is read per call.
  *
- * Every method has to be an *own* property: pi re-wraps what it is given with
- * `{ ...ui }` (`runner.js:274`), which copies own enumerable keys only. A class
- * instance would arrive with `notify` and the rest of the prototype missing.
+ * Must be a plain object: pi copies it with `{ ...ui }`, which drops prototype methods.
  */
 export function adaptSessionUi(
   sink: () => SessionUi | undefined

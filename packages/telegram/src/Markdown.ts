@@ -109,13 +109,8 @@ function renderMd(md: string, options: RenderOptions = {}): string {
   if (!md.trim()) {
     return "";
   }
-  return Bun.markdown.render(md, renderers(options), {
-    strikethrough: false,
-  });
-}
-
-function renderers(options: RenderOptions): typeof RENDERERS {
-  return options.italics ? ITALIC_RENDERERS : RENDERERS;
+  const renderers = options.italics ? ITALIC_RENDERERS : RENDERERS;
+  return Bun.markdown.render(md, renderers, { strikethrough: false });
 }
 
 function italic(text: string): string {
@@ -206,14 +201,10 @@ function renderTable(
   rows: ReadonlyArray<TableRow>,
   aligns: ReadonlyArray<Align | undefined>
 ): string {
-  if (rows.length < 2) {
+  if (rows.length === 0) {
     return "";
   }
-  const header = rows[0]!;
-  const dataRows = rows.slice(1);
-  if (dataRows.length === 0) {
-    return "";
-  }
+  const [header, ...dataRows] = rows as [TableRow, ...TableRow[]];
   const attr = (col: number): string => {
     const align = aligns[col];
     return align ? ` align="${align}"` : "";

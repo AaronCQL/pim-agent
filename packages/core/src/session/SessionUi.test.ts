@@ -29,7 +29,6 @@ function recorder(): {
   };
 }
 
-/** Every dialog at once, so a fallback assertion says the same thing three ways. */
 async function answers(ui: ReturnType<typeof adaptSessionUi>) {
   return {
     select: await ui.select("pick", ["a", "b"]),

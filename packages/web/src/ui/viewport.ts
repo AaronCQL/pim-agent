@@ -1,10 +1,6 @@
 import { createSignal, onCleanup } from "solid-js";
 
-/**
- * The height the page is really visible in, as a CSS length. `dvh` does not
- * follow the software keyboard on iOS — only the visual viewport shrinks — and
- * a top-layer `<dialog>` measures the layout viewport whatever the page does.
- */
+/** Visible height as a CSS length; unlike `dvh`, it shrinks for the iOS keyboard. */
 export function createViewportHeight(): () => string {
   const viewport = globalThis.visualViewport;
   const [height, setHeight] = createSignal(viewport?.height);

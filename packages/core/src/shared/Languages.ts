@@ -1,4 +1,4 @@
-// Values are highlight.js language ids; keep this module import-free, the web bundle needs it.
+// Values are highlight.js language ids. Keep import-free: the web bundle uses it.
 
 const ALIASES: Readonly<Record<string, string>> = {
   ts: "typescript",
@@ -77,7 +77,7 @@ const ALIASES: Readonly<Record<string, string>> = {
 
 const CANONICAL: ReadonlySet<string> = new Set(Object.values(ALIASES));
 
-// Never guess a language: auto-detection paints ordinary prose as keywords.
+// Unknown names stay undefined: auto-detection paints prose as code.
 function resolve(name: string | undefined): string | undefined {
   if (name === undefined) {
     return undefined;

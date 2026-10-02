@@ -3,7 +3,7 @@ import { untrack, type Store, type StoreSetter } from "solid-js";
 import { openingMessage } from "./fold";
 import type { SessionState } from "./SessionStore";
 
-/** A session this client made that the server has not written a line of yet. */
+/** A session this client created that has nothing on disk yet. */
 export type Unwritten = {
   readonly sessionId: string;
   readonly cwd: string;
@@ -18,13 +18,13 @@ export type UnwrittenSummary = {
 const DRAFTS_KEY = "pim.drafts";
 const UNWRITTEN_KEY = "pim.unwritten";
 
-/** The unsent messages and the session that has nothing but them. */
+/** Unsent drafts per session, persisted to localStorage. */
 export class Drafts {
   private readonly state: Store<SessionState>;
   private readonly setState: StoreSetter<SessionState>;
   private readonly drafts: Record<string, string>;
   private readonly writes = new Map<string, () => string | undefined>();
-  /** The unsent message waiting for the `attached` frame to name its session. */
+  /** Draft text waiting for the `attached` frame to name its session. */
   public claimed: string | undefined;
 
   public constructor(
@@ -37,7 +37,6 @@ export class Drafts {
     this.drafts = drafts;
   }
 
-  /** The sidebar row for a session whose first line has not reached disk yet. */
   public unwrittenSummary(): UnwrittenSummary | undefined {
     const unwritten = this.state.unwritten;
     if (!unwritten) {
@@ -49,7 +48,7 @@ export class Drafts {
     return { sessionId: unwritten.sessionId, cwd: unwritten.cwd };
   }
 
-  /** What a session is called when the listing cannot name it: its opening message. */
+  /** The opening message, else the draft. */
   public localTitle(sessionId: string): string | undefined {
     const opening =
       sessionId === this.state.sessionId
@@ -63,7 +62,6 @@ export class Drafts {
     return this.state.drafts[sessionId] ?? "";
   }
 
-  /** Mirrors the composer's text onto the session the store says is attached. */
   public setDraftText(text: string): void {
     this.putDraft(
       untrack(() => this.state.sessionId),
@@ -90,7 +88,7 @@ export class Drafts {
     this.persist(DRAFTS_KEY, () => JSON.stringify(this.drafts));
   }
 
-  /** The message is on its way, so the box it left is empty and the session sent. */
+  /** Clears the draft and attachments, and marks the unwritten session as sent. */
   public spendDraft(): void {
     this.putDraft(this.state.sessionId, "");
     const sessionId = this.state.sessionId;
@@ -103,7 +101,6 @@ export class Drafts {
     }
   }
 
-  /** The message the unwritten session opens with, if it is the attached one. */
   public openingText(unwritten: Unwritten): string | undefined {
     return unwritten.sessionId === this.state.sessionId
       ? this.firstUserText()
@@ -114,13 +111,12 @@ export class Drafts {
     this.setState((state) => {
       state.unwritten = unwritten;
     });
-    // Serialise the value just set: the store write lands on its own schedule.
+    // Serialise now; the store write lands later.
     const written =
       unwritten === undefined ? undefined : JSON.stringify(unwritten);
     this.persist(UNWRITTEN_KEY, () => written);
   }
 
-  /** The server has named the asked-for chat, so the typed message has a home. */
   public claim(sessionId: string, cwd: string): void {
     if (this.claimed === undefined) {
       return;
@@ -130,10 +126,7 @@ export class Drafts {
     this.claimed = undefined;
   }
 
-  /**
-   * Empties a session's box and answers with what was in it, read from the
-   * synchronous copy because `state` settles one microtask later.
-   */
+  /** Reads the synchronous copy, since `state` settles a microtask later. */
   public takeDraft(sessionId: string): string {
     const typed = this.drafts[sessionId] ?? "";
     this.putDraft(sessionId, "");
@@ -162,7 +155,7 @@ export class Drafts {
             localStorage.setItem(name, written);
           }
         } catch {
-          // Private mode, a full quota, or no storage at all.
+          // Storage unavailable or full.
         }
       }
     });
@@ -170,13 +163,9 @@ export class Drafts {
 }
 
 export function readDrafts(): Record<string, string> {
-  return readRecord<string>(DRAFTS_KEY);
-}
-
-function readRecord<T>(key: string): Record<string, T> {
   try {
-    const raw = localStorage.getItem(key);
-    return raw === null ? {} : (JSON.parse(raw) as Record<string, T>);
+    const raw = localStorage.getItem(DRAFTS_KEY);
+    return raw === null ? {} : (JSON.parse(raw) as Record<string, string>);
   } catch {
     return {};
   }

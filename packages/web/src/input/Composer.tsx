@@ -27,23 +27,21 @@ function sends(event: KeyboardEvent, keyboard: boolean): boolean {
   return keyboard && !event.shiftKey;
 }
 
-// Refuse focus on `mousedown`: blurring the textarea retracts the soft keyboard and reflows the card before the tap becomes a click.
+// Keeps focus in the textarea so the soft keyboard doesn't retract before the click lands.
 function keepFocus(event: MouseEvent): void {
   event.preventDefault();
 }
 
-/** The draft, the pickers over it, and the two ways bytes get in. */
 export function Composer(props: {
   readonly store: SessionStore;
   readonly onSend: () => void;
-  /** A message taken back out of pi's queue to be edited here; a new object each time. */
+  /** A new object each time, so recalling the same text twice still fires. */
   readonly recalled?: { readonly text: string };
-  /** What a reader has written over a diff, waiting to ride the next message. */
+  /** Pending diff comments, sent ahead of the typed draft. */
   readonly review?: {
     readonly count: number;
-    /** The composed block, carried above whatever the user typed. */
     readonly text: () => string;
-    /** Called only after `prompt` reports the message was sent. */
+    /** Called only once `prompt` reports the message was sent. */
     readonly sent: () => void;
     readonly discard: () => void;
     readonly open: () => void;
@@ -65,7 +63,7 @@ export function Composer(props: {
   let card!: HTMLDivElement;
   let generation = 0;
 
-  // Every user write to the box goes through here: a bare `setText` leaves the store's draft stale and loses the message on the next session switch.
+  // User edits must go through here so the store's draft stays in sync.
   function edit(next: string): void {
     setText(next);
     props.store.setDraftText(next);
@@ -134,7 +132,6 @@ export function Composer(props: {
   createEffect(
     () => props.store.state.sessionId,
     (sessionId) => {
-      // Snapshot, not a subscription: the draft belongs to the session being switched to.
       const held = untrack(() => props.store.draftText(sessionId));
       setText(held);
       setCaret(held.length);
@@ -279,9 +276,6 @@ export function Composer(props: {
           <div class="flex flex-wrap items-center gap-2">
             <Show when={pending()}>
               {(review) => (
-                // The pill wears the cards' indigo rather than the composer's
-                // neutral: it is the review itself, carried up here, and a
-                // reader should recognise it as the same thing they wrote.
                 <span class="flex items-center gap-1 rounded-full bg-indigo-500/10 py-1 pr-1 pl-2.5 text-sm text-indigo-200 ring-1 ring-indigo-400/40">
                   <button
                     type="button"

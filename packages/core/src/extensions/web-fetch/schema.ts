@@ -6,7 +6,6 @@ export const WEB_FETCH_INLINE_BYTES = 32 * 1024;
 
 export const FETCH_FORMATS = ["markdown", "html"] as const;
 export type WebFetchFormat = (typeof FETCH_FORMATS)[number];
-export type WebFetchResolvedFormat = WebFetchFormat;
 
 export const webFetchSchema = Type.Object({
   url: Type.String({
@@ -27,7 +26,7 @@ export type WebFetchPageDetails = {
   readonly kind: "page";
   readonly url: string;
   readonly title: string;
-  readonly format: WebFetchResolvedFormat;
+  readonly format: WebFetchFormat;
   readonly returnedBytes: number;
   readonly totalBytes: number;
   readonly truncated: boolean;
@@ -37,9 +36,9 @@ export type WebFetchPageDetails = {
 export type WebFetchImageDetails = ImageDetails & {
   readonly kind: "image";
   readonly url: string;
-  /** `~/.pim/cache/img-<sha256>.<ext>`, or null when the cache write failed. */
+  /** Null when the cache write failed. */
   readonly path: string | null;
-  /** Cached and shown here, but never sent: the current model has no vision input. */
+  /** Not sent because the model has no vision input. */
   readonly withheld: boolean;
 };
 

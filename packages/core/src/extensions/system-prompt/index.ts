@@ -15,8 +15,7 @@ const DATETIME_MESSAGE_TYPE = "pim-datetime";
 
 export default function (surface?: Surface): ExtensionFactory {
   return (pi: ExtensionAPI): void => {
-    // On submit rather than in `before_agent_start`, which can only append
-    // behind the user's message.
+    // `before_agent_start` could only append after the user's message.
     pi.on("input", () => {
       pi.sendMessage(
         {

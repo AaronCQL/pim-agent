@@ -11,11 +11,7 @@ import { GatewayHarness } from "../test/gateway";
 import { until } from "#core/shared/fixtures/wait";
 import { Topbar } from "./Topbar";
 
-/**
- * The branch chip against a real gateway and a real repository: the rows are
- * what `git for-each-ref` says about a repository this test built, and
- * choosing one runs the checkout.
- */
+// Runs against a real gateway and a real git repository.
 
 let harness: GatewayHarness;
 let store: SessionStore;
@@ -90,10 +86,7 @@ function action(host: HTMLElement, title: string): HTMLButtonElement {
   return found;
 }
 
-/**
- * The two notices read the same, so only their tone tells them apart: amber is
- * the standing banner, rose is what the last press answered.
- */
+/** Amber is the busy banner; rose is the last action's error. */
 function notice(host: HTMLElement, tone: "amber" | "rose"): string {
   return host.querySelector(`p.text-${tone}-400`)?.textContent ?? "";
 }
@@ -113,8 +106,7 @@ test("lists the trunk first and marks where the session stands", async () => {
   const host = await open();
 
   expect(names(host)).toEqual(["main", "feat/work"]);
-  // The check is on the branch in force, and the arrows start there rather
-  // than on the trunk, which Enter would check out.
+  // Selection starts on the current branch, not the first row.
   expect(rows(host)[0]?.getAttribute("aria-selected")).toBe("false");
   expect(rows(host)[1]?.getAttribute("aria-selected")).toBe("true");
   expect(
@@ -144,7 +136,6 @@ test("choosing a branch checks it out and the chip follows", async () => {
   await until(() => store.state.branch === "main", "the checkout");
   flush();
   expect(chip(host).textContent).toContain("main");
-  // The menu is done once the branch moved; the list behind it is stale.
   expect(expanded(host)).toBe(false);
 });
 
@@ -157,7 +148,6 @@ test("git's refusal is shown where the button was pressed", async () => {
     flush();
     return host.textContent?.includes("no remote") === true;
   }, "the push failure");
-  // Still open: the reader has to be able to read why.
   expect(expanded(host)).toBe(true);
 });
 

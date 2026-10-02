@@ -1,7 +1,7 @@
 import { defineConfig, presetIcons, presetWind4 } from "unocss";
 
 export default defineConfig({
-  // Scan `.ts` as well as `.tsx`: the default pipeline is JSX-only, so classes named in lookup tables get no rules.
+  // Also scan `.ts`, so classes in lookup tables get rules.
   content: {
     pipeline: {
       include: [/\.[jt]sx?($|\?)/],

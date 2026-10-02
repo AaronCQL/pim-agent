@@ -10,10 +10,6 @@ const SIGNS = {
   removed: "−",
 } as const satisfies Record<ToolDiffLineKind, string>;
 
-/**
- * What a gutter reads: the line's number in its own side's file, then the sign
- * of what happened to it. A filler has neither and keeps the width all the same.
- */
 export function gutterText(
   line: ToolDiffLine | undefined,
   side: DiffSide,
@@ -23,43 +19,32 @@ export function gutterText(
   return ` ${String(number ?? "").padStart(width)} ${SIGNS[line?.kind ?? "context"]} `;
 }
 
-/**
- * A gutter a comment can be anchored to, in whichever layout is painting it:
- * the two differ in the classes they dress the cell in, and must not differ in
- * the gestures that pick a line out.
- */
+/** Shared by the unified and split layouts so the gestures stay identical. */
 export function DiffGutter(props: {
   readonly line: ToolDiffLine;
   readonly side: DiffSide;
   readonly width: number;
   readonly anchors: DiffAnchors;
-  /** How the painter dresses its own cell; the gesture rules are added here. */
   readonly class: string;
 }): Element {
   return (
     <button
       type="button"
       aria-label={`Comment on ${props.side} line ${lineNumberOf(props.line, props.side) ?? ""}`}
-      // A finger drawn down the gutter is a range rather than a scroll, and
-      // only the compositor can be told so beforehand: the gutter keeps
-      // sideways panning and gives up the vertical. The code beside it scrolls
-      // as it always did. Written out in full rather than with the shorthand
-      // utility, which leans on two further variables registered with no
-      // initial value and so voids itself.
+      // A vertical drag selects a range instead of scrolling. Spelled out
+      // because the `touch-pan-x` utility relies on unset variables.
       class={`select-none [touch-action:pan-x] ${props.class}`}
       onClick={(event) => {
-        // A keyboard reports no clicks; the pointer has its own path.
+        // Keyboard only (`detail` 0); pointers go through `onPointerDown`.
         if (event.detail === 0) {
           props.anchors.onPick(props.line, props.side, event.shiftKey);
         }
       }}
       onPointerDown={(event) => {
         if (event.button === 0) {
-          // A press that draws a range must not also drag a text selection
-          // through the code it is drawn beside.
+          // No text selection while dragging a range.
           event.preventDefault();
-          // Touch captures the pointer to the element it went down on, which
-          // would keep every gutter it then crosses from hearing it.
+          // Touch implicitly captures; release so other gutters get `pointerenter`.
           event.currentTarget.releasePointerCapture(event.pointerId);
           props.anchors.onPress(props.line, props.side, event.shiftKey);
         }

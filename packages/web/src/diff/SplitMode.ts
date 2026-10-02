@@ -1,12 +1,6 @@
-/** How a file's hunks are laid out: old beside new, or one column of both. */
 export type SplitMode = "auto" | "split" | "unified";
 
-/**
- * Measured pane width below which side beside side stops being worth its
- * columns. A long line wraps inside its half rather than widening it, so this
- * is the width at which half of it still holds a typical line before wrapping,
- * not the width the longest line needs.
- */
+/** Pane width (not window width) below which `auto` goes unified. */
 const SPLIT_MIN_REM = 56.25;
 
 const MODES: readonly SplitMode[] = ["auto", "split", "unified"];

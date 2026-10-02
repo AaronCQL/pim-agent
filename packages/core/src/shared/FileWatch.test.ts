@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { FileWatch } from "./FileWatch";
 import { until } from "./fixtures/wait";
 
-/** Large enough that anything seen inside a test was seen by `fs.watch`. */
+/** Long enough that anything seen in a test came from `fs.watch`. */
 const NO_POLL_MS = 60_000;
 
 let root: string;
@@ -48,13 +48,6 @@ test("a file that does not exist yet is still watched", async () => {
   await until(() => fired() > 0, "the file appearing");
 });
 
-/**
- * Two writes close enough together arrive as one event, and the look it
- * triggers can land between them — so the watch has to look again, or the
- * last write waits on the poll. The race itself is in the gateway's lease
- * suite, where the poll is put out of reach; here it is the burst that is
- * covered.
- */
 test("a burst of writes ends with the last of them seen", async () => {
   const path = join(root, "session.jsonl");
   await Bun.write(path, "one\n");
@@ -78,14 +71,28 @@ test("a burst of writes ends with the last of them seen", async () => {
 test("a change with nothing behind it fires once, not on every look", async () => {
   const path = join(root, "quiet.jsonl");
   await Bun.write(path, "one\n");
-  const fired = watchFile(path, NO_POLL_MS);
+  let fired = 0;
+  let looks = 0;
+  stops.push(
+    FileWatch.file(
+      path,
+      () => {
+        fired += 1;
+      },
+      NO_POLL_MS,
+      () => {
+        looks += 1;
+      }
+    )
+  );
 
   await Bun.write(path, "one\ntwo\n");
-  await until(() => fired() > 0, "the write");
-  const settled = fired();
-  await Bun.sleep(100);
+  await until(() => fired > 0, "the write");
+  const settled = fired;
+  const seen = looks;
+  await until(() => looks > seen, "a look after the write");
 
-  expect(fired()).toBe(settled);
+  expect(fired).toBe(settled);
 });
 
 test("a directory that cannot be watched yet is answered by the poll", async () => {

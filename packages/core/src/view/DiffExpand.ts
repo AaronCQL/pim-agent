@@ -1,11 +1,7 @@
 import type { ToolDiffHunk, ToolDiffLine } from "../shared/DiffLines";
 import type { LineSpan } from "../shared/RepoDiff";
 
-/**
- * A stretch of a file neither side changed and no hunk shows, numbered on the
- * new side. `above` and `below` say which ends of it sit against a hunk, which
- * is where a reader asking for more of it is given it.
- */
+/** Unchanged lines no hunk shows, in new-side numbers. `above`/`below`: that end touches a hunk. */
 export type DiffGap = {
   readonly start: number;
   readonly end: number;
@@ -14,7 +10,7 @@ export type DiffGap = {
   readonly below: boolean;
 };
 
-/** What a diff is painted from, top to bottom: hunks and the gaps between them. */
+/** Hunks and gaps in display order. */
 export type DiffPart =
   | { readonly hunk: ToolDiffHunk }
   | { readonly gap: DiffGap };
@@ -22,7 +18,7 @@ export type DiffPart =
 /** Lines one click reveals at each end of a gap. */
 const STEP = 25;
 
-/** A remainder this small is taken with the click rather than left as a row of its own. */
+/** A smaller remainder is revealed with the click instead of left as its own gap. */
 const MIN_REMAINDER = 10;
 
 function newEnd(hunk: ToolDiffHunk): number {
@@ -44,11 +40,7 @@ function gapOf(
     : [{ start, end, count: end - start + 1, above, below }];
 }
 
-/**
- * Every gap in one file's hunks: before the first, between each pair, and
- * after the last once `total` says where the file ends. A file with no new
- * side to number has none of them.
- */
+/** Gaps before, between and (given `total` lines) after the hunks. */
 function gaps(
   hunks: readonly ToolDiffHunk[],
   total?: number
@@ -71,10 +63,7 @@ function gaps(
   ];
 }
 
-/**
- * What to ask the server for when a reader opens a gap: a step against each
- * hunk it touches, or the whole gap when what would be left of it is a sliver.
- */
+/** Line spans to fetch when a gap is opened: `STEP` lines at each hunk-facing end, or the whole gap if little would remain. */
 function spans(gap: DiffGap): readonly LineSpan[] {
   const edges = (gap.above ? 1 : 0) + (gap.below ? 1 : 0);
   if (gap.count <= edges * STEP + MIN_REMAINDER) {
@@ -86,7 +75,7 @@ function spans(gap: DiffGap): readonly LineSpan[] {
   ];
 }
 
-/** How many lines opening a gap would put on the page. */
+/** Lines that opening `gap` would reveal. */
 function revealed(gap: DiffGap): number {
   return spans(gap).reduce(
     (total, span) => total + span.end - span.start + 1,
@@ -94,15 +83,13 @@ function revealed(gap: DiffGap): number {
   );
 }
 
-/** The hunks with each gap in its place among them. */
 function parts(
   hunks: readonly ToolDiffHunk[],
   total?: number
 ): readonly DiffPart[] {
   const found = gaps(hunks, total);
   const tail = found.find((gap) => !gap.below);
-  // Keyed by the line a gap ends on, which is the line before the hunk it
-  // leads into: one lookup per hunk rather than a scan of every gap.
+  // Keyed by end line, i.e. the line before the hunk it leads into.
   const leading = new Map(found.map((gap) => [gap.end, gap]));
   return [
     ...hunks.flatMap((hunk) => {
@@ -117,7 +104,7 @@ type Run = {
   readonly oldStart: number;
   readonly newStart: number;
   readonly lines: ToolDiffLine[];
-  /** Lines of the run that stand on the new side, counted as they are added. */
+  /** New-side line count. */
   newCount: number;
 };
 
@@ -140,10 +127,8 @@ function hunkOf(run: Run): ToolDiffHunk {
 }
 
 /**
- * The hunks with every line a reader has since been given spliced back into
- * the gaps around them, and hunks that now touch merged into one. Only lines
- * running from a hunk's own edge are taken: an island in the middle of a gap
- * is not a thing this ever asks for.
+ * Splices `known` lines (by new-side number) into the hunks as context and
+ * merges hunks that now touch. Only lines contiguous with a hunk edge are used.
  */
 function expand(
   hunks: readonly ToolDiffHunk[],

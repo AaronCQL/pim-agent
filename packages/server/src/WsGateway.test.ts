@@ -19,18 +19,14 @@ import {
 } from "#protocol/ServerEvent";
 import { ProbeClient } from "./ProbeClient";
 import { WsGateway } from "./WsGateway";
+import { until } from "#core/shared/fixtures/wait";
 
 const REPLY = "hello from the gateway";
-/** The first step's reasoning and prose, which stream before any tool runs. */
 const REASONING = "the user wants a ping, so call the tool";
 const PROSE = "Pinging the tool now.";
 const TOOL_ARGS = { text: "hi" };
 const TOOL_OUTPUT = `pong: ${TOOL_ARGS.text}`;
-/**
- * Yields between chunks so each delta reaches the client as its own frame
- * rather than one batched write. Only the interleaving matters, never the
- * duration — a test that needs a turn held open mid-stream uses `holdTurn`.
- */
+/** Yields between chunks so each delta is its own frame. */
 const TOKEN_DELAY_MS = 1;
 
 let tmp: string;
@@ -43,7 +39,6 @@ let probes: ProbeClient[] = [];
 
 const pingSchema = Type.Object({ text: Type.String() });
 
-/** A tool with a view that reads `details` only, never the model-facing text. */
 function pingTool(): PimToolDefinition<typeof pingSchema, { echoed: string }> {
   return {
     name: "ping",
@@ -82,22 +77,11 @@ function chunk(delta: Record<string, unknown>, finish?: string): string {
   })}\n\n`;
 }
 
-/**
- * Set by a test to hold the prose turn open until it says otherwise, and
- * cleared by `afterEach` as well as by `release`. Both, because a test that
- * fails between `holdTurn()` and its `release()` never reaches the release —
- * and a gate left standing is awaited by the *next* test's model server,
- * whose turn then never ends and whose every wait burns its full timeout. One
- * failing assertion would otherwise cost the rest of the file 20s apiece.
- */
+/** Holds the prose turn open; also cleared in `afterEach` so a failed test can't stall the next. */
 let gate: Promise<void> | undefined;
 let openGate: (() => void) | undefined;
 
-/**
- * Set by a test to make the provider refuse every call, the way a rate limit
- * or a dead key does. Not on the retryable list, so pi answers with the dead
- * turn immediately rather than backing off three times first.
- */
+/** Makes the provider refuse every call with a non-retryable error. */
 let refusal: string | undefined;
 
 function holdTurn(): () => void {
@@ -109,18 +93,13 @@ function holdTurn(): () => void {
   return releaseTurn;
 }
 
-/** Idempotent, so `afterEach` and a test's own `finally` can both call it. */
 function releaseTurn(): void {
   gate = undefined;
   openGate?.();
   openGate = undefined;
 }
 
-/**
- * Streams reasoning, prose and a tool call on the first request of a turn and
- * prose on the second, so one prompt exercises the whole projection and the
- * whole live turn: two assistant messages, a call, a result, a final text.
- */
+/** First request: reasoning, prose and a tool call. Second: prose. */
 function startModelServer(): void {
   let requests = 0;
   modelServer = Bun.serve({
@@ -184,8 +163,7 @@ async function startGateway(): Promise<void> {
   registry = new SessionRegistry({
     defaults: { cwd: tmp, model: "test/echo" },
     agentDir,
-    // Pi's ToolDefinition is invariant in its schema, so a concrete one needs a
-    // cast to sit in the erased array pi asks for.
+    // ToolDefinition is invariant in its schema, hence the cast.
     customTools: () => [Tools.wrap(pingTool()) as unknown as ToolDefinition],
   });
   await registry.init();
@@ -221,20 +199,8 @@ function durable(probe: ProbeClient): readonly DurableEvent[] {
 }
 
 /**
- * The end of this probe's turn — not merely an event that says "idle".
- *
- * A `session_state` is pushed whenever anything the panel shows changes, and
- * the git watcher's first read pushes one of its own. That read is a handful
- * of subprocesses, so where it lands is a race: on this machine it arrives
- * before the caller's `from`, and on a slower one it arrives after `from` but
- * before the prompt has started work — carrying the status the session still
- * legitimately had, which is idle. Waiting on the event alone then hands the
- * test back mid-turn, and the turn-sensitive assertion after it fails for a
- * reason that has nothing to do with what it was testing.
- *
- * The host's own status is the truth the event is only a snapshot of, so an
- * idle event counts as the turn's end only when the host still agrees. When
- * it does not, the turn is running and its real end is yet to be pushed.
+ * Waits for the turn to end. An idle event only counts if the host is idle too:
+ * the git watcher can push a stale idle state before the turn starts.
  */
 async function idle(probe: ProbeClient, from: number): Promise<ServerEvent> {
   let cursor = from;
@@ -248,27 +214,14 @@ async function idle(probe: ProbeClient, from: number): Promise<ServerEvent> {
     if (host === undefined || host.status === "idle") {
       return event;
     }
-    // Stale, and so is everything buffered behind it while the host works:
-    // only an event pushed from here on can be the end of this turn.
+    // Stale; only a later event can end this turn.
     cursor = probe.events.length;
   }
 }
 
 /**
- * Prompts, and returns once the turn it starts is running.
- *
- * `ProbeClient.prompt` resolves on the server's ack, which pi sends before it
- * has queued the turn: the session is still legitimately idle then, and so is
- * the state the git watcher's first read pushes a moment later. An `idle` taken
- * straight after therefore accepts the calm *before* the turn as its end, and
- * hands the test a session with no `message_start`, no delta and no reply —
- * the assertion after it fails for a reason that has nothing to do with what it
- * was testing.
- *
- * `agent_start` pushes a working state, so that is the edge worth waiting on,
- * and the event log is kept: a turn that has already begun and ended has that
- * state in it and this returns at once. Only for a prompt that starts a turn —
- * a message steered into a running one pushes no such state.
+ * Prompts and waits until the turn is running. The ack arrives before pi
+ * queues the turn, so waiting for idle right after could see the calm before it.
  */
 async function prompt(
   probe: ProbeClient,
@@ -282,25 +235,13 @@ async function prompt(
   );
 }
 
-/** Polls, because a prompt is accepted long before pi has queued it. */
-async function until(ready: () => boolean, what: string): Promise<void> {
-  const deadline = Date.now() + 20_000;
-  while (!ready()) {
-    if (Date.now() > deadline) {
-      throw new Error(`timed out waiting for ${what}`);
-    }
-    await Bun.sleep(1);
-  }
-}
-
-/** The texts of the durable user messages, in the order pi wrote them. */
 function saidBy(probe: ProbeClient): readonly string[] {
   return durable(probe)
     .filter((event) => event.type === "message" && event.role === "user")
     .map((event) => (event.type === "message" ? event.text : ""));
 }
 
-/** The mark one client is shown for one session; absent means read. */
+/** Absent means read. */
 function unreadIn(
   rows: readonly SessionSummaryView[],
   sessionId: string
@@ -308,7 +249,6 @@ function unreadIn(
   return rows.find((row) => row.sessionId === sessionId)?.unread;
 }
 
-/** `repliedAt` is when the agent answered, `saidAt` a message typed in afterwards. */
 async function writeSession(
   id: string,
   repliedAt: string,
@@ -406,14 +346,6 @@ test("never forwards raw tool content to a client", async () => {
   expect(dump).not.toContain('"content"');
 });
 
-/**
- * A provider that refuses ends the turn without a word of prose. Pi writes
- * the dead assistant message down like any other, so the client hears why
- * from the log — which is what makes it survive a reload, unlike a live
- * frame — rather than watching the agent stop for no stated reason. A rate
- * limit reads the same way; it is only refused here in words pi does not
- * retry, so the test costs no backoff.
- */
 test("says why a turn the provider refused stopped", async () => {
   refusal = "invalid_request_error: this key cannot use that model";
   const probe = await connect();
@@ -426,8 +358,7 @@ test("says why a turn the provider refused stopped", async () => {
   );
   expect(dead?.type === "message" && dead.error).toContain(refusal);
 
-  // On the log and not only on the wire: a client attaching afterwards is
-  // told the same thing by the replay.
+  // Persisted, so a later attach replays it too.
   const later = await connect({ sessionId: probe.sessionId!, fromSeq: 0 });
   expect(durable(later)).toEqual(durable(probe));
 });
@@ -461,12 +392,6 @@ test("loses nothing when a probe dies mid-turn and resumes by seq", async () => 
   expect(durable(complete)).toEqual(seen);
 });
 
-/**
- * A turn is a model call per step, and pi writes the entry for a step long
- * after it streamed — here, not until the turn settles. So every step has to
- * be live in its own right: one `message_start` each, its own reasoning and
- * prose, and the calls it made hung off it.
- */
 test("streams a step at a time, reasoning included", async () => {
   const probe = await connect();
   const mark = probe.events.length;
@@ -487,14 +412,12 @@ test("streams a step at a time, reasoning included", async () => {
     e.type === "message_start" ? e.messageId : ""
   );
   expect(streamed("thinking_delta", first!)).toBe(REASONING);
-  // The prose of the step that called the tool: the thing a single-slot
-  // bucket used to drop the moment the next step started.
   expect(streamed("text_delta", first!)).toBe(PROSE);
   expect(streamed("text_delta", second!)).toBe(REPLY);
 
   const call = live.find((e) => e.type === "tool_call");
   expect(call?.type === "tool_call" && call.messageId).toBe(first!);
-  // Settled live, not left spinning until pi appends the result.
+  // Settled live, before pi appends the result.
   const end = live.find((e) => e.type === "tool_end");
   expect(end?.type === "tool_end" && end.isError).toBe(false);
   expect(live.indexOf(end!)).toBeLessThan(live.indexOf(steps[1]!));
@@ -506,17 +429,12 @@ test("hands a reconnecting client every step of the in-flight turn", async () =>
   const sessionId = first.sessionId!;
   const mark = first.events.length;
   await first.prompt("say hello");
-  // The gate holds the *second* step open, so that is the one the reconnect
-  // has to land in. The first step streams prose too, and only this step's
-  // words are a prefix of `REPLY`, so waiting on any delta was waiting on the
-  // first step being quicker than this line.
+  // The gate holds the second step; only its words are a prefix of `REPLY`.
   await first.waitFor(
     (e) => e.type === "text_delta" && REPLY.startsWith(e.delta.trim()),
     { from: mark }
   );
-  // The step that finished is a line in the log already, result and all —
-  // pi wrote it when it ended, and the client is told then rather than when
-  // the run settles.
+  // The finished step is already in the log.
   await first.waitFor((e) => e.type === "tool_result", { from: mark });
   const step = durable(first).find(
     (e) => e.type === "message" && e.role === "assistant"
@@ -525,11 +443,7 @@ test("hands a reconnecting client every step of the in-flight turn", async () =>
   first.kill();
 
   const second = await connect({ sessionId, fromSeq: first.seq });
-  // Only the step still streaming comes back live, announced once, and the
-  // deltas — never persisted — arrive as the text so far. How many frames
-  // that text is cut into is not asserted: the catch-up sends what had
-  // accumulated by then, and a word streamed between that send and this line
-  // is a second frame. Counting them was counting the scheduler.
+  // Only the streaming step comes back live, once. Delta frame count is not asserted.
   const starts = second.events.filter((e) => e.type === "message_start");
   const deltas = second.events.filter((e) => e.type === "text_delta");
   expect(new Set(starts.map((e) => e.messageId)).size).toBe(starts.length);
@@ -540,9 +454,7 @@ test("hands a reconnecting client every step of the in-flight turn", async () =>
     .trim();
   expect(streamed.length).toBeGreaterThan(0);
   expect(REPLY).toStartWith(streamed);
-  // And the finished step is not sent twice: the client read it from the log
-  // before it died, so what comes back is the turn's remainder, not a live
-  // copy of a row it already has.
+  // The finished step is not sent twice.
   expect(second.events.some((e) => e.type === "tool_call")).toBe(false);
 
   release();
@@ -568,9 +480,7 @@ test("two probes attached at once see identical durable streams", async () => {
         !isDurableEvent(event) &&
         event.type !== "response" &&
         event.type !== "attached" &&
-        // Server-wide, like the response and the handshake above it: which
-        // of these a client has seen says when it arrived, not what the
-        // session it is reading has done.
+        // Server-wide events vary with arrival time.
         event.type !== "session_read"
     );
   expect(live(second)).toEqual(live(first));
@@ -583,14 +493,13 @@ test("finishes a turn with zero clients attached", async () => {
   starter.kill();
 
   const host = registry.peek(sessionId)!;
-  // The reply landing on disk is the edge that cannot be missed: a queued turn
-  // waiting on its lease is idle too, and so is one that has already finished.
+  // Wait for the reply on disk: a queued turn is idle too.
   const settled = async (): Promise<boolean> => {
     const path = host.settings.sessionPath;
     if (path === undefined || host.status !== "idle" || host.isStreaming) {
       return false;
     }
-    // Pi withholds the file itself until the first assistant message.
+    // Pi only writes the file after the first assistant message.
     const text = await Bun.file(path)
       .text()
       .catch(() => "");
@@ -610,8 +519,7 @@ test("finishes a turn with zero clients attached", async () => {
 test("says which sessions are working, to clients attached elsewhere", async () => {
   const worker = await connect();
   const sessionId = worker.sessionId!;
-  // Once around, so pi has written the session and the catalogue can answer
-  // for it: a client that arrives mid-turn reads the row, not the stream.
+  // One turn first, so the session is on disk for the catalogue.
   const first = worker.events.length;
   await prompt(worker, "say hello", first);
   await idle(worker, first);
@@ -631,8 +539,7 @@ test("says which sessions are working, to clients attached elsewhere", async () 
     "idle"
   );
 
-  // The same answer for a client that arrives mid-turn, which has no frame to
-  // have missed and only the catalogue to go on.
+  // Same for a client that arrives mid-turn.
   const during = await watcher.listSessions();
   expect(
     during.find((row) => row.sessionId === sessionId)?.status
@@ -646,8 +553,7 @@ test("says which sessions are working, to clients attached elsewhere", async () 
       event.status === "idle",
     { from: mark }
   );
-  // A session doing nothing is not marked at all: the row it draws is a row
-  // about a file, and a file is never working.
+  // An idle session has no status.
   const after = await watcher.listSessions();
   expect(
     after.find((row) => row.sessionId === sessionId)?.status
@@ -677,10 +583,7 @@ test("dates a session by its last completed turn, and holds that while one runs"
     { from: mark }
   );
 
-  // The user's message is on disk, so is the step that has already run, and
-  // the file's modified time has moved twice — none of which is the agent
-  // having finished. A row that climbed the list here would climb it again
-  // on the next tool result.
+  // Mid-turn the file mtime has moved, but the row must not.
   expect(settled(await watcher.listSessions())).toBe(before);
 
   release();
@@ -692,7 +595,6 @@ test("dates a session by its last completed turn, and holds that while one runs"
     { from: mark }
   );
 
-  // And steps once, when the turn ends.
   expect(settled(await watcher.listSessions())).toBeGreaterThan(before);
 });
 
@@ -703,9 +605,7 @@ test("goes unread when a turn ends, and not on the lines it ends with", async ()
   await prompt(worker, "say hello", first);
   await idle(worker, first);
 
-  // Read, because a client has been sitting in it the whole turn — and the
-  // answer is the same asked from a second browser, which is the point of
-  // keeping the cursor here rather than in either of them.
+  // Read: a client is attached. The cursor is server-side, so another client agrees.
   const watcher = await connect();
   expect(unreadIn(await watcher.listSessions(), sessionId)).toBeUndefined();
 
@@ -721,8 +621,7 @@ test("goes unread when a turn ends, and not on the lines it ends with", async ()
   );
   worker.close();
 
-  // Nobody is reading it and its first step is already written, result and
-  // all. A turn is one thing to be told about, so none of that is news yet.
+  // Unattended and mid-turn: not unread until the turn ends.
   expect(unreadIn(await watcher.listSessions(), sessionId)).toBeUndefined();
 
   release();
@@ -735,8 +634,7 @@ test("goes unread when a turn ends, and not on the lines it ends with", async ()
   );
   expect(unreadIn(await watcher.listSessions(), sessionId)).toBe(true);
 
-  // Opening it in one client reads it in all of them: the watcher is told
-  // without having asked, because a mark it is holding has just gone stale.
+  // Opening it in one client clears it for all.
   const reader = await connect({ sessionId, fromSeq: 0 });
   expect(reader.sessionId).toBe(sessionId);
   await watcher.waitFor(
@@ -746,11 +644,6 @@ test("goes unread when a turn ends, and not on the lines it ends with", async ()
   expect(unreadIn(await watcher.listSessions(), sessionId)).toBeUndefined();
 });
 
-/**
- * A socket is not a reader. A backgrounded tab is attached to its session for
- * as long as the machine stays awake, and the turn it misses is exactly the
- * one it was left open to hear about.
- */
 test("leaves a turn unread when the tab attached to it is not looking", async () => {
   const hidden = await connect({ attentive: false });
   const sessionId = hidden.sessionId!;
@@ -761,11 +654,6 @@ test("leaves a turn unread when the tab attached to it is not looking", async ()
   expect(unreadIn(await hidden.listSessions(), sessionId)).toBe(true);
 });
 
-/**
- * The cursor is one machine's, so consuming it in the wrong tab is not a
- * mistake that stays there: the mark is broadcast, and the window the user is
- * actually in drops the dot it drew.
- */
 test("keeps a hidden tab's session unread for the client working elsewhere", async () => {
   const hidden = await connect({ attentive: false });
   const sessionId = hidden.sessionId!;
@@ -809,8 +697,7 @@ test("reads nothing on a reconnect from a hidden tab, and reads it on the way ba
   );
   expect(unreadIn(await watcher.listSessions(), sessionId)).toBe(true);
 
-  // A dropped socket comes back on its own, whether or not anyone is there to
-  // see it: the mark a network blip would otherwise consume is still owed.
+  // A reconnect from a hidden tab must not consume the mark.
   const hidden = await connect({ sessionId, fromSeq: 0, attentive: false });
   expect(hidden.sessionId).toBe(sessionId);
   expect(unreadIn(await watcher.listSessions(), sessionId)).toBe(true);
@@ -823,11 +710,6 @@ test("reads nothing on a reconnect from a hidden tab, and reads it on the way ba
   expect(unreadIn(await watcher.listSessions(), sessionId)).toBeUndefined();
 });
 
-/**
- * Attention says who is owed the news, never who hears it. The watches follow
- * the attachment, so a hidden tab is still told everything — including the
- * branch, which only the git watch a dropped file watch takes with it can say.
- */
 test("streams the whole turn to a tab that is not looking", async () => {
   Bun.spawnSync(["git", "init", "-q", "-b", "trunk"], { cwd: tmp });
 
@@ -844,9 +726,7 @@ test("streams the whole turn to a tab that is not looking", async () => {
 });
 
 test("starts with nothing unread, and keeps what is across a restart", async () => {
-  // A fresh install opens on a quiet list rather than on a dot per
-  // conversation its user has already had: everything older than this
-  // server's first launch reads as read.
+  // A fresh install starts with everything older read.
   const before = "00000000-0000-4000-8000-00000000old1";
   const after = "00000000-0000-4000-8000-00000000new1";
   await writeSession(before, SessionFixture.minutesAgo(30));
@@ -862,8 +742,7 @@ test("starts with nothing unread, and keeps what is across a restart", async () 
   await registry.disposeAll();
   await startGateway();
 
-  // The baseline is on disk rather than on the clock: taken from the clock,
-  // every restart would read everything that had gone unread since the last.
+  // The baseline is persisted, not taken from the clock on each start.
   const restarted = await connect();
   const again = await restarted.listSessions();
   expect(unreadIn(again, before)).toBeUndefined();
@@ -871,9 +750,7 @@ test("starts with nothing unread, and keeps what is across a restart", async () 
 });
 
 test("orders the catalogue by the last reply, not by the last keystroke", async () => {
-  // Written newest-file-last, so the modified times say the opposite of what
-  // the conversations do: `stale` was typed into a moment ago and answered an
-  // hour ago, `fresh` was answered a minute ago and left alone since.
+  // mtimes are reversed: `stale` was typed into recently but answered an hour ago.
   const fresh = "00000000-0000-4000-8000-0000000fresh";
   const stale = "00000000-0000-4000-8000-0000000stale";
   const answered = SessionFixture.minutesAgo(60);
@@ -885,8 +762,7 @@ test("orders the catalogue by the last reply, not by the last keystroke", async 
   const written = listed.filter((row) => row.sessionId.startsWith("00000000"));
 
   expect(written.map((row) => row.sessionId)).toEqual([fresh, stale]);
-  // Dated by the reply it has been waiting on an answer to since, not by the
-  // message that is waiting.
+  // Dated by the reply, not the pending message.
   expect(written[1]!.settledAt).toBe(Date.parse(answered));
 });
 
@@ -919,10 +795,7 @@ test("lists pi's sessions, before any attach and after one", async () => {
   const mine = listed.find((row) => row.sessionId === sessionId)!;
   expect(mine.cwd).toBe(tmp);
   expect(mine.settledAt).toBeGreaterThan(0);
-  // Named by its opening message, and read: this client has been sitting in
-  // it since before it answered.
   expect(mine.title).toBe("say hello");
-  // The catalogue is pi's directory layout, not a store of ours.
   expect(Object.keys(mine).sort()).toEqual([
     "createdAt",
     "cwd",
@@ -933,8 +806,7 @@ test("lists pi's sessions, before any attach and after one", async () => {
 
   expect(await probe.listSessions({ cwd: "/nowhere" })).toEqual([]);
 
-  // Picking a session is what a client does instead of already having one, so
-  // this is the one command that answers without an attach.
+  // The one command that answers without an attach.
   const socket = new WebSocket(gateway.url);
   await new Promise((resolve) => socket.addEventListener("open", resolve));
   const answer = new Promise<string>((resolve) => {
@@ -959,14 +831,11 @@ test("answers with the model catalogue and this model's thinking levels", async 
   expect(models).toEqual([
     { id: "test/echo", label: "echo", provider: "test" },
   ]);
-  // The same name the state event carries, so a client can title its picker
-  // without waiting for the catalogue.
   const state = probe.events.findLast(
     (event) => event.type === "session_state"
   );
   expect(state?.type === "session_state" && state.modelLabel).toBe("echo");
-  // The levels belong to the model the session is on, so they only exist
-  // once this connection has one.
+  // Thinking levels need an attached session.
   expect(thinkingLevels).toBeArray();
 });
 
@@ -978,8 +847,7 @@ test("session state carries context usage and the cwd's git branch", async () =>
   await prompt(probe, "say hello", mark);
   await idle(probe, mark);
 
-  // The branch is read behind the caller — `sessionState()` is synchronous
-  // and git is not — so it lands on a later state than the first one.
+  // Git is read async, so the branch lands on a later state.
   const state = await probe.waitFor(
     (event) => event.type === "session_state" && event.branch !== undefined,
     { from: mark }
@@ -997,12 +865,6 @@ test("session state carries context usage and the cwd's git branch", async () =>
   expect(usage?.type === "session_state" && usage.contextPercent).toBeNumber();
 });
 
-/**
- * There is no version handshake: client and server ship together, and the
- * only skew is a tab left open across a restart. So a client from another
- * build must degrade to the features both halves know, never to a dead
- * socket — the one command it asked for is refused, and it stays attached.
- */
 test("a command this server does not know is refused without dropping the client", async () => {
   const probe = new ProbeClient({ url: gateway.url, cwd: tmp });
   probes.push(probe);
@@ -1015,7 +877,6 @@ test("a command this server does not know is refused without dropping the client
   expect(response.success).toBe(false);
   expect(response.error).toContain("unknown command");
 
-  // Still a working client: the session it attached to still answers.
   const after = await probe.send({ type: "attention", value: true });
   expect(after.success).toBe(true);
 });
@@ -1042,11 +903,6 @@ test("refuses commands before an attach", async () => {
   socket.close();
 });
 
-/**
- * Two messages said into the same running turn are one steer, not two turns
- * apart. One entry, not two: the gateway merges so that a client has one
- * thing to take back, which is what makes a queued message editable.
- */
 test("a message said into a running turn steers it, merged into one", async () => {
   const probe = await connect();
   const release = holdTurn();
@@ -1069,7 +925,6 @@ test("a message said into a running turn steers it, merged into one", async () =
     release();
   }
 
-  // Delivered as one user message, in the turn it was said into.
   await until(
     () => saidBy(probe).length === 2,
     "the queued message to be delivered"
@@ -1077,10 +932,6 @@ test("a message said into a running turn steers it, merged into one", async () =
   expect(saidBy(probe)).toEqual(["say hello", "steer me\n\nand then this"]);
 });
 
-/**
- * A turn held open with one message waiting behind it, reclaimed by the
- * command under test and then let go.
- */
 async function reclaim(
   type: "cancel" | "dequeue"
 ): Promise<{ probe: ProbeClient; mark: number; response: ResponseEvent }> {
@@ -1107,8 +958,7 @@ test("cancelling hands back what the turn was still holding", async () => {
   expect(response.success).toBe(true);
   expect(response.restored).toEqual(["steer me"]);
   await idle(probe, mark);
-  // Never said, so never written: a message queued behind a turn that was
-  // killed belongs back in the client's box, not in the conversation.
+  // A queued message from a killed turn goes back to the client, not the log.
   expect(saidBy(probe)).toEqual(["say hello"]);
 });
 
@@ -1117,8 +967,6 @@ test("taking the queued message back leaves the turn running", async () => {
 
   expect(response.success).toBe(true);
   expect(response.restored).toEqual(["steer me"]);
-  // The turn ran to its own end, and said only what it was told before the
-  // reader thought better of the rest.
   await idle(probe, mark);
   expect(saidBy(probe)).toEqual(["say hello"]);
 });
@@ -1142,8 +990,6 @@ test("a working agent freezes the repository its session sits in", async () => {
       branch: "feat/work",
     });
 
-    // The model may be halfway through an edit; moving the tree under it would
-    // land half its work on the wrong branch.
     expect(refused.success).toBe(false);
     expect(refused.error).toContain("working");
   } finally {
@@ -1156,8 +1002,7 @@ test("a working agent freezes the repository its session sits in", async () => {
     sessionId,
     branch: "feat/work",
   });
-  // The error ahead of the flag: git's own failures are the only other way
-  // this comes back false, and `false !== true` does not say which happened.
+  // Check the error first so a git failure is distinguishable.
   expect(moved.error).toBeUndefined();
   expect(moved.success).toBe(true);
 });
@@ -1169,8 +1014,7 @@ test("keeps a renamed row named through the turn that is writing to it", async (
   await prompt(probe, "say hello", mark);
   await idle(probe, mark);
 
-  // Warms the digest the row is drawn from, while it still goes by its
-  // opening message.
+  // Warm the digest while it still uses the opening message.
   expect(
     SessionFixture.rowIn(await probe.listSessions(), sessionId)?.title
   ).toBe("say hello");
@@ -1188,9 +1032,7 @@ test("keeps a renamed row named through the turn that is writing to it", async (
       { from: second }
     );
 
-    // Mid-turn the file is appended to between listings, so it is not
-    // re-digested for any of them: the name the row shows is the live
-    // session's own, and the one it was warmed with is a turn out of date.
+    // Mid-turn the digest is reused, so the name must come from the live session.
     const row = SessionFixture.rowIn(await probe.listSessions(), sessionId);
     expect(row?.title).toBe("Parser work");
     expect(row?.named).toBe(true);

@@ -2,7 +2,7 @@ import solid from "@solidjs/vite-plugin";
 import unocss from "unocss/vite";
 import { defineConfig } from "vite";
 
-// Client mode only — no `start`, and no Babel pass, which would forfeit Solid's Oxc compiler.
+// No Babel pass: it would replace Solid's Oxc compiler.
 export default defineConfig({
   plugins: [unocss(), solid()],
   publicDir: "../../assets/brand",

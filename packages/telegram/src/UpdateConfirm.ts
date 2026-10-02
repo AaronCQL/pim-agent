@@ -5,8 +5,8 @@ import { Fs } from "#core/shared/Fs";
 
 const CONFIRM_FILE = "update-confirm.json";
 
-/** The "🔄 Updating..." message to edit once the restarted daemon is back. */
-export type UpdateConfirmEntry = {
+/** The "🔄 Updating..." message to edit after the restart. */
+type UpdateConfirmEntry = {
   readonly chatId: number;
   readonly threadId: number | undefined;
   readonly messageId: number;

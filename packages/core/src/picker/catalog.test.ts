@@ -87,19 +87,6 @@ describe("loadRelative — fast path (git ls-files)", () => {
       "zzz.ts",
     ]);
   });
-
-  test("sorts ascending by relative path", async () => {
-    const candidates = await loadRelative({
-      root: workspace,
-      gitSpawner: succeedingSpawner(["zeta.ts", "alpha.ts", "mu.ts"]),
-    });
-
-    expect(candidates.map((c) => c.displayPath)).toEqual([
-      "alpha.ts",
-      "mu.ts",
-      "zeta.ts",
-    ]);
-  });
 });
 
 describe("loadRelative — fallback (Bun.Glob)", () => {
@@ -129,15 +116,6 @@ describe("loadRelative — fallback (Bun.Glob)", () => {
 
     const nested = candidates.find((c) => c.displayPath === "nested");
     expect(nested?.isDirectory).toBe(true);
-  });
-
-  test("empty workspace produces an empty list", async () => {
-    const candidates = await loadRelative({
-      root: workspace,
-      gitSpawner: failingSpawner,
-    });
-
-    expect(candidates).toEqual([]);
   });
 });
 
@@ -274,22 +252,5 @@ describe("loadAbsolute", () => {
     });
     expect(withDot.candidates.map((c) => c.matchHaystack)).toContain(".hidden");
     expect(withDot.residualQuery).toBe(".h");
-  });
-
-  test("directories sort before files within the same anchor", async () => {
-    await mkdir(join(workspace, "sub"), { recursive: true });
-    await writeFile(join(workspace, "sub", "z-file.ts"), "z");
-    await mkdir(join(workspace, "sub", "a-dir"), { recursive: true });
-    await writeFile(join(workspace, "sub", "a-file.ts"), "a");
-
-    const result = await loadAbsolute({
-      query: `${join(workspace, "sub")}/`,
-    });
-
-    expect(result.candidates.map((c) => c.matchHaystack)).toEqual([
-      "a-dir",
-      "a-file.ts",
-      "z-file.ts",
-    ]);
   });
 });

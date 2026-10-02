@@ -16,14 +16,14 @@ type Preferences = {
   diffSplit: SplitMode;
 };
 
-/** Whether the transcript hides what the model thought; outside the shell it shows everything. */
+/** Defaults to showing thinking outside the shell. */
 export const HideThinking = createContext<() => boolean>(() => false);
 
-/** What this browser remembers rather than the server: where to connect, and what to draw. */
+/** Per-browser preferences, persisted to localStorage. */
 export class Settings {
   public readonly state: Store<Preferences>;
   private readonly setState: StoreSetter<Preferences>;
-  // The same values, written synchronously: a store write only lands on the next flush.
+  // Synchronous copy of `state`; store writes only land on the next flush.
   private current: Preferences;
 
   public constructor() {
@@ -33,13 +33,13 @@ export class Settings {
     this.setState = setState;
   }
 
-  /** The socket address to open; an address that cannot be read falls back to this origin. */
+  /** Falls back to this origin when the URL is empty or invalid. */
   public gateway(): string {
     const typed = this.current.serverUrl;
     return (typed === "" ? undefined : socketUrl(typed)) ?? origin();
   }
 
-  /** A `ws://` gateway named from an `https://` page, which the browser blocks silently. */
+  /** A `ws://` gateway from an `https://` page, which the browser blocks. */
   public insecure(): boolean {
     return location.protocol === "https:" && this.gateway().startsWith("ws:");
   }
@@ -66,7 +66,7 @@ export class Settings {
     try {
       localStorage.setItem(KEY, JSON.stringify(next));
     } catch {
-      // Private mode or a full quota; the preferences still hold for this tab.
+      // Private mode or full quota; keep the in-memory value.
     }
   }
 }
@@ -106,7 +106,7 @@ const SOCKET_SCHEMES: Record<string, string> = {
   "wss:": "wss:",
 };
 
-// Assemble from the parsed parts: the `protocol` setter refuses some scheme changes.
+// Built by hand: the URL `protocol` setter refuses some scheme changes.
 function socketUrl(typed: string): string | undefined {
   const secure = location.protocol === "https:";
   const url = URL.parse(

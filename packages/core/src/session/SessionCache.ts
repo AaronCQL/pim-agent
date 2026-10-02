@@ -1,4 +1,3 @@
-/** What a cache entry has to offer: a recency stamp and a way to let go. */
 export type CachedSession = {
   lastUsed: number;
   dispose(): Promise<void>;
@@ -6,7 +5,7 @@ export type CachedSession = {
 
 const CAPACITY = 16;
 
-/** Live sessions, keyed however the frontend keys them, capped by least-recently-used. */
+/** LRU cache of live sessions; evicted entries are disposed. */
 export class SessionCache<T extends CachedSession> {
   private readonly capacity: number;
   private readonly entries = new Map<string, T>();
@@ -19,12 +18,11 @@ export class SessionCache<T extends CachedSession> {
     return this.entries.size;
   }
 
-  /** The live entry, if there is one, without counting as a use. */
+  /** Does not count as a use. */
   public peek(key: string): T | undefined {
     return this.entries.get(key);
   }
 
-  /** The live entry, marked used now so eviction passes over it. */
   public touch(key: string): T | undefined {
     const entry = this.entries.get(key);
     if (entry) {
@@ -33,7 +31,6 @@ export class SessionCache<T extends CachedSession> {
     return entry;
   }
 
-  /** Store `value`, disposing the least recently used entry first when full. */
   public adopt(key: string, value: T): T {
     this.evictIfNeeded();
     this.entries.set(key, value);
@@ -63,6 +60,11 @@ export class SessionCache<T extends CachedSession> {
     }
     const evicted = this.entries.get(oldestKey)!;
     this.entries.delete(oldestKey);
-    void evicted.dispose();
+    evicted.dispose().catch((err: unknown) => {
+      console.warn(
+        `[pim] failed to dispose evicted session ${oldestKey}:`,
+        err
+      );
+    });
   }
 }

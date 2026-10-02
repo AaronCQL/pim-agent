@@ -2,12 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 const repoRoot = new URL("../../../", import.meta.url).pathname;
 
-/**
- * `bun pm pack --dry-run` runs `prepack`, so the Vite build that produces
- * `packages/web/dist/client` is part of what this asserts. Synchronous so the
- * built-client assertions can be skipped at collection time on a checkout
- * where the web toolchain is unavailable.
- */
+// `--dry-run` still runs `prepack` (the web build). Sync so `skipIf` can see the result at collection time.
 function packedPaths(): readonly string[] {
   const packed = Bun.spawnSync(["bun", "pm", "pack", "--dry-run"], {
     cwd: repoRoot,
@@ -34,17 +29,12 @@ const builtClient = paths.filter((path) =>
 );
 
 describe("the published tarball", () => {
-  test("is not empty", () => {
-    expect(paths.length).toBeGreaterThan(50);
-  });
-
   test.each([
     "bin/pim.ts",
     "packages/core/src/extensions/bash/index.ts",
     "packages/tui/src/extensions/_init/index.ts",
     "packages/daemon/src/index.ts",
     "packages/telegram/src/Bot.ts",
-    // pim's themes are loaded from disk at runtime; nothing else guards them.
     "packages/tui/src/themes/pim-dark.json",
     "packages/tui/src/themes/pim-light.json",
   ])("ships %s", (path) => {

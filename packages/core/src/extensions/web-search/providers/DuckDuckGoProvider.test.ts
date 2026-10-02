@@ -89,7 +89,7 @@ describe("DuckDuckGoProvider", () => {
       jinaEnvelope("Unfortunately, bots use DuckDuckGo too.")
     );
 
-    expect(provider.search(input)).rejects.toThrow("bot-blocked");
+    await expect(provider.search(input)).rejects.toThrow("bot-blocked");
   });
 
   test("accepts a genuine empty result page", async () => {

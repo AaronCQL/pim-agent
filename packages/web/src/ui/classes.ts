@@ -3,15 +3,15 @@ export const ICON =
 
 const FIELD_PAINT = "bg-neutral-850 ring-1 ring-transparent";
 
-/** How a text field is painted, less the box it takes: for one written over something that sets its own. */
+/** `FIELD` without the box size. */
 export const FIELD_SKIN = `${FIELD_PAINT} outline-none focus:ring-neutral-600`;
 
 export const FIELD = `h-8 min-w-0 flex-1 rounded-lg px-3 text-sm ${FIELD_SKIN}`;
 
-/** A field that holds something besides its input — a leading icon, a trailing key — so the box rings for whatever inside it has focus. */
+/** A field wrapping an input plus icons; rings when anything inside has focus. */
 export const FIELD_BOX = `flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg px-3 text-sm ${FIELD_PAINT} focus-within:ring-neutral-600`;
 
-/** The input inside a `FIELD_BOX`: the box draws everything, so this draws nothing. */
+/** The input inside a `FIELD_BOX`. */
 export const FIELD_BARE =
   "min-w-0 flex-1 bg-transparent outline-none placeholder:text-neutral-500";
 
@@ -21,28 +21,20 @@ export const ACTION =
 export const QUIET =
   "h-8 shrink-0 rounded-lg bg-neutral-850 px-3 text-sm text-neutral-350 hover:bg-neutral-800 hover:text-neutral-50 disabled:text-neutral-500 disabled:hover:bg-neutral-850";
 
-/** A topbar chip: what the session is working on, stated rather than controlled. */
-export const CHIP =
+const CHIP =
   "flex h-8 max-w-max min-w-0 flex-1 items-center gap-1.5 rounded-lg bg-neutral-850 px-2 text-sm text-neutral-350";
 
-/** A topbar chip that is pressed: the stated chip, lit under a pointer. */
 export const CHIP_BUTTON = `${CHIP} hover:bg-neutral-800 hover:text-neutral-50`;
 
-/** A topbar chip cut into segments: one object to read, a target per segment. */
 export const CHIP_GROUP =
   "flex h-8 max-w-max min-w-0 items-center rounded-lg bg-neutral-850 text-sm text-neutral-350";
 
-/** One segment of a cut chip; the caller rounds the end it takes. */
+/** The caller rounds the end segments. */
 export const CHIP_SEGMENT =
   "flex h-8 min-w-0 items-center gap-1.5 px-2 hover:bg-neutral-800 hover:text-neutral-50";
 
-/** A composer pill: dark and quiet until a pointer picks it out with a ring. */
 export const PILL =
   "flex items-center justify-center gap-1.5 rounded-full bg-neutral-900 text-neutral-350 ring-neutral-600 hover:text-neutral-100 hover:ring-1";
 
-/**
- * The lift a list row takes under the caret. The pointer moves that caret as
- * it passes, so hover and the keyboard are one reading and one fill: the keys
- * take over from wherever the hand left off.
- */
+/** The active list row, whether reached by pointer or keyboard. */
 export const ROW_ACTIVE = "bg-neutral-800";

@@ -10,12 +10,8 @@ export type WebOptions = {
   readonly clientDir: string | undefined;
 };
 
-/**
- * `--web-cwd` wins over `--cwd`, which the Telegram surface reads out of the
- * same argv as its own default directory. Only the frozen unit uses it.
- */
+/** `--web-cwd` wins over `--cwd`, which Telegram also reads. */
 function parse(args: ReadonlyArray<string>): WebOptions {
-  // An explicit `--port` always wins over `PORT`.
   let port = process.env["PORT"] ?? String(DEFAULT_PORT);
   let hostname = DEFAULT_HOSTNAME;
   let cwd = process.cwd();
@@ -46,7 +42,7 @@ function parse(args: ReadonlyArray<string>): WebOptions {
   return { port, hostname, cwd: webCwd ?? cwd, clientDir };
 }
 
-/** The argv a supervisor has to start the daemon with to serve these same options. */
+/** The argv that reproduces these options in a supervised unit. */
 function freeze(options: WebOptions): ReadonlyArray<string> {
   return [
     "--port",

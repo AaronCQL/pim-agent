@@ -122,14 +122,13 @@ async function runLoadRelative(
   options: LoadRelativeOptions
 ): Promise<readonly FileCandidate[]> {
   const spawner = options.gitSpawner ?? defaultGitSpawner;
-
-  const fastPath = await tryGitListFiles(root, spawner);
-  if (fastPath !== undefined) {
-    return finalizeRelative(fastPath);
-  }
-
-  const fallback = await scanWithGlob(root);
-  return finalizeRelative(fallback);
+  const paths =
+    (await tryGitListFiles(root, spawner)) ??
+    (await FileEnumerator.enumerate(root, {
+      includeDotfiles: false,
+      includeIgnored: false,
+    }));
+  return finalizeRelative(paths);
 }
 
 async function tryGitListFiles(
@@ -146,13 +145,6 @@ async function tryGitListFiles(
   }
 
   return result.stdout.split("\n").filter((line) => line.length > 0);
-}
-
-async function scanWithGlob(root: string): Promise<readonly string[]> {
-  return FileEnumerator.enumerate(root, {
-    includeDotfiles: false,
-    includeIgnored: false,
-  });
 }
 
 function finalizeRelative(paths: readonly string[]): readonly FileCandidate[] {

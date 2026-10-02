@@ -32,7 +32,7 @@ export async function menuItems(): Promise<SettingItem[]> {
   }));
 }
 
-export function createToggleMenu(
+function createToggleMenu(
   items: SettingItem[],
   onToggle: (name: PimExtensionName, disabled: boolean) => void,
   done: () => void

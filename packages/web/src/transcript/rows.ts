@@ -32,13 +32,12 @@ export type NoticeRow = {
 
 export type Row = MessageRow | ToolRow | NoticeRow;
 
-/** The rows plus the dedupe index, so a later batch can keep merging into them. */
 export type RowBuild = {
   readonly rows: readonly Row[];
   readonly toolIndex: ReadonlyMap<string, number>;
 };
 
-// A call is sighted more than once on the wire; dedupe on `callId` and upgrade in place.
+// A tool call can arrive more than once; dedupe on `callId`.
 function append(
   rows: Row[],
   toolIndex: Map<string, number>,
@@ -46,8 +45,7 @@ function append(
 ): void {
   switch (event.type) {
     case "message": {
-      // Trimmed: the block is `whitespace-pre-wrap`, and models end reasoning
-      // with newlines.
+      // Models end reasoning with newlines.
       const thinking = event.thinking?.trim() ?? "";
       const attachments = event.attachments ?? [];
       if (event.text !== "" || thinking !== "" || attachments.length > 0) {
@@ -103,7 +101,7 @@ function append(
   }
 }
 
-// A settled row is never downgraded back to partial by a re-stated call.
+// Never downgrades a settled row back to partial.
 function upsertTool(
   rows: Row[],
   toolIndex: Map<string, number>,
@@ -133,7 +131,6 @@ function appendLive(
         id: message.messageId,
         role: "assistant",
         text: message.text,
-        // Never written, so never stamped; assistant rows do not draw one.
         timestamp: 0,
         ...(thinking === "" ? {} : { thinking }),
         streaming: true,
@@ -175,11 +172,7 @@ function pushPending(rows: Row[], pending: PendingMessage): void {
   });
 }
 
-/**
- * Continues a build with this client's unacknowledged messages and the live
- * turn. The copy is shallow, so durable rows keep their identity across a
- * delta; a message queued into a running turn sits below it.
- */
+/** Appends pending messages and the live turn; queued messages go below the live turn. Durable rows keep their identity. */
 export function extendRows(
   base: RowBuild,
   trailing: readonly PendingMessage[],

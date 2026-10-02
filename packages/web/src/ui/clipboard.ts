@@ -1,4 +1,4 @@
-/** Copy text, falling back to a selection copy where `navigator.clipboard` is absent (plain http). */
+/** Falls back to `execCommand` where `navigator.clipboard` is absent (plain http). */
 export async function copyText(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text);
@@ -13,7 +13,7 @@ function copyBySelection(text: string): boolean {
   if (selection === null) {
     return false;
   }
-  // Off the page, not hidden: `display:none`/`visibility:hidden` cannot hold a selection, and iOS Safari refuses to select a scripted `<textarea>`.
+  // Transparent, not hidden: hidden nodes cannot hold a selection. iOS refuses a scripted `<textarea>`.
   const carrier = document.createElement("span");
   carrier.textContent = text;
   carrier.ariaHidden = "true";

@@ -20,9 +20,8 @@ import { MessageText } from "../../session/MessageText";
 import { CoreExtensions } from "../CoreExtensions";
 import { formatTopLine } from "./render";
 
-export const PER_TASK_OUTPUT_CAP = 32 * 1024;
-export const SUBAGENT_TOOL_NAME = "subagent";
-
+const PER_TASK_OUTPUT_CAP = 32 * 1024;
+const SUBAGENT_TOOL_NAME = "subagent";
 export const UPDATE_INTERVAL_MS = 100;
 
 const inSubagent = new AsyncLocalStorage<true>();
@@ -38,7 +37,6 @@ export type SubagentUsage = {
 };
 
 export type SubagentSnapshot = {
-  /** The child's session id, for a log reader; a transcript is found from the call id, not this. */
   readonly sessionId: string | undefined;
   readonly usage: SubagentUsage;
   readonly stopReason: string | undefined;
@@ -47,7 +45,7 @@ export type SubagentSnapshot = {
   readonly contextWindow: number | undefined;
 };
 
-/** `returnedOutput` is the capped answer for the parent model; `fullOutput` is every word written. */
+/** `returnedOutput` is the capped last message; `fullOutput` is every message. */
 export type SubagentDetails = SubagentSnapshot & {
   readonly returnedOutput: string;
   readonly fullOutput: string;
@@ -67,9 +65,9 @@ export type SubagentSession = {
 
 export type SubagentSessionSpec = {
   readonly activeToolNames?: readonly string[];
-  /** The parent's live level; left unset, pi falls back to settings, not to the parent. */
+  /** Unset falls back to pi's settings, not the parent's level. */
   readonly thinkingLevel?: ThinkingLevel;
-  /** The parent's tool call id, which names the child's log on disk. */
+  /** Names the child's log file. */
   readonly callId?: string;
 };
 
@@ -90,7 +88,7 @@ export function childToolNames(
   return activeToolNames.filter((name) => name !== SUBAGENT_TOOL_NAME);
 }
 
-// The child inherits no registrations: without this roster its `tools` allowlist loses every pim tool.
+// The child inherits no registrations; without these its `tools` allowlist drops every pim tool.
 export function childLoaderOptions(cwd: string): {
   readonly cwd: string;
   readonly agentDir: string;
@@ -103,7 +101,7 @@ export function childLoaderOptions(cwd: string): {
   };
 }
 
-export async function createSdkSubagentSession(
+async function createSdkSubagentSession(
   parentCtx: ExtensionContext,
   spec: SubagentSessionSpec = {}
 ): Promise<SubagentSession> {
@@ -125,7 +123,7 @@ export async function createSdkSubagentSession(
   return session;
 }
 
-// `open`, not `create`: the log path must be derivable from the parent session id and call id.
+// `open`, not `create`, so the log path is derived from the parent session id and call id.
 async function childSessionManager(
   parentCtx: ExtensionContext,
   callId: string | undefined
@@ -279,7 +277,6 @@ export class SubagentEventCapture {
     this.emitUpdate();
   }
 
-  /** Drops a throttled update still in flight once the run is over. */
   public dispose(): void {
     this.cancelPending();
   }
@@ -295,7 +292,7 @@ export class SubagentEventCapture {
     };
   }
 
-  /** Everything the child wrote, one paragraph per assistant message, including a streaming one. */
+  /** All assistant messages so far, including one still streaming. */
   public narration(): string {
     const said =
       this.pendingText === ""
@@ -358,15 +355,7 @@ export class SubagentEventCapture {
   }
 }
 
-type MutableUsage = {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  cost: number;
-  turns: number;
-  contextTokens: number | undefined;
-};
+type MutableUsage = { -readonly [K in keyof SubagentUsage]: SubagentUsage[K] };
 
 export type OutputCapResult = {
   readonly text: string;

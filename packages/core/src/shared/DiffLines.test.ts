@@ -90,16 +90,17 @@ describe("DiffLines.buildToolDiff", () => {
     }
   });
 
-  test("skips emphasis when removed and added runs are unequal length", () => {
+  test.each([
+    ["runs of unequal length", ["alpha"], ["beta", "gamma"]],
+    ["lines that share no content", ["foo"], ["bar"]],
+  ])("skips emphasis for %s", (_, from, to) => {
     const result = DiffLines.buildToolDiff(
       "/tmp/x.ts",
-      side(["alpha"]),
-      side(["beta", "gamma"]),
+      side(from),
+      side(to),
       1
     );
-    const lines = result?.hunks[0]?.lines ?? [];
-
-    for (const line of lines) {
+    for (const line of result?.hunks[0]?.lines ?? []) {
       expect(line.emphasis).toBeUndefined();
     }
   });
@@ -121,21 +122,7 @@ describe("DiffLines.buildToolDiff", () => {
     }
   });
 
-  test("skips emphasis when lines share no content", () => {
-    const result = DiffLines.buildToolDiff(
-      "/tmp/x.ts",
-      side(["foo"]),
-      side(["bar"]),
-      1
-    );
-    const lines = result?.hunks[0]?.lines ?? [];
-
-    for (const line of lines) {
-      expect(line.emphasis).toBeUndefined();
-    }
-  });
-
-  test("returns undefined when only EOF newline state differs (callers surface EOF themselves)", () => {
+  test("returns undefined when only the EOF newline differs", () => {
     const result = DiffLines.buildToolDiff(
       "/tmp/x.ts",
       side(["alpha"], true),
@@ -166,28 +153,12 @@ describe("DiffLines.buildToolDiff", () => {
 });
 
 describe("DiffLines.fromText", () => {
-  test("treats the empty string as zero lines, no trailing newline", () => {
-    expect(DiffLines.fromText("")).toEqual({
-      lines: [],
-      hasTrailingNewline: false,
-    });
-  });
-
-  test("distinguishes 'a' from 'a\\n'", () => {
-    expect(DiffLines.fromText("a")).toEqual({
-      lines: ["a"],
-      hasTrailingNewline: false,
-    });
-    expect(DiffLines.fromText("a\n")).toEqual({
-      lines: ["a"],
-      hasTrailingNewline: true,
-    });
-  });
-
-  test("preserves embedded blank lines without collapsing them", () => {
-    expect(DiffLines.fromText("a\n\nb\n")).toEqual({
-      lines: ["a", "", "b"],
-      hasTrailingNewline: true,
-    });
+  test.each([
+    ["", [], false],
+    ["a", ["a"], false],
+    ["a\n", ["a"], true],
+    ["a\n\nb\n", ["a", "", "b"], true],
+  ])("%j", (text, lines, hasTrailingNewline) => {
+    expect(DiffLines.fromText(text)).toEqual({ lines, hasTrailingNewline });
   });
 });

@@ -8,10 +8,7 @@ import { basename, dirname, join } from "node:path";
 
 const POLL_MS = 1_000;
 
-/**
- * A burst coalesces into one event, and the read it triggers can land inside
- * the burst — so look once more after it, or the last write waits on the poll.
- */
+/** A burst arrives as one event, so look again shortly after to catch its last write. */
 const SETTLE_MS = 25;
 
 function signatureOf(path: string): string {
@@ -21,7 +18,7 @@ function signatureOf(path: string): string {
     : `${stats.mtimeMs}:${stats.size}:${stats.ino}`;
 }
 
-/** Reports a change only once the path itself moved, so a watcher firing for its neighbours costs nothing. */
+/** Calls `onChange` only when the path's stat signature changed. */
 function tracker(path: string, onChange: () => void): () => void {
   let signature = signatureOf(path);
   return (): void => {
@@ -34,11 +31,7 @@ function tracker(path: string, onChange: () => void): () => void {
   };
 }
 
-/**
- * `fs.watch` reports nothing at all on some filesystems and network mounts, so
- * the poll beside it is not optional. The poll also re-arms the watcher, which
- * a directory that does not exist yet refuses to give.
- */
+/** `fs.watch` is silent on some filesystems, so a poll always runs too and re-arms a watcher that failed. */
 function follow(
   watched: string,
   entry: string | undefined,
@@ -86,27 +79,31 @@ function follow(
   };
 }
 
-/** Fires when one file appears, grows, or goes away; the directory is watched, so the file need not exist yet. */
+/** Watches the parent directory, so the file need not exist yet. `onLook` sees every stat, changed or not. */
 function file(
   path: string,
   onChange: () => void,
-  pollMs: number = POLL_MS
+  pollMs: number = POLL_MS,
+  onLook?: () => void
 ): () => void {
-  const check = tracker(path, onChange);
+  const track = tracker(path, onChange);
+  const check = (): void => {
+    track();
+    onLook?.();
+  };
   return follow(dirname(path), basename(path), check, check, pollMs);
 }
 
-/** Fires when a directory gains or loses an entry, or when anything inside it is written. */
+/** Fires on entries added, removed or written. The poll only sees adds and removes. */
 function directory(
   path: string,
   onChange: () => void,
   pollMs: number = POLL_MS
 ): () => void {
-  // Writing a file moves nothing on the directory holding it, so the poll answers only for entries coming and going.
   return follow(path, undefined, onChange, tracker(path, onChange), pollMs);
 }
 
-/** The directories directly inside `path`, or none when it does not exist. */
+/** Empty when `path` is missing. */
 function subdirectories(path: string): readonly string[] {
   try {
     return readdirSync(path, { withFileTypes: true })
@@ -117,5 +114,4 @@ function subdirectories(path: string): readonly string[] {
   }
 }
 
-/** Watching paths other processes write: an `fs.watch` that may do nothing, backed by a poll that always does. */
 export const FileWatch = { file, directory, subdirectories };

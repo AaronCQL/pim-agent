@@ -21,14 +21,14 @@ const FIXTURE = join(
   "pi-session-v3.jsonl"
 );
 
-/** A one-pixel PNG as pi persists it: the string that must never reach a client. */
+/** A one-pixel PNG; must never reach a client. */
 const BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 const SHA256 = "b".repeat(64);
 
 const pi = { registerTool: () => {} } as unknown as ExtensionAPI;
 
-/** A view that shows whatever content it is handed, so a leak would be visible in the frame. */
+/** Paints whatever content it gets, so a leak shows up in the view. */
 function registerMirror(): void {
   Tools.register(pi, {
     name: "mirror",
@@ -46,7 +46,6 @@ function registerMirror(): void {
   });
 }
 
-/** The pair of entries a `read` of a picture leaves in the session file. */
 function imageRead(toolName: string): ReadonlyArray<Record<string, unknown>> {
   return [
     {
@@ -97,7 +96,6 @@ afterEach(async () => {
   }
 });
 
-/** A log holding exactly the messages a test needs, one entry per message. */
 async function logOf(
   ...messages: ReadonlyArray<Record<string, unknown>>
 ): Promise<SessionProjection> {
@@ -120,7 +118,6 @@ async function logOf(
   return new SessionProjection(path, () => "/");
 }
 
-/** A log holding an assistant message pi could not finish. */
 async function deadTurn(
   message: Record<string, unknown>
 ): Promise<SessionProjection> {
@@ -143,8 +140,6 @@ test("projects a persisted session into durable events, one per line", async () 
     [7, "message", "assistant"],
   ]);
 
-  // The view itself depends on which extensions registered one, so assert the
-  // wiring rather than a particular tool's painting.
   const call = events[1];
   const toolCalls = call?.type === "message" ? call.toolCalls : undefined;
   expect(toolCalls?.map(({ callId, name }) => ({ callId, name }))).toEqual([
@@ -156,8 +151,6 @@ test("projects a persisted session into durable events, one per line", async () 
   expect(result?.type === "tool_result" && result.isError).toBe(false);
   expect(JSON.stringify(events)).not.toContain('"content"');
 
-  // The stamp is pi's own, read off the entry: it is what the client's clock
-  // line and its "Clanked for" reading are derived from after a reload.
   const first = events[0];
   expect(first?.type === "message" && first.timestamp).toBe(
     Date.parse("2026-08-01T10:17:47.104Z")
@@ -206,20 +199,21 @@ test("a turn the model killed carries why on the message it died on", async () =
   ]);
 });
 
-test("a failure the provider did not explain still says one happened", async () => {
-  const events = await (await deadTurn({ stopReason: "error" })).drain();
+test.each([
+  [
+    "an unexplained error gets a fallback",
+    { stopReason: "error" },
+    "The model call failed.",
+  ],
+  [
+    "an abort is not an error",
+    { stopReason: "aborted", errorMessage: "Aborted" },
+    undefined,
+  ],
+])("%s", async (_name, message, error) => {
+  const events = await (await deadTurn(message)).drain();
 
-  expect(events[0]?.type === "message" && events[0].error).toBe(
-    "The model call failed."
-  );
-});
-
-test("an abort is not an error: cancelling is not a failure", async () => {
-  const events = await (
-    await deadTurn({ stopReason: "aborted", errorMessage: "Aborted" })
-  ).drain();
-
-  expect(events[0]?.type === "message" && events[0].error).toBeUndefined();
+  expect(events[0]?.type === "message" && events[0].error).toBe(error);
 });
 
 test("a failed call carries why, not a view of the result it never got", async () => {
@@ -243,7 +237,6 @@ test("a failed call carries why, not a view of the result it never got", async (
         toolName: "apply_patch",
         isError: true,
         content: [{ type: "text", text: "No files were modified." }],
-        // Pi's error result is synthetic: the message is all it carries.
         details: {},
       }
     )

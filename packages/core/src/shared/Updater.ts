@@ -8,7 +8,7 @@ import { Supervisor, type Install } from "./Supervisor";
 
 const STAGING = "staging";
 
-// Relative to `packages/web`: the vite root `web:build` cds into.
+// Relative to `packages/web`, the vite root.
 const STAGING_OUT_DIR = `dist/${STAGING}`;
 
 type ClientDirs = {
@@ -17,7 +17,6 @@ type ClientDirs = {
   readonly previous: string;
 };
 
-/** A spawned command, or filesystem work — never both. */
 export type UpdateStep =
   | {
       readonly label: string;
@@ -26,14 +25,14 @@ export type UpdateStep =
     }
   | { readonly label: string; readonly act: () => Promise<void> };
 
-/** Work the plan declined to do; `blocking` means the run did less than asked. */
+/** `blocking` means the update did less than asked. */
 export type UpdateSkip = {
   readonly label: string;
   readonly reason: string;
   readonly blocking: boolean;
 };
 
-export type UpdatePlan = {
+type UpdatePlan = {
   readonly steps: ReadonlyArray<UpdateStep>;
   readonly skipped: ReadonlyArray<UpdateSkip>;
 };
@@ -41,24 +40,24 @@ export type UpdatePlan = {
 export type UpdateFacts = {
   readonly at: Install;
   readonly packageName: string;
-  /** A dev checkout with no uncommitted changes; irrelevant to a prod install. */
+  /** Dev only: no uncommitted changes. */
   readonly cleanTree: boolean;
-  /** The dev checkout's branch tracks a remote one, so a pull has somewhere to pull from; irrelevant to a prod install. */
+  /** Dev only: the branch has an upstream. */
   readonly tracked: boolean;
-  /** The newest published release, or undefined when the registry was silent. */
+  /** Undefined when the registry could not be reached. */
   readonly latest: string | undefined;
 };
 
 export type UpdateOutcome = {
   readonly ok: boolean;
   readonly from: string;
-  /** Re-read from disk after the steps ran, never the version that was asked for. */
+  /** Re-read from disk after the steps ran. */
   readonly to: string;
   readonly skipped: ReadonlyArray<UpdateSkip>;
   readonly error: string | undefined;
 };
 
-export type UpdateOptions = {
+type UpdateOptions = {
   readonly onStep?: (label: string) => void | Promise<void>;
 };
 
@@ -71,7 +70,7 @@ function clientDirs(packageRoot: string): ClientDirs {
   };
 }
 
-// `vite build` empties its outDir: build to staging and swap, or a failed build deletes the live bundle.
+// `vite build` empties its outDir, so build to staging and swap; a failed build keeps the live bundle.
 async function swapClient(packageRoot: string): Promise<void> {
   const dirs = clientDirs(packageRoot);
   await rm(dirs.previous, { recursive: true, force: true });
@@ -83,7 +82,6 @@ async function swapClient(packageRoot: string): Promise<void> {
   await rename(dirs.staging, dirs.client);
 }
 
-/** Why this checkout cannot be pulled, or undefined when it can. */
 function pullBlocker(facts: UpdateFacts): string | undefined {
   if (!facts.tracked) {
     return "this branch has no upstream to pull from";
@@ -137,11 +135,11 @@ function plan(facts: UpdateFacts): UpdatePlan {
       blocking: true,
     });
   } else {
-    // Install the exact version, never `@latest`: a tag cannot be reported truthfully.
+    // Exact version, not `@latest`, so the reported version is accurate.
     steps.push({
       label: `install ${packageName}@${latest}`,
       command: ["bun", "install", "-g", `${packageName}@${latest}`],
-      // No cwd: a global install must not adopt the tree it is replacing.
+      // No cwd: the global install must not run inside the tree it replaces.
       cwd: undefined,
     });
   }
@@ -156,14 +154,16 @@ async function gather(): Promise<UpdateFacts> {
       ? Git.fetchStatus(at.packageRoot).then((git) => git.dirtyCount === 0)
       : Promise.resolve(true),
     at.kind === "dev"
-      ? Git.upstreamOf(at.packageRoot).then((at) => at !== undefined)
+      ? Git.upstreamOf(at.packageRoot).then(
+          (upstream) => upstream !== undefined
+        )
       : Promise.resolve(true),
     at.kind === "prod" ? PimVersion.latest() : Promise.resolve(undefined),
   ]);
   return { at, packageName, cleanTree, tracked, latest };
 }
 
-/** Never restarts or exits: the caller owns that. */
+/** Never restarts or exits; that's the caller's job. */
 async function run(options: UpdateOptions = {}): Promise<UpdateOutcome> {
   const from = await PimVersion.current();
   const { steps, skipped } = plan(await gather());

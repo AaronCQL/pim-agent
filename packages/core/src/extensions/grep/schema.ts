@@ -2,15 +2,11 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
 
 export const GREP_HEAD_LIMIT_MAX = 1000;
-export const GREP_CONTEXT_MAX = 20;
+const GREP_CONTEXT_MAX = 20;
 
-export const GREP_OUTPUT_MODES = [
-  "files_with_matches",
-  "content",
-  "count",
-] as const;
+const GREP_OUTPUT_MODES = ["files_with_matches", "content", "count"] as const;
 
-export const GREP_PATH_FORMATS = ["relative", "absolute"] as const;
+const GREP_PATH_FORMATS = ["relative", "absolute"] as const;
 
 export const grepSchema = Type.Object({
   pattern: Type.String({

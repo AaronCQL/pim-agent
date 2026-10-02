@@ -28,7 +28,7 @@ export type ToolDiff = {
   readonly hunks: readonly ToolDiffHunk[];
 };
 
-// Keep the EOF-newline flag out of `lines`, or `joinComparable` emits a phantom blank line.
+// The EOF newline is a flag, not an empty last line, or diffs gain a phantom blank line.
 export type ToolDiffSide = {
   readonly lines: readonly string[];
   readonly hasTrailingNewline: boolean;
@@ -48,16 +48,11 @@ function buildToolDiff(
 
   const lines = build(oldSide.lines, newSide.lines);
 
-  if (!lines.some((line) => line.kind !== "context")) {
+  if (lines.every((line) => line.kind === "context")) {
     return undefined;
   }
 
-  const emphasized = attachEmphasis(lines);
-
-  return {
-    path,
-    hunks: buildHunks(emphasized, contextSize),
-  };
+  return { path, hunks: buildHunks(attachEmphasis(lines), contextSize) };
 }
 
 function fromText(text: string): ToolDiffSide {
@@ -82,48 +77,35 @@ function attachEmphasis(
   let i = 0;
 
   while (i < result.length) {
-    if (result[i]?.kind !== "removed") {
+    if (result[i]!.kind !== "removed") {
       i += 1;
       continue;
     }
 
     let removedEnd = i;
-    while (
-      removedEnd < result.length &&
-      result[removedEnd]?.kind === "removed"
-    ) {
+    while (result[removedEnd]?.kind === "removed") {
       removedEnd += 1;
     }
-
     let addedEnd = removedEnd;
-    while (addedEnd < result.length && result[addedEnd]?.kind === "added") {
+    while (result[addedEnd]?.kind === "added") {
       addedEnd += 1;
     }
 
-    const removedCount = removedEnd - i;
-    const addedCount = addedEnd - removedEnd;
-
-    if (removedCount > 0 && removedCount === addedCount) {
-      for (let k = 0; k < removedCount; k += 1) {
-        const removed = result[i + k];
-        const added = result[removedEnd + k];
-
-        if (removed === undefined || added === undefined) {
-          continue;
-        }
-
+    // Only pair lines when the removed and added runs are the same length.
+    const count = removedEnd - i;
+    if (count === addedEnd - removedEnd) {
+      for (let k = 0; k < count; k += 1) {
+        const removed = result[i + k]!;
+        const added = result[removedEnd + k]!;
         const ranges = computeIntraLineRanges(removed.text, added.text);
-
-        if (ranges === undefined) {
-          continue;
+        if (ranges !== undefined) {
+          result[i + k] = { ...removed, emphasis: ranges.removed };
+          result[removedEnd + k] = { ...added, emphasis: ranges.added };
         }
-
-        result[i + k] = { ...removed, emphasis: ranges.removed };
-        result[removedEnd + k] = { ...added, emphasis: ranges.added };
       }
     }
 
-    i = addedEnd > i ? addedEnd : i + 1;
+    i = addedEnd;
   }
 
   return result;

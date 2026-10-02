@@ -3,14 +3,10 @@ import { createSignal, onCleanup } from "solid-js";
 
 import { fit } from "../format";
 
-// Sub-pixel slack, or a box a hair under its own text elides a text that fits.
+// Sub-pixel slack, so a text that just fits is not elided.
 const SLACK = 0.02;
 
-/**
- * The first of `texts` the box has room for, measured rather than guessed.
- * A child paints the room itself, in character cells, when what fits is more
- * than one string — the count is what it was measured in either way.
- */
+/** Shows the first of `texts` that fits; `children` gets the room in columns instead. */
 export function Fitted(props: {
   readonly texts: readonly string[];
   readonly class?: string;
@@ -21,6 +17,8 @@ export function Fitted(props: {
   const columns = (): number => Math.floor(widest().length * share() + SLACK);
 
   let box!: HTMLSpanElement;
+  // Unclipped copy to measure: the box itself shrinks onto its ellipsis.
+  // `inline-block` because inline boxes are not observed.
   let ghost!: HTMLSpanElement;
   const observer = new ResizeObserver(() => {
     const full = ghost.getBoundingClientRect().width;
@@ -38,8 +36,6 @@ export function Fitted(props: {
       }}
       class={`relative min-w-0 overflow-hidden whitespace-pre ${props.class ?? ""}`}
     >
-      {/* The chip is `max-w-max`, so measure a copy no cut touches, or the box
-          shrinks onto its own ellipsis. `inline-block`: inline boxes go unobserved. */}
       <span
         ref={(element: HTMLSpanElement) => {
           ghost = element;

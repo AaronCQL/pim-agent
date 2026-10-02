@@ -27,9 +27,7 @@ import type {
 
 export type SessionCatalogueDeps = {
   readonly registry: SessionRegistry;
-  /** Which sessions have been read, shared by every client. */
   readonly cursors: ReadCursors;
-  /** Archived, held-unread and pinned, shared by every client. */
   readonly meta: SessionMeta;
   readonly liveStatus: (sessionId: string) => SessionStatus | undefined;
   readonly liveSessionIds: () => Iterable<string>;
@@ -39,10 +37,10 @@ export type SessionCatalogueDeps = {
 
 const DEFAULT_SESSION_LIMIT = 50;
 
-/** A digest is a whole-file read; a page of them at once is a page of files in memory at once. */
+/** Concurrent digest reads; each reads a whole file into memory. */
 const DIGEST_READS = 16;
 
-/** Long enough that a turn's entries are one announcement, short enough that a new session appears while the user is still looking. */
+/** Debounce for `sessions_changed`. */
 const ANNOUNCE_MS = 500;
 
 type CachedDigest = SessionDigest & { readonly modifiedAt: number };
@@ -51,7 +49,6 @@ type Overrides = ReadonlyMap<string, SessionEntry>;
 
 type PageScope = {
   readonly overrides: Overrides;
-  /** True while listing the archived sessions rather than the live ones. */
   readonly archived: boolean;
   readonly limit: number;
   readonly perProject: number;
@@ -72,12 +69,7 @@ export class SessionCatalogue {
     this.index = this.newIndex();
   }
 
-  /**
-   * Follow the sessions tree while anyone is connected. A session the terminal
-   * or a vanilla `pi` starts is a file this process never hears about
-   * otherwise, and a list nobody asked to re-fetch is a list that never learns
-   * about it.
-   */
+  /** Watches the sessions tree, so sessions started by other processes are announced. */
   public watch(active: boolean): void {
     if (active === this.watching) {
       return;
@@ -103,7 +95,7 @@ export class SessionCatalogue {
       this.deps.meta.sessions(),
       this.deps.meta.pinning(),
     ]);
-    // Prune only on an unfiltered listing: a cwd-filtered one would forget every other directory.
+    // Prune only when unfiltered, or other directories would be forgotten.
     if (command.cwd === undefined) {
       const alive = new Set([
         ...summaries.map((summary) => summary.sessionId),
@@ -113,9 +105,10 @@ export class SessionCatalogue {
         this.deps.cursors.prune(alive),
         this.deps.meta.prune(alive),
       ]);
+      this.forget(alive, new Set(summaries.map((summary) => summary.path)));
     }
     const scope = command.archived === true;
-    // Before the cut: an archived row that ate the page budget would push a live one off the end.
+    // Filter before paging so out-of-scope rows don't use the page budget.
     const inScope = summaries.filter(
       (summary) =>
         (overrides.get(summary.sessionId)?.archived === true) === scope
@@ -126,19 +119,13 @@ export class SessionCatalogue {
         overrides,
         archived: scope,
         limit,
-        // Absent, a project may fill the page; it is the page that bounds it either way.
         perProject: command.perProject ?? limit,
       }),
-      // Counted before the cut, and over the whole scope: a collapsed group says how many it holds, and a row the cut dropped is one a client can still ask for.
+      // Counted before paging.
       projects: projectsOf(inScope, pinning),
     };
   }
 
-  /**
-   * The index cannot see the sidecar, so the archived scope is a predicate it
-   * calls before its own limit, and the badge is a `Map.get` over the one read
-   * of `sessions.json` this query makes.
-   */
   public async search(
     command: Command & { readonly type: "search_sessions" }
   ): Promise<SessionSearch> {
@@ -162,7 +149,7 @@ export class SessionCatalogue {
     };
   }
 
-  /** Announces a status edge to every client; the announcement must precede the read mark. */
+  /** Announces a status change; must precede the read mark. */
   public onStatus(sessionId: string, status: SessionStatus): void {
     if (this.activity.get(sessionId) === status) {
       return;
@@ -178,10 +165,10 @@ export class SessionCatalogue {
     this.activity.set(sessionId, status);
   }
 
-  /** Moves a session's read cursor to now, drops the mark a reader left on it by hand, and says so to every client. */
+  /** Marks read now, clears the sticky unread flag, and announces it. */
   public async markRead(sessionId: string): Promise<void> {
     await this.deps.cursors.mark(sessionId);
-    // The only place the sticky flag is cleared; a listing must never clear it.
+    // The only place the sticky flag is cleared.
     if ((await this.deps.meta.of(sessionId)).unread === true) {
       await this.deps.meta.setUnread(sessionId, false);
     }
@@ -199,17 +186,28 @@ export class SessionCatalogue {
     this.index = this.newIndex();
   }
 
-  /** One index per catalogue, and so one per session root; the registry's listing is the tree it follows. */
+  private forget(alive: ReadonlySet<string>, paths: ReadonlySet<string>): void {
+    for (const map of [this.activity, this.settled]) {
+      for (const sessionId of map.keys()) {
+        if (!alive.has(sessionId)) {
+          map.delete(sessionId);
+        }
+      }
+    }
+    for (const path of this.digests.keys()) {
+      if (!paths.has(path)) {
+        this.digests.delete(path);
+      }
+    }
+  }
+
   private newIndex(): SearchIndex {
     return new SearchIndex({ list: () => this.deps.registry.list() });
   }
 
   /**
-   * Selects by modified time under a per-project budget and digests only what
-   * it selects: ordering by settle time would read every session on disk. A
-   * session with nothing to call itself is not a row, and the budget it spent
-   * goes back to its project, so a directory of abandoned files still shows
-   * the sessions underneath them.
+   * Selects by mtime under a per-project budget and digests only the selection.
+   * A session without a title yields no row and refunds its project's budget.
    */
   private async page(
     candidates: readonly SessionSummary[],
@@ -241,7 +239,7 @@ export class SessionCatalogue {
     return rows.sort((a, b) => b.settledAt - a.settledAt);
   }
 
-  /** Nothing for a session that never asked anything and was never named: the row it would draw is a truncated UUID. */
+  /** Undefined for a session with no title (never prompted or named). */
   private async row(
     { sessionId, cwd, path, createdAt, modifiedAt }: SessionSummary,
     { overrides, archived }: PageScope
@@ -273,7 +271,7 @@ export class SessionCatalogue {
     };
   }
 
-  // One watch per directory, never a recursive one: `fs.watch` recursion is unsupported on some platforms and silent on others.
+  // One watch per directory: recursive `fs.watch` is unreliable across platforms.
   private follow(): void {
     const root = this.deps.registry.sessionsRoot;
     const wanted = new Set([root, ...FileWatch.subdirectories(root)]);
@@ -295,7 +293,6 @@ export class SessionCatalogue {
     }
   }
 
-  // Debounced: a turn writes a dozen entries, and re-listing is a read of every session header.
   private onTreeChange(): void {
     if (this.announcing !== undefined || !this.watching) {
       return;
@@ -308,7 +305,7 @@ export class SessionCatalogue {
     this.announcing.unref?.();
   }
 
-  // A running session must be answered for by its last idle reading: mid-turn the file's time is the line just written.
+  // Mid-turn, use the last idle time: the file's time is just the latest write.
   private answerTime(
     sessionId: string,
     status: SessionStatus | undefined,
@@ -339,13 +336,7 @@ export class SessionCatalogue {
     return renamed(digest, name);
   }
 
-  /**
-   * Mid-turn the file is appended to between listings, so its digest never hits
-   * the cache and the whole-file read lands on the busiest session there is.
-   * Nothing it answers can have moved: the opening message was written long
-   * ago, the settle time is deliberately not read from the file while a turn
-   * runs, and the name is the live session's own to say.
-   */
+  /** Mid-turn the cached digest is reused despite a changed mtime: nothing it holds can have moved. */
   private reusable(
     path: string,
     modifiedAt: number,
@@ -356,8 +347,7 @@ export class SessionCatalogue {
     if (cached === undefined) {
       return undefined;
     }
-    // Except a name the live session has since cleared: the opening message a
-    // nameless row falls back to is in the file and nowhere else.
+    // A cleared name needs the opening message, which only the file has.
     if (name === null && cached.named === true) {
       return undefined;
     }
@@ -374,7 +364,7 @@ export class SessionCatalogue {
     return digest;
   }
 
-  /** What a live session calls itself, without reading its file; `null` is live and unnamed. */
+  /** `null` is live and unnamed; undefined is not live. */
   private liveName(sessionId: string): string | null | undefined {
     const agent = this.deps.registry.peek(sessionId)?.agentSession;
     return agent === undefined
@@ -383,7 +373,6 @@ export class SessionCatalogue {
   }
 }
 
-/** The row the wire carries: the index's hit, plus the one thing about it only the sidecar knows. */
 function hitOf(hit: SearchHit, archived: boolean): SearchHitView {
   return {
     sessionId: hit.sessionId,
@@ -398,7 +387,7 @@ function hitOf(hit: SearchHit, archived: boolean): SearchHitView {
   };
 }
 
-/** A live session's own name wins over the file's: a rename lands on the row before the digest behind it expires. */
+/** A live session's name wins over the file's. */
 function renamed(
   digest: SessionDigest,
   name: string | null | undefined
@@ -408,7 +397,7 @@ function renamed(
     : digest;
 }
 
-/** The next sessions to digest, newest first, skipping the projects that have spent their budget and the candidates an earlier round already took. */
+/** The next unconsumed sessions to digest, skipping projects over budget. */
 function choose(
   candidates: readonly SessionSummary[],
   consumed: Set<SessionSummary>,
@@ -431,7 +420,6 @@ function choose(
   return batch;
 }
 
-/** Every working directory the scope holds sessions in, newest first; the count is the header scan's, so it owes nothing to the page. */
 function projectsOf(
   summaries: readonly SessionSummary[],
   { projects, order }: Pinning

@@ -28,11 +28,6 @@ function get(path: string): Promise<Response> {
   return endpoint.handle(new Request(`http://gateway${path}`));
 }
 
-test("owns only its own prefix", () => {
-  expect(ImageEndpoint.owns("/image/x.png")).toBe(true);
-  expect(ImageEndpoint.owns("/attachment/s1/x.png")).toBe(false);
-});
-
 test("serves the cached copy immutably", async () => {
   await Bun.write(join(root, `img-${SHA256}.png`), PNG);
 

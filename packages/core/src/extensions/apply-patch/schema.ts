@@ -10,7 +10,6 @@ export type ApplyPatchInput = Static<typeof applyPatchSchema>;
 
 const ALIAS_KEYS = ["patch", "patchText", "patch_text"] as const;
 
-/** Normalize a bare string or a `patch`/`patchText`/`patch_text` key to `{input}`, dropping the alias. */
 export function prepareApplyPatchArguments(rawArgs: unknown): ApplyPatchInput {
   if (typeof rawArgs === "string") {
     return { input: rawArgs };

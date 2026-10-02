@@ -9,7 +9,7 @@ import { Highlight } from "../view/highlight";
 import { syntaxClass } from "../view/tokens";
 import { Diagrams } from "./Diagrams";
 
-// The `<pre>` the parser may still append to: markdown only grows at its tail.
+// The `<pre>` the parser may still append to.
 function openBlock(host: HTMLElement): Element | undefined {
   let node = host.lastElementChild;
   while (node !== null) {
@@ -21,7 +21,6 @@ function openBlock(host: HTMLElement): Element | undefined {
   return undefined;
 }
 
-// Links open out of the page: `target=_blank` and `noopener`, set as each anchor arrives.
 function renderer(host: HTMLElement): smd.Default_Renderer {
   const base = smd.default_renderer(host);
   return {
@@ -54,8 +53,7 @@ async function copyInline(code: Element): Promise<void> {
   code.setAttribute("data-copied", "");
 }
 
-// One delegated listener: the parser owns this DOM and rewrites it, so no token
-// can be bound individually.
+// Delegated: the parser owns and rewrites this DOM.
 function onCodeClick(event: MouseEvent): void {
   const from = event.target;
   if (!(from instanceof Element)) {
@@ -65,15 +63,14 @@ function onCodeClick(event: MouseEvent): void {
   if (code === null || code.closest("pre, a") !== null) {
     return;
   }
-  // A click that ends a drag is a selection, not a copy request.
+  // A click that ends a drag is a selection.
   if (window.getSelection()?.isCollapsed === false) {
     return;
   }
   void copyInline(code);
 }
 
-// Only closed blocks, and in a wrapper: `<pre>` scrolls, and a button inside it
-// would slide off with the code.
+// Wrapped because a button inside the scrolling `<pre>` would scroll with the code.
 function mountCopyButtons(
   host: HTMLElement,
   open: Element | undefined,
@@ -103,8 +100,7 @@ function mountCopyButtons(
   }
 }
 
-// Closed fences only: the parser never repaints, and half a line tokenises wrong.
-// Marked with `data-hl` rather than a class, which carries the fence language.
+// `data-hl`, not a class: the class carries the fence language.
 function highlightFences(host: HTMLElement, open: Element | undefined): void {
   for (const code of host.querySelectorAll("pre > code:not([data-hl])")) {
     if (code.parentElement === open) {
@@ -112,7 +108,6 @@ function highlightFences(host: HTMLElement, open: Element | undefined): void {
     }
 
     const lang = Languages.resolve(code.className);
-    // Untracked: the effect below already tracks the grammar generation.
     const lines = untrack(() =>
       Highlight.tokenize(code.textContent ?? "", lang)
     );
@@ -131,16 +126,11 @@ function highlightFences(host: HTMLElement, open: Element | undefined): void {
   }
 }
 
-/**
- * Markdown rendered by `streaming-markdown`: only the appended suffix is
- * parsed, text that diverges rebuilds the element, and `complete` flushes the
- * token the parser withholds mid-stream.
- */
+/** Streams appended text into the parser; text that diverges rebuilds from scratch. */
 export function Markdown(props: {
   readonly text: string;
   readonly complete?: boolean;
-  /** Wrapping, replaced rather than appended: two `overflow-wrap` utilities
-      on one element resolve by stylesheet order, not by who wrote them. */
+  /** Replaces the default `break-words`; two wrap utilities on one element would conflict. */
   readonly wrap?: string;
 }) {
   let host!: HTMLDivElement;
@@ -166,7 +156,7 @@ export function Markdown(props: {
     () => ({
       text: props.text,
       complete: props.complete !== false,
-      // A grammar arriving repaints every fence painted plain without it.
+      // A newly loaded grammar repaints fences painted without it.
       grammars: Highlight.version(),
     }),
     ({ text, complete, grammars }) => {

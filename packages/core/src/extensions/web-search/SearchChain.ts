@@ -18,7 +18,7 @@ export type SearchChainOptions = {
   readonly breaker: SearchBreaker;
 };
 
-/** Tries providers in order until one answers; an empty result set is an answer and ends the chain. */
+/** Tries providers in order; the first answer wins, even an empty one. */
 export class SearchChain {
   private readonly providers: readonly SearchProvider[];
   private readonly breaker: SearchBreaker;
@@ -30,7 +30,6 @@ export class SearchChain {
 
   public async search(input: ProviderSearchInput): Promise<ChainSearchOutcome> {
     const failures: string[] = [];
-    let attempted = false;
 
     for (const provider of this.providers) {
       if (await this.breaker.isOpen(provider.name)) {
@@ -46,13 +45,15 @@ export class SearchChain {
         const results = await provider.search(input);
         await this.breaker.reset(provider.name);
 
-        return { provider: provider.name, results, fellBack: attempted };
+        return {
+          provider: provider.name,
+          results,
+          fellBack: failures.length > 0,
+        };
       } catch (error) {
         if (input.signal?.aborted || Errors.isAbort(error)) {
           throw error;
         }
-
-        attempted = true;
 
         if (error instanceof ProviderQuotaError) {
           await this.breaker.trip({

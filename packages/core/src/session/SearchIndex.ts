@@ -13,59 +13,56 @@ import {
 } from "./SessionDigest";
 import type { SessionSummary } from "./SessionRegistry";
 
-/** Half-open character offsets into the string they mark, non-overlapping, ascending. */
+/** Half-open character offsets; non-overlapping and ascending. */
 export type SearchRange = readonly [start: number, end: number];
 
 export type SearchSnippet = {
   readonly seq: number;
   readonly role: "user" | "assistant";
-  /** The windowed snippet, verbatim from the message. */
   readonly text: string;
   /** Offsets into `text`, not into the message. */
   readonly ranges: readonly SearchRange[];
-  /** The window opened past the message's first word. */
+  /** The snippet does not start at the message start. */
   readonly cutHead?: true;
 };
 
 export type SearchHit = {
   readonly sessionId: string;
   readonly cwd: string;
-  /** This machine's path to the session file: local to whoever reads it, and never fit for a wire. */
+  /** Local file path; do not send over the wire. */
   readonly path: string;
   readonly title?: string;
   readonly named?: true;
   /** Offsets into the clamped `title`. */
   readonly titleRanges: readonly SearchRange[];
-  /** The session's opening ask, for a row whose name is all that matched and so has no snippet to show. */
+  /** The first user message; set only for named sessions. */
   readonly opening?: string;
-  /** End of the last completed turn, falling back to when the session started: a row always has a clock to print. */
+  /** End of the last completed turn, else the session's creation time. */
   readonly settledAt: number;
   readonly snippets: readonly SearchSnippet[];
   /** Matching messages in this session, before the snippet cut. */
   readonly total: number;
-  /** This hit was reached through typo expansion, so it ranks below every exact hit. */
+  /** Matched only via typo expansion; ranks below exact hits. */
   readonly typos: boolean;
 };
 
 export type SearchAnswer = {
   readonly hits: readonly SearchHit[];
-  /** Query words dropped because they were too rare; the UI says these out loud. */
+  /** Query words dropped to get any results, rarest first. */
   readonly dropped: readonly string[];
-  /** Sessions searched. */
   readonly scanned: number;
 };
 
 export type SearchOptions = {
   readonly limit?: number;
   readonly cwd?: string;
-  /** Applied before the limit, so the server can exclude sessions without core knowing why. */
+  /** Applied before `limit`. */
   readonly accept?: (sessionId: string) => boolean;
 };
 
 export type SearchIndexDeps = {
-  /** `SessionRegistry.list` in production; a fake in tests. */
   readonly list: () => Promise<readonly SessionSummary[]>;
-  /** Only the refresh throttle reads it, and only a test replaces it. */
+  /** Clock for the refresh throttle. */
   readonly now?: () => number;
 };
 
@@ -83,9 +80,9 @@ type Entry = {
   readonly path: string;
   readonly createdAt: number;
   modifiedAt: number;
-  /** Durable bytes taken from the file, and the resume point of the next tail read. */
+  /** Bytes read so far; the next tail read starts here. */
   offset: number;
-  /** Durable lines taken, so an appended one keeps counting from the right ordinal. */
+  /** Lines read so far. */
   seq: number;
   parts: DigestParts;
   digest: SessionDigest;
@@ -97,23 +94,22 @@ type Posting = {
   readonly turn: Turn;
 };
 
-/** What one file's read yielded: `full` replaces the entry, otherwise it extends it. */
+/** `full` replaces the entry; otherwise `body` is appended to it. */
 type Read = {
   readonly full: boolean;
   readonly body?: Durable;
 };
 
-/** One file's read, folded into its entry and with the bytes already let go. */
 type Taken = {
   readonly entry: Entry;
-  /** Turns the entry held before this read, so only the appended ones are posted. */
+  /** Turn count before this read; later turns are new. */
   readonly from: number;
-  /** A whole file read over an entry we already had, so every ordinal it owned is stale. */
+  /** An existing entry was re-read in full, so postings must be rebuilt. */
   readonly replaced: boolean;
 };
 
 type Plan = {
-  /** Terms reached with no typos: the word itself, and prefixes of it when it is last. */
+  /** The word itself, plus completions when it is the last word. */
   readonly exact: readonly string[];
   readonly typo: readonly string[];
 };
@@ -124,11 +120,7 @@ type Group = {
   exact: boolean;
 };
 
-/**
- * Everything `byRank` weighs, taken from the group alone: no message is
- * tokenised until the sort has cut the losers, and four in five matched
- * sessions never reach a snippet.
- */
+/** Rank inputs, computed without tokenising any message. */
 type Ranked = {
   readonly entry: Entry;
   readonly group: Group;
@@ -140,45 +132,34 @@ type Ranked = {
 
 const FILE_READS = 16;
 
-/** The granularity at which the catalogue already decided file changes become visible. */
 const REFRESH_MS = 500;
 
-/** Typesense's `typo_tokens_threshold`: below this many results, and only then, typos are allowed in. */
+/** Typesense's `typo_tokens_threshold`: typos are tried only below this many results. */
 const ENOUGH = 1;
 
-/** Typesense's `max_candidates`; unbounded expansion is where precision dies. */
+/** Typesense's `max_candidates`. */
 const MAX_CANDIDATES = 4;
 
 const MAX_TYPOS = 2;
 
-/** Typesense's `highlight_affix_num_tokens`, for the run-up only: how far back of the match a window opens. */
+/** Typesense's `highlight_affix_num_tokens`: tokens shown before the first match. */
 const AFFIX = 4;
 
-/**
- * How far past the window's start a snippet runs. A row is cut to pixels, and
- * only the row knows how many it has, so the tail is not a window at all: it is
- * more text than the widest row can draw — the modal is capped at 30rem, which
- * is about 59 of these characters — and the client's own ellipsis does the
- * cutting. A word count here cut short rows shorter still, on the wide screens
- * that had the most room to spare.
- */
+/** Snippet length in characters; more than the widest row shows, so the client's ellipsis cuts it. */
 const TAIL = 100;
 
 const SNIPPETS = 2;
 
-/** What a row draws of an opening ask before its own box cuts it anyway. */
 const PREVIEW = 200;
 
 const LIMIT = 20;
 
-/** Cheap reject before decoding a line: no text part, nothing to index. */
+/** Lines without this are skipped before decoding. */
 const TEXT = Buffer.from('"text"');
 
 /**
- * An inverted index over what was said in every session on disk: `user:text`
- * and `assistant:text` only, which is a sixtieth of the bytes a session tree
- * weighs. Built lazily on the first query and refreshed by later ones, never
- * by a watcher, so the cold cost belongs to whoever searches.
+ * Inverted index over user and assistant text in every session, plus titles.
+ * Built on the first query and refreshed incrementally by later ones.
  */
 export class SearchIndex {
   private readonly list: () => Promise<readonly SessionSummary[]>;
@@ -229,13 +210,13 @@ export class SearchIndex {
       hits: ranked
         .sort(byRank)
         .slice(0, options.limit ?? LIMIT)
-        .map((one) => hitOf(one)),
+        .map(hitOf),
       dropped,
       scanned: scope.size,
     };
   }
 
-  /** Exact and prefix first; typos only widen a result set that came back thin. */
+  /** Exact and prefix first; adds typos only while results are too few. */
   private run(words: readonly string[], scope: ReadonlySet<Entry>): Ranked[] {
     const reach = Math.min(MAX_TYPOS, Math.max(...words.map(gateOf)));
     const last = words.length - 1;
@@ -286,15 +267,11 @@ export class SearchIndex {
   }
 
   private collect(plans: readonly Plan[], scope: ReadonlySet<Entry>): Ranked[] {
-    const turnsExact = plans.map((plan) =>
-      this.union(this.postings, plan.exact)
-    );
-    const titlesExact = plans.map((plan) =>
-      this.union(this.titles, plan.exact)
-    );
+    const turnsExact = plans.map((plan) => union(this.postings, plan.exact));
+    const titlesExact = plans.map((plan) => union(this.titles, plan.exact));
     const everything = plans.map((plan) => [...plan.exact, ...plan.typo]);
-    const turns = everything.map((terms) => this.union(this.postings, terms));
-    const titles = everything.map((terms) => this.union(this.titles, terms));
+    const turns = everything.map((terms) => union(this.postings, terms));
+    const titles = everything.map((terms) => union(this.titles, terms));
     const terms = new Set(everything.flat());
 
     const groups = new Map<Entry, Group>();
@@ -363,19 +340,6 @@ export class SearchIndex {
       .slice(0, MAX_CANDIDATES);
   }
 
-  private union<T>(
-    index: ReadonlyMap<string, T[]>,
-    terms: readonly string[]
-  ): ReadonlySet<T> {
-    const found = new Set<T>();
-    for (const term of terms) {
-      for (const value of index.get(term) ?? []) {
-        found.add(value);
-      }
-    }
-    return found;
-  }
-
   private vocabularyOf(): readonly string[] {
     if (this.vocabularyStale) {
       this.vocabulary = [
@@ -421,9 +385,7 @@ export class SearchIndex {
       }
     }
 
-    // A posting is an ordinal into one flat array of turns, which only holds
-    // while every entry keeps the turns it had; a replaced or departed session
-    // invalidates the lot, and an appended one does not.
+    // Postings are indices into `turns`, so a replaced or removed session forces a full reindex.
     if (replaced) {
       this.reindex();
     } else {
@@ -436,11 +398,7 @@ export class SearchIndex {
     this.syncedAt = this.now();
   }
 
-  /**
-   * One file's bytes end here, with the turns and parts taken out of them:
-   * held until the pool drained instead, a whole session tree would be
-   * resident at once. The entry lands in `entries` in the caller's order.
-   */
+  /** Absorbs the file's bytes immediately so they are not all held at once. */
   private async take(summary: SessionSummary): Promise<Taken | undefined> {
     const read = await this.read(summary);
     if (read === undefined) {
@@ -456,11 +414,7 @@ export class SearchIndex {
     return { entry, from, replaced: read.full && known !== undefined };
   }
 
-  /**
-   * A session file is append-only, so the usual read is the bytes past the
-   * stored offset. Only a file that shrank or whose mtime went backwards has
-   * been rewritten under us, and only that forces the whole file again.
-   */
+  /** Reads only the appended tail, unless the file shrank or its mtime went backwards. */
   private async read(summary: SessionSummary): Promise<Read | undefined> {
     const known = this.entries.get(summary.sessionId);
     const file = Bun.file(summary.path);
@@ -643,7 +597,7 @@ function rangesOf(
   return rangesIn(SearchTokens.scan(text), terms, 0, text.length);
 }
 
-/** Offsets into the cut the caller is about to make, not into the string the tokens came from. */
+/** Ranges within `[from, to)`, relative to `from`. */
 function rangesIn(
   tokens: readonly SearchToken[],
   terms: ReadonlySet<string>,
@@ -675,12 +629,12 @@ function merge(ranges: readonly SearchRange[]): readonly SearchRange[] {
   return marked;
 }
 
-/** What you asked is more memorable than what the agent answered. */
+/** User turns first, then by seq. */
 function byRecognition(a: Turn, b: Turn): number {
   return a.role === b.role ? a.seq - b.seq : a.role === "user" ? -1 : 1;
 }
 
-/** The turn a hit will lead with, without sorting the ones it will never show. */
+/** The first turn by `byRecognition`, without sorting. */
 function leadOf(turns: readonly Turn[]): Turn | undefined {
   let lead: Turn | undefined;
   for (const turn of turns) {
@@ -698,11 +652,7 @@ function byRank(a: Ranked, b: Ranked): number {
   return a.field - b.field || b.settledAt - a.settledAt;
 }
 
-/**
- * A title match outranks a spoken one. The title index is built from the very
- * tokens `rangesOf` marks, so a titled group always has a range to show, and
- * the field is settled without cutting a single snippet.
- */
+/** Title match, then user turn, then assistant turn. */
 function fieldOf(group: Group, title: string | undefined): number {
   if (group.title && title !== undefined) {
     return 0;
@@ -734,6 +684,19 @@ function add<T>(into: Map<string, T[]>, key: string, value: T): void {
 function groupIn(groups: Map<Entry, Group>, entry: Entry): Group {
   const found = groups.get(entry) ?? { turns: [], title: false, exact: false };
   groups.set(entry, found);
+  return found;
+}
+
+function union<T>(
+  index: ReadonlyMap<string, T[]>,
+  terms: readonly string[]
+): ReadonlySet<T> {
+  const found = new Set<T>();
+  for (const term of terms) {
+    for (const value of index.get(term) ?? []) {
+      found.add(value);
+    }
+  }
   return found;
 }
 

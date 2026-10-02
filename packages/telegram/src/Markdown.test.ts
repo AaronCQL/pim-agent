@@ -56,8 +56,7 @@ describe("toHtml", () => {
     expect(Markdown.toHtml("a \\~~b~~ c")).toBe("<p>a ~~b~~ c</p>");
   });
 
-  // Known limitation: strikethrough that wraps other inline markup is rebuilt
-  // from text fragments, so the `~~` runs land in separate nodes and stay literal.
+  // Known limitation.
   test("strikethrough spanning inline markup is not struck", () => {
     expect(Markdown.toHtml("~~a **b** c~~")).toBe("<p>~~a <b>b</b> c~~</p>");
   });
@@ -158,6 +157,12 @@ describe("toHtml", () => {
       "<table><tr><th>Name</th><th>Score</th></tr>" +
         "<tr><td>Aaron</td><td>99</td></tr>" +
         "<tr><td>Bo</td><td>7</td></tr></table>"
+    );
+  });
+
+  test("header-only table renders its header row", () => {
+    expect(Markdown.toHtml("| a | b |\n|---|---|")).toBe(
+      "<table><tr><th>a</th><th>b</th></tr></table>"
     );
   });
 

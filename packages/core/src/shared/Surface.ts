@@ -1,2 +1,2 @@
-/** Where the human on the other end is reading; absent for a subagent, which has no human. */
+/** Where the user is reading. Absent for a subagent. */
 export type Surface = "terminal" | "web browser" | "Telegram";

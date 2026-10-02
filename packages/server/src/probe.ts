@@ -160,25 +160,16 @@ for (const path of values.upload ?? []) {
   process.stderr.write(`uploaded: ${JSON.stringify(file)}\n`);
 }
 
-if (values.cancel) {
-  const response = await probe.send({
-    type: "cancel",
-    sessionId: probe.sessionId ?? "",
-  });
-  process.stderr.write(`cancel: ${JSON.stringify(response)}\n`);
-}
-if (values.dequeue) {
-  const response = await probe.send({
-    type: "dequeue",
-    sessionId: probe.sessionId ?? "",
-  });
-  process.stderr.write(`dequeue: ${JSON.stringify(response)}\n`);
-}
-
 const sessionId = probe.sessionId ?? "";
 const report = (what: string, response: ResponseEvent): void => {
   process.stderr.write(`${what}: ${JSON.stringify(response)}\n`);
 };
+if (values.cancel) {
+  report("cancel", await probe.send({ type: "cancel", sessionId }));
+}
+if (values.dequeue) {
+  report("dequeue", await probe.send({ type: "dequeue", sessionId }));
+}
 if (values.rename !== undefined) {
   report("rename", await probe.rename(sessionId, values.rename || null));
 }
@@ -200,9 +191,6 @@ if (values.unpin !== undefined) {
 
 if (values.prompt !== undefined) {
   await probe.promptWith(values.prompt, uploaded);
-}
-
-if (values.prompt !== undefined) {
   await probe.waitFor(
     (event) => event.type === "session_state" && event.status === "idle",
     { timeoutMs: 10 * 60_000, from: mark }

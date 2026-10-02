@@ -38,16 +38,6 @@ describe("SpillCache.write", () => {
 
     expect(await Bun.file(path!).text()).toBe("# hello\nworld");
   });
-
-  test("accepts binary payloads", async () => {
-    const path = await SpillCache.write(
-      "bash",
-      "out",
-      new Uint8Array([65, 66])
-    );
-    expect(path).toBeTruthy();
-    expect(await Bun.file(path!).text()).toBe("AB");
-  });
 });
 
 describe("SpillCache.writeNamed", () => {

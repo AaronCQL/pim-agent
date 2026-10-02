@@ -54,7 +54,7 @@ function build(
           isImage: stored.mimeType.startsWith("image/"),
         };
         return {
-          // Never the URL: an address the model can repeat is a second, dead copy of this delivery.
+          // Omit the URL so the model can't repeat it.
           content: [{ type: "text", text: `Sent ${details.name} (${size} B)` }],
           details,
         };

@@ -13,10 +13,6 @@ import type { SearchHitView } from "#protocol/ServerEvent";
 import { ProbeClient } from "./ProbeClient";
 import { WsGateway } from "./WsGateway";
 
-/**
- * Search over the wire: the fixture corpus of Phase 1a, read through a real
- * socket. No model ever answers here — nothing in it runs a turn.
- */
 const SESSIONS = 13;
 
 let tmp: string;
@@ -34,7 +30,7 @@ async function connect(): Promise<ProbeClient> {
   return probe;
 }
 
-/** Dates every file by the conversation in it, so a page is the corpus's own order and not the disk's. */
+/** Sets each file's mtime from its conversation, so disk order matches corpus order. */
 async function age(): Promise<void> {
   for (const summary of summaries) {
     const seconds = summary.createdAt / 1000;
@@ -115,8 +111,7 @@ test("finds a session no page of the sidebar's could have reached", async () => 
   const probe = await connect();
   const page = await probe.listSessions({ limit: 4 });
 
-  // Ten newer sessions sit on top of it, eight of them in one directory, so a
-  // page of the sidebar's is that directory and nothing else.
+  // Ten newer sessions, eight in one directory, push it off the sidebar's page.
   expect(page).toHaveLength(4);
   expect(ids(page)).not.toContain("old-note");
   expect(page.every((row) => row.cwd === summaryOf("lease-turn").cwd)).toBe(
@@ -132,7 +127,6 @@ test("searches the archived too and badges them, or leaves them out on request",
   const probe = await connect();
   expect((await probe.setArchived("old-note", true)).success).toBe(true);
 
-  // You archived it because you stopped looking; search is how it comes back.
   const both = await probe.search("lease");
   expect(ids(both.hits)).toContain("old-note");
   expect(hitOf(both.hits, "old-note").archived).toBe(true);
@@ -156,7 +150,7 @@ test("answers an empty query with no hits and a real count", async () => {
   expect(warm.dropped).toEqual([]);
   expect(warm.scanned).toBe(SESSIONS);
 
-  // And the index it built is the one the first typed query is answered from.
+  // The warmed index answers the first real query.
   expect(ids((await probe.search("quokka")).hits)).toEqual(["quokka"]);
 });
 
@@ -166,13 +160,13 @@ test("carries every match range across the wire as a pair into the string it mar
   const title = hit.title!;
   const spoken = hit.snippets.find((snippet) => snippet.role === "assistant")!;
 
-  // JSON has no tuples: what arrives is the two-element array a client slices with.
+  // Ranges arrive as two-element arrays.
   expect(hit.titleRanges).toEqual([
     [title.indexOf("lease"), title.indexOf("lease") + "lease".length],
   ]);
   expect(marked(title, hit.titleRanges)).toEqual(["lease"]);
 
-  // The half of an identifier the tokenizer split, still marked after the trip.
+  // Half of a split identifier, still marked.
   expect(spoken.text).toContain("SessionLease");
   expect(marked(spoken.text, spoken.ranges)).toContain("Lease");
   expect(marked(spoken.text, spoken.ranges)).not.toContain("SessionLease");
@@ -209,7 +203,7 @@ test("every hit carries a clock, answered or not", async () => {
   const answered = await probe.search("lease");
   expect(answered.hits.every((hit) => hit.settledAt > 0)).toBe(true);
 
-  // Nothing ever settled a turn here, so the row is dated by the session's own start.
+  // No settled turn, so dated by the session start.
   expect(hitOf((await probe.search("interesting")).hits, "quiet-note")).toEqual(
     expect.objectContaining({ settledAt: quiet.createdAt })
   );

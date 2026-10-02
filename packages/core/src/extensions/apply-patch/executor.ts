@@ -164,11 +164,7 @@ async function planUpdate(
 ): Promise<PlannedAction> {
   const absoluteSource = Paths.resolve(hunk.path, cwd);
   const metadata = await statPatchTarget(absoluteSource, hunk.path, "update");
-  const canonicalSource = await realpathPatchTarget(
-    absoluteSource,
-    hunk.path,
-    "update"
-  );
+  const canonicalSource = await realpathUpdateTarget(absoluteSource, hunk.path);
   if (metadata.size > MAX_UPDATE_BYTES) {
     throw new Error(
       `Cannot update ${hunk.path}: file is too large (${metadata.size} bytes, max ${MAX_UPDATE_BYTES}). Use bash or another purpose-built tool for large-file edits.`
@@ -257,15 +253,14 @@ async function statPatchTarget(
   return metadata;
 }
 
-async function realpathPatchTarget(
+async function realpathUpdateTarget(
   absolutePath: string,
-  displayPath: string,
-  operation: "delete" | "update"
+  displayPath: string
 ): Promise<string> {
   try {
     return await realpath(absolutePath);
   } catch (error) {
-    throw new Error(formatStatFailure(displayPath, operation, error));
+    throw new Error(formatStatFailure(displayPath, "update", error));
   }
 }
 
@@ -275,23 +270,21 @@ function formatStatFailure(
   error: unknown
 ): string {
   const code = FsErrors.code(error);
-  if (operation === "delete") {
-    if (code === "ENOENT") {
-      return `Failed to delete file ${displayPath}: file does not exist. Use glob to locate the file, or omit this delete hunk.`;
-    }
-    if (code === "EACCES" || code === "EPERM") {
-      return `Failed to delete file ${displayPath}: permission denied.`;
-    }
-    return `Failed to delete file ${displayPath}: ${errorDetail(error)}.`;
-  }
-
+  const prefix =
+    operation === "delete"
+      ? `Failed to delete file ${displayPath}`
+      : `Failed to read file to update ${displayPath}`;
   if (code === "ENOENT") {
-    return `Failed to read file to update ${displayPath}: file does not exist. Use *** Add File to create a new file, or use glob to locate the existing file.`;
+    const hint =
+      operation === "delete"
+        ? "Use glob to locate the file, or omit this delete hunk."
+        : "Use *** Add File to create a new file, or use glob to locate the existing file.";
+    return `${prefix}: file does not exist. ${hint}`;
   }
   if (code === "EACCES" || code === "EPERM") {
-    return `Failed to read file to update ${displayPath}: permission denied.`;
+    return `${prefix}: permission denied.`;
   }
-  return `Failed to read file to update ${displayPath}: ${errorDetail(error)}.`;
+  return `${prefix}: ${errorDetail(error)}.`;
 }
 
 function errorDetail(error: unknown): string {
@@ -352,6 +345,7 @@ function applyChunks(
     readonly start: number;
     readonly oldLen: number;
     readonly newLines: readonly string[];
+    readonly order: number;
   }> = [];
   let lineIndex = 0;
 
@@ -373,11 +367,12 @@ function applyChunks(
     }
 
     if (chunk.oldLines.length === 0) {
-      const insertionIdx = originalLines.length;
       replacements.push({
-        start: insertionIdx,
+        start:
+          chunk.changeContext === undefined ? originalLines.length : lineIndex,
         oldLen: 0,
         newLines: chunk.newLines,
+        order: replacements.length,
       });
       continue;
     }
@@ -416,11 +411,12 @@ function applyChunks(
       start: found[0]!,
       oldLen: pattern.length,
       newLines: newSlice,
+      order: replacements.length,
     });
     lineIndex = found[0]! + pattern.length;
   }
 
-  replacements.sort((a, b) => a.start - b.start);
+  replacements.sort((a, b) => a.start - b.start || a.order - b.order);
 
   const lines = [...originalLines];
   for (const { start, oldLen, newLines } of replacements.reverse()) {

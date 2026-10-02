@@ -2,7 +2,6 @@ import type { Element } from "solid-js";
 
 import { createDialog } from "./dialog";
 
-/** A left sheet over `<dialog>.showModal()`; a backdrop tap is a click on the dialog box itself. */
 export function Drawer(props: {
   readonly open: boolean;
   readonly onClose: () => void;

@@ -2,12 +2,6 @@ import { For } from "solid-js";
 
 import type { SearchRange } from "#core/session/SearchIndex";
 
-/**
- * The tint `::selection` wears, on the element that means it: a match is the
- * same statement a selection makes, and the UA's yellow is picked for a light
- * page. The word takes the hue as well, so one match still reads as a match
- * in a line the eye is skimming rather than reading.
- */
 const MARK = "rounded-[2px] bg-indigo-500/25 text-indigo-300";
 
 type Segment = {
@@ -15,15 +9,10 @@ type Segment = {
   readonly marked: boolean;
 };
 
-/**
- * Text with the server's match ranges drawn on it. The query planner expands
- * what was typed before it matches anything — a typo is corrected, a prefix
- * completed, an identifier split — so the span to mark is never something this
- * client could have found by searching the string for the query.
- */
+/** Highlights the server's match ranges; the server expands the query, so the client cannot find them itself. */
 export function Marked(props: {
   readonly text: string;
-  /** Half-open character offsets into `text`; anything outside it is ignored rather than drawn. */
+  /** Half-open offsets into `text`; out-of-range parts are clamped. */
   readonly ranges: readonly SearchRange[];
 }) {
   return (
@@ -35,7 +24,7 @@ export function Marked(props: {
   );
 }
 
-/** Every character of `text`, once and in order, whatever the ranges claim. */
+/** Covers `text` exactly once, even for overlapping or out-of-range ranges. */
 function segmentsOf(
   text: string,
   ranges: readonly SearchRange[]

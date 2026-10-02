@@ -43,9 +43,6 @@ test("a message with no files is not touched on the way through", () => {
   expect(Attachments.parse(said).files).toEqual([]);
 });
 
-// A session file is history: a marker written by an older pim, or by another
-// frontend spelling it differently, is still the only record that the message
-// had a file on it.
 test("either spelling of the marker is read", () => {
   const said = Attachments.parse(
     "[image attachment: /srv/a/one.png]\n[ATTACHMENT: /srv/a/two.pdf]"
@@ -64,6 +61,5 @@ test("a stored name is shown without the stamp that made it unique", () => {
   expect(Attachments.nameOf("/srv/a/s1/notes-1730000000000.txt")).toBe(
     "notes.txt"
   );
-  // Nothing stamped it, so there is nothing to take off.
   expect(Attachments.nameOf("/home/me/report.pdf")).toBe("report.pdf");
 });

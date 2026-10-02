@@ -4,14 +4,13 @@ import type { AttachmentView } from "#protocol/ServerEvent";
 import { ImageTile } from "../ui/ImageTile";
 import { Spinner } from "../ui/Spinner";
 
-/** One file as a row draws it, plus what only an unsent one has. */
 export type AttachmentTile = AttachmentView & {
   readonly key: string;
   readonly uploading?: boolean;
   readonly onRemove?: () => void;
 };
 
-/** How much room a tile gets: `grid` and `compact` are inputs, `delivery` is output. */
+/** `delivery` is for files the agent sends, and adds a download button. */
 export type TileVariant = "grid" | "compact" | "delivery";
 
 const IMAGE_CLASSES: Record<TileVariant, string> = {
@@ -20,7 +19,6 @@ const IMAGE_CLASSES: Record<TileVariant, string> = {
   delivery: "max-h-80 max-w-full object-contain",
 };
 
-/** The files on a message: pictures shown as pictures, everything else as a chip. */
 export function Attachments(props: {
   readonly files: readonly AttachmentTile[];
   readonly variant?: TileVariant;
@@ -28,7 +26,6 @@ export function Attachments(props: {
   return (
     <Show when={props.files.length > 0}>
       <ul class="flex flex-wrap gap-2">
-        {/* Keyed: a tile keeps its own state when the row is rebuilt around it. */}
         <For each={props.files} keyed={(file: AttachmentTile) => file.key}>
           {(file) => <Tile file={file()} variant={props.variant ?? "grid"} />}
         </For>
@@ -41,7 +38,7 @@ function Tile(props: {
   readonly file: AttachmentTile;
   readonly variant: TileVariant;
 }) {
-  // A file stored by another frontend 404s here, so the chip is the fallback.
+  // Files stored by another frontend 404 here.
   const [broken, setBroken] = createSignal(false);
   const shows = () => props.file.isImage && !broken();
 

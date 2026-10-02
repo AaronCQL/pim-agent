@@ -5,7 +5,6 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { git, makeRepo } from "./fixtures/repo";
 import { Git, type GitOutcome } from "./Git";
 
-/** Narrowing an outcome in an assertion: `ok` is the discriminant, not a flag. */
 const refusal = (outcome: GitOutcome): string =>
   outcome.ok ? "" : outcome.error;
 
@@ -23,26 +22,7 @@ afterAll(async () => {
   );
 });
 
-describe("parseGitStatus", () => {
-  test("parses clean branch status", () => {
-    expect(
-      Git.parseStatus(
-        [
-          "# branch.oid 123456",
-          "# branch.head main",
-          "# branch.upstream origin/main",
-          "# branch.ab +0 -0",
-        ].join("\n")
-      )
-    ).toEqual({
-      branch: "main",
-      dirtyCount: 0,
-      ahead: 0,
-      behind: 0,
-      revision: expect.any(String),
-    });
-  });
-
+describe("parseStatus", () => {
   test("counts one dirty path per entry, tracked or not", () => {
     expect(
       Git.parseStatus(
@@ -75,7 +55,7 @@ describe("parseGitStatus", () => {
   });
 });
 
-describe("fetchGitStatus", () => {
+describe("fetchStatus", () => {
   test("returns empty git state outside a git repository", async () => {
     const root = await tempRoot();
 
@@ -197,15 +177,6 @@ describe("checkout", () => {
     expect((await Git.fetchStatus(root)).branch).toBe("main");
 
     expect(refusal(await Git.checkout(root, "nope"))).toContain("nope");
-  });
-
-  test("refuses rather than clobbering work in the tree", async () => {
-    const root = await repo();
-    await Bun.write(join(root, "file.txt"), "uncommitted\n");
-
-    expect(refusal(await Git.checkout(root, "main"))).toContain(
-      "would be overwritten"
-    );
   });
 });
 

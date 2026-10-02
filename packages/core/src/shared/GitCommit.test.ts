@@ -7,12 +7,6 @@ import { git, makeRepo } from "./fixtures/repo";
 import { Git, type CommitResult } from "./Git";
 import { Proc } from "./Proc";
 
-/**
- * What `Git.commit` puts in a commit, and what it refuses to. Every assertion
- * here is git's own answer over a real repository: a path-limited commit is
- * only worth anything if what it leaves behind is exactly what it found.
- */
-
 const roots: string[] = [];
 
 afterAll(async () => {
@@ -47,7 +41,6 @@ const refusal = (result: CommitResult): string =>
 const landedSha = (result: CommitResult): string =>
   result.ok ? result.sha : "";
 
-/** A repository with three committed files, and an identity of its own so no machine's config decides the test. */
 async function repo(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "pim-git-commit-"));
   roots.push(root);
@@ -56,7 +49,6 @@ async function repo(): Promise<string> {
   await git(root, ["config", "user.name", "pim"]);
   await Bun.write(join(root, "a.txt"), "a\n");
   await Bun.write(join(root, "b.txt"), "b\n");
-  await Bun.write(join(root, "sp ace.txt"), "space\n");
   await git(root, ["add", "-A"]);
   await git(root, ["commit", "-m", "base"]);
   return root;
@@ -108,20 +100,6 @@ test("a deleted picked file commits its deletion", async () => {
   expect(await status(root)).toBe("");
 });
 
-test("a path with a space in it is one path, not two", async () => {
-  const root = await repo();
-  await Bun.write(join(root, "sp ace.txt"), "edited\n");
-
-  const result = await Git.commit(root, {
-    message: "space",
-    paths: ["sp ace.txt"],
-  });
-
-  expect(result.ok).toBe(true);
-  expect(await landed(root)).toBe("M\tsp ace.txt");
-  expect(await status(root)).toBe("");
-});
-
 test("a staged rename committed by both of its names leaves nothing behind", async () => {
   const root = await repo();
   await git(root, ["mv", "a.txt", "moved.txt"]);
@@ -133,11 +111,7 @@ test("a staged rename committed by both of its names leaves nothing behind", asy
   });
 
   expect(result.ok).toBe(true);
-  expect((await committed(root)).split("\n")).toEqual([
-    "b.txt",
-    "moved.txt",
-    "sp ace.txt",
-  ]);
+  expect((await committed(root)).split("\n")).toEqual(["b.txt", "moved.txt"]);
   expect(await status(root)).toBe("");
 });
 

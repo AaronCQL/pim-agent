@@ -5,7 +5,7 @@ export type HttpFetch = (
   init?: Parameters<typeof fetch>[1]
 ) => ReturnType<typeof fetch>;
 
-/** Ky with retries off: its defaults retry GETs twice and honour `Retry-After` uncapped, stalling a tool for hours. */
+/** Retries off: ky's default honours `Retry-After` uncapped and can stall a tool for hours. */
 export function createKy(custom?: HttpFetch): KyInstance {
   return ky.create({
     retry: 0,

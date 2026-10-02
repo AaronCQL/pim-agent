@@ -2,7 +2,7 @@ export type Size = { readonly width: number; readonly height: number };
 
 export type Point = { readonly x: number; readonly y: number };
 
-/** The picture drawn at `scale` times its natural size, its top-left corner at `x`, `y`. */
+/** `x`, `y` is the top-left corner. */
 export type View = {
   readonly scale: number;
   readonly x: number;
@@ -49,7 +49,7 @@ function isFitted(view: View, image: Size, stage: Size): boolean {
   return view.scale <= fitScale(image, stage) + 1e-6;
 }
 
-/** Scales by `factor` while the image point under `at` stays under it. */
+/** Keeps the image point under `at` fixed. */
 function zoomAt(
   view: View,
   factor: number,
@@ -78,7 +78,7 @@ function panBy(view: View, by: Point, image: Size, stage: Size): View {
   return clamp({ ...view, x: view.x + by.x, y: view.y + by.y }, image, stage);
 }
 
-/** Fitted goes to actual pixels (or double, for a picture that already fits); anything else goes back to fitted. */
+/** Fitted → actual size (or 2× if it already fits); otherwise → fitted. */
 function toggle(view: View, at: Point, image: Size, stage: Size): View {
   if (!isFitted(view, image, stage)) {
     return fit(image, stage);

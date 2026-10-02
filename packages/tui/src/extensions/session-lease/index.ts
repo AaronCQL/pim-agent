@@ -13,7 +13,7 @@ import { WriteMark } from "#core/session/WriteMark";
 
 const POLL_MS = 2_000;
 
-/** Survives the extension instance: `switchSession` re-runs every factory. */
+/** Module-level because `switchSession` re-runs every factory. */
 let carried: { readonly path: string; readonly text: string } | undefined;
 
 function isForeign(record: LeaseRecord | undefined): record is LeaseRecord {
@@ -53,11 +53,11 @@ export default function (pi: ExtensionAPI): void {
     return await WriteMark.of(log, manager);
   };
 
-  /** Absorb our own appends and a rename we can carry on without; anything else is another surface writing this session. */
+  /** Marks the session stale when another surface wrote it; our own appends and benign renames are absorbed. */
   const reconcile = async (): Promise<void> => {
     const current = log;
     const next = await measure();
-    // Staleness only clears by re-anchoring, and re-deciding it costs a whole read.
+    // Only `anchor()` clears staleness.
     if (stale || current === undefined || next === undefined) {
       return;
     }
@@ -71,7 +71,6 @@ export default function (pi: ExtensionAPI): void {
     mark = next;
   };
 
-  /** Whatever the file says right now is the truth pi was opened on. */
   const anchor = async (): Promise<void> => {
     mark = (await measure()) ?? WriteMark.UNREAD;
     stale = false;
@@ -95,7 +94,7 @@ export default function (pi: ExtensionAPI): void {
     }
   };
 
-  // Idle only: during our own turn every append is ours and the lease is held.
+  // Idle only: during our own turn we hold the lease.
   const startIdleWatch = (): void => {
     stopIdleWatch();
     const current = path;
@@ -233,7 +232,7 @@ export default function (pi: ExtensionAPI): void {
         return;
       }
       try {
-        // Reopening repairs a torn tail and rewrites on migration, so hold the lease over it.
+        // Reopening may rewrite the file, so hold the lease.
         await SessionLease.hold(
           current,
           "tui",

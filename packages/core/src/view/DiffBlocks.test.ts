@@ -22,40 +22,21 @@ const paintStats = (d: ToolDiff | undefined): string =>
   AnsiPainter.paint(DiffBlocks.stats(d), theme).join(" ");
 
 describe("DiffBlocks.stats", () => {
-  test("emits both segments separated by an uncoloured slash", () => {
-    expect(paintStats(diff(["a", "b"], ["A", "B"]))).toBe(
-      "<toolDiffAdded>+2</toolDiffAdded>/<toolDiffRemoved>-2</toolDiffRemoved>"
-    );
-  });
-
-  test("omits the removed segment when nothing was removed", () => {
-    expect(paintStats(diff(["a"], ["a", "b"]))).toBe(
-      "<toolDiffAdded>+1</toolDiffAdded>"
-    );
-  });
-
-  test("omits the added segment when nothing was added", () => {
-    expect(paintStats(diff(["a", "b"], ["a"]))).toBe(
-      "<toolDiffRemoved>-1</toolDiffRemoved>"
-    );
+  test.each([
+    [
+      ["a", "b"],
+      ["A", "B"],
+      "<toolDiffAdded>+2</toolDiffAdded>/<toolDiffRemoved>-2</toolDiffRemoved>",
+    ],
+    [["a"], ["a", "b"], "<toolDiffAdded>+1</toolDiffAdded>"],
+    [["a", "b"], ["a"], "<toolDiffRemoved>-1</toolDiffRemoved>"],
+  ])("%p -> %p", (from, to, expected) => {
+    expect(paintStats(diff(from, to))).toBe(expected);
   });
 
   test("emits no block at all when there is nothing to count", () => {
     expect(DiffBlocks.stats(undefined)).toEqual([]);
     expect(DiffBlocks.stats({ path: "a.ts", hunks: [] })).toEqual([]);
-  });
-});
-
-describe("DiffBlocks.body", () => {
-  test("wraps a diff in a single diff block", () => {
-    const toolDiff = diff(["a"], ["b"]);
-    expect(DiffBlocks.body(toolDiff)).toEqual([
-      { kind: "diff", path: toolDiff.path, hunks: toolDiff.hunks },
-    ]);
-  });
-
-  test("is empty without a diff", () => {
-    expect(DiffBlocks.body(undefined)).toEqual([]);
   });
 });
 

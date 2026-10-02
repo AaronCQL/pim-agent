@@ -48,5 +48,4 @@ function fileView(args: {
   };
 }
 
-/** View-model fragments shared by every tool that reports a file diff. */
 export const DiffBlocks = { statSpans, stats, body, fileView };

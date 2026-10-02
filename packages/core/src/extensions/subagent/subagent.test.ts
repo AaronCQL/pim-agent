@@ -3,7 +3,6 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
 import {
   applyOutputCap,
-  childToolNames,
   childLoaderOptions,
   runSubagent,
   SubagentEventCapture,
@@ -95,23 +94,12 @@ class FakeSession implements SubagentSession {
   }
 }
 
-describe("childToolNames", () => {
-  test("removes the subagent tool from a child's inherited allowlist", () => {
-    expect(childToolNames(["read", "subagent", "bash"])).toEqual([
-      "read",
-      "bash",
-    ]);
-  });
-});
-
 describe("childLoaderOptions", () => {
   test("gives the child pim's own roster, not pi's built-ins alone", () => {
     const names = childLoaderOptions("/work").extensionFactories.map(
       (entry) => entry.name
     );
 
-    // The allowlist names tools by their registered name, so a child built
-    // without the roster would resolve `glob` or `web_search` to nothing.
     expect(names).toContain("glob");
     expect(names).toContain("web-search");
     expect(names).toContain("apply-patch");
@@ -153,9 +141,6 @@ describe("SubagentEventCapture", () => {
     } as never);
 
     const snapshot = capture.snapshot();
-    // The tool call above leaves nothing behind: the narration is what rides
-    // into the parent's log, and no row reports what the child reached for —
-    // its own log has the calls in full.
     expect(capture.narration()).toBe("first turn\n\nfinal answer");
     expect(snapshot.usage).toEqual({
       input: 12,
@@ -232,8 +217,7 @@ describe("SubagentEventCapture", () => {
     } as never);
     expect(updates.length).toBe(1);
 
-    // A second stream proves the flushed timer was cancelled: had it survived
-    // it would have landed here as an extra update carrying the same text.
+    // A surviving flushed timer would show up as an extra update here.
     capture.handle({
       type: "message_update",
       message: assistant(["next"]),
@@ -260,8 +244,6 @@ describe("SubagentEventCapture", () => {
       } as never);
       capture.dispose();
 
-      // Past the throttle: had dispose only skipped the callback and left the
-      // timer running, the scheduled update would have landed here.
       jest.advanceTimersByTime(UPDATE_INTERVAL_MS * 2);
       expect(updates).toEqual([]);
     } finally {

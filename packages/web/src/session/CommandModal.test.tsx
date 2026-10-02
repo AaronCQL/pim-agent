@@ -61,7 +61,6 @@ function paint(): Painted {
   return { host, store: target, sent, feed };
 }
 
-/** What a command said; an unnamed one is a toast, and is spelled out where it is tested. */
 function notice(
   id: string,
   text: string,
@@ -104,7 +103,6 @@ describe("the command modal", () => {
     expect(panel(host).querySelector("h2")?.textContent).toBe("Claude Quotas");
     expect(panel(host).querySelector("strong")?.textContent).toBe("enabled");
     expect(panel(host).textContent).toContain("account: 40%");
-    // One per notice: each is a document somebody may want out of the browser.
     expect(
       buttons(host).filter(
         (button) => button.getAttribute("aria-label") === "Copy notice"
@@ -124,43 +122,32 @@ describe("the command modal", () => {
     expect(panel(host).open).toBe(false);
   });
 
-  test("the command that opened it is what it is called", () => {
+  test.each<[string, ServerEvent]>([
+    ["/claude-logging", notice("n1", "fine", "/claude-logging")],
+    [
+      "/login",
+      {
+        type: "ui_request",
+        requestId: "r1",
+        method: "confirm",
+        title: "Drop the table?",
+        command: "/login",
+      },
+    ],
+    [
+      "Command",
+      {
+        type: "ui_request",
+        requestId: "r1",
+        method: "confirm",
+        title: "Drop the table?",
+      },
+    ],
+  ])("the panel is titled %s", (title, event) => {
     const { host, feed } = paint();
-    feed(notice("n1", "fine", "/claude-logging"));
+    feed(event);
 
-    expect(panel(host).querySelector("header")?.textContent).toContain(
-      "/claude-logging"
-    );
-  });
-
-  test("a question that opened it names it too", () => {
-    const { host, feed } = paint();
-    feed({
-      type: "ui_request",
-      requestId: "r1",
-      method: "confirm",
-      title: "Drop the table?",
-      command: "/login",
-    });
-
-    expect(panel(host).querySelector("header")?.textContent).toContain(
-      "/login"
-    );
-  });
-
-  /** Nothing named it, so it falls back to what every such panel is. */
-  test("an unprompted question is a command panel all the same", () => {
-    const { host, feed } = paint();
-    feed({
-      type: "ui_request",
-      requestId: "r1",
-      method: "confirm",
-      title: "Drop the table?",
-    });
-
-    expect(panel(host).querySelector("header")?.textContent).toContain(
-      "Command"
-    );
+    expect(panel(host).querySelector("header")?.textContent).toContain(title);
   });
 
   test("a select offers its options, and the press names the one chosen", () => {
@@ -181,7 +168,6 @@ describe("the command modal", () => {
     expect(sent).toEqual([
       { type: "ui_response", sessionId: "s1", requestId: "r1", value: "work" },
     ]);
-    // Nothing left pending and nothing said: the panel is done.
     expect(panel(host).open).toBe(false);
   });
 
@@ -222,7 +208,6 @@ describe("the command modal", () => {
       '[aria-label="Paste the code"]'
     )!;
     expect(box.placeholder).toBe("code");
-    // Nothing typed is nothing to send.
     expect(
       buttons(host).find((button) => button.textContent?.trim() === "Send")
         ?.disabled
@@ -258,13 +243,12 @@ describe("the command modal", () => {
     expect(panel(host).querySelector('[aria-label="Paste the code"]')).toBe(
       null
     );
-    // The panel stays: what the command already said is still worth reading.
+    // The notices keep the panel open.
     expect(panel(host).open).toBe(true);
     expect(panel(host).textContent).toContain("Signing in…");
     expect(sent).toEqual([]);
   });
 
-  /** Two dispatches nest, so two questions can stand at once and the panel asks them in turn. */
   test("a second question waits its turn, and keeps the panel when the first is answered", () => {
     const { host, sent, feed } = paint();
     feed(
@@ -331,13 +315,11 @@ describe("the command modal", () => {
     ]);
     expect(panel(host).open).toBe(false);
 
-    // And the next dispatch opens on its own words, not on the last one's.
     feed(notice("n2", "Signed in."));
     expect(panel(host).textContent).not.toContain("Signing in…");
     expect(panel(host).textContent).toContain("Signed in.");
   });
 
-  // The gesture a phone dismisses with, which `Modal` arms for every overlay.
   test("the back gesture cancels what the close button cancels", () => {
     const { host, sent, feed } = paint();
     feed({

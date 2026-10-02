@@ -35,11 +35,18 @@ async function seed(
   return path;
 }
 
+async function seedFixture(): Promise<string> {
+  return await seed(
+    "--home-htpc-Desktop-dev-mmorpg--",
+    `2026-08-01T10-17-46-728Z_${FIXTURE_ID}.jsonl`
+  );
+}
+
 beforeEach(async () => {
   tmp = await mkdtemp(join(tmpdir(), "pim-registry-test-"));
   agentDir = join(tmp, "agent");
   await mkdir(join(agentDir, "extensions"), { recursive: true });
-  // Pi picks the directory for a new session itself; this is its own knob.
+  // Pi resolves new session paths from this env var.
   previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = agentDir;
   registry = new SessionRegistry({
@@ -60,10 +67,7 @@ afterEach(async () => {
 });
 
 test("lists pi's on-disk cwd grouping without a store of its own", async () => {
-  const path = await seed(
-    "--home-htpc-Desktop-dev-mmorpg--",
-    `2026-08-01T10-17-46-728Z_${FIXTURE_ID}.jsonl`
-  );
+  const path = await seedFixture();
   await seed("--tmp-other--", "2026-08-02T00-00-00-000Z_other.jsonl", {
     id: "other",
     cwd: "/tmp/other",
@@ -97,7 +101,7 @@ test("an empty sessions root lists nothing", async () => {
   expect(await registry.list()).toEqual([]);
 });
 
-test("lists every session past the gate the header scan fans out through", async () => {
+test("lists more sessions than the header-read pool size, newest first", async () => {
   const count = 64;
   await Promise.all(
     Array.from({ length: count }, (_, index) =>
@@ -119,10 +123,7 @@ test("lists every session past the gate the header scan fans out through", async
 });
 
 test("opens an existing session by pi's uuid and caches it under that key", async () => {
-  const path = await seed(
-    "--home-htpc-Desktop-dev-mmorpg--",
-    `2026-08-01T10-17-46-728Z_${FIXTURE_ID}.jsonl`
-  );
+  const path = await seedFixture();
 
   expect(registry.peek(FIXTURE_ID)).toBeUndefined();
   const host = await registry.open(FIXTURE_ID);
@@ -142,18 +143,15 @@ test("creates a session under the uuid pi assigns it", async () => {
   expect(host.settings.sessionPath).toStartWith(
     join(agentDir, "sessions", "--")
   );
-  // Pi withholds the file until the first assistant message, so a brand new
-  // session is not listable yet — nothing durable has happened.
+  // Pi writes the file only after the first assistant message.
   expect(await registry.list()).toEqual([]);
 });
 
 test("rejects an unknown session id", async () => {
-  expect(registry.open("nope")).rejects.toThrow("unknown session: nope");
+  await expect(registry.open("nope")).rejects.toThrow("unknown session: nope");
 });
 
 test("opens a session whose file is not named after it", async () => {
-  // The id is the header's. Pi's own filenames carry it, and the id a file
-  // was written under is the one the header says either way.
   const path = await seed("--tmp-odd--", "notes.jsonl", {
     id: "renamed-file",
     cwd: "/tmp/odd",
@@ -163,20 +161,6 @@ test("opens a session whose file is not named after it", async () => {
   expect(host.settings.sessionPath).toBe(path);
   expect(host.cwd).toBe("/tmp/odd");
 });
-
-test("requires init before building a host", async () => {
-  const fresh = new SessionRegistry({ defaults: { cwd: tmp }, agentDir });
-  expect(fresh.create()).rejects.toThrow(
-    "AgentRuntime.init() must complete before use"
-  );
-});
-
-async function seedFixture(): Promise<string> {
-  return await seed(
-    "--home-htpc-Desktop-dev-mmorpg--",
-    `2026-08-01T10-17-46-728Z_${FIXTURE_ID}.jsonl`
-  );
-}
 
 async function lineCount(path: string): Promise<number> {
   return (await new EventLog(path).read()).length;
@@ -223,7 +207,7 @@ test("normalises a name pi would have stored verbatim", async () => {
 });
 
 test("refuses to rename a session that is not on disk", async () => {
-  expect(registry.setName("nope", "whatever")).rejects.toThrow(
+  await expect(registry.setName("nope", "whatever")).rejects.toThrow(
     "unknown session: nope"
   );
 });
@@ -256,7 +240,7 @@ test("refuses to rename under another surface's turn", async () => {
     })}\n`
   );
 
-  expect(registry.setName(FIXTURE_ID, "Sidebar rename")).rejects.toThrow(
+  await expect(registry.setName(FIXTURE_ID, "Sidebar rename")).rejects.toThrow(
     "Session is busy: tui"
   );
   expect(await new EventLog(path).name()).toBeUndefined();

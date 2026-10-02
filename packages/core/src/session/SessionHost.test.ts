@@ -39,18 +39,13 @@ function expectPrefix(earlier: ChatRequest, later: ChatRequest): void {
   ]);
 }
 
-/** Resolves once the model server has been asked for a completion. */
 let requested: () => void;
 let requestSeen: Promise<void>;
 
-/**
- * Yields between chunks so the deltas arrive as a stream rather than one
- * write. Duration is irrelevant: a test that has to look at a turn while it is
- * still open holds it open with `holdTurn` instead of racing a sleep.
- */
+/** Only makes deltas arrive separately; use `holdTurn` to keep a turn open. */
 const TOKEN_DELAY_MS = 1;
 
-/** Set by `holdTurn` to stall the reply just before it finishes. */
+/** Stalls the reply before its final chunk. */
 let gate: Promise<void> | undefined;
 let releaseGate: (() => void) | undefined;
 
@@ -80,7 +75,7 @@ async function roles(sessionPath = mainPath()): Promise<readonly string[]> {
   );
 }
 
-/** The line a `pi` that never took the lease leaves behind: a child of whatever leaf it read. */
+/** Appends a message as a pi that never took the lease would. */
 async function appendUnleased(text: string): Promise<void> {
   const entries = await new EventLog(mainPath()).read();
   await appendFile(
@@ -109,11 +104,7 @@ function chunk(delta: Record<string, unknown>): string {
   })}\n\n`;
 }
 
-/**
- * An OpenAI-compatible endpoint that streams a fixed reply one token at a
- * time, stalling before the final chunk while a test holds `gate` so the turn
- * can be inspected or aborted mid-flight.
- */
+/** OpenAI-compatible endpoint streaming a fixed reply; stalls on `gate`. */
 function startModelServer(): void {
   server = Bun.serve({
     port: 0,
@@ -219,16 +210,7 @@ async function buildHost(
   return host;
 }
 
-/**
- * The clock is the one part of the context that changes every turn, so it
- * rides ahead of the user's message instead of inside the system prompt,
- * where it would re-key the cached prefix on every submit. Pi appends what
- * `before_agent_start` returns behind the user's message, so the stamp goes
- * in on `input` — which records it ahead of pi's first system message, so the
- * request is re-led by the prompt. The model here keeps mid-conversation
- * system messages in place, as Claude does, so a prompt that stops leading
- * the request shows up on the wire.
- */
+/** The clock stays out of the system prompt so the cached prefix is stable. */
 test("stamps the clock ahead of the user's message", async () => {
   const host = await buildHost();
   await host.run((agent) => agent.prompt("say hello"));
@@ -474,7 +456,7 @@ test("a host whose file advanced rebuilds from it before its next turn", async (
     "assistant",
   ]);
 
-  // A turn that changed nothing on disk leaves the rebuilt agent alone.
+  // An unchanged file does not trigger another rebuild.
   const rebuilt = first.agentSession;
   await first.run(async () => {});
   expect(first.agentSession).toBe(rebuilt);
@@ -579,7 +561,7 @@ test("evicting a host from the registry leaves no lease behind", async () => {
     expect(sessionPath).toBeString();
     expect(await leaseExists(sessionPath!)).toBe(false);
 
-    // `evictIfNeeded` disposes without awaiting, so nothing may outlive the turn.
+    // Eviction disposes without awaiting.
     await registry.create({ cwd: tmp });
 
     expect(registry.peek(evicted.sessionId!)).toBeUndefined();
@@ -594,11 +576,6 @@ test("evicting a host from the registry leaves no lease behind", async () => {
   }
 });
 
-/**
- * A `pi` that never took the lease appends while the daemon holds it. The turn
- * in flight is worth more than the inconsistency, so it finishes; the file is
- * what the next turn is rebuilt from.
- */
 test("warns when another process writes the session mid-turn", async () => {
   const warnings = spyOn(console, "warn").mockImplementation(() => {});
   const host = await buildHost({ lease: "daemon" });
@@ -630,7 +607,7 @@ test("warns when another process writes the session mid-turn", async () => {
     "assistant",
   ]);
 
-  // The head was never marked as seen, so the next turn rebuilds from the file.
+  // The next turn rebuilds from the file.
   let carried = false;
   await host.run(async (agent) => {
     carried = agent.sessionManager
@@ -642,7 +619,6 @@ test("warns when another process writes the session mid-turn", async () => {
   warnings.mockRestore();
 });
 
-/** Everything pi appends on this host's behalf moves both counts together. */
 test("a host's own turns and out-of-turn writes are never foreign", async () => {
   const warnings = spyOn(console, "warn").mockImplementation(() => {});
   const errors = spyOn(console, "error").mockImplementation(() => {});
@@ -657,11 +633,11 @@ test("a host's own turns and out-of-turn writes are never foreign", async () => 
   expect(await host.setModel(MODEL_ID)).toEqual({ ok: true, id: MODEL_ID });
   await host.setThinkingLevel("high");
   await host.run((agent) => agent.prompt("say hello again"));
-  // pi refuses to compact a session this short, which still holds and gives back the lease.
+  // Too short to compact, but still takes and releases the lease.
   await expect(host.compact()).rejects.toThrow("Nothing to compact");
 
   expect(foreign).toBe(0);
-  // Nothing looked stale either, so no turn ran against a rebuilt agent.
+  // And nothing triggered a rebuild.
   expect(host.agentSession).toBe(built);
   errors.mockRestore();
   warnings.mockRestore();

@@ -8,7 +8,6 @@ import type { DiffAnchors } from "../view/anchors";
 import { UnifiedLines } from "../view/Blocks";
 import { GapRow } from "./GapRow";
 
-/** One column of both sides, the layout a narrow screen gets, with its gaps open to a reader. */
 export function UnifiedDiff(props: {
   readonly path: string;
   readonly hunks: readonly ToolDiffHunk[];
@@ -21,15 +20,8 @@ export function UnifiedDiff(props: {
   const width = createMemo(() => DiffLayout.gutterWidth(props.hunks));
   const parts = createMemo(() => DiffExpand.parts(props.hunks, props.total));
 
-  // A line is never re-wrapped, so a long one is panned to — inside this file
-  // and nowhere else. The scroller is the file's own: without it the only
-  // scroller on the page is the list of files, and one long line there widens
-  // the list, which pans every file's sticky title bar off the left edge with
-  // it. `overscroll-x-contain` keeps a pan that reaches the end of a line from
-  // becoming the browser's back gesture.
-  //
-  // `--gutter` is where the code text starts, which is what a comment card
-  // hanging off a row indents itself by: it varies with this file's numbering.
+  // Scrolls per file so a long line can't widen the list and drag the sticky titles.
+  // `--gutter` is where code text starts; comment cards indent by it.
   return (
     <div class="overflow-x-auto overscroll-x-contain">
       <div

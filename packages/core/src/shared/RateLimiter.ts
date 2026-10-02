@@ -1,4 +1,4 @@
-export type RateLimiterOptions = {
+type RateLimiterOptions = {
   readonly maxRequests: number;
   readonly windowMs: number;
   readonly now?: () => number;

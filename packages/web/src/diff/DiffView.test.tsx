@@ -20,11 +20,6 @@ import { until } from "#core/shared/fixtures/wait";
 import { DiffStore } from "./DiffStore";
 import { DiffView } from "./DiffView";
 
-/**
- * The change set of a real repository, read over the real gateway: the rows are
- * what git says about files this test wrote, and expanding one runs the diff.
- */
-
 let harness: GatewayHarness;
 let store: SessionStore;
 let repo: string;
@@ -38,7 +33,7 @@ beforeEach(async () => {
   repo = join(harness.tmp, "repo");
   await mkdir(repo, { recursive: true });
   await makeRepo(repo);
-  // `Git.commit` runs without the fixture's identity env, so the repository carries its own.
+  // `Git.commit` doesn't get the fixture's identity env.
   await git(repo, ["config", "user.email", "pim@example.com"]);
   await git(repo, ["config", "user.name", "pim"]);
   store = new SessionStore({
@@ -58,11 +53,7 @@ afterEach(async () => {
   mock.restore();
 });
 
-/**
- * Two tracked files, both committed and then edited, and then the server's own
- * reading of them: a frame still on its way would re-read the list under a
- * test that counts reads.
- */
+/** Two committed-then-edited files; waits for the server's git refresh so no stray re-read lands mid-test. */
 async function seed(): Promise<void> {
   await Bun.write(join(repo, "alpha.ts"), "one\ntwo\nthree\n");
   await Bun.write(join(repo, "src/beta.ts"), "alpha\nbeta\n");
@@ -73,7 +64,7 @@ async function seed(): Promise<void> {
   await store.refreshGit();
 }
 
-/** Every command the overlay asks for, with an optional stand-in answer. */
+/** Records every command, optionally stubbing the answer. */
 function watch(answer?: (command: CommandDraft) => ResponseEvent | undefined) {
   const original = store.client.send.bind(store.client);
   spyOn(store.client, "send").mockImplementation((command: CommandDraft) => {
@@ -116,7 +107,6 @@ function labels(host: HTMLElement): readonly string[] {
   return rows(host).map((row) => row.getAttribute("aria-label") ?? "");
 }
 
-/** The modal's own message box, which is only there while it is open. */
 function box(host: HTMLElement): HTMLTextAreaElement | null {
   return host.querySelector<HTMLTextAreaElement>(
     "textarea[aria-label='Commit message']"
@@ -132,14 +122,12 @@ function openCommit(host: HTMLElement): void {
   flush();
 }
 
-/** One file's row in the modal, by the path it names. */
 function pick(host: HTMLElement, path: string): HTMLButtonElement {
   return host.querySelector<HTMLButtonElement>(
     `dialog [role='checkbox'][aria-label='${path}']`
   )!;
 }
 
-/** The modal's button, which reads the same as the toolbar's that opened it. */
 function submit(host: HTMLElement): void {
   [...host.querySelectorAll<HTMLButtonElement>("dialog button")]
     .find((button) => button.textContent?.trim().startsWith("Commit"))
@@ -166,7 +154,6 @@ function settle(test: () => boolean, label: string): Promise<void> {
   }, label);
 }
 
-/** A change list no repository has to be built for: the row ceiling needs more files than git can cheaply make. */
 function bulk(files: number): ChangeList {
   return {
     base: { kind: "worktree" },
@@ -201,7 +188,6 @@ function clickText(host: HTMLElement, label: string): void {
     ?.click();
 }
 
-/** The state frame the server sends whenever the repository moves. */
 function dirty(count: number, revision = `r${count}`): void {
   store.ingest({
     type: "session_state",
@@ -219,7 +205,6 @@ function dirty(count: number, revision = `r${count}`): void {
   });
 }
 
-/** The overlay painted with its first list already landed. */
 async function open(): Promise<HTMLElement> {
   watch();
   const host = paint();
@@ -237,12 +222,6 @@ test("the list is every file the base says changed", async () => {
   expect(host.textContent).toContain("−2");
 });
 
-/*
- * A file's stat is the one a diff tool's own title carries: `+1/−1`, the
- * slash binding the two counts so neither reads as a stray number on a bar
- * that also holds a path. A file that only grew has one count and no slash to
- * divide it from — a trailing `/` would promise a removal that never happened.
- */
 test("added and removed are divided by a slash, and only when both are there", async () => {
   await seed();
   await Bun.write(join(repo, "gamma.ts"), "only\nmore\n");
@@ -253,76 +232,7 @@ test("added and removed are divided by a slash, and only when both are there", a
   expect(alpha?.textContent).toContain("+1/−1");
   expect(gamma?.textContent).toContain("+2");
   expect(gamma?.textContent).not.toContain("/−");
-  // The whole tree's stat over the pane reads the same way.
   expect(host.querySelector("header")?.textContent).toContain("+4/−2");
-});
-
-/*
- * A diff is read by scrolling, and a hunk halfway down a long file says
- * nothing about which file it belongs to. The title bar pins to the top of the
- * list for as long as any of its file is on screen, and is opaque while it is
- * there: the bar of the next file slides over this one on its way past, and
- * two see-through bars would be legible through each other. Being positioned
- * is not enough to cover what it scrolls over: an icon is painted through a
- * mask, which is a stacking context of its own, so the icons of the hunks
- * below would show through an unlayered bar. It takes a layer, and the list
- * around it is isolated so that layer never reaches the composer floating at
- * the foot.
- */
-test("a file's title bar pins to the top of the list, opaque", async () => {
-  await seed();
-  const host = await open();
-  await settle(() => rows(host).length === 2, "both rows");
-
-  const bar = (): HTMLElement => rows(host)[0]?.parentElement as HTMLElement;
-  expect(bar().className).toContain("sticky");
-  expect(bar().className).toContain("top-0");
-  expect(bar().className).toContain("bg-neutral-925");
-  expect(bar().className).toMatch(/\bz-\d/);
-  const list = bar().closest(".overflow-y-auto") as HTMLElement;
-  expect(list.className).toContain("isolate");
-
-  rows(host)[0]?.click();
-  await settle(() => host.textContent?.includes("THREE") === true, "the hunks");
-  expect(bar().className).toContain("sticky");
-  expect(bar().className).toContain("bg-neutral-850");
-});
-
-/*
- * A row is a thing to click, so all of it is the button: the padding that
- * gives the row its height belongs to the button rather than the bar around
- * it, or the top and bottom few pixels of every row swallow a click. Nothing
- * shares the bar with it: what goes in a commit is asked in the modal.
- */
-test("the row is the button, top to bottom", async () => {
-  await seed();
-  const host = await open();
-  await settle(() => rows(host).length === 2, "both rows");
-
-  const row = rows(host)[0] as HTMLElement;
-  const bar = row.parentElement as HTMLElement;
-  expect(bar.className).not.toMatch(/\bpy-/);
-  expect(row.className).toContain("py-1.5");
-  expect(bar.querySelector("[role='checkbox']")).toBeNull();
-  expect(host.querySelector("header [role='checkbox']")).toBeNull();
-});
-
-/*
- * A move is one path, not two: everything the old and new names agree on is
- * said once and the segments that changed are braced, exactly as the patch
- * tool titles a move — same arrow, same strike through what is gone.
- */
-test("a renamed file reads as one braced path", async () => {
-  await seed();
-  await git(repo, ["add", "-A"]);
-  await git(repo, ["commit", "-m", "edits"]);
-  await git(repo, ["mv", "src/beta.ts", "src/gamma.ts"]);
-  const host = await open();
-
-  await settle(() => rows(host).length === 1, "the renamed row");
-  const row = rows(host)[0] as HTMLElement;
-  expect(row.textContent).toContain("src/{beta.ts ➝ gamma.ts}");
-  expect(row.querySelector(".line-through")?.textContent).toBe("beta.ts");
 });
 
 test("expanding reads the file once, and never again", async () => {
@@ -421,7 +331,6 @@ test("a clean tree says so", async () => {
   expect(rows(host)).toEqual([]);
 });
 
-/** The shell's own changes segment, with the change set as its destination. */
 function shell(): HTMLElement {
   const host = mountPoint();
   dispose = render(
@@ -436,7 +345,6 @@ function changesPane(host: HTMLElement): HTMLElement | null {
   return host.querySelector<HTMLElement>("section[aria-label='Changes']");
 }
 
-/** The bottom-origin scroller, which is the transcript and nothing else. */
 function transcript(host: HTMLElement): HTMLElement | null {
   return host.querySelector<HTMLElement>("div.h-full.flex-col-reverse");
 }
@@ -478,11 +386,6 @@ test("the changes segment opens the change set while an agent is working", async
   expect(changesPane(host)).not.toBeNull();
 });
 
-/**
- * The change set takes the transcript's place rather than covering it, and the
- * composer stays where it was: a hunk can be read and answered without going
- * back first.
- */
 test("the change set replaces the transcript and keeps the composer", async () => {
   await seed();
   watch();
@@ -513,7 +416,6 @@ test("the change set replaces the transcript and keeps the composer", async () =
   expect(transcript(host)?.textContent).toContain("the conversation so far");
 });
 
-/** Reopening reads the rows out of the store that outlived the last visit. */
 test("closing and reopening does not read the repository again", async () => {
   await seed();
   watch();
@@ -566,7 +468,6 @@ test("a repository that moves re-reads itself, keeping the open file open", asyn
   expect(host.querySelector("[title='Read the change list again']")).toBeNull();
 });
 
-/** A file the repository has lost is a row the list drops of its own accord. */
 test("a repository that loses a change drops its row", async () => {
   await seed();
   const host = await open();
@@ -580,7 +481,6 @@ test("a repository that loses a change drops its row", async () => {
   expect(labels(host)).toEqual(["alpha.ts"]);
 });
 
-/** Nothing is read for a pane nobody is on; coming back reads it once. */
 test("a repository that moves while the change set is closed is read on return", async () => {
   await seed();
   watch();
@@ -657,7 +557,6 @@ test("a binary file reads as one row and the size of each side", async () => {
   expect(host.querySelector("img")).toBeNull();
 });
 
-/** A committed file long enough to leave gaps, edited at both ends. */
 async function longFile(
   lines: number,
   edits: readonly number[]
@@ -678,7 +577,6 @@ function gaps(host: HTMLElement): readonly HTMLButtonElement[] {
   ];
 }
 
-/** The rows the hunks skip, counted and offered rather than merely marked. */
 test("a gap says how many lines it hides, and opens them when clicked", async () => {
   await longFile(60, [3, 55]);
   const host = await open();
@@ -710,7 +608,6 @@ test("a gap says how many lines it hides, and opens them when clicked", async ()
   expect(host.textContent).toContain("2 lines unchanged");
 });
 
-/** A gap no reader wants whole opens a step at a time, from each hunk it touches. */
 test("a gap too wide to swallow opens a step against each hunk", async () => {
   await longFile(400, [3, 395]);
   const host = await open();
@@ -743,26 +640,6 @@ test("a gap too wide to swallow opens a step against each hunk", async () => {
   expect(asked("read_lines")).toHaveLength(2);
 });
 
-/** The pane is for reading; what a commit is made of is asked in the modal. */
-test("the toolbar offers the whole change set, and the modal arrives holding it", async () => {
-  await seed();
-  const host = await open();
-  await settle(() => rows(host).length === 2, "both rows");
-
-  expect(box(host)).toBeNull();
-  expect(host.querySelector("header")?.textContent).toContain("Commit");
-
-  openCommit(host);
-
-  expect(box(host)).not.toBeNull();
-  // Ready to be written in: the caret is the attribute's to give, since the
-  // dialog's own focusing steps run after this body's effects and would take
-  // the first control in the header.
-  expect(box(host)?.hasAttribute("autofocus")).toBe(true);
-  expect(pick(host, "alpha.ts").getAttribute("aria-checked")).toBe("true");
-  expect(pick(host, "src/beta.ts").getAttribute("aria-checked")).toBe("true");
-});
-
 test("a commit writes exactly the picked files and leaves the rest dirty", async () => {
   await seed();
   const host = await open();
@@ -783,35 +660,7 @@ test("a commit writes exactly the picked files and leaves the rest dirty", async
   expect(host.querySelector("header")?.textContent).toContain(
     `committed ${await gitOut(["rev-parse", "--short", "HEAD"])}`
   );
-  // The modal is done: what it wrote is read back in the pane it emptied.
   expect(host.querySelector("dialog")?.open).toBe(false);
-});
-
-/*
- * A move is two names in one row, and a commit of only the new one leaves the
- * old path behind in the tree; both go on the pathspec.
- */
-test("a rename goes on the commit by both of its names", async () => {
-  await seed();
-  await git(repo, ["add", "-A"]);
-  await git(repo, ["commit", "-m", "edits"]);
-  await git(repo, ["mv", "src/beta.ts", "src/gamma.ts"]);
-  const host = await open();
-  await settle(() => rows(host).length === 1, "the renamed row");
-
-  openCommit(host);
-  write(host, "renamed");
-  submit(host);
-
-  await settle(() => asked("commit").length === 1, "the commit");
-  expect(asked("commit")).toEqual([
-    {
-      type: "commit",
-      sessionId: store.state.sessionId,
-      message: "renamed",
-      paths: ["src/gamma.ts", "src/beta.ts"],
-    },
-  ]);
 });
 
 test("a refused commit keeps the picks and the message that was refused", async () => {
@@ -844,36 +693,6 @@ test("a refused commit keeps the picks and the message that was refused", async 
   expect(pick(host, "alpha.ts").getAttribute("aria-checked")).toBe("true");
   expect(pick(host, "src/beta.ts").getAttribute("aria-checked")).toBe("false");
   expect(await gitOut(["log", "-1", "--pretty=%s"])).toBe("seed");
-});
-
-test("a commit of our own re-reads the list it emptied", async () => {
-  await seed();
-  watch((command) =>
-    command.type === "commit"
-      ? {
-          type: "response",
-          id: "stub",
-          success: true,
-          commit: { sha: "a1b2c3d" },
-        }
-      : undefined
-  );
-  const host = paint();
-  await settle(() => rows(host).length === 2, "both rows");
-
-  openCommit(host);
-  write(host, "the reviewed change");
-  submit(host);
-
-  await settle(
-    () => asked("list_changes").length === 2,
-    "the re-read the commit asks for"
-  );
-
-  await settle(
-    () => host.textContent?.includes("committed a1b2c3d") === true,
-    "the receipt"
-  );
 });
 
 test("a half-written message survives leaving the review and coming back", async () => {

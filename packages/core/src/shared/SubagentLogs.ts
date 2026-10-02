@@ -4,15 +4,14 @@ import { dirname, join } from "node:path";
 import { Paths } from "./Paths";
 import { Sweeper } from "./Sweeper";
 
-// The parent id names a directory; a call id is opaque provider data, hashed rather than trusted as a segment.
+// Parent ids become directory names; call ids are untrusted, so they are hashed.
 const ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
-// A call id arrives off the wire: bound what gets hashed.
 const MAX_CALL_ID_LENGTH = 4096;
 
 const TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 
-// Must stay outside pi's sessions root, which `SessionRegistry` globs as the session catalogue.
+// Must stay outside pi's sessions root, which `SessionRegistry` globs.
 function dir(): string {
   return join(Paths.pimHomeDir(), "subagents");
 }
@@ -32,7 +31,7 @@ function pathFor(parentSessionId: string, callId: string): string | null {
   );
 }
 
-// Create the log empty with explicit modes: a file pi creates takes the process umask.
+// Created up front with private modes; pi would use the umask.
 async function create(
   parentSessionId: string,
   callId: string
@@ -50,7 +49,7 @@ async function create(
   }
 }
 
-// Expire a parent's children together by newest mtime, or a long run loses its earlier subagents.
+// Expires a parent's logs together, by their newest mtime.
 function cleanup(root = dir(), now = Date.now()): void {
   let names: string[];
   try {
@@ -93,7 +92,6 @@ function installSweeper(): void {
 
 export const SubagentLogs = {
   TTL_MS,
-  SWEEP_INTERVAL_MS,
   dir,
   pathFor,
   create,

@@ -13,7 +13,7 @@ import { Spinner } from "../ui/Spinner";
 
 const TURN_SLACK_MS = 2_000;
 
-/** The running indicator: a spinner and the turn's elapsed time, anchored to the server's `turnElapsedMs`. */
+/** Spinner plus the turn's elapsed time, anchored to the server's `turnElapsedMs`. */
 export function ClankChip(props: { readonly store: SessionStore }) {
   const [elapsed, setElapsed] = createSignal<number | undefined>(undefined);
   const replayed = createMemo(() => lastTurnMs(props.store.state.durable));
@@ -65,8 +65,8 @@ export function ClankChip(props: { readonly store: SessionStore }) {
     }
   );
 
+  // Zero is a valid reading, so test for undefined rather than falsy.
   return (
-    // `undefined`, not falsy: a turn one tick old measures zero, and zero is a reading.
     <Show when={shown() !== undefined}>
       <div
         class="pointer-events-auto flex items-center gap-1.5 rounded-lg bg-neutral-900 px-2.5 py-1 text-sm text-neutral-350 tabular-nums ring-1 ring-neutral-750"

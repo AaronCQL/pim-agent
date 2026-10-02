@@ -68,20 +68,8 @@ export default function (pi: ExtensionAPI): void {
         });
       }
 
-      return {
-        content,
-        details: {
-          kind: "text",
-          absolutePath,
-          totalLines: outcome.totalLines,
-          visibleStart: outcome.visibleStart,
-          visibleEnd: outcome.visibleEnd,
-          truncatedByByteCap: outcome.truncatedByByteCap,
-          truncatedByEnd: outcome.truncatedByEnd,
-          hadBom: outcome.hadBom,
-          nextStart: outcome.nextStart,
-        },
-      };
+      const { body: _body, ...text } = outcome;
+      return { content, details: { ...text, absolutePath } };
     },
     toViewModel: readView,
   });

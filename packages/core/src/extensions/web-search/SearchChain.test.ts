@@ -119,6 +119,22 @@ describe("SearchChain", () => {
     expect(second.calls).toBe(2);
   });
 
+  test("reports a fallback when the breaker skipped the first provider", async () => {
+    const breaker = new SearchBreaker({ path: breakerPath() });
+    await breaker.trip({ provider: "exa", reason: "daily limit reached" });
+    const first = stubProvider("exa", async () => [result("https://a.test")]);
+    const second = stubProvider("firecrawl", async () => [
+      result("https://b.test"),
+    ]);
+    const chain = new SearchChain({ providers: [first, second], breaker });
+
+    const outcome = await chain.search(input);
+
+    expect(outcome.provider).toBe("firecrawl");
+    expect(outcome.fellBack).toBe(true);
+    expect(first.calls).toBe(0);
+  });
+
   test("does not sideline a provider that merely errored", async () => {
     const path = breakerPath();
     const first = stubProvider("exa", async () => {

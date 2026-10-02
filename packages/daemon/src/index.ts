@@ -4,7 +4,6 @@ import { Surfaces } from "./Surfaces";
 import { TelegramSurface } from "./TelegramSurface";
 import { WebSurface } from "./WebSurface";
 
-/** Every surface in this process shares one pi installation, and so one `auth.json`. */
 export function build(args: ReadonlyArray<string>): ReadonlyArray<Surface> {
   const runtime = new AgentRuntime();
   return Surfaces.parse(args).map((name) =>

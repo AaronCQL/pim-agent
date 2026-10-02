@@ -21,10 +21,6 @@ function file(path: string, fingerprint = "f1"): ChangeSummary {
   return { path, status: "modified", added: 1, removed: 0, fingerprint };
 }
 
-/**
- * The file on disk is what a bare reference already names, so nothing is said
- * twice: no revision, no quote of lines the reader can go and read.
- */
 test("a line comment on the working copy is the reference and what was written", () => {
   const block = Review.compose(
     "worktree",
@@ -64,7 +60,6 @@ test("a range carries both ends and no count of what is between them", () => {
   expect(block).toBe(["> src/a.ts:141-147", "", "Split this."].join("\n"));
 });
 
-/** The numbers belong to a revision, so the entry names the one git knows. */
 test("an old-side comment names the revision its numbers belong to", () => {
   const worktree = Review.compose(
     "worktree",
@@ -81,7 +76,6 @@ test("an old-side comment names the revision its numbers belong to", () => {
   expect(unstaged.split("\n")[0]).toBe("> src/a.ts:141-147 (index)");
 });
 
-/** `--cached` puts both sides in a revision: the new one is the index, not the disk. */
 test("a staged diff names the index on the side that is not on disk", () => {
   const block = Review.compose(
     "staged",
@@ -110,10 +104,6 @@ test("a comment on the file itself names no line and no revision", () => {
   );
 });
 
-/**
- * No revision holds the working copy the reader read, so the quote is the only
- * anchor left — and the one place it is still worth its width.
- */
 test("a new-side comment whose file has moved carries the line it was written against", () => {
   const block = Review.compose(
     "worktree",
@@ -140,7 +130,6 @@ test("a new-side comment whose file has moved carries the line it was written ag
   );
 });
 
-/** HEAD and the index do not move when the working copy does. */
 test("an old-side comment on a moved file keeps its plain reference", () => {
   const block = Review.compose(
     "worktree",

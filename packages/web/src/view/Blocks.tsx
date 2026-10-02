@@ -46,7 +46,6 @@ type PainterMap = {
   readonly [TKind in ViewBlock["kind"]]: BlockPainter<TKind>;
 };
 
-/** The recursive block dispatcher; a kind with no painter fails to typecheck. */
 export function Blocks(props: { readonly blocks: readonly ViewBlock[] }) {
   return <For each={props.blocks}>{(block) => <Block block={block} />}</For>;
 }
@@ -60,7 +59,7 @@ function Block(props: { readonly block: ViewBlock }) {
   );
 }
 
-/** Blocks in a body, wrapped run by run in the container their frame asks for. */
+/** Wraps each run of same-frame blocks in its frame container. */
 export function Body(props: { readonly blocks: readonly ViewBlock[] }) {
   return (
     <For each={groupByFrame(props.blocks)}>
@@ -85,7 +84,7 @@ function MarkdownBlock(props: { readonly block: BlockOf<"markdown"> }) {
   return <Markdown text={props.block.text} />;
 }
 
-// Producers write their own spacing into span text, so no gap and `pre-wrap`.
+// Spacing is baked into the span text.
 function SpansBlock(props: { readonly block: BlockOf<"spans"> }) {
   return (
     <p class="whitespace-pre-wrap break-words">
@@ -159,7 +158,7 @@ function CodeBlock(props: { readonly block: BlockOf<"code"> }) {
   );
 }
 
-// Tabs are sized, not expanded: emphasis ranges count characters of the original line.
+// Tabs are not expanded: emphasis ranges index the original characters.
 function DiffBlock(props: { readonly block: BlockOf<"diff"> }) {
   const lang = createMemo(() => Languages.fromPath(props.block.path));
   const width = createMemo(() => DiffLayout.gutterWidth(props.block.hunks));
@@ -184,14 +183,13 @@ function DiffBlock(props: { readonly block: BlockOf<"diff"> }) {
   );
 }
 
-/** The rows of a unified diff: a gutter, a sign, and the line they belong to. */
 export function UnifiedLines(props: {
   readonly lines: readonly ToolDiffLine[];
   readonly lang: string | undefined;
   readonly width: number;
   readonly anchors?: DiffAnchors;
 }) {
-  // One tokenisation per side of the run, memoised: it re-runs when a grammar lands.
+  // Re-runs when a grammar finishes loading.
   const tokens = createMemo(() =>
     DiffLayout.mapSides(props.lines, (block) =>
       Highlight.tokenize(block, props.lang)
@@ -256,11 +254,6 @@ function DiffRow(props: {
           )}
         </For>
       </div>
-      {/* A hold does not stop at the last line it names: the gutter beside
-          the cards carries the same wash on down, so the lines, the cross in
-          the margin and the words under them read as one block rather than
-          three. Split says this with a cell of its own; here it is a strip as
-          wide as the gutter, which is what a card indents itself by. */}
       <Show when={props.anchors?.holdsCards(side(), number()) === true}>
         <div class="relative">
           <div
@@ -276,7 +269,7 @@ function DiffRow(props: {
 
 export type Piece = Token & { readonly emphasis?: boolean };
 
-// Syntax tokens re-cut at the emphasis range edges; both count the same characters.
+// Splits syntax tokens at the emphasis range edges.
 export function emphasize(
   tokens: readonly Token[],
   ranges: readonly IntraLineRange[] = []
@@ -439,7 +432,7 @@ function AttachmentBlock(props: { readonly block: BlockOf<"attachment"> }) {
 
 function ImageBlock(props: { readonly block: BlockOf<"image"> }) {
   const origin = useContext(GatewayOrigin);
-  // The cache sweep takes the bytes after a week; the summary is what the row keeps saying.
+  // The image cache is swept after a week; fall back to the summary.
   const [swept, setSwept] = createSignal(false);
   const src = () =>
     `${origin()}${ImageRoute.url(

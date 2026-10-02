@@ -26,7 +26,7 @@ function sameActiveAtToken(
   return a?.cursorLine === b.cursorLine && a.atCol === b.atCol;
 }
 
-export type FilePickerProviderFactoryOptions = {
+type FilePickerProviderFactoryOptions = {
   readonly engine: FilePickerSuggestionEngine;
 };
 
@@ -38,10 +38,6 @@ type ActiveAtToken = {
 export function createFilePickerProviderFactory(
   options: FilePickerProviderFactoryOptions
 ): AutocompleteProviderFactory {
-  const refreshRelative = (): void => {
-    void options.engine.refreshRelative();
-  };
-
   return (current: AutocompleteProvider): AutocompleteProvider => {
     let activeAtToken: ActiveAtToken | undefined;
 
@@ -65,7 +61,7 @@ export function createFilePickerProviderFactory(
         const atToken = { cursorLine, atCol: sigilOffset(atMatch) };
         if (!sameActiveAtToken(activeAtToken, atToken)) {
           activeAtToken = atToken;
-          refreshRelative();
+          void options.engine.refreshRelative();
         }
 
         const items = await options.engine

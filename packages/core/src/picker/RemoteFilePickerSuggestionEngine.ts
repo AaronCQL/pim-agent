@@ -13,7 +13,7 @@ const DEBOUNCE_MS = 30;
 
 const CACHE_LIMIT = 100;
 
-/** The client half of the `@` picker: the TUI's engine contract, answered by the server. Browser-safe APIs only. */
+/** Browser-safe: asks the server for `@` picker rows. */
 export class RemoteFilePickerSuggestionEngine implements FilePickerSuggestionEngine {
   private readonly cache = new Map<string, readonly PickerItem[]>();
   private generation = 0;
@@ -23,7 +23,6 @@ export class RemoteFilePickerSuggestionEngine implements FilePickerSuggestionEng
     private readonly debounceMs: number = DEBOUNCE_MS
   ) {}
 
-  /** The invalidation hook: `picker_invalidate` from the server lands here. */
   public refreshRelative(): Promise<void> {
     this.cache.clear();
     return Promise.resolve();
