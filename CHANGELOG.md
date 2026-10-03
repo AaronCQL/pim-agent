@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.14.0
+
+### Features
+
+- Upgrade pi to 1.0.0 (7b3589b)
+
+### Bug Fixes
+
+- Fix `pim mcp` being sent to the model as a prompt (705b98a)
+- Fix assorted bugs in Telegram scheduled tasks, apply-patch, file uploads, and session search (#27)
+- Fix a command killed for exceeding its memory limit sometimes being reported as a plain SIGTERM (06b97dc)
+
+### Improvements
+
+- Code cleanup and leaner tests (#27)
+
 ## v0.13.0
 
 ### Features
