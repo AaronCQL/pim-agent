@@ -104,6 +104,8 @@ async function scope(): Promise<MemoryScope | null> {
       `--property=MemoryMax=${limit}`,
       "--property=MemorySwapMax=0",
       "--property=OOMPolicy=kill",
+      // The kernel's group kill races systemd's OOM stop; both must SIGKILL so run.ts can tell.
+      "--property=KillSignal=SIGKILL",
       ...(bindTo
         ? [`--property=BindsTo=${bindTo}`, `--property=After=${bindTo}`]
         : []),

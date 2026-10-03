@@ -207,7 +207,7 @@ export async function runBashCommand(
   const stdout = stdoutCap.snapshot(sniffed !== null);
   const stderr = stderrCap.snapshot();
 
-  // OOMPolicy=kill SIGKILLs the scope; systemd's own Result for it is racy.
+  // OOMPolicy=kill + KillSignal=SIGKILL: an OOM ends in SIGKILL whoever wins; systemd's Result is racy.
   const memoryLimitHit =
     scope !== null && signalCode === "SIGKILL" && !timedOut && !aborted
       ? scope.limitBytes
