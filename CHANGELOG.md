@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.14.1
+
+### Improvements
+
+- Upgrade pi to 1.0.4: retries "model at capacity" errors, keeps the Anthropic prompt cache when tools change mid-conversation, and fixes multiline syntax highlighting in code blocks. The Azure provider is renamed from `azure-openai-responses` to `azure`; rename it in `auth.json`, `models.json` and `settings.json`, or run `/login` again (7ad4b97)
+
 ## v0.14.0
 
 ### Features
