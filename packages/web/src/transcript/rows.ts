@@ -59,6 +59,20 @@ function append(
           ...(thinking === "" ? {} : { thinking }),
         });
       }
+      if (event.skill !== undefined) {
+        rows.push({
+          kind: "tool",
+          id: `${event.messageId}-skill`,
+          name: "skill",
+          view: {
+            label: "Skill",
+            title: [{ kind: "text", text: event.skill.name }],
+            body: [{ kind: "markdown", text: event.skill.content }],
+          },
+          isError: false,
+          isPartial: false,
+        });
+      }
       if (event.error !== undefined) {
         rows.push({
           kind: "notice",

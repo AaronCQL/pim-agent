@@ -268,6 +268,32 @@ describe("painting", () => {
     expect(card?.querySelector("strong")?.textContent).toBe("bold");
   });
 
+  test("a skill is the command typed, then a closed row that opens onto its markdown", () => {
+    const host = replay([
+      {
+        seq: 1,
+        type: "message",
+        messageId: "m",
+        role: "user",
+        text: "/skill:release cut it",
+        timestamp: 0,
+        skill: { name: "release", content: "# Release\n\nShip **it**." },
+      },
+    ]);
+    const bubble = host.querySelector(".bg-neutral-850")!;
+    const row = host.querySelector("details")!;
+
+    expect(bubble.textContent).toBe("/skill:release cut it");
+    expect(
+      bubble.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(row.open).toBe(false);
+    expect(row.querySelector("summary")?.textContent).toContain(
+      "Skill:release"
+    );
+    expect(row.querySelector("strong")?.textContent).toBe("it");
+  });
+
   test("a dead turn is a tagged rose line where the answer would have been", () => {
     const host = replay([
       {

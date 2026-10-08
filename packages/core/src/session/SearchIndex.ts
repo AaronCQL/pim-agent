@@ -1,6 +1,5 @@
 import { parseSessionEntries } from "@earendil-works/pi-coding-agent";
 
-import { Attachments } from "../attachments/Attachments";
 import { Levenshtein } from "../shared/Levenshtein";
 import { Pool } from "../shared/Pool";
 import { MessageText } from "./MessageText";
@@ -12,6 +11,7 @@ import {
   type Durable,
 } from "./SessionDigest";
 import type { SessionSummary } from "./SessionRegistry";
+import { UserPrompt } from "./UserPrompt";
 
 /** Half-open character offsets; non-overlapping and ascending. */
 export type SearchRange = readonly [start: number, end: number];
@@ -527,9 +527,10 @@ function turnOf(line: string, seq: number): Turn | undefined {
   if (message.role !== "user" && message.role !== "assistant") {
     return undefined;
   }
-  const said = MessageText.textOf(message.content);
   const text = (
-    message.role === "user" ? Attachments.parse(said).text : said
+    message.role === "user"
+      ? UserPrompt.of(message.content).text
+      : MessageText.textOf(message.content)
   ).trim();
   return text === "" ? undefined : { seq, role: message.role, text };
 }

@@ -7,6 +7,7 @@ import type { FileEntry } from "@earendil-works/pi-coding-agent";
 import { Attachments } from "#core/attachments/Attachments";
 import { EventLog, type LoggedEntry } from "#core/session/EventLog";
 import { MessageText } from "#core/session/MessageText";
+import { UserPrompt } from "#core/session/UserPrompt";
 import { Tools } from "#core/shared/Tools";
 import type {
   AttachmentView,
@@ -83,7 +84,7 @@ export class SessionProjection {
     const timestamp = Date.parse(entry.timestamp);
     switch (message.role) {
       case "user": {
-        const said = Attachments.parse(MessageText.textOf(message.content));
+        const said = UserPrompt.of(message.content);
         const attachments: readonly AttachmentView[] = said.files.map(
           (file) => ({
             name: Attachments.nameOf(file.path),
@@ -99,6 +100,7 @@ export class SessionProjection {
           text: said.text,
           timestamp,
           ...(attachments.length === 0 ? {} : { attachments }),
+          ...(said.skill === undefined ? {} : { skill: said.skill }),
         };
       }
       case "assistant": {

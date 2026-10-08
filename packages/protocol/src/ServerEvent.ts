@@ -4,6 +4,7 @@ import type { PickerItem } from "#core/picker/PickerItem";
 import type { ExtensionEntry } from "#core/shared/PiExtensions";
 import type { SearchRange, SearchSnippet } from "#core/session/SearchIndex";
 import type { LeaseFrontend } from "#core/session/SessionLease";
+import type { SkillUse } from "#core/session/UserPrompt";
 import type { UpdateSkip } from "#core/shared/Updater";
 import type { NoticeSeverity, ToolView } from "#core/view/ViewBlock";
 import type { ChangeList, FileDiff, FileLines } from "./Diff";
@@ -44,6 +45,8 @@ export type DurableEvent =
       readonly thinking?: string;
       /** User messages only. */
       readonly attachments?: readonly AttachmentView[];
+      /** User messages only; `text` then holds the command as typed. */
+      readonly skill?: SkillUse;
       readonly toolCalls?: readonly ToolCallView[];
       /** Model call error; assistant messages only. */
       readonly error?: string;

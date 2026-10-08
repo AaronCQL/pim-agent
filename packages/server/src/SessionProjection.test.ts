@@ -216,6 +216,32 @@ test.each([
   expect(events[0]?.type === "message" && events[0].error).toBe(error);
 });
 
+test("a skill pi expanded crosses as the command typed, its markdown set apart", async () => {
+  const events = await (
+    await logOf({
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: '<skill name="release" location="/s/SKILL.md">\n# Release\n</skill>\n\ncut it',
+        },
+      ],
+    })
+  ).drain();
+
+  expect(events).toEqual([
+    {
+      seq: 1,
+      type: "message",
+      messageId: "entry-0",
+      role: "user",
+      text: "/skill:release cut it",
+      timestamp: Date.parse("2026-08-01T10:17:47.104Z"),
+      skill: { name: "release", content: "# Release" },
+    },
+  ]);
+});
+
 test("a failed call carries why, not a view of the result it never got", async () => {
   const events = await (
     await logOf(

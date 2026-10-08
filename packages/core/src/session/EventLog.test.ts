@@ -218,6 +218,38 @@ describe("EventLog digest", () => {
 
     expect((await new EventLog(path).digest()).title).toBe("hello");
   });
+
+  test("names a session opened with a skill by the command typed", async () => {
+    const path = join(tmp, "skill.jsonl");
+    await Bun.write(
+      path,
+      line({
+        type: "session",
+        id: "s1",
+        timestamp: "2026-08-01T10:00:00.000Z",
+        cwd: "/tmp",
+      }) +
+        line({
+          type: "message",
+          id: "m1",
+          parentId: null,
+          timestamp: "2026-08-01T10:00:01.000Z",
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: `<skill name="release" location="/s/SKILL.md">\n# Release\n</skill>\n\ncut it`,
+              },
+            ],
+          },
+        })
+    );
+
+    expect((await new EventLog(path).digest()).title).toBe(
+      "/skill:release cut it"
+    );
+  });
 });
 
 describe("EventLog session name", () => {

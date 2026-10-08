@@ -255,6 +255,24 @@ test("the parsed user text is indexed, not the attachment markers", async () => 
   expect(ids(await index.search("screenshot"))).toEqual([]);
 });
 
+test("a skill is indexed as the command typed, not the markdown it expanded to", async () => {
+  await index.search("");
+  const quiet = summaryOf("quiet-note");
+  await SearchCorpus.edit(
+    quiet,
+    (text) =>
+      text +
+      SearchCorpus.lineOf(quiet, {
+        role: "user",
+        text: '<skill name="hovercraft" location="/s/SKILL.md">\n# Zeppelin\n</skill>',
+      })
+  );
+  clock += 500;
+
+  expect(ids(await index.search("hovercraft"))).toEqual(["quiet-note"]);
+  expect(ids(await index.search("zeppelin"))).toEqual([]);
+});
+
 test("an empty query answers nothing and leaves the index built", async () => {
   const answer = await index.search("");
 

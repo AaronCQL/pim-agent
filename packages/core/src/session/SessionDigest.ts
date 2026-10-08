@@ -1,7 +1,7 @@
 import { parseSessionEntries } from "@earendil-works/pi-coding-agent";
 
 import { Attachments } from "../attachments/Attachments";
-import { MessageText } from "./MessageText";
+import { UserPrompt } from "./UserPrompt";
 
 /** Catalogue summary of a session file. */
 export type SessionDigest = {
@@ -138,7 +138,7 @@ function firstUserMessage(lines: readonly string[]): string | undefined {
     if (entry?.type !== "message" || entry.message.role !== "user") {
       continue;
     }
-    const said = Attachments.parse(MessageText.textOf(entry.message.content));
+    const said = UserPrompt.of(entry.message.content);
     const text =
       said.text.trim() ||
       said.files.map((file) => Attachments.nameOf(file.path)).join(", ");
