@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.14.2
+
+### Bug Fixes
+
+- Web: a `/skill:` prompt now shows as the user's typed `/skill:name` message followed by a Skill tool row, instead of the raw expanded skill text; session search and digests also match what the user typed (3b3ed84)
+
 ## v0.14.1
 
 ### Improvements
