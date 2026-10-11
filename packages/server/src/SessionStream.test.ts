@@ -74,13 +74,17 @@ async function persistAssistant(
   await persist(id, { role: "assistant", content });
 }
 
-async function persistToolResult(callId: string): Promise<void> {
+async function persistToolResult(
+  callId: string,
+  extra: Record<string, unknown> = {}
+): Promise<void> {
   await persist(`r-${callId}`, {
     role: "toolResult",
     toolCallId: callId,
     toolName: TOOL,
     content: [],
     isError: false,
+    ...extra,
   });
 }
 
@@ -287,6 +291,44 @@ test("keeps a retired step's calls, and drops each on its durable result", async
   expect(settled.filter((event) => event.type === "tool_call")).toEqual([]);
 });
 
+test("carries how long a call ran, live, on reattach and from the log", async () => {
+  emit(agentEvent({ type: "message_start", message: thinkingMessage("") }));
+  emit(
+    agentEvent({
+      type: "tool_execution_start",
+      toolCallId: "call_1",
+      toolName: TOOL,
+      args: {},
+    })
+  );
+  emit(
+    agentEvent({
+      type: "tool_execution_end",
+      toolCallId: "call_1",
+      toolName: TOOL,
+      result: { content: [] },
+      isError: false,
+      durationMs: 1234,
+    })
+  );
+  const ends = (events: readonly ServerEvent[]) =>
+    events.flatMap((event) =>
+      event.type === "tool_end" || event.type === "tool_result"
+        ? [[event.type, event.durationMs]]
+        : []
+    );
+  expect(ends(received())).toEqual([["tool_end", 1234]]);
+  expect(ends(await stream.replay(99))).toEqual([["tool_end", 1234]]);
+
+  await persistToolResult("call_1", { durationMs: 1234 });
+  emit(agentEvent({ type: "entry_appended" }));
+  await until(
+    () => received().some((event) => event.type === "tool_result"),
+    "the result to be read out of the log"
+  );
+  expect(ends(received()).at(-1)).toEqual(["tool_result", 1234]);
+});
+
 test("hands a reattaching client each step exactly once", async () => {
   await step("step one", "a1");
   emit(agentEvent({ type: "message_start", message: thinkingMessage("") }));
@@ -336,6 +378,17 @@ test("the state carries the age of the turn, and only while one is running", () 
     Date.now = real;
     running.dispose();
   }
+});
+
+test("the state says whether the last turn was interrupted", () => {
+  emit(agentEvent({ type: "agent_start" }));
+  emit(agentEvent({ type: "agent_settled", aborted: true }));
+  expect(stateOf(stream).interrupted).toBe(true);
+
+  emit(agentEvent({ type: "agent_start" }));
+  expect(stateOf(stream).interrupted).toBeUndefined();
+  emit(agentEvent({ type: "agent_settled", aborted: false }));
+  expect(stateOf(stream).interrupted).toBeUndefined();
 });
 
 function stateOf(

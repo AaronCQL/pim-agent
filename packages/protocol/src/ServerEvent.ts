@@ -58,6 +58,8 @@ export type DurableEvent =
       readonly name: string;
       readonly view: ToolView;
       readonly isError: boolean;
+      /** Absent when the tool did not run, or for results recorded before pi measured it. */
+      readonly durationMs?: number;
     }
   | {
       readonly seq: number;
@@ -143,6 +145,7 @@ export type EphemeralEvent =
       readonly callId: string;
       readonly view: ToolView;
       readonly isError: boolean;
+      readonly durationMs?: number;
     }
   /** Cached picker answers for this cwd are stale. */
   | {
@@ -234,6 +237,8 @@ export type EphemeralEvent =
       readonly tps?: number;
       /** Absent when idle. */
       readonly turnElapsedMs?: number;
+      /** The last turn was aborted rather than finished. */
+      readonly interrupted?: boolean;
       /** Context filled, 0–100. Absent until a turn has reported usage. */
       readonly contextPercent?: number;
       readonly contextWindow?: number;

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentToolResult, Theme } from "@earendil-works/pi-coding-agent";
-import type { Component } from "@earendil-works/pi-tui";
+import type { Box, Component } from "@earendil-works/pi-tui";
 import type { JsonObject } from "@earendil-works/pi-ai";
 import { Type, type TSchema } from "typebox";
 import { StringEnum, validateToolArguments } from "@earendil-works/pi-ai";
@@ -345,8 +345,14 @@ describe("Tools.wrap view model synthesis", () => {
       expanded: false,
       showImages: false,
       isError: false,
+      durationMs: undefined,
+      outputPad: 1,
       ...overrides,
     } as ResultContext;
+  }
+
+  function trimmed(component: Component): string[] {
+    return component.render(80).map((line) => line.trimEnd());
   }
 
   function persistedResult(): AgentToolResult<ReadDetails> {
@@ -362,6 +368,7 @@ describe("Tools.wrap view model synthesis", () => {
       label: "read",
       description: "test",
       parameters: params,
+      renderShell: "self",
       async execute() {
         return persistedResult();
       },
@@ -465,7 +472,7 @@ describe("Tools.wrap view model synthesis", () => {
       theme,
       context()
     );
-    expect(component.render(80)).toEqual([" │ 1:alpha", " │ 2:beta"]);
+    expect(trimmed(component)).toEqual([" │ 1:alpha", " │ 2:beta"]);
   });
 
   test("a body stays shut until the row is expanded", () => {
@@ -489,12 +496,9 @@ describe("Tools.wrap view model synthesis", () => {
       }),
     });
     const render = (options: { expanded: boolean; isPartial: boolean }) =>
-      wrapped.renderResult!(
-        persistedResult(),
-        options,
-        theme,
-        context()
-      ).render(80);
+      trimmed(
+        wrapped.renderResult!(persistedResult(), options, theme, context())
+      );
 
     expect(render({ expanded: false, isPartial: true })).toEqual([
       " │ 2 lines",
@@ -565,7 +569,55 @@ describe("Tools.wrap view model synthesis", () => {
       theme,
       context({ isError: true })
     );
-    expect(component.render(80)).toEqual([" │ Path not found: src/foo.ts"]);
+    expect(trimmed(component)).toEqual([" │ Path not found: src/foo.ts"]);
+  });
+
+  test("honours the outputPad setting", () => {
+    const wrapped = Tools.wrap(readLikeDef());
+    const render = (outputPad: number) => ({
+      title: trimmed(
+        wrapped.renderCall!(
+          { path: "src/foo.ts" },
+          theme,
+          context({ outputPad })
+        )
+      ),
+      body: trimmed(
+        wrapped.renderResult!(
+          persistedResult(),
+          { expanded: true, isPartial: false },
+          theme,
+          context({ outputPad })
+        )
+      ),
+    });
+
+    expect(render(0)).toEqual({
+      title: ["▪ Read: src/foo.ts"],
+      body: ["│ 1:alpha", "│ 2:beta"],
+    });
+    expect(render(2)).toEqual({
+      title: ["  ▪ Read: src/foo.ts"],
+      body: ["  │ 1:alpha", "  │ 2:beta"],
+    });
+  });
+
+  test("reuses the inner component across renders", () => {
+    const wrapped = Tools.wrap(readLikeDef());
+    const first = wrapped.renderResult!(
+      persistedResult(),
+      { expanded: true, isPartial: false },
+      theme,
+      context()
+    );
+    const second = wrapped.renderResult!(
+      persistedResult(),
+      { expanded: true, isPartial: false },
+      theme,
+      context({ lastComponent: first, outputPad: 0 })
+    );
+    expect((second as Box).children[0]).toBe((first as Box).children[0]);
+    expect(trimmed(second)).toEqual(["│ 1:alpha", "│ 2:beta"]);
   });
 
   test("a view of a failed call says so, whatever the tool's renderer paints", () => {
@@ -623,23 +675,22 @@ describe("Tools.wrap view model synthesis", () => {
     expect(invalidated).toBe(1);
   });
 
-  test("explicit renderers always win", () => {
+  test("explicit renderers always win, inside the same margin", () => {
     const marker: Component = { render: () => ["explicit"], invalidate() {} };
     const wrapped = Tools.wrap({
       ...readLikeDef(),
       renderCall: () => marker,
       renderResult: () => marker,
     });
-    expect(wrapped.renderCall!({ path: "src/foo.ts" }, theme, context())).toBe(
-      marker
+    const call = wrapped.renderCall!({ path: "src/foo.ts" }, theme, context());
+    const result = wrapped.renderResult!(
+      persistedResult(),
+      { expanded: true, isPartial: false },
+      theme,
+      context()
     );
-    expect(
-      wrapped.renderResult!(
-        persistedResult(),
-        { expanded: true, isPartial: false },
-        theme,
-        context()
-      )
-    ).toBe(marker);
+    expect((call as Box).children).toEqual([marker]);
+    expect((result as Box).children).toEqual([marker]);
+    expect(trimmed(call)).toEqual([" explicit"]);
   });
 });

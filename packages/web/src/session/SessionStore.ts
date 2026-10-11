@@ -116,6 +116,7 @@ export type SessionState = {
   repoBusy: boolean;
   heldBy: LeaseHolder;
   turnElapsedMs: number | undefined;
+  interrupted: boolean;
   contextPercent: number | undefined;
   contextWindow: number | undefined;
   branch: string | undefined;
@@ -252,6 +253,7 @@ export class SessionStore {
       repoBusy: false,
       heldBy: undefined,
       turnElapsedMs: undefined,
+      interrupted: false,
       contextPercent: undefined,
       contextWindow: undefined,
       branch: undefined,
@@ -1313,6 +1315,7 @@ export class SessionStore {
             draft.writable = true;
             draft.heldBy = undefined;
             draft.turnElapsedMs = undefined;
+            draft.interrupted = false;
             draft.loading = event.head > 0;
           }
           // The replay re-sends any dialog still open.
@@ -1452,6 +1455,7 @@ export class SessionStore {
           draft.repoBusy = event.repoBusy === true;
           draft.heldBy = event.heldBy;
           draft.turnElapsedMs = event.turnElapsedMs;
+          draft.interrupted = event.interrupted === true;
           draft.activity[draft.sessionId] = event.status;
           draft.contextPercent = event.contextPercent;
           draft.contextWindow = event.contextWindow;

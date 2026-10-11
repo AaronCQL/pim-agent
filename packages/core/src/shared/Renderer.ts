@@ -27,12 +27,12 @@ export type PrefixSpec = {
 };
 
 const GAPPED_PREFIX: PrefixSpec = {
-  prefix: " │ ",
-  width: 3,
+  prefix: "│ ",
+  width: 2,
 };
 const TIGHT_PREFIX: PrefixSpec = {
-  prefix: " │",
-  width: 2,
+  prefix: "│",
+  width: 1,
 };
 
 class ToolTitle implements Component {
@@ -213,7 +213,7 @@ function titleHead(args: {
 }): string {
   const { label, theme, markerColor, labelColor } = args;
   return (
-    theme.fg(markerColor, " ▪") +
+    theme.fg(markerColor, "▪") +
     " " +
     theme.fg(labelColor ?? "toolTitle", theme.bold(label))
   );

@@ -61,9 +61,9 @@ describe("Renderer.renderErrorResult", () => {
     });
 
     expect(component.render(80)).toEqual([
-      " │   src/file.ts:10:before",
-      " │ > src/file.ts:11:matched",
-      " │   src/file.ts:12:after",
+      "│   src/file.ts:10:before",
+      "│ > src/file.ts:11:matched",
+      "│   src/file.ts:12:after",
     ]);
   });
 
@@ -88,7 +88,7 @@ describe("Renderer.renderToolCallTitle", () => {
       context: rendererContext,
     });
 
-    expect(component.render(80)).toEqual([" ▪ Bash: pwd".padEnd(80, " ")]);
+    expect(component.render(80)).toEqual(["▪ Bash: pwd".padEnd(80, " ")]);
   });
 
   test("labelColor overrides the default label color when provided", () => {
@@ -132,7 +132,7 @@ describe("Renderer.renderToolCallTitle", () => {
     const lines = component.render(width);
 
     expect(lines.length).toBeGreaterThan(1);
-    expect(lines.slice(1).every((line) => line.startsWith(" │ "))).toBe(true);
+    expect(lines.slice(1).every((line) => line.startsWith("│ "))).toBe(true);
     expect(lines.every((line) => visibleWidth(line) <= width)).toBe(true);
   });
 });

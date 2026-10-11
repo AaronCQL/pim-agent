@@ -54,12 +54,13 @@ export default function (pi: ExtensionAPI): void {
     timer = setInterval(() => setWorkingMessage(ctx), 1000);
   });
 
-  pi.on("agent_end", (_event, ctx) => {
+  pi.on("agent_settled", (event, ctx) => {
     stopTimer();
     if (!ctx.hasUI) {
       return;
     }
-    const message = `⣿ Clanked for ${Format.formatElapsed(Date.now() - startedAt)}\n`;
+    const verb = event.aborted ? "Interrupted after" : "Clanked for";
+    const message = `⣿ ${verb} ${Format.formatElapsed(Date.now() - startedAt)}\n`;
     ctx.ui.setWidget(FINAL_WIDGET_ID, [ctx.ui.theme.fg("muted", message)]);
   });
 

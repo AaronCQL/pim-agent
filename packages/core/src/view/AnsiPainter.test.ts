@@ -89,7 +89,7 @@ describe("AnsiPainter section", () => {
       })
     ).toEqual([
       "",
-      "<success> ▪</success> <toolTitle><b>Write</b></toolTitle>" +
+      "<success>▪</success> <toolTitle><b>Write</b></toolTitle>" +
         "<toolTitle>: b.txt <toolDiffAdded>+2</toolDiffAdded></toolTitle>",
     ]);
   });

@@ -14,6 +14,7 @@ export type LiveTool = {
   readonly view: ToolView;
   readonly isError: boolean;
   readonly isPartial: boolean;
+  readonly durationMs?: number;
 };
 
 /** One assistant message of the in-flight turn. */
@@ -99,6 +100,7 @@ export function applyLive(target: LiveHolder, event: EphemeralEvent): void {
         view: event.view,
         isError: event.isError,
         isPartial: false,
+        durationMs: event.durationMs,
       });
       return;
     case "message_retire":

@@ -18,8 +18,13 @@ export function ClankChip(props: { readonly store: SessionStore }) {
   const [elapsed, setElapsed] = createSignal<number | undefined>(undefined);
   const replayed = createMemo(() => lastTurnMs(props.store.state.durable));
   const shown = createMemo(() => elapsed() ?? replayed());
+  const ended = createMemo(() =>
+    props.store.state.interrupted
+      ? { words: "Interrupted after", icon: "i-griddy-icons:stop-filled" }
+      : { words: "Clanked for", icon: "i-griddy-icons:check" }
+  );
   const words = createMemo(() =>
-    props.store.isBusy() ? "Clanking…" : "Clanked for"
+    props.store.isBusy() ? "Clanking…" : ended().words
   );
   const reading = createMemo(() => Format.formatElapsed(shown() ?? 0));
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -77,7 +82,7 @@ export function ClankChip(props: { readonly store: SessionStore }) {
           when={props.store.isBusy()}
           fallback={
             <span
-              class="i-griddy-icons:check size-3.5 shrink-0"
+              class={`${ended().icon} size-3.5 shrink-0`}
               aria-hidden="true"
             />
           }

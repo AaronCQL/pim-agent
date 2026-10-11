@@ -40,6 +40,7 @@ type LiveTool = {
   view: ToolView;
   isError: boolean;
   done: boolean;
+  durationMs: number | undefined;
 };
 
 type LiveMessage = {
@@ -105,6 +106,7 @@ export class SessionStream implements SessionUi {
   private uiSeq = 0;
   private readonly dispatching: string[] = [];
   private turnStartedAt = 0;
+  private interrupted = false;
   private gitCwd: string | undefined;
   private gitStop: (() => void) | undefined;
   private gitBranch: string | null = null;
@@ -422,6 +424,7 @@ export class SessionStream implements SessionUi {
             callId: tool.callId,
             view: tool.view,
             isError: tool.isError,
+            durationMs: tool.durationMs,
           });
         }
       }
@@ -465,6 +468,7 @@ export class SessionStream implements SessionUi {
       ...(this.repoBusy?.() === true ? { repoBusy: true } : {}),
       ...(tps === undefined ? {} : { tps }),
       ...(turnElapsedMs === undefined ? {} : { turnElapsedMs }),
+      ...(this.interrupted ? { interrupted: true } : {}),
       ...(usage?.percent === null || usage === undefined
         ? {}
         : {
@@ -534,6 +538,7 @@ export class SessionStream implements SessionUi {
     switch (event.type) {
       case "agent_start":
         this.turnStartedAt = Date.now();
+        this.interrupted = false;
         this.liveTurn = [];
         this.emit(this.sessionState());
         return;
@@ -569,6 +574,7 @@ export class SessionStream implements SessionUi {
           view,
           isError: false,
           done: false,
+          durationMs: undefined,
         });
         this.emit({
           type: "tool_call",
@@ -609,12 +615,14 @@ export class SessionStream implements SessionUi {
           tool.view = view;
           tool.isError = event.isError;
           tool.done = true;
+          tool.durationMs = event.durationMs;
         }
         this.emit({
           type: "tool_end",
           callId: event.toolCallId,
           view,
           isError: event.isError,
+          durationMs: event.durationMs,
         });
         if (Tools.effectOf(event.toolName)?.kind !== "readOnly") {
           this.invalidatePickers("files");
@@ -652,6 +660,7 @@ export class SessionStream implements SessionUi {
         return;
       }
       case "agent_settled":
+        this.interrupted = event.aborted;
         void this.flushDurable().then(() => {
           // Clear only after the superseding durable events are sent.
           this.liveTurn = [];

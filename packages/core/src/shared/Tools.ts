@@ -3,6 +3,7 @@ import type {
   ExtensionAPI,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { Box, type Component } from "@earendil-works/pi-tui";
 import { validateToolArguments, type JsonObject } from "@earendil-works/pi-ai";
 import type { Static, TSchema } from "typebox";
 import { Levenshtein } from "./Levenshtein";
@@ -136,9 +137,23 @@ function wrap<TParams extends TSchema, TDetails = unknown, TState = unknown>(
   if (effect !== undefined) {
     effects.set(def.name, effect as ErasedToolEffect);
   }
+  const { renderCall, renderResult } =
+    toViewModel === undefined ? piDef : synthesizeRenderers(def, toViewModel);
+  const self = def.renderShell === "self";
   return {
     ...piDef,
-    ...(toViewModel === undefined ? {} : synthesizeRenderers(def, toViewModel)),
+    renderCall:
+      self && renderCall
+        ? (args, theme, context) =>
+            padded(context, (inner) => renderCall(args, theme, inner))
+        : renderCall,
+    renderResult:
+      self && renderResult
+        ? (result, options, theme, context) =>
+            padded(context, (inner) =>
+              renderResult(result, options, theme, inner)
+            )
+        : renderResult,
     prepareArguments: (rawArgs: unknown): Static<TParams> => {
       const prepared = def.prepareArguments
         ? def.prepareArguments(rawArgs)
@@ -289,6 +304,27 @@ function synthesizeRenderers<TParams extends TSchema, TDetails, TState>(
         });
       }),
   };
+}
+
+type PadContext = {
+  readonly lastComponent: Component | undefined;
+  readonly outputPad: number;
+};
+
+/** pi leaves the `outputPad` margin to `renderShell: "self"` renderers. */
+function padded<C extends PadContext>(
+  context: C,
+  draw: (context: C) => Component
+): Component {
+  const last = context.lastComponent;
+  const box = new Box(context.outputPad, 0);
+  box.addChild(
+    draw({
+      ...context,
+      lastComponent: last instanceof Box ? last.children[0] : last,
+    })
+  );
+  return box;
 }
 
 function parseIssues(message: string): Issue[] {

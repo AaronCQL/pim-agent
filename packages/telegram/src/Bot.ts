@@ -182,7 +182,13 @@ export class Bot {
     prompt: Prompt
   ): Promise<void> {
     const renderer = new Renderer(session, this.grammy.api);
-    const unsubscribe = agent.subscribe((event) => renderer.handleEvent(event));
+    let aborted = false;
+    const unsubscribe = agent.subscribe((event) => {
+      if (event.type === "agent_settled") {
+        aborted = event.aborted;
+      }
+      renderer.handleEvent(event);
+    });
     await renderer.start();
     try {
       await agent.prompt(prompt.text, {
@@ -190,7 +196,11 @@ export class Bot {
         source: "rpc",
       });
       const final = extractFinalResult(agent);
-      await renderer.finish(final.text, final.state);
+      if (aborted && final.state === "ok") {
+        await renderer.finish("", "cancelled");
+      } else {
+        await renderer.finish(final.text, final.state);
+      }
     } catch (err) {
       const msg = (err as Error).message ?? String(err);
       console.error(`[bot] turn failed:`, err);

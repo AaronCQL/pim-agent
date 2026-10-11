@@ -145,6 +145,7 @@ export class SessionProjection {
           callId: message.toolCallId,
           name: message.toolName,
           isError: message.isError,
+          durationMs: message.durationMs,
           view: Tools.viewOf({
             name: message.toolName,
             args: this.callArgs.get(message.toolCallId) ?? {},

@@ -17,7 +17,7 @@ const removed = (n: number) => `<toolDiffRemoved>-${n}</toolDiffRemoved>`;
 const dim = (text: string) => `<dim>${text}</dim>`;
 const titled = (text: string) => `<toolTitle>${text}</toolTitle>`;
 const header = (label: string, title: string) =>
-  `<success> ▪</success> <toolTitle>${label}</toolTitle><toolTitle>: ${title}</toolTitle>`;
+  `<success>▪</success> <toolTitle>${label}</toolTitle><toolTitle>: ${title}</toolTitle>`;
 
 const cwd = "/repo";
 
