@@ -10,7 +10,15 @@ export type MemoryScope = {
   readonly unit: string;
   readonly limitBytes: number;
   readonly argv: readonly string[];
+  /** Shell run first inside the scope; makes the kernel's OOM kill take the whole command. */
+  readonly prelude: string;
 };
+
+// The kernel kills the whole group on OOM, as OOMPolicy=kill would, but the unit never ends in
+// Result=oom-kill, which desktops (Plasma's oom_notifier) report as "system low on memory".
+// Only ever run inside our scope: anywhere else it would mark pim's own cgroup.
+const OOM_GROUP_PRELUDE =
+  '{ read -r __pim_cg < /proc/self/cgroup; echo 1 > "/sys/fs/cgroup${__pim_cg#0::}/memory.oom.group"; unset __pim_cg; } 2>/dev/null; ';
 
 let supported: Promise<boolean> | null = null;
 let owner: Promise<string | null> | null = null;
@@ -93,6 +101,7 @@ async function scope(): Promise<MemoryScope | null> {
   return {
     unit,
     limitBytes: limit,
+    prelude: OOM_GROUP_PRELUDE,
     argv: [
       "systemd-run",
       "--user",
@@ -103,8 +112,7 @@ async function scope(): Promise<MemoryScope | null> {
       `--unit=${unit}`,
       `--property=MemoryMax=${limit}`,
       "--property=MemorySwapMax=0",
-      "--property=OOMPolicy=kill",
-      // The kernel's group kill races systemd's OOM stop; both must SIGKILL so run.ts can tell.
+      "--property=OOMPolicy=continue",
       "--property=KillSignal=SIGKILL",
       ...(bindTo
         ? [`--property=BindsTo=${bindTo}`, `--property=After=${bindTo}`]

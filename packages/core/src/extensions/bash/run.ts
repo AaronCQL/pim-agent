@@ -100,7 +100,13 @@ export async function runBashCommand(
 
   // setsid: own process group (pgid == pid), so the whole tree can be signalled.
   const proc = Bun.spawn({
-    cmd: [...(scope?.argv ?? []), "setsid", "bash", "-lc", RUNNER],
+    cmd: [
+      ...(scope?.argv ?? []),
+      "setsid",
+      "bash",
+      "-lc",
+      (scope?.prelude ?? "") + RUNNER,
+    ],
     cwd,
     stdout: "pipe",
     stderr: "pipe",
@@ -207,7 +213,7 @@ export async function runBashCommand(
   const stdout = stdoutCap.snapshot(sniffed !== null);
   const stderr = stderrCap.snapshot();
 
-  // OOMPolicy=kill + KillSignal=SIGKILL: an OOM ends in SIGKILL whoever wins; systemd's Result is racy.
+  // The kernel's OOM group kill is a SIGKILL; systemd's Result never says oom-kill (see MemoryCap).
   const memoryLimitHit =
     scope !== null && signalCode === "SIGKILL" && !timedOut && !aborted
       ? scope.limitBytes
