@@ -1,6 +1,5 @@
 import { createMemo, For, Show } from "solid-js";
 
-import { Format } from "#core/shared/Format";
 import { Painting } from "#core/view/Painting";
 import type { Tone, ToolView, ViewBlock } from "#core/view/ViewBlock";
 import { Markdown } from "../markdown/Markdown";
@@ -13,7 +12,6 @@ export function ToolCard(props: {
   readonly name?: string;
   readonly isError?: boolean;
   readonly isPartial?: boolean;
-  readonly durationMs?: number;
 }) {
   const body = createMemo(() => (props.view.body ?? []).filter(isDrawn));
   const error = () => props.isError === true;
@@ -38,7 +36,6 @@ export function ToolCard(props: {
 
   const head = () => (
     <>
-      <Took durationMs={props.durationMs} />
       <Head view={props.view} name={props.name} tone={tone()} />
       <Show when={summary().status.length > 0}>
         <div class="text-neutral-400">
@@ -91,18 +88,11 @@ export function ToolCards(props: {
   readonly name?: string;
   readonly isError?: boolean;
   readonly isPartial?: boolean;
-  readonly durationMs?: number;
 }) {
   // Unkeyed: keyed would rebuild the card on every delta and close an open row.
   return (
     <For each={splitPatchView(props.name, props.view)} keyed={false}>
-      {(view, index) => (
-        <ToolCard
-          {...props}
-          view={view()}
-          durationMs={index === 0 ? props.durationMs : undefined}
-        />
-      )}
+      {(view) => <ToolCard {...props} view={view()} />}
     </For>
   );
 }
@@ -188,29 +178,6 @@ function Head(props: {
         {(text) => <Markdown text={text()} />}
       </Show>
     </>
-  );
-}
-
-const TOOK_FLOOR_MS = 1000;
-
-function Took(props: { readonly durationMs: number | undefined }) {
-  const took = () => {
-    const ms = props.durationMs;
-    return ms !== undefined && ms >= TOOK_FLOOR_MS
-      ? Format.formatElapsed(ms)
-      : undefined;
-  };
-  return (
-    <Show when={took()}>
-      {(text) => (
-        <span
-          class="float-right pl-2ch text-neutral-500 tabular-nums"
-          title={`Took ${text()}`}
-        >
-          {text()}
-        </span>
-      )}
-    </Show>
   );
 }
 

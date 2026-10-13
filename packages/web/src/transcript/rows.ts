@@ -21,7 +21,6 @@ export type ToolRow = {
   readonly view: ToolView;
   readonly isError: boolean;
   readonly isPartial: boolean;
-  readonly durationMs?: number;
 };
 
 export type NoticeRow = {
@@ -102,7 +101,6 @@ function append(
         view: event.view,
         isError: event.isError,
         isPartial: false,
-        durationMs: event.durationMs,
       });
       break;
     }
@@ -160,7 +158,6 @@ function appendLive(
         view: tool.view,
         isError: tool.isError,
         isPartial: tool.isPartial,
-        durationMs: tool.durationMs,
       });
     }
   }

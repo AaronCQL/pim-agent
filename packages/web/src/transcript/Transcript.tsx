@@ -208,7 +208,6 @@ function ToolRowView(props: {
           name={props.row.name}
           isError={props.row.isError}
           isPartial={props.row.isPartial}
-          durationMs={props.row.durationMs}
         />
       }
     >

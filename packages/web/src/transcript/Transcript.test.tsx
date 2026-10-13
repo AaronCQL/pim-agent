@@ -128,14 +128,13 @@ describe("rows", () => {
 });
 
 describe("row grouping", () => {
-  const call = (callId: string, durationMs?: number): DurableEvent => ({
+  const call = (callId: string): DurableEvent => ({
     seq: 1,
     type: "tool_result",
     callId,
     name: "read",
     view: { title: [{ kind: "text", text: callId }] },
     isError: false,
-    durationMs,
   });
 
   test("a run of tool calls is one group, so the calls stack with no gap", () => {
@@ -144,19 +143,6 @@ describe("row grouping", () => {
     const groups = [...host.querySelectorAll(":scope > div > div")];
     expect(groups).toHaveLength(1);
     expect(groups[0]?.querySelectorAll("article")).toHaveLength(3);
-  });
-
-  test("a slow call says how long it took, and a quick one says nothing", () => {
-    const host = replay([
-      call("slow", 83_000),
-      call("quick", 40),
-      call("legacy"),
-    ]);
-
-    const took = [...host.querySelectorAll("article")].map(
-      (card) => card.querySelector("[title^='Took']")?.textContent
-    );
-    expect(took).toEqual(["1m 23s", undefined, undefined]);
   });
 
   test("a step that only thought leaves no gap once thinking is hidden", () => {
