@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.15.0
+
+### Features
+
+- Upgrade pi to 1.1.0: a turn cancelled mid-tool is shown as "Interrupted after" in the TUI and web (with a stop icon in the web) and reported as cancelled in Telegram, and tool output padding follows pi's `outputPad` setting (e68df5b)
+
+### Bug Fixes
+
+- Fix commands killed for exceeding their memory limit triggering a persistent "system is low on memory" desktop notification on KDE Plasma (1e403da)
+
 ## v0.14.2
 
 ### Bug Fixes
