@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.16.0
+
+### Features
+
+- Upgrade pi to 1.2.0: with an OpenRouter key, the model list shows only the models that key may use, with their real context sizes and prices; `PI_CLIPBOARD_OSC52=1` sends copied text to a remote client's clipboard; Anthropic requests that hit strict-tool limits are retried; Mistral streams are no longer cut off during long thinking. Custom themes are now checked against the schema at startup; point their `$schema` at `https://pi.dev/schemas/theme.schema.json`. Pim's bundled themes are already updated, and the unused `@earendil-works/pi-server` dependency is gone (94db826)
+
 ## v0.15.0
 
 ### Features
