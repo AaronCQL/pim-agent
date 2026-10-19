@@ -157,12 +157,12 @@ button {
 }
 
 /* The mockup's hanging indent: the marker sits in the negative text-indent so
-   wrapped lines align with the text rather than with the bullet. `inside`
-   positioning is what puts ::marker inside that indented box; the browser
-   writes the <li>, so the mockup's <Row> component cannot be reused here. */
+   wrapped lines align with the text rather than with the bullet. The marker is
+   a real `.pim-marker` text span rather than a ::marker, which no browser puts
+   in a selection, so a copied list keeps its `- ` and `1. `. */
 .pim-markdown ul,
 .pim-markdown ol {
-  list-style-position: inside;
+  list-style: none;
 }
 .pim-markdown li {
   padding-left: var(--marker);
@@ -170,14 +170,23 @@ button {
 }
 .pim-markdown ul > li {
   --marker: 2ch;
-  list-style-type: "- ";
 }
 .pim-markdown ol > li {
   --marker: 3ch;
-  list-style-type: decimal;
 }
-.pim-markdown li::marker {
+.pim-markdown ul > li[data-task] {
+  --marker: 6ch;
+}
+.pim-markdown ol > li[data-task] {
+  --marker: 7ch;
+}
+.pim-markdown .pim-marker,
+.pim-markdown .pim-task {
   color: rgb(163 163 163);
+  white-space: pre;
+}
+.pim-markdown .pim-task[data-checked] {
+  color: rgb(52 211 153);
 }
 /* A nested list is a block inside the <li>, so it re-indents from the marker
    column instead of inheriting its parent's negative indent. */

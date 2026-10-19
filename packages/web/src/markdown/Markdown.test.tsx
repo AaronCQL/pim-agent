@@ -77,6 +77,28 @@ describe("Markdown", () => {
     expect(view.html()).not.toContain("first message");
   });
 
+  test("list markers are text a selection carries", () => {
+    const view = mount("- one\n- two\n  - nested\n\n3. three\n4. four");
+    const texts = [
+      ...(view.find(".pim-markdown")?.querySelectorAll(".pim-marker") ?? []),
+    ].map((marker) => marker.textContent);
+    expect(texts).toEqual(["- ", "- ", "- ", "3. ", "4. "]);
+    expect(view.text()).toContain("- one");
+    expect(view.text()).toContain("4. four");
+  });
+
+  test("a task list copies back as its Markdown", () => {
+    const view = mount("- [x] done\n- [ ] open\n\n1. [ ] first");
+    expect(view.find("input")).toBeNull();
+    expect(
+      view.find("ul > li[data-task] > .pim-task[data-checked]")
+    ).not.toBeNull();
+    const items = [
+      ...(view.find(".pim-markdown")?.querySelectorAll("li") ?? []),
+    ].map((item) => item.textContent);
+    expect(items).toEqual(["- [x] done", "- [ ] open", "1. [ ] first"]);
+  });
+
   test("raw HTML never reaches the DOM as markup", () => {
     const view = mount('<img src=x onerror="alert(1)">\n');
     expect(view.html()).not.toContain("<img");

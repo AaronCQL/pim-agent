@@ -21,16 +21,54 @@ function openBlock(host: HTMLElement): Element | undefined {
   return undefined;
 }
 
+function markerText(item: Element): string {
+  const list = item.parentElement;
+  if (list?.tagName !== "OL") {
+    return "- ";
+  }
+  const start = Number.parseInt(list.getAttribute("start") ?? "1", 10);
+  return `${start + list.children.length - 1}. `;
+}
+
+function addTask(data: smd.Default_Renderer_Data): void {
+  const item = data.nodes[data.index];
+  const task = document.createElement("span");
+  task.className = "pim-task";
+  task.textContent = "[ ]";
+  item?.setAttribute("data-task", "");
+  item?.append(task);
+  data.nodes[++data.index] = task;
+}
+
 function renderer(host: HTMLElement): smd.Default_Renderer {
   const base = smd.default_renderer(host);
   return {
     ...base,
+    set_attr: (data, type, value) => {
+      const node = data.nodes[data.index];
+      if (node?.className === "pim-task" && type === smd.CHECKED) {
+        node.textContent = "[x]";
+        node.setAttribute("data-checked", "");
+        return;
+      }
+      base.set_attr(data, type, value);
+    },
     add_token: (data, type) => {
+      if (type === smd.CHECKBOX) {
+        addTask(data);
+        return;
+      }
       base.add_token(data, type);
       const node = data.nodes[data.index];
       if (node?.tagName === "A") {
         node.setAttribute("target", "_blank");
         node.setAttribute("rel", "noopener");
+      }
+      if (node?.tagName === "LI") {
+        const marker = document.createElement("span");
+        marker.className = "pim-marker";
+        marker.textContent = markerText(node);
+        node.append(marker);
       }
     },
   };
