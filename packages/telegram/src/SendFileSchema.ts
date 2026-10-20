@@ -2,6 +2,8 @@ import { type Static, Type } from "typebox";
 
 export const MAX_CAPTION_CHARS = 1024;
 
+export const MAX_DOCUMENT_BYTES = 50 * 1024 * 1024;
+
 export const sendFileSchema = Type.Object({
   path: Type.String({
     minLength: 1,

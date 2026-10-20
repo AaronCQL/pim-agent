@@ -1,7 +1,9 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 import { AttachmentStore } from "#core/attachments/AttachmentStore";
+import { AttachmentSweep } from "#core/attachments/AttachmentSweep";
 import type { AgentRuntime } from "#core/session/AgentRuntime";
+import { SessionMeta } from "#core/session/SessionMeta";
 import { SessionRegistry } from "#core/session/SessionRegistry";
 import { Tools } from "#core/shared/Tools";
 import { defaultAttachmentsRoot } from "#server/AttachmentEndpoint";
@@ -39,12 +41,18 @@ function create(args: ReadonlyArray<string>, runtime: AgentRuntime): Surface {
           : { clientDir: options.clientDir }),
       });
       gateway.start();
+      const stopSweep = AttachmentSweep.install({
+        root: attachmentsRoot,
+        registry,
+        meta: new SessionMeta(),
+      });
       process.stderr.write(
         `pim-server listening on ${gateway.url} (web UI: http://${options.hostname}:${gateway.port})\n`
       );
 
       return {
         stop: async () => {
+          stopSweep();
           await gateway.stop();
           await registry.disposeAll();
         },

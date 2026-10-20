@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { AttachmentStore } from "#core/attachments/AttachmentStore";
-import { SendFile } from "#core/shared/SendFile";
 import { AttachmentEndpoint } from "./AttachmentEndpoint";
 import { SendFileTool } from "./SendFileTool";
 
@@ -94,15 +93,18 @@ test("the bytes are fetchable at the url, and the agent's path is not", async ()
   expect(JSON.stringify(result.details)).not.toContain(tmp);
 });
 
-test("only a regular file that exists and fits can be sent", async () => {
+test("only a regular file that exists can be sent", async () => {
   expect(send("nope.png")).rejects.toThrow(/Path not found/);
   expect(send(".")).rejects.toThrow(/not a regular file/);
+});
 
+test("a file over Telegram's 50 MB cap still reaches the browser", async () => {
   const huge = join(cwd, "huge.bin");
   await Bun.write(huge, "");
-  // Sparse file, so no real 50 MB write.
-  await truncate(huge, SendFile.MAX_BYTES + 1);
-  expect(send("huge.bin")).rejects.toThrow(/max allowed/);
+  await truncate(huge, 60 * 1024 * 1024);
+
+  const result = await send("huge.bin");
+  expect(result.details.name).toBe("huge.bin");
 });
 
 test("a session pi has not named yet cannot send", async () => {

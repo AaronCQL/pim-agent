@@ -1,4 +1,4 @@
-import { createSignal, For, Show } from "solid-js";
+import { createSignal, For, onSettled, Show, untrack } from "solid-js";
 
 import type { AttachmentView } from "#protocol/ServerEvent";
 import { ImageTile } from "../ui/ImageTile";
@@ -40,11 +40,40 @@ function Tile(props: {
 }) {
   // Files stored by another frontend 404 here.
   const [broken, setBroken] = createSignal(false);
+  const [missing, setMissing] = createSignal(false);
   const shows = () => props.file.isImage && !broken();
+
+  const probe = (): void => {
+    fetch(props.file.url, { method: "HEAD" }).then(
+      (response) => {
+        setMissing(response.status === 404);
+      },
+      () => {}
+    );
+  };
+
+  onSettled(() => {
+    untrack(() => {
+      if (
+        !props.file.isImage &&
+        !props.file.uploading &&
+        props.variant !== "compact"
+      ) {
+        probe();
+      }
+    });
+  });
 
   return (
     <li class="relative">
-      <Show when={shows()} fallback={<Chip file={props.file} />}>
+      <Show
+        when={shows()}
+        fallback={
+          <Show when={!missing()} fallback={<MissingChip file={props.file} />}>
+            <Chip file={props.file} />
+          </Show>
+        }
+      >
         <ImageTile
           src={props.file.url}
           alt={props.file.name}
@@ -54,6 +83,7 @@ function Tile(props: {
           }`}
           onError={() => {
             setBroken(true);
+            probe();
           }}
         />
       </Show>
@@ -88,6 +118,22 @@ function Tile(props: {
         )}
       </Show>
     </li>
+  );
+}
+
+function MissingChip(props: { readonly file: AttachmentTile }) {
+  return (
+    <span
+      title="This file was cleaned up and is no longer available."
+      class="flex items-center gap-1.5 rounded-full bg-neutral-900 px-2.5 py-1 text-sm text-neutral-500 ring-1 ring-neutral-800"
+    >
+      <span
+        class="i-griddy-icons:link-off size-4 shrink-0"
+        aria-hidden="true"
+      />
+      <span class="max-w-40 truncate line-through">{props.file.name}</span>
+      <span>expired</span>
+    </span>
   );
 }
 

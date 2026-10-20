@@ -38,7 +38,8 @@ function build(
     ...defineTool({
       name: "send_file",
       label: "send_file",
-      description: `Send a local file to the user's web browser. Images appear inline. Max ${SendFile.MAX_BYTES / (1024 * 1024)} MB.`,
+      description:
+        "Send a local file to the user's web browser. Images appear inline. No size limit.",
       parameters: sendFileSchema,
       async execute(_id, params) {
         const { path: rawPath } = params as SendFileInput;

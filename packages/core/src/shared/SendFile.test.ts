@@ -24,16 +24,22 @@ test("resolves a relative path against the cwd and reports its size", async () =
   });
 });
 
-test("refuses a missing path, a directory and an oversize file", async () => {
+test("refuses a missing path and a directory", async () => {
   expect(SendFile.validate("nope.png", cwd)).rejects.toThrow(/Path not found/);
   expect(SendFile.validate(".", cwd)).rejects.toThrow(
     ". is not a regular file."
   );
+});
 
+test("any size passes unless the caller sets a cap", async () => {
   const huge = join(cwd, "huge.bin");
   await Bun.write(huge, "");
-  await truncate(huge, SendFile.MAX_BYTES + 1);
-  expect(SendFile.validate("huge.bin", cwd)).rejects.toThrow(
-    `huge.bin is ${SendFile.MAX_BYTES + 1} bytes; max allowed is ${SendFile.MAX_BYTES}.`
+  await truncate(huge, 60 * 1024 * 1024);
+
+  expect((await SendFile.validate("huge.bin", cwd)).size).toBe(
+    60 * 1024 * 1024
+  );
+  expect(SendFile.validate("huge.bin", cwd, 50 * 1024 * 1024)).rejects.toThrow(
+    "huge.bin is 60 MB; max allowed is 50 MB."
   );
 });
