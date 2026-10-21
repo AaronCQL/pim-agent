@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.17.0
+
+### Features
+
+- Web: `send_file` no longer has a size limit. The 50 MB cap now applies only to Telegram, and size errors are shown in MB. Each sent file is stored as a copy, so the web surface now clears out old files in `~/.pim/attachments` on start and every hour, keeping them under 5 GB. Files under 24 hours old are always kept. Files from deleted sessions are removed first, then the oldest files go, starting with archived sessions. A cleared file shows as an "expired" chip instead of a broken download link (63fd773)
+
+### Bug Fixes
+
+- Web: list bullets and numbers in Markdown can now be selected and copied (fcfbc25)
+
+### Improvements
+
+- Upgrade pi to 1.3.0: resumed sessions keep the tools they had active, switching models drops the previous model's thinking instead of passing it on as text, the new `sessionShareDestination` setting picks where `/share` uploads, and more errors are retried automatically. `models.json` overrides of the `kimi-coding` base URL must now end in `/v1` (9658e80)
+
 ## v0.16.0
 
 ### Features
