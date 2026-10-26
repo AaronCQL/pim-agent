@@ -50,6 +50,7 @@ import {
   applyChild,
   applyLive,
   ingestDurable,
+  mirrorQueued,
   openingMessage,
   resolveUrls,
   type LiveMessage,
@@ -444,6 +445,7 @@ export class SessionStore {
         rowId = growing.id;
         growing.text = `${growing.text}\n\n${trimmed}`;
         growing.attachments = [...(growing.attachments ?? []), ...carried];
+        growing.mirrored = false;
       } else {
         rowId = `optimistic:${++this.optimisticId}`;
         draft.optimistic.push({
@@ -1474,6 +1476,7 @@ export class SessionStore {
               (pending) => pending.queued
             );
           }
+          mirrorQueued(draft, event.queued);
         });
         return;
       case "error":

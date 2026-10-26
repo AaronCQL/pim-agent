@@ -341,6 +341,17 @@ export class SessionHost {
     return { cancelled: true, restored };
   }
 
+  /** Messages queued behind the running turn, oldest first. */
+  public get queued(): readonly string[] {
+    if (!this.cached || !this.cached.isStreaming) {
+      return [];
+    }
+    return [
+      ...this.cached.getSteeringMessages(),
+      ...this.cached.getFollowUpMessages(),
+    ];
+  }
+
   /** Takes back messages queued behind the running turn. Not queued: the turn holds the queue. */
   public takeBack(): readonly string[] {
     if (!this.cached || !this.cached.isStreaming) {

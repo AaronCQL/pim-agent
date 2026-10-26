@@ -4,17 +4,12 @@ import type {
 } from "@earendil-works/pi-agent-core";
 import type { FileEntry } from "@earendil-works/pi-coding-agent";
 
-import { Attachments } from "#core/attachments/Attachments";
 import { EventLog, type LoggedEntry } from "#core/session/EventLog";
 import { MessageText } from "#core/session/MessageText";
 import { UserPrompt } from "#core/session/UserPrompt";
 import { Tools } from "#core/shared/Tools";
-import type {
-  AttachmentView,
-  DurableEvent,
-  ToolCallView,
-} from "#protocol/ServerEvent";
-import { attachmentUrl } from "./AttachmentEndpoint";
+import type { DurableEvent, ToolCallView } from "#protocol/ServerEvent";
+import { attachmentView } from "./AttachmentEndpoint";
 
 /** Projects pi's session file into durable events: at most one per line, tagged with the line ordinal. */
 export class SessionProjection {
@@ -85,13 +80,7 @@ export class SessionProjection {
     switch (message.role) {
       case "user": {
         const said = UserPrompt.of(message.content);
-        const attachments: readonly AttachmentView[] = said.files.map(
-          (file) => ({
-            name: Attachments.nameOf(file.path),
-            url: attachmentUrl(file.path),
-            isImage: file.isImage,
-          })
-        );
+        const attachments = said.files.map(attachmentView);
         return {
           seq,
           type: "message",

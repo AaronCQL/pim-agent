@@ -1,5 +1,6 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
+import { Attachments } from "#core/attachments/Attachments";
 import { PickerService } from "#core/picker/PickerService";
 import { MessageText } from "#core/session/MessageText";
 import type { LeaseState, SessionHost } from "#core/session/SessionHost";
@@ -12,9 +13,11 @@ import type { NoticeSeverity, ToolView } from "#core/view/ViewBlock";
 import type { Command } from "#protocol/Command";
 import type {
   EphemeralEvent,
+  QueuedView,
   ServerEvent,
   StreamEvent,
 } from "#protocol/ServerEvent";
+import { attachmentView } from "./AttachmentEndpoint";
 import { SessionProjection } from "./SessionProjection";
 
 export type StreamListener = (event: ServerEvent) => void;
@@ -68,6 +71,16 @@ const REQUEST_CEILING_MS = 180_000;
 
 /** How long a pending dialog survives its last client detaching (reloads, reconnects). */
 const DETACH_GRACE_MS = 15_000;
+
+function queuedView(queued: readonly string[]): QueuedView | undefined {
+  if (queued.length === 0) {
+    return undefined;
+  }
+  const { text, files } = Attachments.parse(queued.join("\n\n"));
+  return files.length === 0
+    ? { text }
+    : { text, attachments: files.map(attachmentView) };
+}
 
 function sameLease(a: LeaseState, b: LeaseState): boolean {
   return (
@@ -452,6 +465,7 @@ export class SessionStream implements SessionUi {
     const { branch, dirtyCount, ahead, behind, revision } =
       this.git.stateOf(cwd);
     const modelLabel = this.host.currentModelLabel;
+    const queued = queuedView(this.host.queued);
     const turnElapsedMs =
       this.host.status === "idle" || this.turnStartedAt === 0
         ? undefined
@@ -478,6 +492,7 @@ export class SessionStream implements SessionUi {
       ...(branch === null
         ? {}
         : { branch, dirtyCount, ahead, behind, repoRevision: revision }),
+      ...(queued === undefined ? {} : { queued }),
     };
   }
 
@@ -633,6 +648,9 @@ export class SessionStream implements SessionUi {
       }
       case "entry_appended":
         void this.flushDurable();
+        return;
+      case "queue_update":
+        this.emit(this.sessionState());
         return;
       // Don't await: pi appends the entry only after this listener returns.
       case "message_end": {

@@ -18,6 +18,7 @@ let stream: SessionStream;
 let seen: ServerEvent[];
 let stopListening: () => void;
 let emit: (event: AgentSessionEvent) => void;
+let queued: string[];
 
 /** Unique so no other test file's registered view paints these calls. */
 const TOOL = "stream_probe";
@@ -32,6 +33,9 @@ function host(): SessionHost {
     currentModelId: "test/echo",
     currentThinkingLevel: "off",
     tps: undefined,
+    get queued() {
+      return queued;
+    },
     leaseState: { writable: true },
     onLeaseChange: () => () => {},
     onForeignWrite: () => () => {},
@@ -192,6 +196,7 @@ beforeEach(async () => {
       cwd: tmp,
     })}\n`
   );
+  queued = [];
   stream = new SessionStream("s1", host(), path);
   seen = [];
   stopListening = stream.subscribe((event) => {
@@ -389,6 +394,28 @@ test("the state says whether the last turn was interrupted", () => {
   expect(stateOf(stream).interrupted).toBeUndefined();
   emit(agentEvent({ type: "agent_settled", aborted: false }));
   expect(stateOf(stream).interrupted).toBeUndefined();
+});
+
+test("tells clients what is queued as the queue changes", () => {
+  queued = [
+    "use the other file",
+    "[Image attachment: /up/s1/tide-1700000000000.png]",
+  ];
+  emit(agentEvent({ type: "queue_update" }));
+  expect(states().at(-1)?.queued).toEqual({
+    text: "use the other file",
+    attachments: [
+      {
+        name: "tide.png",
+        url: "/attachment/s1/tide-1700000000000.png",
+        isImage: true,
+      },
+    ],
+  });
+
+  queued = [];
+  emit(agentEvent({ type: "queue_update" }));
+  expect(states().at(-1)?.queued).toBeUndefined();
 });
 
 function stateOf(

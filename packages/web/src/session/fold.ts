@@ -3,6 +3,7 @@ import type {
   AttachmentView,
   DurableEvent,
   EphemeralEvent,
+  QueuedView,
   ServerEvent,
   StreamEvent,
 } from "#protocol/ServerEvent";
@@ -39,6 +40,8 @@ export type PendingMessage = {
   readonly attachments?: readonly AttachmentView[];
   readonly timestamp: number;
   readonly queued?: boolean;
+  /** Copied from the server's queue rather than sent from here. */
+  readonly mirrored?: boolean;
 };
 
 export type OptimisticMessage = {
@@ -183,6 +186,51 @@ export function ingestDurable(
       target.optimistic = target.optimistic.filter((_, index) => index !== at);
     }
   }
+}
+
+/** Shows what the server holds queued, unless a send from here already stands for it. */
+export function mirrorQueued(
+  target: SessionHolder,
+  queued: QueuedView | undefined
+): void {
+  if (
+    target.optimistic.some((pending) => pending.queued && !pending.mirrored)
+  ) {
+    return;
+  }
+  const mirror = target.optimistic.find((pending) => pending.mirrored);
+  if (mirror && queued && sameQueued(mirror, queued)) {
+    return;
+  }
+  if (mirror === undefined && queued === undefined) {
+    return;
+  }
+  const kept = target.optimistic.filter((pending) => !pending.mirrored);
+  target.optimistic =
+    queued === undefined
+      ? kept
+      : [
+          ...kept,
+          {
+            id: "mirrored",
+            text: queued.text,
+            ...(queued.attachments === undefined
+              ? {}
+              : { attachments: queued.attachments }),
+            timestamp: mirror?.timestamp ?? Date.now(),
+            queued: true,
+            mirrored: true,
+          },
+        ];
+}
+
+function sameQueued(row: OptimisticMessage, queued: QueuedView): boolean {
+  const urls = (attachments: readonly AttachmentView[] | undefined) =>
+    (attachments ?? []).map((attachment) => attachment.url).join("\n");
+  return (
+    row.text === queued.text &&
+    urls(row.attachments) === urls(queued.attachments)
+  );
 }
 
 /** The first durable user message, else the first optimistic one. */

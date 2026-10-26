@@ -1871,3 +1871,117 @@ describe("extension commands", () => {
     expect(target.state.requests).toEqual([]);
   });
 });
+
+describe("the server's queue", () => {
+  function state(
+    extra: Partial<Extract<ServerEvent, { type: "session_state" }>> = {}
+  ): ServerEvent {
+    return {
+      type: "session_state",
+      writable: true,
+      cwd: "/repo",
+      model: "sonnet",
+      thinking: "off",
+      cost: 0,
+      status: "tool",
+      ...extra,
+    };
+  }
+
+  function accept(target: SessionStore): void {
+    target.client.send = (async () => ({
+      type: "response",
+      id: "1",
+      success: true,
+    })) as typeof target.client.send;
+  }
+
+  function trailing(target: SessionStore) {
+    return target.trailing().map((row) => [row.text, row.queued === true]);
+  }
+
+  test("a reopened page shows the message still queued behind the turn", () => {
+    const target = store();
+    feed(
+      target,
+      attached("s1"),
+      { type: "message_start", role: "assistant", messageId: "live-1" },
+      { type: "text_delta", messageId: "live-1", delta: "working on it" },
+      state({ queued: { text: "use the other file" } })
+    );
+
+    expect(
+      rows(target).map((row) => (row.kind === "message" ? row.text : row.kind))
+    ).toEqual(["working on it", "use the other file"]);
+
+    feed(
+      target,
+      state({ queued: undefined }),
+      {
+        seq: 1,
+        type: "message",
+        messageId: "u1",
+        role: "user",
+        text: "use the other file",
+        timestamp: 0,
+      },
+      state({ status: "idle" })
+    );
+
+    expect(target.trailing()).toEqual([]);
+  });
+
+  test("carries the queued attachments", () => {
+    const target = store();
+    const attachments = [
+      { name: "tide.png", url: "/attachment/s1/tide.png", isImage: true },
+    ];
+    feed(
+      target,
+      attached("s1"),
+      state({ queued: { text: "and this", attachments } })
+    );
+
+    expect(target.trailing()[0]?.attachments).toEqual(attachments);
+  });
+
+  test("a send from here is not doubled by the server's echo of it", async () => {
+    const target = store();
+    accept(target);
+    feed(target, attached("s1"), state());
+
+    await target.prompt("use the other file");
+    feed(target, state({ queued: { text: "use the other file" } }));
+
+    expect(trailing(target)).toEqual([["use the other file", true]]);
+  });
+
+  test("goes once the queue is taken back elsewhere", () => {
+    const target = store();
+    feed(
+      target,
+      attached("s1"),
+      state({ queued: { text: "use the other file" } }),
+      state()
+    );
+
+    expect(target.trailing()).toEqual([]);
+  });
+
+  test("a send joined onto it survives the queue emptying while the server merges", async () => {
+    const target = store();
+    accept(target);
+    feed(
+      target,
+      attached("s1"),
+      state({ queued: { text: "use the other file" } })
+    );
+
+    await target.prompt("and mention the tide");
+    feed(target, state());
+
+    expect(trailing(target)).toEqual([
+      ["use the other file\n\nand mention the tide", true],
+    ]);
+  });
+});

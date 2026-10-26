@@ -1064,6 +1064,27 @@ describe("the composer, against a real gateway", () => {
     }
   });
 
+  test("a page opened on the session mid-turn still shows the queued card", async () => {
+    const { release } = await withQueued("and the weather");
+    const reopened = new SessionStore({
+      url: harness.url,
+      sessionId: store.state.sessionId,
+      pickerDebounceMs: 0,
+    });
+    try {
+      await reopened.connect();
+      const host = paint(reopened);
+      await until(() => {
+        flush();
+        return queuedCard(host) !== null;
+      }, "the queued card on the reopened page");
+      expect(queuedCard(host)?.textContent).toContain("and the weather");
+    } finally {
+      release();
+      reopened.dispose();
+    }
+  });
+
   test("Escape stops the turn and hands the queue back, box or no box", async () => {
     const { host, input, release } = await withQueued("and the weather");
     try {

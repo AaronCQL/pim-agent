@@ -1,10 +1,15 @@
 import { basename, dirname, join } from "node:path";
 
 import {
+  Attachments,
+  type PromptAttachment,
+} from "#core/attachments/Attachments";
+import {
   AttachmentStore,
   type StoredAttachment,
 } from "#core/attachments/AttachmentStore";
 import { Paths } from "#core/shared/Paths";
+import type { AttachmentView } from "#protocol/ServerEvent";
 import { IMMUTABLE, serveFile } from "./StaticClient";
 
 export type AttachmentEndpointDeps = {
@@ -39,6 +44,14 @@ function allow(response: Response): Response {
 export function attachmentUrl(path: string): string {
   const scope = encodeURIComponent(basename(dirname(path)));
   return `${PREFIX}${scope}/${encodeURIComponent(basename(path))}`;
+}
+
+export function attachmentView(file: PromptAttachment): AttachmentView {
+  return {
+    name: Attachments.nameOf(file.path),
+    url: attachmentUrl(file.path),
+    isImage: file.isImage,
+  };
 }
 
 /** `POST /upload?session=<id>` with a multipart `file` field; `GET /attachment/<session>/<file>` reads it back. */

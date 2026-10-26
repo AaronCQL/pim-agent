@@ -32,6 +32,12 @@ export type AttachmentView = {
   readonly isImage: boolean;
 };
 
+/** What pi holds queued behind the running turn, merged into one message. */
+export type QueuedView = {
+  readonly text: string;
+  readonly attachments?: readonly AttachmentView[];
+};
+
 /** Projected from pi's session JSONL. `seq` is the line ordinal, so each line emits at most one durable event. */
 export type DurableEvent =
   | {
@@ -249,6 +255,8 @@ export type EphemeralEvent =
       readonly behind?: number;
       /** Changes whenever the working copy does, including dirty file content. */
       readonly repoRevision?: string;
+      /** Absent when nothing is queued. */
+      readonly queued?: QueuedView;
     }
   /** A frame the server could not attribute to any command. */
   | { readonly type: "error"; readonly message: string };
