@@ -102,6 +102,26 @@ test("settings restarts once, shows progress, and recovers from failure", () => 
   expect(restart.querySelector(".animate-spin")).toBeNull();
 });
 
+test("a page built from another version still updates the server rather than only reloading", () => {
+  const host = paint();
+  store.ingest({
+    type: "attached",
+    sessionId: store.state.sessionId,
+    cwd: harness.tmp,
+    head: 0,
+    pimVersion: "0.0.0-elsewhere",
+    piVersion: "0.0.0",
+  });
+  flush();
+  expect(store.update.state.stale).toBe(true);
+
+  button(host).click();
+  flush();
+  expect(commands.filter(({ type }) => type === "reload")).toEqual([
+    { type: "reload" },
+  ]);
+});
+
 test("killing a turn in another session requires confirmation before force is sent", () => {
   const host = paint();
   store.ingest({

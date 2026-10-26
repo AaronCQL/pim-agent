@@ -37,7 +37,7 @@ const TIMEOUT_NOTICE: ReloadNotice = {
 function staleNotice(server: string): ReloadNotice {
   return {
     tone: "warning",
-    text: `This page was built from pim ${version} but the server runs ${server}. Reload the page; if that does not settle it, restart the server.`,
+    text: `This page was built from pim ${version} but the server runs ${server}. Run Update & Restart in Settings to rebuild it.`,
   };
 }
 

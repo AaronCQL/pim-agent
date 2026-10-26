@@ -34,7 +34,6 @@ export function SettingsModal(props: {
     }
   );
 
-  const outdated = (): boolean => props.store.update.state.stale;
   const busy = (): number => props.store.runningIds().length;
   const pending = (): boolean => props.store.update.state.pending;
 
@@ -45,10 +44,6 @@ export function SettingsModal(props: {
   };
 
   const restart = (): void => {
-    if (outdated()) {
-      props.store.update.refresh();
-      return;
-    }
     if (
       busy() > 0 &&
       !window.confirm(
@@ -142,22 +137,15 @@ export function SettingsModal(props: {
           <Section title="Updates">
             <button
               type="button"
-              aria-label={outdated() ? "Reload page" : "Update & Restart"}
+              aria-label="Update & Restart"
               class={`${ACTION} flex items-center gap-2`}
-              disabled={
-                pending() ||
-                (!outdated() && props.store.state.connection !== "open")
-              }
+              disabled={pending() || props.store.state.connection !== "open"}
               onClick={restart}
             >
               <Show when={pending()}>
                 <Spinner />
               </Show>
-              {pending()
-                ? props.store.update.state.label
-                : outdated()
-                  ? "Reload page"
-                  : "Update & Restart"}
+              {pending() ? props.store.update.state.label : "Update & Restart"}
             </button>
             <p class="text-sm text-neutral-500">
               {busy() > 0
