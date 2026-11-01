@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.17.1
+
+### Bug Fixes
+
+- Web: a message queued mid-turn is still shown after reloading the page or opening the session in another tab (a876592)
+- Web: the update and restart button in settings always runs the server update, which rebuilds the client. A page from an older version used to show a plain reload instead, which served the same stale page again (879e396)
+
+### Improvements
+
+- Upgrade pi to 1.4.0: sessions no longer break after a response is cut off at the output limit, compaction summaries no longer fail when the model uses a lot of reasoning, `/compact <instructions>` keeps its instructions when it splits a turn, a second TUI dialog no longer leaves the first one unanswered, the `grep` tool ignores `RIPGREP_CONFIG_PATH`, and more gateway errors are retried automatically (06fd957)
+
 ## v0.17.0
 
 ### Features
