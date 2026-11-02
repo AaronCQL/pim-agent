@@ -259,6 +259,31 @@ test("the picker closes for the token that was dismissed and opens on the next o
   expect(options(host)).toHaveLength(0);
 });
 
+test("a space ends the token, so a soft keyboard taking it back on Enter picks nothing", async () => {
+  softKeyboard();
+  const store = offline();
+  answers(store, () => rows("src/a.ts"));
+  store.ingest(attached());
+  const { host, input } = paint(store);
+
+  type(input, "@src/");
+  await until(() => options(host).length > 0, "the file rows");
+  type(input, "@src/ ");
+  expect(options(host)).toHaveLength(0);
+
+  // Gboard drops a dangling space before it sends the Enter.
+  type(input, "@src/");
+  await new Promise(setImmediate);
+  flush();
+  expect(options(host)).toHaveLength(0);
+  expect(press(input, "Enter").defaultPrevented).toBe(false);
+  flush();
+  expect(input.value).toBe("@src/");
+
+  type(input, "@src/a");
+  await until(() => options(host).length > 0, "the picker for a new query");
+});
+
 test("a reply that arrives after a newer one never lands", async () => {
   const store = offline();
   const held = new Map<string, () => void>();

@@ -189,8 +189,20 @@ export function Composer(props: {
   }
 
   function track(): void {
+    const before = untrack(token);
+    const grew = input.value.length > untrack(text).length;
+    const at = input.selectionStart ?? input.value.length;
     edit(input.value);
-    setCaret(input.selectionStart ?? input.value.length);
+    setCaret(at);
+    // Whitespace ends the token for good: Gboard deletes a trailing space ahead of its Enter, which would revive the picker and commit its first row.
+    if (
+      before &&
+      grew &&
+      /\s/.test(input.value[at - 1] ?? "") &&
+      !activeToken(input.value, at)
+    ) {
+      setDismissed(tokenKey(before));
+    }
   }
 
   async function submit(): Promise<void> {
