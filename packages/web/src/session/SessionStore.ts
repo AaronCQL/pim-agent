@@ -16,8 +16,10 @@ import type {
 import type {
   ChangeList,
   DiffBase,
+  FileContent,
   FileDiff,
   FileLines,
+  FileList,
   LineSpan,
 } from "#protocol/Diff";
 import type {
@@ -712,6 +714,29 @@ export class SessionStore {
       throw new Error(response.error ?? `could not read ${path}`);
     }
     return response.fileLines;
+  }
+
+  public async listFiles(): Promise<FileList> {
+    const response = await this.client.send({
+      type: "list_files",
+      sessionId: this.attached(),
+    });
+    if (!response.success || !response.files) {
+      throw new Error(response.error ?? "could not list the files");
+    }
+    return response.files;
+  }
+
+  public async readFile(path: string): Promise<FileContent> {
+    const response = await this.client.send({
+      type: "read_file",
+      sessionId: this.attached(),
+      path,
+    });
+    if (!response.success || !response.file) {
+      throw new Error(response.error ?? `could not read ${path}`);
+    }
+    return response.file;
   }
 
   /** Stages and commits exactly `paths`; resolves to the short sha. */

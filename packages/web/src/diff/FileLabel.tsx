@@ -4,7 +4,7 @@ import type { ChangeStatus, ChangeSummary } from "#protocol/Diff";
 import { Fitted } from "../ui/Fitted";
 import { FileTitle, type Role } from "./FileTitle";
 
-const LETTERS = {
+export const LETTERS = {
   added: "A",
   modified: "M",
   deleted: "D",
@@ -12,7 +12,7 @@ const LETTERS = {
   untracked: "U",
 } as const satisfies Record<ChangeStatus, string>;
 
-const LETTER_CLASSES = {
+export const LETTER_CLASSES = {
   added: "text-emerald-400",
   modified: "text-amber-400",
   deleted: "text-rose-400",
@@ -20,7 +20,7 @@ const LETTER_CLASSES = {
   untracked: "text-neutral-400",
 } as const satisfies Record<ChangeStatus, string>;
 
-const ROLES = {
+export const ROLES = {
   lead: "text-neutral-400",
   name: "text-neutral-100",
   gone: "text-neutral-400 line-through",

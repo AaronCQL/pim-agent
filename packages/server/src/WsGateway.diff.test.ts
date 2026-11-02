@@ -349,3 +349,37 @@ test("a commit is refused while the session's agent is mid-turn", async () => {
     ).success
   ).toBe(true);
 });
+
+test("list_files answers the working tree's files", async () => {
+  const probe = await connect();
+
+  const response = await probe.send({
+    type: "list_files",
+    sessionId: sessionOf(probe),
+  });
+
+  expect(response.success).toBe(true);
+  expect(response.files).toEqual({ paths: ["loose.txt", "sp ace.txt"] });
+});
+
+test("read_file answers a file's text, and refuses one outside the cwd", async () => {
+  const probe = await connect();
+
+  const read = await probe.send({
+    type: "read_file",
+    sessionId: sessionOf(probe),
+    path: "sp ace.txt",
+  });
+  const escaped = await probe.send({
+    type: "read_file",
+    sessionId: sessionOf(probe),
+    path: "../agent/models.json",
+  });
+
+  expect(read.file).toMatchObject({
+    path: "sp ace.txt",
+    text: "one\ntwo\nthree\n",
+  });
+  expect(escaped.success).toBe(false);
+  expect(escaped.error).toContain("outside");
+});

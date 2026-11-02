@@ -11,7 +11,10 @@ import { Composer } from "./input/Composer";
 import { Comments, ReviewComments } from "./diff/Comments";
 import { DiffStore } from "./diff/DiffStore";
 import { DiffView } from "./diff/DiffView";
+import type { ReviewMode } from "./diff/ModeSwitch";
 import { Review } from "./diff/Review";
+import { FileStore } from "./files/FileStore";
+import { FilesView } from "./files/FilesView";
 import { CommandModal } from "./session/CommandModal";
 import { GatewayOrigin } from "./session/Gateway";
 import { NoticeToast } from "./session/NoticeToast";
@@ -57,6 +60,10 @@ export function Shell(props: {
   const [searching, setSearching] = createSignal(false);
   const [reviewing, setReviewing] = createSignal(false);
   const diff = new DiffStore(props.store);
+  const files = new FileStore(props.store);
+  const [mode, setMode] = createSignal<ReviewMode>("changes");
+  /** A changed file the diff should scroll to. */
+  const [focus, setFocus] = createSignal<string>();
   const comments = new Comments();
   const back = createBackGuard(() => {
     setReviewing(false);
@@ -252,12 +259,41 @@ export function Shell(props: {
             <div class="relative min-h-0 flex-1">
               <Show when={reviewing()} fallback={<Conversation />}>
                 <ReviewComments value={() => comments}>
-                  <DiffView
-                    diff={diff}
-                    settings={props.settings}
-                    inset={inset()}
-                    onClose={converse}
-                  />
+                  <Show
+                    when={mode() === "files"}
+                    fallback={
+                      <DiffView
+                        diff={diff}
+                        settings={props.settings}
+                        inset={inset()}
+                        mode={mode()}
+                        onMode={setMode}
+                        onView={(path) => {
+                          files.reveal(path);
+                          setMode("files");
+                        }}
+                        focus={focus()}
+                        onFocused={() => {
+                          setFocus(undefined);
+                        }}
+                        onClose={converse}
+                      />
+                    }
+                  >
+                    <FilesView
+                      files={files}
+                      diff={diff}
+                      inset={inset()}
+                      mode={mode()}
+                      onMode={setMode}
+                      onDiff={(path) => {
+                        diff.reveal(path);
+                        setFocus(path);
+                        setMode("changes");
+                      }}
+                      onClose={converse}
+                    />
+                  </Show>
                 </ReviewComments>
               </Show>
 

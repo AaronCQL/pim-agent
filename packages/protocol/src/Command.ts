@@ -161,6 +161,19 @@ export type Command =
       readonly path: string;
       readonly spans: readonly LineSpan[];
     }
+  /** Working-tree files, gitignored ones left out. */
+  | {
+      readonly id: string;
+      readonly type: "list_files";
+      readonly sessionId: string;
+    }
+  /** One working-tree file; `path` must stay inside the cwd. */
+  | {
+      readonly id: string;
+      readonly type: "read_file";
+      readonly sessionId: string;
+      readonly path: string;
+    }
   /** Refused while any session in the same cwd is mid-turn. */
   | {
       readonly id: string;

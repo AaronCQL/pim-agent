@@ -7,6 +7,8 @@ const CONCURRENCY = 32;
 export type EnumerateOptions = {
   readonly includeDotfiles?: boolean;
   readonly includeIgnored?: boolean;
+  /** Stops walking once this many files are found; a few more may still land. */
+  readonly limit?: number;
 };
 
 type StackEntry = {
@@ -24,6 +26,7 @@ type WalkContext = {
   includeDotfiles: boolean;
   useIgnore: boolean;
   globalGitIgnore: string | undefined;
+  limit: number;
   stack: StackEntry[];
   result: string[];
 };
@@ -278,6 +281,9 @@ function drain(ctx: WalkContext): Promise<void> {
   let inFlight = 0;
   return new Promise<void>((resolve, reject) => {
     const pump = (): void => {
+      if (ctx.result.length >= ctx.limit) {
+        ctx.stack.length = 0;
+      }
       while (inFlight < CONCURRENCY && ctx.stack.length > 0) {
         const currentDir = ctx.stack.pop()!;
         inFlight++;
@@ -353,6 +359,7 @@ async function enumerate(
     includeDotfiles,
     useIgnore,
     globalGitIgnore,
+    limit: opts?.limit ?? Number.POSITIVE_INFINITY,
     stack: [
       {
         abs: root,

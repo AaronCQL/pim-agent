@@ -16,6 +16,7 @@ import { observeWidth } from "../ui/scroll";
 import { CommitModal } from "./CommitModal";
 import { DiffStore, type BaseKind } from "./DiffStore";
 import { FileRow } from "./FileRow";
+import { ModeSwitch, type ReviewMode } from "./ModeSwitch";
 import { SplitMode } from "./SplitMode";
 import { Stat } from "./Stat";
 
@@ -43,11 +44,19 @@ export function DiffView(props: {
   readonly settings: Settings;
   /** Height of the composer overlaying the bottom, in px. */
   readonly inset: number;
+  readonly mode: ReviewMode;
+  readonly onMode: (mode: ReviewMode) => void;
+  /** Opens a file in the file viewer. */
+  readonly onView: (path: string) => void;
+  /** A file to scroll to once it is listed. */
+  readonly focus: string | undefined;
+  readonly onFocused: () => void;
   readonly onClose: () => void;
 }) {
   const [visible, setVisible] = createSignal(PAGE);
   const [width, setWidth] = createSignal(0);
   const [writing, setWriting] = createSignal(false);
+  let scroller!: HTMLDivElement;
   const measure = observeWidth(setWidth);
 
   const split = createMemo(() =>
@@ -77,6 +86,47 @@ export function DiffView(props: {
 
   const shown = createMemo(() => props.diff.files().slice(0, visible()));
 
+  /** A focused row waiting for its hunks before it is scrolled to. */
+  const [landing, setLanding] = createSignal<string>();
+
+  createEffect(
+    () => ({ path: props.focus, files: props.diff.files() }),
+    ({ path, files }) => {
+      const at =
+        path === undefined ? -1 : files.findIndex((file) => file.path === path);
+      if (path === undefined || at < 0) {
+        return;
+      }
+      setVisible((rows) => Math.max(rows, at + 1));
+      setLanding(path);
+      props.onFocused();
+    }
+  );
+
+  createEffect(
+    () => {
+      const path = landing();
+      return path === undefined
+        ? undefined
+        : { path, kind: props.diff.fileState(path)?.kind };
+    },
+    (target) => {
+      if (target === undefined || target.kind === "loading") {
+        return;
+      }
+      setLanding(undefined);
+      requestAnimationFrame(() => {
+        for (const row of scroller.querySelectorAll<HTMLElement>(
+          "[data-path]"
+        )) {
+          if (row.dataset.path === target.path) {
+            row.scrollIntoView({ block: "start" });
+          }
+        }
+      });
+    }
+  );
+
   const all = createMemo(() => props.diff.files().length);
 
   // Only a failed commit keeps the modal open.
@@ -100,6 +150,7 @@ export function DiffView(props: {
           >
             <span class="i-griddy-icons:arrow-left size-5" aria-hidden="true" />
           </button>
+          <ModeSwitch mode={props.mode} onMode={props.onMode} />
           <Menu
             label={labelOf(BASES, props.diff.state.base)}
             icon="i-griddy-icons:code-compare"
@@ -155,7 +206,13 @@ export function DiffView(props: {
         </Show>
       </header>
 
-      <div ref={measure} class="isolate min-h-0 flex-1 overflow-y-auto">
+      <div
+        ref={(element: HTMLDivElement) => {
+          scroller = element;
+          measure(element);
+        }}
+        class="isolate min-h-0 flex-1 overflow-y-auto"
+      >
         <div style={{ "padding-bottom": `${props.inset}px` }}>
           <Show when={props.diff.state.error}>
             {(message) => (
@@ -187,6 +244,9 @@ export function DiffView(props: {
                 }}
                 onOpen={(gap) => {
                   void props.diff.open(file().path, gap);
+                }}
+                onView={() => {
+                  props.onView(file().path);
                 }}
               />
             )}

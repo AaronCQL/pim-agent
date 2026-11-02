@@ -9,6 +9,7 @@ import { Git } from "#core/shared/Git";
 import { GitMonitor, type GitRun } from "#core/shared/GitMonitor";
 import { PiExtensions, type ExtensionScope } from "#core/shared/PiExtensions";
 import { RepoDiff } from "#core/shared/RepoDiff";
+import { RepoFiles } from "#core/shared/RepoFiles";
 import { ReadCursors } from "#core/session/ReadCursors";
 import type { SessionHost } from "#core/session/SessionHost";
 import { SessionMeta } from "#core/session/SessionMeta";
@@ -408,6 +409,17 @@ export class WsGateway {
             command.path,
             command.spans,
             this.git
+          ),
+        };
+      case "list_files":
+        return {
+          files: await RepoFiles.list(this.requireStream(connection).host.cwd),
+        };
+      case "read_file":
+        return {
+          file: await RepoFiles.read(
+            this.requireStream(connection).host.cwd,
+            command.path
           ),
         };
       case "checkout": {

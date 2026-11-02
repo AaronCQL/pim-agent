@@ -86,6 +86,11 @@ function paint(): HTMLElement {
         diff={new DiffStore(store, 0)}
         settings={new Settings()}
         inset={0}
+        mode="changes"
+        onMode={() => {}}
+        onView={() => {}}
+        focus={undefined}
+        onFocused={() => {}}
         onClose={() => {}}
       />
     ),

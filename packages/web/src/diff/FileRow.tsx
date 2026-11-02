@@ -33,6 +33,8 @@ export function FileRow(props: {
   readonly open: boolean;
   readonly onToggle: () => void;
   readonly onOpen: (gap: DiffGap) => void;
+  /** Absent where the file can't be opened. */
+  readonly onView?: () => void;
   readonly split: boolean;
 }) {
   const notes = useContext(ReviewComments)();
@@ -73,7 +75,10 @@ export function FileRow(props: {
   const badge = createMemo(() => notes?.count(props.file.path) ?? 0);
 
   return (
-    <div class="border-b border-neutral-850 last:border-b-0">
+    <div
+      data-path={props.file.path}
+      class="border-b border-neutral-850 last:border-b-0"
+    >
       <div
         class={`sticky top-0 z-1 flex w-full items-center gap-2 px-3 text-sm ${props.open ? "bg-neutral-850" : "bg-neutral-925 hover:bg-neutral-900"}`}
       >
@@ -104,6 +109,21 @@ export function FileRow(props: {
             <Stat added={props.file.added} removed={props.file.removed} />
           </Show>
         </button>
+        <Show
+          when={props.file.status !== "deleted" && props.onView !== undefined}
+        >
+          <button
+            type="button"
+            aria-label={`View ${props.file.path}`}
+            title="View the whole file"
+            class="-mr-1.5 flex size-7 shrink-0 items-center justify-center rounded-md text-neutral-400 hover:bg-neutral-800 hover:text-neutral-50"
+            onClick={() => {
+              props.onView?.();
+            }}
+          >
+            <span class="i-griddy-icons:file-text size-4" aria-hidden="true" />
+          </button>
+        </Show>
       </div>
 
       <Show when={props.open}>

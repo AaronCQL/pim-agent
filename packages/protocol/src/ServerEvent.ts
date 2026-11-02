@@ -7,7 +7,13 @@ import type { LeaseFrontend } from "#core/session/SessionLease";
 import type { SkillUse } from "#core/session/UserPrompt";
 import type { UpdateSkip } from "#core/shared/Updater";
 import type { NoticeSeverity, ToolView } from "#core/view/ViewBlock";
-import type { ChangeList, FileDiff, FileLines } from "./Diff";
+import type {
+  ChangeList,
+  FileContent,
+  FileDiff,
+  FileLines,
+  FileList,
+} from "./Diff";
 
 export type SessionStatus = "idle" | "thinking" | "streaming" | "tool";
 
@@ -361,6 +367,10 @@ export type ResponseEvent = {
   readonly fileDiff?: FileDiff;
   /** For `read_lines`. */
   readonly fileLines?: FileLines;
+  /** For `list_files`. */
+  readonly files?: FileList;
+  /** For `read_file`. */
+  readonly file?: FileContent;
   /** For `cancel` and `dequeue`: queued messages handed back to the client. */
   readonly restored?: readonly string[];
   /** For `user_message`: an extension command ran, so no turn started. */
