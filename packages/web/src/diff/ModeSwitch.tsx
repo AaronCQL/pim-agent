@@ -18,7 +18,7 @@ export function ModeSwitch(props: {
   readonly onMode: (mode: ReviewMode) => void;
 }) {
   return (
-    <div role="group" aria-label="Review mode" class={`${CHIP_GROUP} p-0.5`}>
+    <div role="group" aria-label="Review mode" class={CHIP_GROUP}>
       <For each={MODES}>
         {(mode) => (
           <button
@@ -26,7 +26,7 @@ export function ModeSwitch(props: {
             aria-pressed={props.mode === mode.value ? "true" : "false"}
             aria-label={mode.label}
             title={mode.label}
-            class={`${CHIP_SEGMENT} h-7 rounded-md ${props.mode === mode.value ? "bg-neutral-700 text-neutral-50 hover:bg-neutral-700" : ""}`}
+            class={`${CHIP_SEGMENT} first:rounded-l-lg last:rounded-r-lg ${props.mode === mode.value ? "bg-neutral-700 text-neutral-50 hover:bg-neutral-700" : ""}`}
             onClick={() => {
               props.onMode(mode.value);
             }}

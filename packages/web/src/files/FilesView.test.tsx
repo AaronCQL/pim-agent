@@ -48,7 +48,23 @@ beforeEach(async () => {
   });
 });
 
+let realMatchMedia: typeof globalThis.matchMedia | undefined;
+
+/** Below `md`, where the tree and the file can't sit side by side. */
+function narrow(): void {
+  realMatchMedia = globalThis.matchMedia;
+  const real = realMatchMedia.bind(globalThis);
+  globalThis.matchMedia = ((query: string) =>
+    query.includes("min-width")
+      ? { matches: false, addEventListener() {}, removeEventListener() {} }
+      : real(query)) as typeof globalThis.matchMedia;
+}
+
 afterEach(async () => {
+  if (realMatchMedia !== undefined) {
+    globalThis.matchMedia = realMatchMedia;
+    realMatchMedia = undefined;
+  }
   dispose?.();
   dispose = undefined;
   store.dispose();
@@ -221,4 +237,29 @@ test("a binary file says so instead of painting bytes", async () => {
     () => host.textContent?.includes("binary file") === true,
     "the binary notice"
   );
+});
+
+test("on a narrow screen the file takes the page and the tree slides in over it", async () => {
+  narrow();
+  const host = await files();
+  press(host, "[data-path='README.md']");
+  await settle(() => code(host).includes("readme"), "the file's lines");
+
+  expect(treeRows(host)).toEqual([]);
+  expect(
+    host.querySelector("[aria-label='Back to the conversation']")
+  ).not.toBeNull();
+
+  press(host, "[aria-label='Show the files']");
+  const drawer = host.querySelector<HTMLDialogElement>(
+    "dialog[aria-label='Files']"
+  );
+  expect(drawer?.open).toBe(true);
+  expect(treeRows(host)).toEqual(["src", "README.md"]);
+
+  press(host, "[data-path='src']");
+  press(host, "[data-path='src/alpha.ts']");
+  await settle(() => code(host).includes("THREE"), "the other file");
+  expect(drawer?.open).toBe(false);
+  expect(treeRows(host)).toEqual([]);
 });

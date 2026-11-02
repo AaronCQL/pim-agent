@@ -4,12 +4,12 @@ import {
   createSignal,
   onCleanup,
   Show,
-  untrack,
 } from "solid-js";
 
 import type { DiffStore } from "../diff/DiffStore";
 import { ModeSwitch, type ReviewMode } from "../diff/ModeSwitch";
 import { ICON } from "../ui/classes";
+import { Drawer } from "../ui/Drawer";
 import { createMediaQuery, DESKTOP } from "../ui/media";
 import type { FileStore } from "./FileStore";
 import { FileTreeView } from "./FileTreeView";
@@ -26,10 +26,7 @@ export function FilesView(props: {
   readonly onClose: () => void;
 }) {
   const wide = createMediaQuery(DESKTOP);
-  /** On a narrow screen, the tree and the file take turns. */
-  const [browsing, setBrowsing] = createSignal(
-    untrack(() => props.files.state.selected === undefined)
-  );
+  const [browsing, setBrowsing] = createSignal(false);
 
   props.files.watch(true);
   props.diff.watch(true);
@@ -51,47 +48,58 @@ export function FilesView(props: {
     () => new Map(props.diff.files().map((file) => [file.path, file]))
   );
 
-  const reading = (): boolean =>
-    !wide() && !browsing() && props.files.state.selected !== undefined;
+  const picking = (): boolean =>
+    wide() || props.files.state.selected === undefined;
+
+  const pick = (path: string): void => {
+    props.files.select(path);
+    setBrowsing(false);
+  };
+
+  const tree = (inset: number) => (
+    <FileTreeView
+      files={props.files}
+      changes={changes()}
+      inset={inset}
+      onPick={pick}
+    />
+  );
 
   return (
     <section aria-label="Files" class="flex h-full min-h-0 flex-col">
       <header class="flex h-12 min-w-0 shrink-0 items-center gap-2 border-b border-neutral-700 px-3">
         <button
           type="button"
-          aria-label={
-            reading() ? "Back to the files" : "Back to the conversation"
-          }
+          aria-label="Back to the conversation"
           class={ICON}
-          onClick={() => {
-            if (reading()) {
-              setBrowsing(true);
-            } else {
-              props.onClose();
-            }
-          }}
+          onClick={props.onClose}
         >
           <span class="i-griddy-icons:arrow-left size-5" aria-hidden="true" />
         </button>
         <ModeSwitch mode={props.mode} onMode={props.onMode} />
       </header>
       <div class="flex min-h-0 flex-1">
-        <Show when={wide() || !reading()}>
+        <Show
+          when={picking()}
+          fallback={
+            <Drawer
+              open={browsing()}
+              label="Files"
+              onClose={() => {
+                setBrowsing(false);
+              }}
+            >
+              <Show when={browsing()}>{tree(0)}</Show>
+            </Drawer>
+          }
+        >
           <div
             class={`min-h-0 ${wide() ? "w-72 shrink-0 border-r border-neutral-800" : "flex-1"}`}
           >
-            <FileTreeView
-              files={props.files}
-              changes={changes()}
-              inset={props.inset}
-              onPick={(path) => {
-                props.files.select(path);
-                setBrowsing(false);
-              }}
-            />
+            {tree(props.inset)}
           </div>
         </Show>
-        <Show when={wide() || reading()}>
+        <Show when={wide() || !picking()}>
           <div class="min-h-0 min-w-0 flex-1">
             <FileViewer
               files={props.files}
@@ -102,6 +110,13 @@ export function FilesView(props: {
               }
               inset={props.inset}
               onDiff={props.onDiff}
+              {...(wide()
+                ? {}
+                : {
+                    onBrowse: () => {
+                      setBrowsing(true);
+                    },
+                  })}
             />
           </div>
         </Show>

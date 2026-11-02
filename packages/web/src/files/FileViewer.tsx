@@ -131,6 +131,8 @@ export function FileViewer(props: {
   readonly change: ChangeSummary | undefined;
   readonly inset: number;
   readonly onDiff: (path: string) => void;
+  /** Present where the tree is out of sight. */
+  readonly onBrowse?: () => void;
 }) {
   const ready = createMemo(() => {
     const view = props.files.view();
@@ -169,6 +171,19 @@ export function FileViewer(props: {
       {(path) => (
         <div class="flex h-full min-h-0 flex-col">
           <div class="flex h-10 shrink-0 items-center gap-2 border-b border-neutral-800 px-3 text-sm">
+            <Show when={props.onBrowse !== undefined}>
+              <button
+                type="button"
+                aria-label="Show the files"
+                title="Show the files"
+                class="-ml-1.5 flex size-7 shrink-0 items-center justify-center rounded-md text-neutral-400 hover:bg-neutral-800 hover:text-neutral-50"
+                onClick={() => {
+                  props.onBrowse?.();
+                }}
+              >
+                <span class="i-griddy-icons:folder size-4" aria-hidden="true" />
+              </button>
+            </Show>
             <PathTitle path={path} />
             <span class="hidden shrink-0 text-neutral-500 tabular-nums md:inline">
               {meta()}
