@@ -8,7 +8,7 @@
 
 **Extension shape**: TS module, default export `(pi: ExtensionAPI) => void | Promise<void>` (async factories finish before `session_start`). In pim they are inline factories listed in `bin/pim.ts`, living in `packages/{core,tui}/src/extensions/<name>/index.ts`.
 
-**Imports**: `@earendil-works/pi-coding-agent` (`ExtensionAPI`, `ExtensionContext`, `Theme`, `AgentToolResult`, event types), `@earendil-works/pi-tui` (`Component`, `Container`, `visibleWidth`, `wrapTextWithAnsi`), `@earendil-works/pi-ai` (`StringEnum`, `validateToolArguments`), `typebox`.
+**Imports**: `@earendil-works/pi-coding-agent` (`ExtensionAPI`, `ExtensionContext`, `Theme`, `AgentToolResult`, event types), `@earendil-works/pi-tui` (`Component`, `Container`, `visibleWidth`, `wrapTextWithAnsi`), `@earendil-works/pi-ai` (`validateToolArguments`), `typebox`. Build string enums with `core/shared/StringEnum`: pi-ai's returns a pi-schema `Schema`, which TypeBox's `Static` cannot see.
 
 **`pi.*`**: `on`, `registerTool`, `registerCommand`, `registerShortcut`, `registerFlag`, `registerProvider`, `registerMessageRenderer`, `appendEntry` (session-persistent state that survives compaction), `sendMessage`/`sendUserMessage`, `setModel`, `getActiveTools`/`setActiveTools`, `events`, `exec`.
 

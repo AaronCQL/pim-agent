@@ -1,4 +1,4 @@
-import { StringEnum } from "@earendil-works/pi-ai";
+import { StringEnum } from "../../shared/StringEnum";
 import { type Static, Type } from "typebox";
 
 export const GREP_HEAD_LIMIT_MAX = 1000;

@@ -59,12 +59,11 @@ type ViewRenderState<TDetails> = {
   viewResult?: AgentToolResult<TDetails>;
 };
 
-type Issue = { readonly path: string; readonly message: string };
-
 type JsonSchema = {
   readonly type?: string;
   readonly const?: unknown;
   readonly properties?: Readonly<Record<string, JsonSchema>>;
+  readonly required?: readonly string[];
   readonly items?: JsonSchema | readonly JsonSchema[];
   readonly anyOf?: readonly JsonSchema[];
   readonly oneOf?: readonly JsonSchema[];
@@ -124,7 +123,7 @@ function errorView(
   };
 }
 
-/** Registers pim-only fields and rewrites pi's validation errors into clearer ones. */
+/** Registers pim-only fields and tightens pi's argument validation. */
 function wrap<TParams extends TSchema, TDetails = unknown, TState = unknown>(
   def: PimToolDefinition<TParams, TDetails, TState>
 ): ToolDefinition<TParams, TDetails, TState> {
@@ -176,7 +175,7 @@ function wrap<TParams extends TSchema, TDetails = unknown, TState = unknown>(
           }
         ) as Static<TParams>;
       } catch (err) {
-        throw new Error(rewriteValidationError(def.name, schema, err, cleaned));
+        throw new Error(trimReceivedArguments(err));
       }
       const unknownKeys = findUnknownTopLevelKeys(schema, validated);
       if (unknownKeys.length > 0) {
@@ -195,26 +194,9 @@ function register<
   pi.registerTool(wrap(def));
 }
 
-function rewriteValidationError(
-  toolName: string,
-  schema: JsonSchema,
-  err: unknown,
-  args?: unknown
-): string {
+function trimReceivedArguments(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
-  if (!message.startsWith("Validation failed for tool")) {
-    return message;
-  }
-
-  const raw = parseIssues(message);
-  const collapsed = collapseAnyOf(raw, schema, args);
-  const issues = collapsed.map((issue) => formatIssue(issue, schema));
-
-  const header = `Validation failed for tool "${toolName}":`;
-  if (issues.length === 0) {
-    return header;
-  }
-  return `${header}\n${issues.map((s) => `  - ${s}`).join("\n")}`;
+  return message.split("\n\nReceived arguments:")[0]!;
 }
 
 const GENERIC_ARG_KEYS = [
@@ -327,105 +309,6 @@ function padded<C extends PadContext>(
   return box;
 }
 
-function parseIssues(message: string): Issue[] {
-  const issues: Issue[] = [];
-  for (const line of message.split("\n")) {
-    if (line.startsWith("Received arguments:")) {
-      break;
-    }
-    if (!line.startsWith("  - ")) {
-      continue;
-    }
-    const body = line.slice(4);
-    const colonIdx = body.indexOf(": ");
-    if (colonIdx === -1) {
-      issues.push({ path: "", message: body });
-    } else {
-      issues.push({
-        path: body.slice(0, colonIdx),
-        message: body.slice(colonIdx + 2),
-      });
-    }
-  }
-  return issues;
-}
-
-function collapseAnyOf(
-  issues: readonly Issue[],
-  schema: JsonSchema,
-  args: unknown
-): Issue[] {
-  const handled = new Set<number>();
-  const inserts = new Map<number, Issue[]>();
-
-  issues.forEach((issue, idx) => {
-    if (handled.has(idx) || issue.message !== "must match a schema in anyOf") {
-      return;
-    }
-    const node = walkSchema(schema, issue.path);
-    const branches = branchesOf(node);
-    if (!node || !branches) {
-      return;
-    }
-    handled.add(idx);
-    issues.forEach((other, otherIdx) => {
-      if (handled.has(otherIdx)) {
-        return;
-      }
-      if (other.path === issue.path || isUnderPath(other.path, issue.path)) {
-        handled.add(otherIdx);
-      }
-    });
-
-    const value = walkValue(args, issue.path);
-    const matched = matchDiscriminatedBranch(branches, value);
-    if (matched) {
-      const branchIssues = revalidateBranch(matched, value).map((sub) => ({
-        path: joinPath(issue.path, sub.path),
-        message: sub.message,
-      }));
-      inserts.set(idx, branchIssues);
-    } else {
-      inserts.set(idx, [
-        { path: issue.path, message: describeAnyOf(branches) },
-      ]);
-    }
-  });
-
-  const result: Issue[] = [];
-  issues.forEach((issue, idx) => {
-    if (inserts.has(idx)) {
-      result.push(...inserts.get(idx)!);
-      return;
-    }
-    if (!handled.has(idx)) {
-      result.push(issue);
-    }
-  });
-  return result;
-}
-
-function describeAnyOf(branches: readonly JsonSchema[]): string {
-  const constValues = branches
-    .map((b) => (b && "const" in b ? b.const : undefined))
-    .filter((v) => v !== undefined);
-  if (constValues.length === branches.length) {
-    return `must be one of: ${constValues.map(displayValue).join(", ")}`;
-  }
-
-  const discriminator = findDiscriminator(branches);
-  if (discriminator) {
-    const values = discriminator.values.map(displayValue).join(", ");
-    return `must match one of the allowed variants (${discriminator.field}: ${values})`;
-  }
-
-  return `must match one of ${branches.length} allowed variants`;
-}
-
-function displayValue(value: unknown): string {
-  return typeof value === "string" ? value : JSON.stringify(value);
-}
-
 function matchDiscriminatedBranch(
   branches: readonly JsonSchema[],
   value: unknown
@@ -476,81 +359,6 @@ function findDiscriminator(
   return undefined;
 }
 
-function revalidateBranch(branch: JsonSchema, value: unknown): Issue[] {
-  try {
-    validateToolArguments(
-      { name: "_branch", parameters: branch as TSchema } as never,
-      {
-        type: "toolCall",
-        id: "",
-        name: "_branch",
-        arguments: (value ?? {}) as JsonObject,
-      }
-    );
-    return [];
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return parseIssues(message);
-  }
-}
-
-function walkSchema(
-  schema: JsonSchema | undefined,
-  path: string
-): JsonSchema | undefined {
-  if (!schema) {
-    return undefined;
-  }
-  if (!path) {
-    return schema;
-  }
-  let current: JsonSchema | undefined = schema;
-  for (const part of path.split(".")) {
-    if (!current) {
-      return undefined;
-    }
-    if (current.properties && part in current.properties) {
-      current = current.properties[part];
-      continue;
-    }
-    if (current.items) {
-      current = Array.isArray(current.items)
-        ? current.items[Number(part)]
-        : current.items;
-      continue;
-    }
-    return undefined;
-  }
-  return current;
-}
-
-function walkValue(value: unknown, path: string): unknown {
-  if (!path) {
-    return value;
-  }
-  let current = value;
-  for (const part of path.split(".")) {
-    if (current === null || current === undefined) {
-      return undefined;
-    }
-    if (Array.isArray(current)) {
-      current = current[Number(part)];
-    } else if (isRecord(current)) {
-      current = current[part];
-    } else {
-      return undefined;
-    }
-  }
-  return current;
-}
-
-function isUnderPath(candidate: string, parent: string): boolean {
-  if (!parent) {
-    return candidate.length > 0;
-  }
-  return candidate.startsWith(`${parent}.`);
-}
-
 function joinPath(parent: string, child: string): string {
   if (!parent) {
     return child;
@@ -563,34 +371,6 @@ function joinPath(parent: string, child: string): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function formatIssue(issue: Issue, schema: JsonSchema): string {
-  const requiredMatch = issue.message.match(
-    /^must have required propert(?:y|ies) (.+)$/
-  );
-  if (requiredMatch) {
-    const props = requiredMatch[1]!;
-    const parent = issue.path.includes(".")
-      ? issue.path.slice(0, issue.path.lastIndexOf("."))
-      : "";
-    const where = parent ? ` at ${parent}` : "";
-    const noun = props.includes(",") ? "properties" : "property";
-    return `missing required ${noun}${where}: ${props}`;
-  }
-
-  if (issue.message === "must be equal to one of the allowed values") {
-    const node = walkSchema(schema, issue.path);
-    if (node?.enum && node.enum.length > 0) {
-      const values = node.enum.map(displayValue).join(", ");
-      return `${issue.path}: must be one of: ${values}`;
-    }
-  }
-
-  if (!issue.path) {
-    return issue.message;
-  }
-  return `${issue.path}: ${issue.message}`;
 }
 
 function coerceQuotedEnums(
@@ -725,7 +505,8 @@ function checkStrictTypes(
     const issues: string[] = [];
     for (const [key, sub] of Object.entries(value)) {
       const subSchema = schema.properties[key];
-      if (subSchema) {
+      const omittable = sub === null && !schema.required?.includes(key);
+      if (subSchema && !omittable) {
         issues.push(...checkStrictTypes(sub, subSchema, joinPath(path, key)));
       }
     }
@@ -820,5 +601,4 @@ export const Tools = {
   viewOf,
   wrap,
   register,
-  rewriteValidationError,
 };

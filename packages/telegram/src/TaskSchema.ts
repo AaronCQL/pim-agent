@@ -1,4 +1,5 @@
 import { type Static, Type } from "typebox";
+import { StringEnum } from "#core/shared/StringEnum";
 
 export type ScheduleSpec =
   | { readonly type: "once"; readonly at: string }
@@ -43,15 +44,8 @@ const scheduleSchema = Type.Union([
 ]);
 
 export const taskToolSchema = Type.Object({
-  action: Type.Union(
-    [
-      Type.Literal("create"),
-      Type.Literal("list"),
-      Type.Literal("delete"),
-      Type.Literal("pause"),
-      Type.Literal("resume"),
-      Type.Literal("update_prompt"),
-    ],
+  action: StringEnum(
+    ["create", "list", "delete", "pause", "resume", "update_prompt"],
     {
       description:
         "create: schedule a new task. list: see this thread's tasks. delete/pause/resume: by id. update_prompt: change a task's prompt.",

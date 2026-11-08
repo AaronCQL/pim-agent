@@ -1,33 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentToolResult, Theme } from "@earendil-works/pi-coding-agent";
 import type { Box, Component } from "@earendil-works/pi-tui";
-import type { JsonObject } from "@earendil-works/pi-ai";
 import { Type, type TSchema } from "typebox";
-import { StringEnum, validateToolArguments } from "@earendil-works/pi-ai";
+import { StringEnum } from "./StringEnum";
 import { type PimToolDefinition, Tools } from "./Tools";
-
-function runValidator(parameters: TSchema, args: unknown): Error {
-  try {
-    validateToolArguments({ name: "t", parameters } as never, {
-      type: "toolCall",
-      id: "1",
-      name: "t",
-      arguments: args as JsonObject,
-    });
-  } catch (e) {
-    return e as Error;
-  }
-  throw new Error("expected validation to fail");
-}
-
-function rewrite(toolName: string, parameters: TSchema, args: unknown): string {
-  return Tools.rewriteValidationError(
-    toolName,
-    parameters as never,
-    runValidator(parameters, args),
-    args
-  );
-}
 
 function wrapTool(parameters: TSchema, name = "t") {
   return Tools.wrap({
@@ -41,110 +17,37 @@ function wrapTool(parameters: TSchema, name = "t") {
   });
 }
 
-describe("Tools.rewriteValidationError", () => {
-  test("missing single required property at root", () => {
-    const params = Type.Object({ path: Type.String() });
-    expect(rewrite("read", params, {})).toBe(
-      'Validation failed for tool "read":\n  - missing required property: path'
+describe("Tools.wrap validation errors", () => {
+  test("report pi's issues without echoing the arguments back", () => {
+    const wrapped = wrapTool(Type.Object({ path: Type.String() }), "read");
+    expect(() => wrapped.prepareArguments!({})).toThrow(
+      new Error('Validation failed for tool "read":\n  - path: missing')
     );
   });
 
-  test("missing multiple required properties at root", () => {
-    const params = Type.Object({
-      path: Type.String(),
-      edits: Type.Array(Type.String()),
-    });
-    expect(rewrite("edit", params, {})).toBe(
-      'Validation failed for tool "edit":\n  - missing required properties: path, edits'
+  test("a tagged union reports the matched variant's issues", () => {
+    const wrapped = wrapTool(
+      Type.Object({
+        schedule: Type.Union([
+          Type.Object({ type: Type.Literal("once"), at: Type.String() }),
+          Type.Object({ type: Type.Literal("cron"), expr: Type.String() }),
+        ]),
+      })
+    );
+    expect(() =>
+      wrapped.prepareArguments!({ schedule: { type: "once" } })
+    ).toThrow(
+      new Error('Validation failed for tool "t":\n  - schedule.at: missing')
     );
   });
 
-  test("missing nested required property", () => {
-    const params = Type.Object({
-      path: Type.String(),
-      edits: Type.Array(
-        Type.Object({
-          old_string: Type.String(),
-          new_string: Type.String(),
-        })
-      ),
-    });
-    expect(
-      rewrite("edit", params, { path: "foo", edits: [{ old_string: "x" }] })
-    ).toBe(
-      'Validation failed for tool "edit":\n  - missing required property at edits.0: new_string'
+  test("a StringEnum lists its values", () => {
+    const wrapped = wrapTool(
+      Type.Object({ mode: StringEnum(["content", "count"]) }),
+      "grep"
     );
-  });
-
-  test("constraint messages pass through with original path", () => {
-    const params = Type.Object({
-      limit: Type.Integer({ minimum: 1, maximum: 2000 }),
-    });
-    expect(rewrite("read", params, { limit: 99999 })).toBe(
-      'Validation failed for tool "read":\n  - limit: must be <= 2000'
-    );
-  });
-
-  test("non-validation errors pass through unchanged", () => {
-    expect(
-      Tools.rewriteValidationError(
-        "read",
-        Type.Object({}) as never,
-        new Error("boom")
-      )
-    ).toBe("boom");
-  });
-
-  test("union of literals collapses to enumerated values (bare strings, no quotes)", () => {
-    const params = Type.Object({
-      action: Type.Union([
-        Type.Literal("create"),
-        Type.Literal("list"),
-        Type.Literal("delete"),
-        Type.Literal("pause"),
-        Type.Literal("resume"),
-        Type.Literal("update_prompt"),
-      ]),
-    });
-    expect(rewrite("task", params, { action: "foo" })).toBe(
-      'Validation failed for tool "task":\n  - action: must be one of: create, list, delete, pause, resume, update_prompt'
-    );
-  });
-
-  test("tagged union collapses to discriminator values (bare strings)", () => {
-    const params = Type.Object({
-      schedule: Type.Union([
-        Type.Object({ type: Type.Literal("once"), at: Type.String() }),
-        Type.Object({ type: Type.Literal("interval"), every: Type.String() }),
-        Type.Object({ type: Type.Literal("cron"), expr: Type.String() }),
-      ]),
-    });
-    expect(
-      rewrite("task", params, { schedule: { type: "foo", at: "x" } })
-    ).toBe(
-      'Validation failed for tool "task":\n  - schedule: must match one of the allowed variants (type: once, interval, cron)'
-    );
-  });
-
-  test("tagged union with discriminator match shows only matched branch errors", () => {
-    const params = Type.Object({
-      schedule: Type.Union([
-        Type.Object({ type: Type.Literal("once"), at: Type.String() }),
-        Type.Object({ type: Type.Literal("interval"), every: Type.String() }),
-        Type.Object({ type: Type.Literal("cron"), expr: Type.String() }),
-      ]),
-    });
-    expect(rewrite("task", params, { schedule: { type: "once" } })).toBe(
-      'Validation failed for tool "task":\n  - missing required property at schedule: at'
-    );
-  });
-
-  test("StringEnum lists valid values (bare strings)", () => {
-    const params = Type.Object({
-      outputMode: StringEnum(["files_with_matches", "content", "count"]),
-    });
-    expect(rewrite("grep", params, { outputMode: "invalid_enum_value" })).toBe(
-      'Validation failed for tool "grep":\n  - outputMode: must be one of: files_with_matches, content, count'
+    expect(() => wrapped.prepareArguments!({ mode: "nope" })).toThrow(
+      'Validation failed for tool "grep":\n  - mode: expected one of ["content","count"]'
     );
   });
 });
@@ -170,12 +73,10 @@ describe("Tools.wrap quoted-enum coercion", () => {
 
   test("does NOT unwrap when inner value is invalid (still errors)", () => {
     const wrapped = wrapTool(
-      Type.Object({
-        action: Type.Union([Type.Literal("create"), Type.Literal("list")]),
-      })
+      Type.Object({ action: StringEnum(["create", "list"]) })
     );
     expect(() => wrapped.prepareArguments!({ action: '"nope"' })).toThrow(
-      'Validation failed for tool "t":\n  - action: must be one of: create, list'
+      'Validation failed for tool "t":\n  - action: expected one of ["create","list"]'
     );
   });
 
@@ -247,6 +148,11 @@ describe("Tools.wrap strict type checks", () => {
     );
   });
 
+  test("null in an optional field is dropped", () => {
+    const wrapped = wrapTool(Type.Object({ x: Type.Optional(Type.String()) }));
+    expect(wrapped.prepareArguments!({ x: null })).toEqual({});
+  });
+
   test("null is not rejected when schema explicitly accepts it", () => {
     const wrapped = wrapTool(
       Type.Object({ x: Type.Union([Type.String(), Type.Null()]) })
@@ -278,15 +184,6 @@ describe("Tools.wrap unknown property detection", () => {
   });
 });
 
-describe("Tools.wrap", () => {
-  test("prepareArguments rewrites the thrown message", () => {
-    const wrapped = wrapTool(Type.Object({ path: Type.String() }), "read");
-    expect(() => wrapped.prepareArguments!({})).toThrow(
-      'Validation failed for tool "read":\n  - missing required property: path'
-    );
-  });
-});
-
 describe("Tools.register", () => {
   test("forwards the wrapped def to pi.registerTool", () => {
     const params = Type.Object({ path: Type.String() });
@@ -307,7 +204,7 @@ describe("Tools.register", () => {
     });
     expect(captured?.prepareArguments).toBeDefined();
     expect(() => captured!.prepareArguments!({})).toThrow(
-      'Validation failed for tool "read":\n  - missing required property: path'
+      'Validation failed for tool "read":\n  - path: missing'
     );
   });
 });
