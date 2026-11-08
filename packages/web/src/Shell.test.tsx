@@ -9,7 +9,9 @@ import { Shell } from "./App";
 import { baseName } from "./format";
 import { SessionStore } from "./session/SessionStore";
 import { Settings } from "./settings/Settings";
+import { DESKTOP } from "./ui/media";
 import { mountPoint } from "./test/dom";
+import { drag } from "./test/touch";
 import { GatewayHarness } from "./test/gateway";
 import { until } from "#core/shared/fixtures/wait";
 import { fakeViewport } from "./test/viewport";
@@ -39,6 +41,15 @@ function softKeyboard(): void {
   const real = realMatchMedia.bind(globalThis);
   globalThis.matchMedia = ((query: string) =>
     query.includes("hover")
+      ? { matches: false, addEventListener() {}, removeEventListener() {} }
+      : real(query)) as typeof globalThis.matchMedia;
+}
+
+function phone(): void {
+  realMatchMedia ??= globalThis.matchMedia;
+  const real = realMatchMedia.bind(globalThis);
+  globalThis.matchMedia = ((query: string) =>
+    query === DESKTOP
       ? { matches: false, addEventListener() {}, removeEventListener() {} }
       : real(query)) as typeof globalThis.matchMedia;
 }
@@ -919,6 +930,23 @@ describe("the composer, against a real gateway", () => {
     scroller.scrollTop = -500;
     list().querySelector<HTMLButtonElement>("li button")!.click();
     expect(scroller.scrollTop).toBe(0);
+  });
+
+  test("on a phone, a swipe right opens the sessions drawer and a swipe left shuts it", () => {
+    phone();
+    const host = paint(store);
+    const drawer = host.querySelector<HTMLDialogElement>(
+      'dialog[aria-label="Sessions"]'
+    )!;
+    expect(drawer.open).toBe(false);
+
+    drag(scrollerOf(host), { x: 20, y: 300 }, { x: 220, y: 310 });
+    flush();
+    expect(drawer.open).toBe(true);
+
+    drag(drawer, { x: 220, y: 300 }, { x: 20, y: 300 });
+    flush();
+    expect(drawer.open).toBe(false);
   });
 
   function seedComments(cwd: string, ...texts: readonly string[]): void {
