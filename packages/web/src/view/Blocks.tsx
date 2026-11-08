@@ -22,9 +22,11 @@ import { CopyButton } from "../ui/CopyButton";
 import { ImageTile } from "../ui/ImageTile";
 import { Attachments } from "./Attachments";
 import { diffSide, type DiffAnchors } from "./anchors";
+import type { ChangeMark, ChangeMarkMap } from "./ChangeMarks";
 import { DiffGutter, gutterText } from "./DiffGutter";
 import { Highlight, type Token } from "./highlight";
 import {
+  CHANGE_MARK_CLASSES,
   DIFF_GAP_CLASS,
   DIFF_ANCHOR_CLASSES,
   DIFF_EMPHASIS_CLASSES,
@@ -188,6 +190,7 @@ export function UnifiedLines(props: {
   readonly lang: string | undefined;
   readonly width: number;
   readonly anchors?: DiffAnchors;
+  readonly marks?: ChangeMarkMap;
 }) {
   // Re-runs when a grammar finishes loading.
   const tokens = createMemo(() =>
@@ -204,6 +207,11 @@ export function UnifiedLines(props: {
           tokens={tokens()[index()] ?? [{ text: line.text }]}
           width={props.width}
           anchors={props.anchors}
+          mark={
+            line.newLine === undefined
+              ? undefined
+              : props.marks?.get(line.newLine)
+          }
         />
       )}
     </For>
@@ -215,6 +223,7 @@ function DiffRow(props: {
   readonly tokens: readonly Token[];
   readonly width: number;
   readonly anchors?: DiffAnchors;
+  readonly mark?: ChangeMark | undefined;
 }) {
   const kind = () => props.line.kind;
   const side = () => diffSide(props.line);
@@ -223,7 +232,18 @@ function DiffRow(props: {
 
   return (
     <>
-      <div class={`whitespace-pre ${DIFF_ROW_CLASSES[kind()]}`}>
+      <div
+        class={`whitespace-pre ${DIFF_ROW_CLASSES[kind()]} ${props.mark === undefined ? "" : "relative"}`}
+      >
+        <Show when={props.mark}>
+          {(mark) => (
+            <span
+              class={`pointer-events-none absolute left-[calc(var(--gutter)-1.5ch)] -translate-x-1/2 ${CHANGE_MARK_CLASSES[mark()]}`}
+              data-mark={mark()}
+              aria-hidden="true"
+            />
+          )}
+        </Show>
         <Show
           when={props.anchors}
           fallback={

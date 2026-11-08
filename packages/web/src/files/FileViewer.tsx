@@ -15,6 +15,7 @@ import { Fitted } from "../ui/Fitted";
 import { QUIET } from "../ui/classes";
 import { Spinner } from "../ui/Spinner";
 import { UnifiedLines } from "../view/Blocks";
+import type { ChangeMarkMap } from "../view/ChangeMarks";
 import type { FileStore } from "./FileStore";
 
 /** Lines per highlighted block; the highlighter gives up on longer ones. */
@@ -63,6 +64,7 @@ function FileLines(props: {
   readonly path: string;
   readonly fingerprint: string;
   readonly lines: readonly string[];
+  readonly marks: ChangeMarkMap | undefined;
 }) {
   const notes = useContext(ReviewComments)();
   const [pages, setPages] = createSignal(1);
@@ -100,6 +102,7 @@ function FileLines(props: {
               lang={lang()}
               width={width()}
               anchors={anchoring}
+              marks={props.marks}
             />
           )}
         </For>
@@ -129,6 +132,7 @@ function FileLines(props: {
 export function FileViewer(props: {
   readonly files: FileStore;
   readonly change: ChangeSummary | undefined;
+  readonly marks: ChangeMarkMap | undefined;
   readonly inset: number;
   readonly onDiff: (path: string) => void;
   /** Present where the tree is out of sight. */
@@ -255,6 +259,7 @@ export function FileViewer(props: {
                         path={path}
                         fingerprint={fingerprint()}
                         lines={view().lines}
+                        marks={props.marks}
                       />
                     </Show>
                   </Show>

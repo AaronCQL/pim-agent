@@ -6,11 +6,13 @@ import {
   Show,
 } from "solid-js";
 
+import type { ChangeSummary } from "#protocol/Diff";
 import type { DiffStore } from "../diff/DiffStore";
 import { ModeSwitch, type ReviewMode } from "../diff/ModeSwitch";
 import { ICON } from "../ui/classes";
 import { Drawer } from "../ui/Drawer";
 import { createMediaQuery, DESKTOP } from "../ui/media";
+import { ChangeMarks, type ChangeMarkMap } from "../view/ChangeMarks";
 import type { FileStore } from "./FileStore";
 import { FileTreeView } from "./FileTreeView";
 import { FileViewer } from "./FileViewer";
@@ -47,6 +49,51 @@ export function FilesView(props: {
   const changes = createMemo(
     () => new Map(props.diff.files().map((file) => [file.path, file]))
   );
+
+  const change = createMemo(() => {
+    const path = props.files.state.selected;
+    return path === undefined ? undefined : changes().get(path);
+  });
+
+  const marked = (): ChangeSummary | undefined => {
+    const summary = change();
+    return summary === undefined ||
+      summary.binary === true ||
+      summary.status === "deleted" ||
+      props.diff.state.base === "staged"
+      ? undefined
+      : summary;
+  };
+
+  const whole = (summary: ChangeSummary): boolean =>
+    summary.status === "added" || summary.status === "untracked";
+
+  createEffect(
+    () => {
+      const summary = marked();
+      return summary === undefined || whole(summary) ? undefined : summary;
+    },
+    (summary) => {
+      if (summary !== undefined) {
+        void props.diff.expand(summary.path);
+      }
+    }
+  );
+
+  const marks = createMemo((): ChangeMarkMap | undefined => {
+    const summary = marked();
+    const view = props.files.view();
+    if (summary === undefined || view?.kind !== "ready") {
+      return undefined;
+    }
+    if (whole(summary)) {
+      return ChangeMarks.whole(view.lines.length);
+    }
+    const state = props.diff.fileState(summary.path);
+    return state?.kind === "ready"
+      ? ChangeMarks.of(state.diff.hunks, view.lines.length)
+      : undefined;
+  });
 
   const picking = (): boolean =>
     wide() || props.files.state.selected === undefined;
@@ -103,11 +150,8 @@ export function FilesView(props: {
           <div class="min-h-0 min-w-0 flex-1">
             <FileViewer
               files={props.files}
-              change={
-                props.files.state.selected === undefined
-                  ? undefined
-                  : changes().get(props.files.state.selected)
-              }
+              change={change()}
+              marks={marks()}
               inset={props.inset}
               onDiff={props.onDiff}
               {...(wide()

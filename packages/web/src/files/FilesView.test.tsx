@@ -151,6 +151,31 @@ test("the files segment lists folders first and reads a file once picked", async
   ]);
 });
 
+function marks(host: HTMLElement): readonly string[] {
+  return [...host.querySelectorAll<HTMLElement>("[data-mark]")].map(
+    (mark) =>
+      `${mark.parentElement?.textContent?.trim().split(/\s+/)[0]}:${mark.dataset.mark}`
+  );
+}
+
+test("a changed file marks its changed lines in the gutter", async () => {
+  await Bun.write(join(repo, "fresh.ts"), "x\ny\n");
+  const host = await files();
+  press(host, "[data-path='src']");
+  press(host, "[data-path='src/alpha.ts']");
+  await settle(() => marks(host).length > 0, "the change marks");
+  expect(marks(host)).toEqual(["3:modified"]);
+
+  press(host, "[data-path='fresh.ts']");
+  await settle(() => code(host).includes("y"), "the new file");
+  await settle(() => marks(host).length === 2, "the new file's marks");
+  expect(marks(host)).toEqual(["1:added", "2:added"]);
+
+  press(host, "[data-path='README.md']");
+  await settle(() => code(host).includes("readme"), "the clean file");
+  expect(marks(host)).toEqual([]);
+});
+
 test("the filter answers matching paths whole, and Escape clears it", async () => {
   const host = await files();
   const field = host.querySelector<HTMLInputElement>(
