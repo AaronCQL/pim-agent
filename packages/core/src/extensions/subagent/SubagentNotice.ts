@@ -3,7 +3,7 @@ import { Json } from "../../shared/Json";
 import { JobLine, type JobUsage } from "./JobLine";
 import type { ToolTrace } from "./subagent";
 import type { JobView } from "./SubagentJobs";
-import { SubagentResult } from "./SubagentResult";
+import { SubagentResult, type CustomMessageLike } from "./SubagentResult";
 
 const CUSTOM_TYPE = "subagent_notice";
 /** The share of its context window at which a running job tells its parent, once. */
@@ -29,26 +29,14 @@ export type SubagentNoticeMessage = {
   readonly details: SubagentNoticeDetails;
 };
 
-type Known = JobUsage & {
-  readonly contextTokens: number;
-  readonly contextWindow: number;
-};
-
-export type NoticeStats = Known & {
-  readonly jobId: string;
-  readonly handle: string;
-  readonly elapsedMs: number;
-};
+export type NoticeStats = Omit<SubagentNoticeDetails, "tools">;
 
 /** The usage is at or past the threshold, with both sides known. */
-function crossed(usage: JobUsage): usage is Known {
-  const { contextTokens, contextWindow } = usage;
-  return (
-    contextTokens !== undefined &&
-    contextWindow !== undefined &&
-    contextWindow > 0 &&
-    contextTokens / contextWindow >= THRESHOLD
-  );
+function crossed(
+  usage: JobUsage
+): usage is JobUsage & Pick<NoticeStats, "contextTokens" | "contextWindow"> {
+  const filled = JobLine.share(usage);
+  return filled !== undefined && filled >= THRESHOLD;
 }
 
 /** `⚠ 40%` for a job whose notice was issued. */
@@ -57,7 +45,7 @@ function flag(job: JobView): readonly string[] {
 }
 
 function percent(details: SubagentNoticeDetails): string {
-  return `${Math.floor((details.contextTokens / details.contextWindow) * 100)}%`;
+  return `${Math.floor(JobLine.share(details)! * 100)}%`;
 }
 
 function stats(usage: JobUsage, elapsedMs: number): readonly string[] {
@@ -96,7 +84,7 @@ function line(details: SubagentNoticeDetails): string {
   return [
     `⚠ ${details.handle} at ${percent(details)} context`,
     ...stats({ turns: details.turns, cost: details.cost }, details.elapsedMs),
-  ].join(" · ");
+  ].join(JobLine.SEPARATOR);
 }
 
 function isCount(value: unknown): value is number {
@@ -104,10 +92,9 @@ function isCount(value: unknown): value is number {
 }
 
 /** A custom message's details, if it is a `subagent_notice` with every field `line` reads. */
-function detailsOf(message: {
-  readonly customType: string;
-  readonly details?: unknown;
-}): SubagentNoticeDetails | undefined {
+function detailsOf(
+  message: CustomMessageLike
+): SubagentNoticeDetails | undefined {
   if (message.customType !== CUSTOM_TYPE) {
     return undefined;
   }
@@ -126,7 +113,6 @@ function detailsOf(message: {
 
 export const SubagentNotice = {
   CUSTOM_TYPE,
-  THRESHOLD,
   crossed,
   flag,
   of,

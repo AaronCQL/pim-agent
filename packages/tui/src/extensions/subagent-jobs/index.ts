@@ -153,7 +153,7 @@ function open(
       if (shutting) {
         over();
       } else {
-        queued.set(JobMessage.key(message)!, {
+        queued.set(JobMessage.key(message), {
           answered: false,
           message,
           over,
@@ -320,7 +320,7 @@ function open(
     runStarting(event) {
       const carried =
         event.messageType === "custom"
-          ? JobMessage.key(event.message)
+          ? JobMessage.keyOf(event.message)
           : undefined;
       const carriesQueued = carried !== undefined && queued.has(carried);
       for (const [key, wait] of queued) {

@@ -1120,7 +1120,7 @@ describe("context notice", () => {
     );
 
     expect(plain(component?.render(WIDTH))).toEqual([
-      " ⚠ j22 at 40% context · 69 turns · $9.80 · 30m 0s",
+      " ⚠ j22 at 40% context ⬝ 69 turns ⬝ $9.80 ⬝ 30m 0s",
     ]);
     expect(muted).toEqual(["muted"]);
   });

@@ -62,6 +62,12 @@ export type JobEnd = {
   readonly stillRunning: readonly string[];
 };
 
+/** What a custom message's type and details are read from, before it is known to be a job's. */
+export type CustomMessageLike = {
+  readonly customType: string;
+  readonly details?: unknown;
+};
+
 function headline(job: JobIdentity, state: string): string {
   return `[subagent job ${job.handle} ${state}]`;
 }
@@ -209,10 +215,9 @@ async function fromLog(
 }
 
 /** A custom message's details, if it is a `subagent_result` naming its job. */
-function detailsOf(message: {
-  readonly customType: string;
-  readonly details?: unknown;
-}): SubagentResultDetails | undefined {
+function detailsOf(
+  message: CustomMessageLike
+): SubagentResultDetails | undefined {
   if (message.customType !== CUSTOM_TYPE) {
     return undefined;
   }

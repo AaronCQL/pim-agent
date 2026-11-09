@@ -33,14 +33,22 @@ function oneLine(text: string): string {
     .trim();
 }
 
-function context(usage: JobUsage): readonly string[] {
+/** The share of its context window the job fills, when both are known. */
+function share(usage: JobUsage): number | undefined {
   const { contextTokens, contextWindow } = usage;
   return contextWindow === undefined ||
     contextWindow <= 0 ||
     contextTokens === undefined
+    ? undefined
+    : contextTokens / contextWindow;
+}
+
+function context(usage: JobUsage): readonly string[] {
+  const filled = share(usage);
+  return filled === undefined
     ? []
     : [
-        `${((contextTokens / contextWindow) * 100).toFixed(1)}%/${Format.formatTokens(contextWindow)}`,
+        `${(filled * 100).toFixed(1)}%/${Format.formatTokens(usage.contextWindow!)}`,
       ];
 }
 
@@ -71,4 +79,4 @@ function text(job: JobView, now: number): string {
   ].join(" · ");
 }
 
-export const JobLine = { SEPARATOR, parts, usage, text, handleNumber };
+export const JobLine = { SEPARATOR, share, parts, usage, text, handleNumber };

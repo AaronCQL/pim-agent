@@ -4,7 +4,11 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import { SubagentNotice, type SubagentNoticeMessage } from "./SubagentNotice";
-import { SubagentResult, type SubagentResultMessage } from "./SubagentResult";
+import {
+  SubagentResult,
+  type CustomMessageLike,
+  type SubagentResultMessage,
+} from "./SubagentResult";
 
 /** What a job sends its parent: one notice while it runs, at most, then its result. */
 export type JobMessage = SubagentResultMessage | SubagentNoticeMessage;
@@ -18,11 +22,6 @@ export type SessionBranches = Pick<
   "getBranch" | "getEntries"
 >;
 
-type CustomMessageLike = {
-  readonly customType: string;
-  readonly details?: unknown;
-};
-
 /** The job a `subagent_result` or `subagent_notice` names. */
 function jobIdOf(message: CustomMessageLike): string | undefined {
   return (
@@ -31,7 +30,12 @@ function jobIdOf(message: CustomMessageLike): string | undefined {
 }
 
 /** Tells a job's notice from its result. */
-function key(message: CustomMessageLike): string | undefined {
+function key(message: JobMessage): string {
+  return `${message.customType}:${message.details.jobId}`;
+}
+
+/** `key`, for a custom message that may not be a job's. */
+function keyOf(message: CustomMessageLike): string | undefined {
   const jobId = jobIdOf(message);
   return jobId === undefined ? undefined : `${message.customType}:${jobId}`;
 }
@@ -43,7 +47,7 @@ function covers(entry: SessionEntry, message: JobMessage): boolean {
   }
   const jobId = message.details.jobId;
   return (
-    SubagentResult.detailsOf(entry)?.jobId === jobId ||
+    SubagentResult.jobIdOf(entry) === jobId ||
     (message.customType === SubagentNotice.CUSTOM_TYPE &&
       SubagentNotice.detailsOf(entry)?.jobId === jobId)
   );
@@ -70,4 +74,4 @@ function placement(session: SessionBranches, message: JobMessage): Placement {
   return away ? "elsewhere" : "due";
 }
 
-export const JobMessage = { key, placement };
+export const JobMessage = { key, keyOf, placement };

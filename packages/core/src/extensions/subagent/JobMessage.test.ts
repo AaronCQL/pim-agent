@@ -71,7 +71,8 @@ describe("JobMessage.key", () => {
   test("tells a job's notice from its result, and ignores other messages", () => {
     expect(JobMessage.key(notice)).toBe("subagent_notice:call-1");
     expect(JobMessage.key(result)).toBe("subagent_result:call-1");
-    expect(JobMessage.key({ customType: "other", details: {} })).toBe(
+    expect(JobMessage.keyOf(notice)).toBe(JobMessage.key(notice));
+    expect(JobMessage.keyOf({ customType: "other", details: {} })).toBe(
       undefined
     );
   });
@@ -80,7 +81,7 @@ describe("JobMessage.key", () => {
 describe("SubagentNotice", () => {
   test("its one line names the job and its share, then its usage", () => {
     expect(SubagentNotice.line(notice.details)).toBe(
-      "⚠ j1 at 40% context · 69 turns · $9.80 · 30m 0s"
+      "⚠ j1 at 40% context ⬝ 69 turns ⬝ $9.80 ⬝ 30m 0s"
     );
   });
 
