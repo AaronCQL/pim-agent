@@ -15,21 +15,24 @@ import {
   type TUI,
 } from "@earendil-works/pi-tui";
 
+import {
+  JobMessage,
+  type Placement,
+} from "#core/extensions/subagent/JobMessage";
 import type {
   JobDeliverer,
   JobDelivery,
   JobView,
   SubagentJobs,
 } from "#core/extensions/subagent/SubagentJobs";
-import {
-  SubagentResult,
-  type Placement,
-} from "#core/extensions/subagent/SubagentResult";
+import { SubagentNotice } from "#core/extensions/subagent/SubagentNotice";
+import { SubagentResult } from "#core/extensions/subagent/SubagentResult";
 import { Errors } from "#core/shared/Errors";
 import { Format } from "#core/shared/Format";
 import { Timers, type Every } from "#core/shared/Timers";
 import type { SessionGate } from "../session-lease/SessionGate";
 import { JobsWidget } from "./JobsWidget";
+import { SubagentNoticeRenderer } from "./SubagentNoticeRenderer";
 import { SubagentResultRenderer } from "./SubagentResultRenderer";
 
 export type SubagentJobsOptions = {
@@ -50,12 +53,16 @@ type OpenSession = {
 };
 
 /**
- * A waking result pi queued because it was settling a run. Pi sends its queue
+ * A waking job message pi queued because it was settling a run. Pi sends its queue
  * in order once every settled handler has returned, and drops the rest of it
- * when one action throws. `answered` once a run starts with this result, or with
+ * when one action throws. `answered` once a run starts with this message, or with
  * none of the queued ones: pi has then got past its queue.
  */
-type Queued = { answered: boolean; readonly over: () => void };
+type Queued = {
+  answered: boolean;
+  readonly message: JobMessage;
+  readonly over: () => void;
+};
 
 type Shared = {
   readonly jobs: SubagentJobs;
@@ -132,32 +139,37 @@ function open(
   let stopping = false;
   /** Where the session stood when a `!command` began; unset once it is known to be over. */
   let bashFrom: number | undefined;
+  /** By `JobMessage.key`. */
   const queued = new Map<string, Queued>();
   let shutting = false;
   const deliveries = new Set<Promise<Placement>>();
 
-  const place = (jobId: string) =>
-    SubagentResult.placement(ctx.sessionManager, jobId);
+  const place = (message: JobMessage) =>
+    JobMessage.placement(ctx.sessionManager, message);
 
-  /** Resolves once a run that answers it settles, or the result lands, or the session closes. */
-  const answered = (jobId: string): Promise<void> =>
+  /** Resolves once a run that answers it settles, or the message lands, or the session closes. */
+  const answered = (message: JobMessage): Promise<void> =>
     new Promise((over) => {
       if (shutting) {
         over();
       } else {
-        queued.set(jobId, { answered: false, over });
+        queued.set(JobMessage.key(message)!, {
+          answered: false,
+          message,
+          over,
+        });
       }
     });
 
-  const release = (jobId: string, wait: Queued): void => {
-    queued.delete(jobId);
+  const release = (key: string, wait: Queued): void => {
+    queued.delete(key);
     wait.over();
   };
 
   const endQueued = (): void => {
     shutting = true;
-    for (const [jobId, wait] of queued) {
-      release(jobId, wait);
+    for (const [key, wait] of queued) {
+      release(key, wait);
     }
   };
 
@@ -171,7 +183,7 @@ function open(
     jobs.flush(id);
   };
 
-  /** Appends only while pi is idle and no other surface holds the session; a turn's boundary takes it otherwise. A waking result pi queued instead of starting its run is pi's until that queue is past. */
+  /** Appends only while pi is idle and no other surface holds the session; a turn's boundary takes it otherwise. A waking message pi queued instead of starting its run is pi's until that queue is past. */
   const deliver = async (delivery: JobDelivery): Promise<Placement> => {
     if (closed || !ctx.isIdle()) {
       return "due";
@@ -183,14 +195,16 @@ function open(
     if (closed || state !== "open" || !ctx.isIdle()) {
       return "due";
     }
-    const jobId = delivery.result.details.jobId;
-    if (place(jobId) === "due") {
-      pi.sendMessage(delivery.result, { triggerTurn: delivery.wake });
-      if (ctx.isIdle() && place(jobId) === "due") {
-        await answered(jobId);
+    const message = delivery.message;
+    if (!delivery.dropped && place(message) === "due") {
+      pi.sendMessage<JobMessage["details"]>(message, {
+        triggerTurn: delivery.wake,
+      });
+      if (ctx.isIdle() && place(message) === "due") {
+        await answered(message);
       }
     }
-    return place(jobId);
+    return place(message);
   };
 
   const track: JobDeliverer = (delivery) => {
@@ -305,19 +319,19 @@ function open(
     runStarting(event) {
       const carried =
         event.messageType === "custom"
-          ? SubagentResult.detailsOf(event.message)?.jobId
+          ? JobMessage.key(event.message)
           : undefined;
       const carriesQueued = carried !== undefined && queued.has(carried);
-      for (const [jobId, wait] of queued) {
-        if (!carriesQueued || jobId === carried) {
+      for (const [key, wait] of queued) {
+        if (!carriesQueued || key === carried) {
           wait.answered = true;
         }
       }
     },
     runSettled() {
-      for (const [jobId, wait] of queued) {
-        if (wait.answered || place(jobId) === "landed") {
-          release(jobId, wait);
+      for (const [key, wait] of queued) {
+        if (wait.answered || place(wait.message) === "landed") {
+          release(key, wait);
         }
       }
     },
@@ -347,7 +361,7 @@ function open(
   };
 }
 
-/** Delivers background subagent results into the session, shows running jobs, and stops them on Escape or when the session is left. */
+/** Delivers background subagent results and notices into the session, shows running jobs, and stops them on Escape or when the session is left. */
 export default function subagentJobs(
   options: SubagentJobsOptions
 ): ExtensionFactory {
@@ -363,6 +377,10 @@ export default function subagentJobs(
     pi.registerMessageRenderer(
       SubagentResult.CUSTOM_TYPE,
       SubagentResultRenderer.render
+    );
+    pi.registerMessageRenderer(
+      SubagentNotice.CUSTOM_TYPE,
+      SubagentNoticeRenderer.render
     );
 
     pi.on("session_start", (_event, ctx) => {

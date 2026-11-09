@@ -22,6 +22,7 @@ import {
   parent,
   usage,
 } from "#core/extensions/subagent/fixtures/session";
+import type { JobMessage } from "#core/extensions/subagent/JobMessage";
 import { startSubagent } from "#core/extensions/subagent/subagent";
 import {
   type JobView,
@@ -133,7 +134,7 @@ function createHarness() {
   const notifications: string[] = [];
   const children = new Map<string, HeldSession>();
   let handlers = new Map<string, Handler[]>();
-  let renderer: MessageRenderer | undefined;
+  const renderers = new Map<string, MessageRenderer>();
   let sessionId = "s1";
   let streaming = false;
   let turns = 0;
@@ -157,7 +158,7 @@ function createHarness() {
     entries.set(sessionId, [...(entries.get(sessionId) ?? []), entry]);
   };
 
-  const append = (message: SubagentResultMessage): void => {
+  const append = (message: JobMessage): void => {
     push({
       type: "custom_message",
       customType: message.customType,
@@ -207,10 +208,7 @@ function createHarness() {
   };
 
   // Pi's idle `sendCustomMessage`: append at once, or start a run that appends once it has started.
-  const sendMessage = (
-    message: SubagentResultMessage,
-    options: SendOptions
-  ): void => {
+  const sendMessage = (message: JobMessage, options: SendOptions): void => {
     expect(streaming).toBe(false);
     sent.push({
       session: sessionId,
@@ -235,8 +233,7 @@ function createHarness() {
         handlers.set(event, [...(handlers.get(event) ?? []), handler]);
       },
       registerMessageRenderer(type: string, render: MessageRenderer): void {
-        expect(type).toBe("subagent_result");
-        renderer = render;
+        renderers.set(type, render);
       },
       sendMessage,
     } as unknown as ExtensionAPI;
@@ -257,7 +254,7 @@ function createHarness() {
     probes: () => probes,
     ticking: () => ticks.size,
     renders: () => renders,
-    renderer: () => renderer,
+    renderer: (type = "subagent_result") => renderers.get(type),
     entries: (id = sessionId) => entries.get(id) ?? [],
     append,
     /** Records `message` on another branch of the session. */
@@ -337,7 +334,10 @@ function createHarness() {
     },
     async spawn(
       callId: string,
-      options: { readonly session?: string } = {}
+      options: {
+        readonly session?: string;
+        readonly contextWindow?: number;
+      } = {}
     ): Promise<HeldSession> {
       const child = new HeldSession();
       children.set(callId, child);
@@ -346,10 +346,19 @@ function createHarness() {
         prompt: `task ${callId}\nwith details`,
         lastHandle: 0,
         start: (onChange) =>
-          startSubagent(callId, parent, {
-            createSession: async () => child,
-            onChange,
-          }),
+          startSubagent(
+            callId,
+            options.contextWindow === undefined
+              ? parent
+              : {
+                  ...parent,
+                  model: { contextWindow: options.contextWindow } as never,
+                },
+            {
+              createSession: async () => child,
+              onChange,
+            }
+          ),
       });
       await until(() => child.promptCalls === 1, `job ${callId} to start`);
       return child;
@@ -959,8 +968,8 @@ describe("result message", () => {
     const jobs = new SubagentJobs();
     const child = new HeldSession();
     const message = Promise.withResolvers<SubagentResultMessage>();
-    jobs.attach("s1", async ({ result }) => {
-      message.resolve(result);
+    jobs.attach("s1", async ({ message: result }) => {
+      message.resolve(result as SubagentResultMessage);
       return "landed";
     });
     jobs.spawn("s1", {
@@ -1035,5 +1044,84 @@ describe("result message", () => {
         theme
       )
     ).toBeUndefined();
+  });
+});
+
+describe("context notice", () => {
+  const fill = (child: HeldSession, totalTokens: number): void => {
+    child.emit({
+      type: "message_end",
+      message: assistant(["working"], {
+        usage: usage({ totalTokens }),
+        stopReason: "toolUse",
+      }),
+    });
+  };
+
+  test("wakes an idle session once, and the job stays a running job", async () => {
+    const harness = await started();
+    const child = await harness.spawn("call-1", { contextWindow: 100_000 });
+
+    fill(child, 45_000);
+    await until(() => harness.sent.length === 1, "the notice");
+    await harness.settle();
+    await until(() => !harness.jobs.hasPending("s1"), "the notice to land");
+    fill(child, 60_000);
+
+    expect(harness.sent).toEqual([
+      { session: "s1", jobId: "call-1", wake: true },
+    ]);
+    expect(harness.turns()).toBe(1);
+    expect(harness.entries()).toMatchObject([
+      { customType: "subagent_notice", details: { jobId: "call-1" } },
+    ]);
+    expect(plain(harness.widget())[0]).toBe(" 1 subagent job · escape to stop");
+
+    child.finish("all good");
+    await until(() => harness.sent.length === 2, "the result");
+    await harness.settle();
+    await harness.delivered();
+    expect(
+      harness
+        .entries()
+        .map((entry) => entry.type === "custom_message" && entry.customType)
+    ).toEqual(["subagent_notice", "subagent_result"]);
+  });
+
+  test("renders as one muted line", async () => {
+    const harness = await started();
+    const muted: string[] = [];
+    const component = harness.renderer("subagent_notice")?.(
+      {
+        role: "custom",
+        customType: "subagent_notice",
+        content: "",
+        display: true,
+        timestamp: 0,
+        details: {
+          jobId: "call-1",
+          handle: "j22",
+          contextTokens: 402_000,
+          contextWindow: 1_000_000,
+          turns: 69,
+          elapsedMs: 30 * 60_000,
+          cost: 9.8,
+          tools: [],
+        },
+      },
+      { expanded: true, outputPad: 1 } as never,
+      {
+        ...theme,
+        fg: (color: string, text: string) => {
+          muted.push(color);
+          return text;
+        },
+      } as Theme
+    );
+
+    expect(plain(component?.render(WIDTH))).toEqual([
+      " ⚠ j22 at 40% context · 402K/1.0M · 69 turns · 30m 0s",
+    ]);
+    expect(muted).toEqual(["muted"]);
   });
 });

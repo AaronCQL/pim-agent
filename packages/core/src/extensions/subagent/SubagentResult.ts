@@ -1,7 +1,6 @@
 import type {
   AgentSessionEvent,
   AgentToolResult,
-  ExtensionContext,
   SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 
@@ -62,14 +61,6 @@ export type JobEnd = {
   /** The parent's other running jobs, by name. */
   readonly stillRunning: readonly string[];
 };
-
-/** `landed`: already on the branch. `due`: append it now. `elsewhere`: its spawn is on another branch, so it waits until that branch is current again. */
-export type Placement = "landed" | "due" | "elsewhere";
-
-type Session = Pick<
-  ExtensionContext["sessionManager"],
-  "getBranch" | "getEntries"
->;
 
 function headline(job: JobIdentity, state: string): string {
   return `[subagent job ${job.handle} ${state}]`;
@@ -236,32 +227,11 @@ function jobIdOf(entry: SessionEntry): string | undefined {
   return entry.type === "custom_message" ? detailsOf(entry)?.jobId : undefined;
 }
 
-function spawned(entry: SessionEntry, jobId: string): boolean {
-  return (
-    entry.type === "message" &&
-    entry.message.role === "toolResult" &&
-    entry.message.toolCallId === jobId
-  );
-}
-
-/** Where this job's result belongs. Check it right before appending, with no await between. */
-function placement(session: Session, jobId: string): Placement {
-  const branch = session.getBranch();
-  if (branch.some((entry) => jobIdOf(entry) === jobId)) {
-    return "landed";
-  }
-  const away =
-    !branch.some((entry) => spawned(entry, jobId)) &&
-    session.getEntries().some((entry) => spawned(entry, jobId));
-  return away ? "elsewhere" : "due";
-}
-
 export const SubagentResult = {
   CUSTOM_TYPE,
   of,
   fromLog,
   detailsOf,
   jobIdOf,
-  placement,
   toolLines,
 };

@@ -10,6 +10,7 @@ import {
   type Parent,
   type Script,
 } from "#core/extensions/subagent/fixtures/parent";
+import { assistant, usage } from "#core/extensions/subagent/fixtures/session";
 import { SubagentJobs } from "#core/extensions/subagent/SubagentJobs";
 import { usePimHome } from "#core/shared/fixtures/home";
 import { until } from "#core/shared/fixtures/wait";
@@ -122,6 +123,71 @@ describe("a result", () => {
 
     expect(parent.results("c1")).toHaveLength(1);
     expect(parent.requests).toHaveLength(3);
+  });
+});
+
+describe("a context notice", () => {
+  /** Past 40% of the parent model's 65,536-token window. */
+  const fill = (parent: Awaited<ReturnType<typeof start>>): void => {
+    parent.children.get("c1")!.emit({
+      type: "message_end",
+      message: assistant(["Working."], {
+        stopReason: "toolUse",
+        usage: usage({ totalTokens: 30_000 }),
+      }),
+    });
+  };
+
+  test("that comes while idle lands once and wakes the agent, and the result still follows", async () => {
+    const parent = await start(["c1"]);
+    await parent.session.prompt("go");
+    await until(() => parent.children.get("c1")?.promptCalls === 1, "c1");
+
+    fill(parent);
+    await until(() => parent.requests.length === 3, "the notice's turn");
+    await until(() => parent.session.isIdle, "the notice's turn to settle");
+
+    expect(parent.notices("c1")).toHaveLength(1);
+    expect(parent.results("c1")).toEqual([]);
+    expect(JSON.stringify(parent.requests[2]?.messages)).toContain(
+      "[subagent job j1 at 45% context, still running]"
+    );
+    expect(parent.jobs.hasRunning(parent.id)).toBe(true);
+
+    await parent.finish();
+    await parent.settled();
+
+    expect(parent.notices("c1")).toHaveLength(1);
+    expect(parent.results("c1")).toMatchObject([{ state: "done" }]);
+    expect(parent.requests).toHaveLength(4);
+  });
+
+  test("that comes mid-turn lands at the turn's end and continues it", async () => {
+    let parent!: Awaited<ReturnType<typeof start>>;
+    parent = await start(["c1"], {
+      script: async (_request, index) => {
+        if (index === 0) {
+          return { spawn: ["c1"] };
+        }
+        if (index === 1) {
+          await until(() => parent.children.get("c1")?.promptCalls === 1, "c1");
+          fill(parent);
+        }
+        return { text: "ok" };
+      },
+    });
+
+    await parent.session.prompt("go");
+    await until(
+      () => parent.session.isIdle && !parent.jobs.hasPending(parent.id),
+      "the notice to land and the agent to settle"
+    );
+
+    expect(parent.notices("c1")).toHaveLength(1);
+    expect(parent.requests).toHaveLength(3);
+    await parent.finish();
+    await parent.settled();
+    expect(parent.results("c1")).toHaveLength(1);
   });
 });
 

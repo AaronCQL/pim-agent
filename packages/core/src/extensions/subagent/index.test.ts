@@ -15,9 +15,11 @@ import { until } from "../../shared/fixtures/wait";
 import { SubagentLogs } from "../../shared/SubagentLogs";
 import { assistant, HeldSession } from "./fixtures/session";
 import subagent, { type SubagentOptions } from "./index";
+import { JobMessage } from "./JobMessage";
 import type { SpawnDetails, SubagentToolDetails } from "./schema";
 import { SubagentJobs } from "./SubagentJobs";
-import { SubagentResult, type SubagentResultMessage } from "./SubagentResult";
+import type { SubagentNoticeMessage } from "./SubagentNotice";
+import type { SubagentResultMessage } from "./SubagentResult";
 
 usePimHome("pim-subagent-ext-");
 
@@ -27,7 +29,7 @@ type Handler = (event: unknown, ctx: ExtensionContext) => unknown;
 
 type Entry = Record<string, unknown>;
 
-function load(options: SubagentOptions) {
+function load(options: SubagentOptions, contextWindow?: number) {
   let tool: ToolDefinition | undefined;
   const handlers = new Map<string, Handler[]>();
   const pi = {
@@ -47,7 +49,7 @@ function load(options: SubagentOptions) {
   const elsewhere: Entry[] = [];
   const ctx = {
     cwd: "/work",
-    model: undefined,
+    model: contextWindow === undefined ? undefined : { contextWindow },
     sessionManager: {
       getSessionId: () => PARENT,
       getBranch: () => branch,
@@ -106,10 +108,15 @@ function load(options: SubagentOptions) {
   };
 }
 
-function answers(branch: readonly Entry[], jobId: string): number {
+function answers(
+  branch: readonly Entry[],
+  jobId: string,
+  customType = "subagent_result"
+): number {
   return branch.filter(
     (entry) =>
       entry["type"] === "custom_message" &&
+      entry["customType"] === customType &&
       (entry["details"] as { readonly jobId?: string }).jobId === jobId
   ).length;
 }
@@ -119,19 +126,29 @@ function textOf(result: AgentToolResult<unknown>): string {
   return first?.type === "text" ? first.text : "";
 }
 
-function withJobs({ busy }: { readonly busy?: () => boolean } = {}) {
+function withJobs({
+  busy,
+  contextWindow,
+}: {
+  readonly busy?: () => boolean;
+  readonly contextWindow?: number;
+} = {}) {
   const jobs = new SubagentJobs({ now: () => 1_000 });
   const sessions: HeldSession[] = [];
   const delivered: { result: SubagentResultMessage; wake: boolean }[] = [];
-  const loaded = load({
-    jobs,
-    createSession: async () => {
-      const session = new HeldSession();
-      sessions.push(session);
-      return session;
+  const noticed: { notice: SubagentNoticeMessage; wake: boolean }[] = [];
+  const loaded = load(
+    {
+      jobs,
+      createSession: async () => {
+        const session = new HeldSession();
+        sessions.push(session);
+        return session;
+      },
     },
-  });
-  jobs.attach(PARENT, async ({ result, wake }) => {
+    contextWindow
+  );
+  jobs.attach(PARENT, async ({ message, wake }) => {
     if (busy?.() === true) {
       return "due";
     }
@@ -139,10 +156,14 @@ function withJobs({ busy }: { readonly busy?: () => boolean } = {}) {
       getBranch: () => loaded.branch as never,
       getEntries: () => [...loaded.elsewhere, ...loaded.branch] as never,
     };
-    const place = () => SubagentResult.placement(session, result.details.jobId);
+    const place = () => JobMessage.placement(session, message);
     if (place() === "due") {
-      delivered.push({ result, wake });
-      loaded.branch.push({ type: "custom_message", ...result });
+      if (message.customType === "subagent_notice") {
+        noticed.push({ notice: message, wake });
+      } else {
+        delivered.push({ result: message, wake });
+      }
+      loaded.branch.push({ type: "custom_message", ...message });
     }
     return place();
   });
@@ -153,7 +174,7 @@ function withJobs({ busy }: { readonly busy?: () => boolean } = {}) {
     await until(() => session.promptCalls === 1, "the child prompt");
     return session;
   };
-  return { ...loaded, jobs, delivered, spawn };
+  return { ...loaded, jobs, delivered, noticed, spawn };
 }
 
 describe("subagent tool, synchronous", () => {
@@ -501,6 +522,87 @@ describe("subagent delivery at turn boundaries", () => {
   );
 });
 
+describe("subagent context notice", () => {
+  const reach = (session: HeldSession, totalTokens: number): void => {
+    session.emit({
+      type: "message_end",
+      message: assistant(["Working."], {
+        stopReason: "toolUse",
+        usage: { ...assistant([]).usage, totalTokens },
+      }),
+    });
+  };
+
+  test("a busy run's turn boundary appends a job's notice once, continuing the run, and the job runs on", async () => {
+    const { boundary, branch, jobs, spawn } = withJobs({
+      busy: () => true,
+      contextWindow: 100_000,
+    });
+    const session = await spawn("call-1");
+    reach(session, 40_000);
+
+    let proposal: BoundaryResult | undefined;
+    await until(async () => {
+      proposal = await boundary("turn_end");
+      return proposal !== undefined;
+    }, "a boundary to take the notice");
+
+    expect(proposal).toMatchObject({
+      entries: [
+        {
+          type: "custom_message",
+          customType: "subagent_notice",
+          display: true,
+          content: expect.stringContaining(
+            "[subagent job j1 at 40% context, still running]\n40K/100K · 1 turn · 0s · $0.00\n"
+          ),
+          details: { jobId: "call-1", handle: "j1", contextTokens: 40_000 },
+        },
+      ],
+      continue: true,
+    });
+    expect(await boundary("agent_before_settle")).toBeUndefined();
+    expect(jobs.hasRunning(PARENT)).toBe(true);
+
+    session.finish("the answer");
+    await until(() => !jobs.hasRunning(PARENT), "the job to finish");
+    expect((await boundary("turn_end"))?.entries).toMatchObject([
+      { customType: "subagent_result" },
+    ]);
+    expect(answers(branch, "call-1", "subagent_notice")).toBe(1);
+    expect(answers(branch, "call-1")).toBe(1);
+  });
+
+  test("an idle parent is woken with the notice, which reloads never deliver again", async () => {
+    const { emit, branch, jobs, noticed, spawn } = withJobs({
+      contextWindow: 100_000,
+    });
+    const session = await spawn("call-1");
+    reach(session, 45_000);
+    await until(() => noticed.length === 1, "the notice");
+
+    expect(noticed[0]?.wake).toBe(true);
+    expect(noticed[0]?.notice.details.handle).toBe("j1");
+    await emit("session_start", { reason: "reload" });
+    await emit("session_tree");
+    reach(session, 90_000);
+    await until(() => !jobs.hasDue(PARENT), "the retries");
+
+    expect(noticed).toHaveLength(1);
+    expect(answers(branch, "call-1", "subagent_notice")).toBe(1);
+    await jobs.stopAll(PARENT, { by: "user" });
+  });
+
+  test("a job without a known context window sends no notice", async () => {
+    const { boundary, jobs, spawn } = withJobs({ busy: () => true });
+    const session = await spawn("call-1");
+    reach(session, 10_000_000);
+
+    expect(await boundary("turn_end")).toBeUndefined();
+    await jobs.stopAll(PARENT, { by: "user" });
+  });
+});
+
 describe("subagent reconcile", () => {
   const line = (value: unknown) => `${JSON.stringify(value)}\n`;
 
@@ -608,6 +710,26 @@ describe("subagent reconcile", () => {
     expect(delivered[0]?.result.content).toBe(
       `[subagent job j7 interrupted]\nThe process running this job ended before it finished; full log at ${path}.\nPartial output:\nchecking the parser\nRecent tool calls:\n- mcp_lookup callers (running)`
     );
+  });
+
+  test("a lost job whose notice landed is still answered with its result", async () => {
+    const { emit, branch, delivered } = withJobs();
+    branch.push(spawnEntry("noticed"), {
+      type: "custom_message",
+      customType: "subagent_notice",
+      details: {
+        jobId: "noticed",
+        handle: "j7",
+        contextTokens: 50,
+        contextWindow: 100,
+      },
+    });
+    await writeLog("noticed", [assistant(["the answer"])]);
+
+    await emit("session_start", { reason: "startup" });
+    await until(() => delivered.length === 1, "the reconciled result");
+
+    expect(delivered[0]?.result.details.state).toBe("done");
   });
 
   test("leaves answered spawns, live jobs and other live processes' jobs alone", async () => {

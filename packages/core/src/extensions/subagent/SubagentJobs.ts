@@ -2,13 +2,14 @@ import { Format } from "../../shared/Format";
 import { OutputBudget } from "../../shared/OutputBudget";
 import { Timers } from "../../shared/Timers";
 import { JobLine } from "./JobLine";
+import type { JobMessage, Placement } from "./JobMessage";
 import { formatCallTitle } from "./render";
 import { applyOutputCap, type SubagentChild } from "./subagent";
+import { SubagentNotice } from "./SubagentNotice";
 import {
   SubagentResult,
   type JobOutcome,
   type JobStop,
-  type Placement,
   type StoppedBy,
   type SubagentResultMessage,
 } from "./SubagentResult";
@@ -29,13 +30,14 @@ export type JobView = {
   readonly contextWindow?: number;
 };
 
-/** A finished job's result, held until it is on the parent's branch. A user stop can clear `wake` while a delivery waits, so read it when appending. */
+/** A job's message, held until it is on the parent's branch. A user stop can clear `wake`, and the job's result drop its notice, while a delivery waits, so read both when appending. */
 export type JobDelivery = {
-  readonly result: SubagentResultMessage;
+  readonly message: JobMessage;
   readonly wake: boolean;
+  readonly dropped: boolean;
 };
 
-/** Appends only while the parent is idle, and only a result `SubagentResult.placement` says is due right before it; a busy parent's turn boundary takes the result instead. Until it settles, it alone may append that result. Resolves to the result's placement afterwards: `due` means try again later. */
+/** Appends only while the parent is idle, and only an undropped message `JobMessage.placement` says is due right before it; a busy parent's turn boundary takes the message instead. Until it settles, it alone may append that message. Resolves to the message's placement afterwards: `due` means try again later. */
 export type JobDeliverer = (delivery: JobDelivery) => Promise<Placement>;
 
 export type JobSpec = {
@@ -58,11 +60,14 @@ type Job = {
   readonly settled: PromiseWithResolvers<SubagentResultMessage>;
   stop: JobStop | undefined;
   result: SubagentResultMessage | undefined;
+  noticed: boolean;
 };
 
+/** At most one per job: its result replaces its notice. */
 type Pending = {
-  readonly result: SubagentResultMessage;
+  readonly message: JobMessage;
   wake: boolean;
+  dropped: boolean;
   delivering: boolean;
   /** A flush came while it was delivering. */
   again: boolean;
@@ -95,7 +100,7 @@ export class SubagentJobs {
   public readonly now: () => number;
   private readonly parents = new Map<string, Parent>();
   private readonly grace: () => Promise<void>;
-  /** Woken whenever a held result leaves. */
+  /** Woken whenever a held message leaves. */
   private readonly drainWaiters = new Set<() => void>();
 
   public constructor(options: SubagentJobsOptions = {}) {
@@ -115,10 +120,10 @@ export class SubagentJobs {
         JobLine.handleNumber(job.handle)
       ),
       ...[...parent.pending.values()].map((item) =>
-        JobLine.handleNumber(item.result.details.handle)
+        JobLine.handleNumber(item.message.details.handle)
       ),
     ];
-    const child = spec.start(() => this.emit(parentSessionId));
+    const child = spec.start(() => this.changed(parentSessionId, spec.callId));
     const job: Job = {
       id: spec.callId,
       handle: `j${Math.max(...taken) + 1}`,
@@ -128,6 +133,7 @@ export class SubagentJobs {
       settled: Promise.withResolvers(),
       stop: undefined,
       result: undefined,
+      noticed: false,
     };
     parent.running.set(job.id, job);
     void child.result.then(
@@ -160,12 +166,12 @@ export class SubagentJobs {
       .map(([id]) => id);
   }
 
-  /** A finished job's result is not on the parent's branch yet. */
+  /** A job's message is not on the parent's branch yet. */
   public hasPending(parentSessionId: string): boolean {
     return (this.parents.get(parentSessionId)?.pending.size ?? 0) > 0;
   }
 
-  /** A held result belongs on the parent's current branch, as far as anyone has looked. */
+  /** A held message belongs on the parent's current branch, as far as anyone has looked. */
   public hasDue(parentSessionId: string): boolean {
     const parent = this.parents.get(parentSessionId);
     return parent !== undefined && dueIn(parent);
@@ -215,7 +221,7 @@ export class SubagentJobs {
     return result!;
   }
 
-  /** Resolves to how many jobs it stopped. A user stop also keeps every held result from waking the parent. */
+  /** Resolves to how many jobs it stopped. A user stop also keeps every held message from waking the parent. */
   public async stopAll(
     parentSessionId: string,
     stop: { readonly by: StoppedBy }
@@ -228,7 +234,7 @@ export class SubagentJobs {
     return jobs.length;
   }
 
-  /** Stops every job and waits, until the grace runs out, for the results attached parents have due to land. */
+  /** Stops every job and waits, until the grace runs out, for the messages attached parents have due to land. */
   public async stopEverything(): Promise<void> {
     const stopped = Promise.all(
       [...this.parents.keys()].map((id) => this.stopAll(id, { by: "user" }))
@@ -252,7 +258,7 @@ export class SubagentJobs {
     return this.view(job);
   }
 
-  /** One deliverer per parent; attaching retries the held results. */
+  /** One deliverer per parent; attaching retries the held messages. */
   public attach(parentSessionId: string, deliverer: JobDeliverer): () => void {
     const parent = this.parentFor(parentSessionId);
     parent.deliverer = deliverer;
@@ -266,7 +272,7 @@ export class SubagentJobs {
     };
   }
 
-  /** Hands every held result to the attached deliverer; one already on its way is retried if it comes back deferred. */
+  /** Hands every held message to the attached deliverer; one already on its way is retried if it comes back deferred. */
   public flush(parentSessionId: string): void {
     for (const item of this.parents.get(parentSessionId)?.pending.values() ??
       []) {
@@ -274,16 +280,16 @@ export class SubagentJobs {
     }
   }
 
-  /** Held results for a turn boundary to append: those `place` says are due, except one a deliverer is appending. Drops those already landed. */
+  /** Held messages for a turn boundary to append: those `place` says are due, except one a deliverer is appending. Drops those already landed. */
   public due(
     parentSessionId: string,
-    place: (jobId: string) => Placement
+    place: (message: JobMessage) => Placement
   ): readonly JobDelivery[] {
     const parent = this.parents.get(parentSessionId);
     const due: JobDelivery[] = [];
-    for (const [jobId, item] of parent?.pending ?? []) {
-      const where = place(jobId);
-      this.apply(parentSessionId, jobId, item, where);
+    for (const item of parent?.pending.values() ?? []) {
+      const where = place(item.message);
+      this.apply(parentSessionId, item, where);
       if (where === "due" && !item.delivering) {
         due.push(item);
       }
@@ -301,7 +307,7 @@ export class SubagentJobs {
 
   private deliver(parentSessionId: string, item: Pending): void {
     const parent = this.parents.get(parentSessionId);
-    const jobId = item.result.details.jobId;
+    const jobId = item.message.details.jobId;
     const deliverer = parent?.deliverer;
     if (deliverer === undefined || parent?.pending.get(jobId) !== item) {
       return;
@@ -321,7 +327,7 @@ export class SubagentJobs {
       } finally {
         item.delivering = false;
       }
-      this.apply(parentSessionId, jobId, item, where);
+      this.apply(parentSessionId, item, where);
       if (where !== "landed" && item.again) {
         this.deliver(parentSessionId, item);
       }
@@ -408,14 +414,54 @@ export class SubagentJobs {
     return result;
   }
 
+  private changed(parentSessionId: string, jobId: string): void {
+    const job = this.parents.get(parentSessionId)?.running.get(jobId);
+    if (job !== undefined) {
+      this.notice(parentSessionId, job);
+    }
+    this.emit(parentSessionId);
+  }
+
+  /** Once per job, the first time its context crosses the threshold while it runs unstopped. */
+  private notice(parentSessionId: string, job: Job): void {
+    if (job.noticed || job.stop !== undefined || job.result !== undefined) {
+      return;
+    }
+    const view = this.view(job);
+    if (!SubagentNotice.crossed(view)) {
+      return;
+    }
+    job.noticed = true;
+    this.hold(
+      parentSessionId,
+      SubagentNotice.of(
+        {
+          ...view,
+          jobId: job.id,
+          elapsedMs: this.now() - job.startedAt,
+        },
+        job.child.capture.recentTools()
+      ),
+      true
+    );
+  }
+
+  /** Drops the job's held notice, if any. */
   private hold(
     parentSessionId: string,
-    result: SubagentResultMessage,
+    message: JobMessage,
     wake: boolean
   ): void {
-    this.parentFor(parentSessionId).pending.set(result.details.jobId, {
-      result,
+    const pending = this.parentFor(parentSessionId).pending;
+    const jobId = message.details.jobId;
+    const held = pending.get(jobId);
+    if (held !== undefined) {
+      held.dropped = true;
+    }
+    pending.set(jobId, {
+      message,
       wake,
+      dropped: false,
       delivering: false,
       again: false,
       away: false,
@@ -423,22 +469,21 @@ export class SubagentJobs {
     this.flush(parentSessionId);
   }
 
-  private settle(parentSessionId: string, jobId: string): void {
-    if (this.parents.get(parentSessionId)?.pending.delete(jobId) === true) {
-      this.prune(parentSessionId);
-      this.drainChanged();
-    }
-  }
-
-  /** Settles a landed result; otherwise records whether its spawn is on another branch. */
+  /** Settles a landed message; otherwise records whether its spawn is on another branch. Ignores a dropped one. */
   private apply(
     parentSessionId: string,
-    jobId: string,
     item: Pending,
     where: Placement
   ): void {
+    const pending = this.parents.get(parentSessionId)?.pending;
+    const jobId = item.message.details.jobId;
+    if (pending?.get(jobId) !== item) {
+      return;
+    }
     if (where === "landed") {
-      this.settle(parentSessionId, jobId);
+      pending.delete(jobId);
+      this.prune(parentSessionId);
+      this.drainChanged();
       return;
     }
     const away = where === "elsewhere";
@@ -455,7 +500,7 @@ export class SubagentJobs {
     this.drainWaiters.clear();
   }
 
-  /** Until no parent with a deliverer has a result due. */
+  /** Until no parent with a deliverer has a message due. */
   private async drained(): Promise<void> {
     while (
       [...this.parents.values()].some(

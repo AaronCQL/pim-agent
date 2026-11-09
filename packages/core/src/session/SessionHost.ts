@@ -24,15 +24,12 @@ import {
   CoreExtensions,
   type CoreExtensionOptions,
 } from "../extensions/CoreExtensions";
+import { JobMessage, type Placement } from "../extensions/subagent/JobMessage";
 import type {
   JobDelivery,
   JobView,
   SubagentJobs,
 } from "../extensions/subagent/SubagentJobs";
-import {
-  SubagentResult,
-  type Placement,
-} from "../extensions/subagent/SubagentResult";
 import { Directories } from "../shared/Directories";
 import { FuzzyMatcher, type FuzzyCandidate } from "../shared/FuzzyMatcher";
 import type { Surface } from "../shared/Surface";
@@ -931,7 +928,7 @@ export class SessionHost {
       : ((await this.deps.jobs?.stopAll(id, { by: "user" })) ?? 0);
   }
 
-  /** Appends while idle, in the turn queue and under the lease, unless its spawn is on another branch; a streaming turn's boundary takes the result instead. */
+  /** Appends while idle, in the turn queue and under the lease, unless its spawn is on another branch; a streaming turn's boundary takes the message instead. */
   private async deliverJob(
     sessionId: string,
     delivery: JobDelivery
@@ -939,19 +936,21 @@ export class SessionHost {
     if (this.cached?.isStreaming === true) {
       return "due";
     }
-    const jobId = delivery.result.details.jobId;
     let where: Placement = "due";
     const append = async (agent: AgentSession): Promise<void> => {
       if (agent.sessionId !== sessionId || agent.isStreaming) {
         return;
       }
       const place = (): Placement =>
-        SubagentResult.placement(agent.sessionManager, jobId);
+        JobMessage.placement(agent.sessionManager, delivery.message);
       try {
-        if (place() === "due") {
-          await agent.sendCustomMessage(delivery.result, {
-            triggerTurn: delivery.wake,
-          });
+        if (!delivery.dropped && place() === "due") {
+          await agent.sendCustomMessage<JobMessage["details"]>(
+            delivery.message,
+            {
+              triggerTurn: delivery.wake,
+            }
+          );
         }
       } finally {
         where = place();

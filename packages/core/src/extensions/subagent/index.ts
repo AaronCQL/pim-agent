@@ -20,10 +20,10 @@ import {
   type SubagentToolDetails,
 } from "./schema";
 import { JobLine } from "./JobLine";
+import { JobMessage } from "./JobMessage";
 import { LongCache } from "./LongCache";
 import type { JobView, SubagentJobs } from "./SubagentJobs";
 import { SubagentReconcile } from "./SubagentReconcile";
-import { SubagentResult } from "./SubagentResult";
 import {
   runSubagent,
   startSubagent,
@@ -176,7 +176,7 @@ async function steer(
   };
 }
 
-/** A turn boundary appends the held results that are not on the branch yet, and continues the run if one wakes. */
+/** A turn boundary appends the held job messages that are not on the branch yet, and continues the run if one wakes. */
 function boundary(
   jobs: SubagentJobs,
   event: BoundaryState,
@@ -185,8 +185,8 @@ function boundary(
   if (event.outcome !== "completed") {
     return undefined;
   }
-  const due = jobs.due(session.getSessionId(), (jobId) =>
-    SubagentResult.placement(session, jobId)
+  const due = jobs.due(session.getSessionId(), (message) =>
+    JobMessage.placement(session, message)
   );
   if (due.length === 0) {
     return undefined;
@@ -194,12 +194,12 @@ function boundary(
   return {
     entries: [
       ...event.entries,
-      ...due.map(({ result }) => ({
+      ...due.map(({ message }) => ({
         type: "custom_message" as const,
-        customType: result.customType,
-        content: result.content,
-        display: result.display,
-        details: result.details,
+        customType: message.customType,
+        content: message.content,
+        display: message.display,
+        details: message.details,
       })),
     ],
     ...(due.some((delivery) => delivery.wake) ? { continue: true } : {}),
@@ -311,7 +311,7 @@ export default function (options: SubagentOptions = {}): ExtensionFactory {
       return reconciling;
     };
 
-    /** Reconciles, then retries the held results, a macrotask after the event. */
+    /** Reconciles, then retries the held messages, a macrotask after the event. */
     const retry = (_event: unknown, ctx: ExtensionContext): void => {
       const session = ctx.sessionManager;
       setTimeout(() => {

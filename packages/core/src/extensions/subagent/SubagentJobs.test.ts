@@ -11,10 +11,12 @@ import {
 import { startSubagent, type SubagentParent } from "./subagent";
 import {
   SubagentJobs,
+  type JobDelivery,
   type JobView,
   type SubagentJobsOptions,
 } from "./SubagentJobs";
-import type { Placement, SubagentResultMessage } from "./SubagentResult";
+import type { JobMessage, Placement } from "./JobMessage";
+import type { SubagentResultMessage } from "./SubagentResult";
 
 const PARENT = "parent-1";
 
@@ -61,9 +63,9 @@ function setup(options: SubagentJobsOptions = { now: () => 1_000 }) {
   };
 
   const attach = (): (() => void) =>
-    jobs.attach(PARENT, async ({ result, wake }) => {
+    jobs.attach(PARENT, async ({ message, wake }) => {
       if (outcome === "landed") {
-        deliveries.push({ result, wake });
+        deliveries.push({ result: message as SubagentResultMessage, wake });
       }
       return outcome;
     });
@@ -210,8 +212,8 @@ describe("SubagentJobs", () => {
     const { jobs, deliveries, held, attach } = setup();
     const detachOld = attach();
     const later: SubagentResultMessage[] = [];
-    jobs.attach(PARENT, async ({ result }) => {
-      later.push(result);
+    jobs.attach(PARENT, async ({ message }) => {
+      later.push(message as SubagentResultMessage);
       return "landed";
     });
     detachOld();
@@ -297,9 +299,11 @@ describe("SubagentJobs", () => {
     b.finish("second");
     await until(() => !jobs.hasRunning(PARENT), "both jobs to finish");
 
-    const due = jobs.due(PARENT, (jobId) => (jobId === "a" ? "landed" : "due"));
+    const due = jobs.due(PARENT, (message) =>
+      message.details.jobId === "a" ? "landed" : "due"
+    );
 
-    expect(due.map((d) => [d.result.details.jobId, d.wake])).toEqual([
+    expect(due.map((d) => [d.message.details.jobId, d.wake])).toEqual([
       ["b", true],
     ]);
     expect(jobs.has(PARENT, "a")).toBe(false);
@@ -309,18 +313,19 @@ describe("SubagentJobs", () => {
   test("a turn boundary leaves a result whose spawn is on another branch, and one a deliverer is appending", async () => {
     const { jobs, held } = setup();
     const appending = Promise.withResolvers<Placement>();
-    jobs.attach(PARENT, async ({ result }) =>
-      result.details.jobId === "busy" ? await appending.promise : "due"
+    jobs.attach(PARENT, async ({ message }) =>
+      message.details.jobId === "busy" ? await appending.promise : "due"
     );
     for (const id of ["busy", "away", "free"]) {
       (await held(id)).finish(id);
     }
     await until(() => !jobs.hasRunning(PARENT), "the jobs to finish");
-    const place = (jobId: string) => (jobId === "away" ? "elsewhere" : "due");
+    const place = (message: JobMessage) =>
+      message.details.jobId === "away" ? "elsewhere" : "due";
 
-    expect(jobs.due(PARENT, place).map((d) => d.result.details.jobId)).toEqual([
-      "free",
-    ]);
+    expect(jobs.due(PARENT, place).map((d) => d.message.details.jobId)).toEqual(
+      ["free"]
+    );
 
     appending.resolve("due");
     await until(
@@ -409,11 +414,11 @@ describe("SubagentJobs", () => {
     expect(await stopping).toBe(1);
     expect(jobs.hasRunning(PARENT)).toBe(false);
     const [held] = jobs.due(PARENT, () => "due");
-    expect(held?.result.details).toMatchObject({
+    expect(held?.message.details).toMatchObject({
       state: "stopped",
       stoppedBy: "user",
     });
-    expect(held?.result.content).toContain("(no text output yet)");
+    expect(held?.message.content).toContain("(no text output yet)");
   });
 
   test("resolves a handle, else an id, to the one running job it names", async () => {
@@ -494,9 +499,9 @@ describe("SubagentJobs", () => {
     const { jobs, held } = setup();
     const landed = Promise.withResolvers<void>();
     const delivered: string[] = [];
-    jobs.attach(PARENT, async ({ result }) => {
+    jobs.attach(PARENT, async ({ message }) => {
       await landed.promise;
-      delivered.push(result.details.jobId);
+      delivered.push(message.details.jobId);
       return "landed";
     });
     await held("call-1");
@@ -630,5 +635,171 @@ describe("SubagentJobs", () => {
     session.finish("done");
     await until(() => deliveries.length === 2, "the live job's delivery");
     expect(deliveries[1]?.result.details.state).toBe("done");
+  });
+});
+
+describe("SubagentJobs context notice", () => {
+  const sized: SubagentParent = {
+    ...parent,
+    model: { contextWindow: 1_000_000 } as never,
+  };
+
+  function reach(session: FakeSession, totalTokens: number): void {
+    session.emit({
+      type: "message_end",
+      message: assistant(["Working."], {
+        stopReason: "toolUse",
+        usage: usage({ totalTokens, cost: { total: 2.5 } }),
+      }),
+    });
+  }
+
+  function tool(session: FakeSession, id: string, path: string): void {
+    session.emit({
+      type: "tool_execution_start",
+      toolCallId: id,
+      toolName: "mcp_read",
+      args: { path },
+    });
+    session.emit({
+      type: "tool_execution_end",
+      toolCallId: id,
+      toolName: "mcp_read",
+      result: {},
+      isError: false,
+    });
+  }
+
+  function noticing(options: SubagentJobsOptions = { now: () => 1_000 }) {
+    const harness = setup(options);
+    const delivered: JobDelivery[] = [];
+    let outcome: Placement = "landed";
+    harness.jobs.attach(PARENT, async (delivery) => {
+      delivered.push(delivery);
+      return outcome;
+    });
+    const start = async (model = sized): Promise<HeldSession> => {
+      const session = harness.spawn("call-1", { parent: model }) as HeldSession;
+      await until(() => session.promptCalls === 1, "the child to be prompted");
+      return session;
+    };
+    const defer = (deferring: boolean): void => {
+      outcome = deferring ? "due" : "landed";
+    };
+    const notices = () =>
+      delivered.filter(
+        (delivery) => delivery.message.customType === "subagent_notice"
+      );
+    return { ...harness, delivered, notices, start, defer };
+  }
+
+  test("tells the parent once, waking it, when the context first reaches the threshold", async () => {
+    let clock = 1_000;
+    const { jobs, notices, start } = noticing({ now: () => clock });
+    const session = await start();
+    for (const [index, path] of ["a", "b", "c", "d"].entries()) {
+      tool(session, `t${index}`, path);
+    }
+    clock += 30 * 60_000;
+    reach(session, 399_999);
+    expect(notices()).toEqual([]);
+
+    reach(session, 1);
+    reach(session, 402_000);
+    await until(() => notices().length === 1, "the notice");
+
+    const [{ message, wake }] = notices() as [JobDelivery];
+    expect(wake).toBe(true);
+    expect(message).toEqual({
+      customType: "subagent_notice",
+      display: true,
+      content: [
+        "[subagent job j1 at 40% context, still running]",
+        "402K/1.0M · 3 turns · 30m 0s · $7.50",
+        "Recent tool calls:",
+        "- mcp_read b (done)",
+        "- mcp_read c (done)",
+        "- mcp_read d (done)",
+        "Your call: let it finish, steer it to wrap up, or steer it to hand off. If you hand off, it commits work in progress and reports what's done, what's left, its decisions and anything failing. Doing nothing is fine.",
+      ].join("\n"),
+      details: {
+        jobId: "call-1",
+        handle: "j1",
+        contextTokens: 402_000,
+        contextWindow: 1_000_000,
+        turns: 3,
+        elapsedMs: 30 * 60_000,
+        cost: 7.5,
+        tools: [
+          { title: "mcp_read b", state: "done" },
+          { title: "mcp_read c", state: "done" },
+          { title: "mcp_read d", state: "done" },
+        ],
+      },
+    });
+    expect(jobs.hasRunning(PARENT)).toBe(true);
+    expect(jobs.list(PARENT).map((job) => job.handle)).toEqual(["j1"]);
+    await jobs.stopAll(PARENT, { by: "user" });
+  });
+
+  test("never tells it twice, even once the first notice has landed", async () => {
+    const { jobs, notices, start } = noticing();
+    const session = await start();
+    reach(session, 400_000);
+    await until(() => !jobs.hasPending(PARENT), "the notice to land");
+
+    reach(session, 600_000);
+    reach(session, 950_000);
+    session.finish("done");
+    await until(() => !jobs.hasRunning(PARENT), "the job to finish");
+    await until(() => !jobs.hasPending(PARENT), "the result to land");
+
+    expect(notices()).toHaveLength(1);
+  });
+
+  test("says nothing while the context window is unknown", async () => {
+    const { jobs, delivered, start } = noticing();
+    const session = await start(parent);
+    reach(session, 5_000_000);
+    session.finish("done");
+    await until(() => !jobs.hasRunning(PARENT), "the job to finish");
+    await until(() => !jobs.hasPending(PARENT), "the result to land");
+
+    expect(delivered.map((d) => d.message.customType)).toEqual([
+      "subagent_result",
+    ]);
+  });
+
+  test("a job that finishes before its notice is delivered drops it for its result", async () => {
+    const { jobs, delivered, defer, start } = noticing();
+    defer(true);
+    const session = await start();
+    reach(session, 500_000);
+    await until(() => delivered.length === 1, "the notice's delivery");
+
+    session.finish("done");
+    await until(() => !jobs.hasRunning(PARENT), "the job to finish");
+
+    expect(delivered[0]?.dropped).toBe(true);
+    expect(
+      jobs.due(PARENT, () => "due").map((d) => d.message.customType)
+    ).toEqual(["subagent_result"]);
+  });
+
+  test("a job being stopped says nothing", async () => {
+    const grace = Promise.withResolvers<void>();
+    const { jobs, notices, spawn } = noticing({ grace: () => grace.promise });
+    const stubborn = new FakeSession(() => new Promise(() => {}));
+    spawn("call-1", { session: stubborn, parent: sized });
+    await until(() => stubborn.promptCalls === 1, "the child to be prompted");
+
+    const stopping = jobs.stop(PARENT, "j1", { by: "agent", reason: "done" });
+    await until(() => stubborn.abortCalls === 1, "the stop");
+    reach(stubborn, 500_000);
+    expect(jobs.hasRunning(PARENT)).toBe(true);
+    grace.resolve();
+    await stopping;
+
+    expect(notices()).toEqual([]);
   });
 });
