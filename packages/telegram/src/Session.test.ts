@@ -13,8 +13,10 @@ import {
 } from "bun:test";
 
 import {
+  assistant,
   HeldSession,
   parent,
+  usage,
 } from "#core/extensions/subagent/fixtures/session";
 import { startSubagent } from "#core/extensions/subagent/subagent";
 import { SubagentJobs } from "#core/extensions/subagent/SubagentJobs";
@@ -267,17 +269,26 @@ describe("background jobs", () => {
     await built.run(async (agent) => {
       sessionId = agent.sessionId;
     });
-    const spawn = async (callId: string): Promise<HeldSession> => {
+    const spawn = async (
+      callId: string,
+      contextWindow?: number
+    ): Promise<HeldSession> => {
       const child = new HeldSession();
       jobs.spawn(sessionId, {
         callId,
         prompt: `task ${callId}`,
         lastHandle: 0,
         start: (onChange) =>
-          startSubagent(`task ${callId}`, parent, {
-            createSession: async () => child,
-            onChange,
-          }),
+          startSubagent(
+            `task ${callId}`,
+            contextWindow === undefined
+              ? parent
+              : { ...parent, model: { contextWindow } as never },
+            {
+              createSession: async () => child,
+              onChange,
+            }
+          ),
       });
       await until(() => child.promptCalls === 1, "the child prompt");
       return child;
@@ -305,6 +316,28 @@ describe("background jobs", () => {
       "the jobs message to close"
     );
     expect(session.pinned).toBe(false);
+  });
+
+  test("a job's context notice wakes the chat while the job runs on", async () => {
+    const { api, session, sessionId, spawn } = await chatSession();
+    const child = await spawn("call-1", 10_000);
+    await until(() => api.sent.length === 2, "the jobs message");
+
+    child.emit({
+      type: "message_end",
+      message: assistant(["Working."], {
+        stopReason: "toolUse",
+        usage: usage({ totalTokens: 4_500 }),
+      }),
+    });
+    await until(() => api.sent.includes("<p>reply 2</p>"), "the woken reply");
+
+    expect(prompts[1]).toContain(
+      "[subagent job j1 at 45% context, still running]"
+    );
+    expect(jobs.hasRunning(sessionId)).toBe(true);
+    expect(await results()).toEqual([]);
+    expect(session.pinned).toBe(true);
   });
 
   test("a job that finishes mid-turn shows its result in that turn", async () => {
