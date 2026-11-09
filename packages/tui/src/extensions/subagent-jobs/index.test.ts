@@ -729,6 +729,20 @@ describe("widget", () => {
     expect(narrow).toBe(row("j1: 4 turns ⬝ $0.12 ⬝…", "2m 5s", 30));
   });
 
+  test("marks a job its context notice was issued for next to its context", () => {
+    const job = view({
+      turns: 4,
+      cost: 0.12,
+      contextTokens: 410_000,
+      contextWindow: 1_000_000,
+      noticed: true,
+    });
+
+    const [, line] = plain(JobsWidget.lines([job], 125_000, theme, WIDTH));
+
+    expect(line).toBe(row("j1: 4 turns ⬝ $0.12 ⬝ ⚠ 41.0%/1.0M", "2m 5s"));
+  });
+
   test("caps its rows and fits every line to the width", () => {
     const views = Array.from({ length: 7 }, (_, i) => ({
       id: `call-${i}`,

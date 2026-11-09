@@ -2,7 +2,6 @@ import type { Api } from "grammy";
 
 import { JobLine } from "#core/extensions/subagent/JobLine";
 import type { JobView } from "#core/extensions/subagent/SubagentJobs";
-import { SubagentNotice } from "#core/extensions/subagent/SubagentNotice";
 import { Format } from "#core/shared/Format";
 import { Timers, type Every } from "#core/shared/Timers";
 import { RichMessage, type EditOutcome } from "./RichMessage";
@@ -39,7 +38,7 @@ function render(jobs: readonly JobView[], now: number): string {
 
 function row(job: JobView, now: number): string {
   const line = JobLine.parts(job, now);
-  return `• <b>${line.handle}</b>: ${[...line.stats, line.elapsed, ...SubagentNotice.flag(job)].join(JobLine.SEPARATOR)}`;
+  return `• <b>${line.handle}</b>: ${[...line.stats, line.elapsed].join(JobLine.SEPARATOR)}`;
 }
 
 /** One chat message listing the session's running jobs; it outlives the turns that spawn them. */

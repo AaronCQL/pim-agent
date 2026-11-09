@@ -169,7 +169,7 @@ test("flags a job its context notice was issued for, not one merely past the thr
   expect(api.calls).toEqual([
     {
       kind: "send",
-      text: "🤖 <b>2 jobs running</b><br>• <b>j1</b>: 0 turns ⬝ $0.00 ⬝ 40.2%/1.0M ⬝ 0s ⬝ ⚠ 40%<br>• <b>j2</b>: 0 turns ⬝ $0.00 ⬝ 50.0%/100 ⬝ 0s",
+      text: "🤖 <b>2 jobs running</b><br>• <b>j1</b>: 0 turns ⬝ $0.00 ⬝ ⚠ 40.2%/1.0M ⬝ 0s<br>• <b>j2</b>: 0 turns ⬝ $0.00 ⬝ 50.0%/100 ⬝ 0s",
     },
   ]);
 });

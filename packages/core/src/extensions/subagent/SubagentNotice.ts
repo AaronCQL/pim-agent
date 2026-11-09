@@ -2,7 +2,6 @@ import { Format } from "../../shared/Format";
 import { Json } from "../../shared/Json";
 import { JobLine, type JobUsage } from "./JobLine";
 import type { ToolTrace } from "./subagent";
-import type { JobView } from "./SubagentJobs";
 import { SubagentResult, type CustomMessageLike } from "./SubagentResult";
 
 const CUSTOM_TYPE = "subagent_notice";
@@ -37,11 +36,6 @@ function crossed(
 ): usage is JobUsage & Pick<NoticeStats, "contextTokens" | "contextWindow"> {
   const filled = JobLine.share(usage);
   return filled !== undefined && filled >= THRESHOLD;
-}
-
-/** `⚠ 40%` for a job whose notice was issued. */
-function flag(job: JobView): readonly string[] {
-  return job.noticed === true ? [`⚠ ${THRESHOLD * 100}%`] : [];
 }
 
 function percent(details: SubagentNoticeDetails): string {
@@ -114,7 +108,6 @@ function detailsOf(
 export const SubagentNotice = {
   CUSTOM_TYPE,
   crossed,
-  flag,
   of,
   line,
   detailsOf,

@@ -43,28 +43,28 @@ function share(usage: JobUsage): number | undefined {
     : contextTokens / contextWindow;
 }
 
-function context(usage: JobUsage): readonly string[] {
+function context(usage: JobUsage, noticed: boolean): readonly string[] {
   const filled = share(usage);
   return filled === undefined
     ? []
     : [
-        `${(filled * 100).toFixed(1)}%/${Format.formatTokens(usage.contextWindow!)}`,
+        `${noticed ? "⚠ " : ""}${(filled * 100).toFixed(1)}%/${Format.formatTokens(usage.contextWindow!)}`,
       ];
 }
 
-/** `4 turns`, `$0.12`, then `5.0%/1.0M` when the context is known. */
-function usage(job: JobUsage): readonly string[] {
+/** `4 turns`, `$0.12`, then `5.0%/1.0M` when the context is known, as `⚠ 41.0%/1.0M` once its notice was issued. */
+function usage(job: JobUsage, noticed = false): readonly string[] {
   return [
     Format.count(job.turns, "turn"),
     `$${job.cost.toFixed(2)}`,
-    ...context(job),
+    ...context(job, noticed),
   ];
 }
 
 function parts(job: JobView, now: number): JobLineParts {
   return {
     handle: job.handle,
-    stats: usage(job),
+    stats: usage(job, job.noticed === true),
     elapsed: Format.formatElapsed(now - job.startedAt),
   };
 }
