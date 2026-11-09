@@ -529,7 +529,7 @@ describe("subagent context notice", () => {
       contextWindow: 100_000,
     });
     const session = await spawn("call-1");
-    session.fill(40_000);
+    session.fill(41_000);
 
     let proposal: BoundaryResult | undefined;
     await until(async () => {
@@ -544,9 +544,9 @@ describe("subagent context notice", () => {
           customType: "subagent_notice",
           display: true,
           content: expect.stringContaining(
-            "[subagent job j1 at 40% context, still running]\n1 turn · $0.00 · 40.0%/100K · 0s\n"
+            "[subagent job j1 at 41% context, still running]\n1 turn · $0.00 · 41.0%/100K · 0s\n"
           ),
-          details: { jobId: "call-1", handle: "j1", contextTokens: 40_000 },
+          details: { jobId: "call-1", handle: "j1", contextTokens: 41_000 },
         },
       ],
       continue: true,
@@ -575,7 +575,7 @@ describe("subagent context notice", () => {
     expect(noticed[0]?.notice.details.handle).toBe("j1");
     await emit("session_start", { reason: "reload" });
     await emit("session_tree");
-    session.fill(90_000);
+    session.fill(60_000);
     await until(() => !jobs.hasDue(PARENT), "the retries");
 
     expect(noticed).toHaveLength(1);

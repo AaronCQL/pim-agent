@@ -7,7 +7,10 @@ import type {
   FileEntry,
 } from "@earendil-works/pi-coding-agent";
 
-import { subagentResultView } from "#core/extensions/subagent/render";
+import {
+  subagentNoticeView,
+  subagentResultView,
+} from "#core/extensions/subagent/render";
 import { SubagentNotice } from "#core/extensions/subagent/SubagentNotice";
 import { SubagentResult } from "#core/extensions/subagent/SubagentResult";
 import { EventLog, type LoggedEntry } from "#core/session/EventLog";
@@ -218,9 +221,11 @@ function subagentNotice(
   }
   return {
     seq,
-    type: "notice",
-    severity: "muted",
-    text: SubagentNotice.line(details),
+    type: "subagent_notice",
+    messageId: entry.id,
+    jobId: details.jobId,
+    handle: details.handle,
+    view: subagentNoticeView(details),
   };
 }
 

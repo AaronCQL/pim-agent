@@ -1,13 +1,20 @@
-import { Format } from "../../shared/Format";
+import { Format, type ContextFill } from "../../shared/Format";
 import { Json } from "../../shared/Json";
 import { JobLine, type JobUsage } from "./JobLine";
 import type { ToolTrace } from "./subagent";
 import { SubagentResult, type CustomMessageLike } from "./SubagentResult";
 
 const CUSTOM_TYPE = "subagent_notice";
-/** The share of its context window at which a running job tells its parent, once. */
-const THRESHOLD = 0.4;
 const RECENT_TOOLS = 3;
+const HAND_OFF =
+  "(tell it to commit work in progress and report what's done, what's left, its decisions and anything failing)";
+const ADVICE = {
+  warn: `Your call: let it finish, steer it to wrap up, or steer it to hand off ${HAND_OFF}. Doing nothing is fine.`,
+  full: `It is running out of room: steer it to hand off now ${HAND_OFF}, unless it is about to finish.`,
+} as const satisfies Record<NoticeLevel, string>;
+
+/** A running job tells its parent once per level, the first time its context reaches it. */
+export type NoticeLevel = Exclude<ContextFill, "ok">;
 
 export type SubagentNoticeDetails = {
   readonly jobId: string;
@@ -30,12 +37,10 @@ export type SubagentNoticeMessage = {
 
 export type NoticeStats = Omit<SubagentNoticeDetails, "tools">;
 
-/** The usage is at or past the threshold, with both sides known. */
-function crossed(
-  usage: JobUsage
-): usage is JobUsage & Pick<NoticeStats, "contextTokens" | "contextWindow"> {
-  const filled = JobLine.share(usage);
-  return filled !== undefined && filled >= THRESHOLD;
+/** The notice level the usage has reached, if any. */
+function level(usage: JobUsage): NoticeLevel | undefined {
+  const fill = JobLine.fill(usage);
+  return fill === "ok" ? undefined : fill;
 }
 
 function percent(details: SubagentNoticeDetails): string {
@@ -43,7 +48,10 @@ function percent(details: SubagentNoticeDetails): string {
 }
 
 function stats(usage: JobUsage, elapsedMs: number): readonly string[] {
-  return [...JobLine.usage(usage), Format.formatElapsed(elapsedMs)];
+  return [
+    ...JobLine.usage(usage).map((span) => span.text),
+    Format.formatElapsed(elapsedMs),
+  ];
 }
 
 function of(
@@ -66,19 +74,16 @@ function of(
       `[subagent job ${details.handle} at ${percent(details)} context, still running]`,
       stats(details, details.elapsedMs).join(" · "),
       ...SubagentResult.toolLines(details.tools),
-      "Your call: let it finish, steer it to wrap up, or steer it to hand off (tell it to commit work in progress and report what's done, what's left, its decisions and anything failing). Doing nothing is fine.",
+      ADVICE[level(details) ?? "warn"],
     ].join("\n"),
     display: true,
     details,
   };
 }
 
-/** The one muted line every surface shows for a notice; its head already gives the share. */
+/** What every surface shows for a notice, after the job's handle. */
 function line(details: SubagentNoticeDetails): string {
-  return [
-    `⚠ ${details.handle} at ${percent(details)} context`,
-    ...stats({ turns: details.turns, cost: details.cost }, details.elapsedMs),
-  ].join(JobLine.SEPARATOR);
+  return `context at ${percent(details)}`;
 }
 
 function isCount(value: unknown): value is number {
@@ -107,7 +112,7 @@ function detailsOf(
 
 export const SubagentNotice = {
   CUSTOM_TYPE,
-  crossed,
+  level,
   of,
   line,
   detailsOf,

@@ -721,18 +721,22 @@ describe("widget", () => {
     expect(narrow).toBe(row("j1: 4 turns ⬝ $0.12 ⬝…", "2m 5s", 30));
   });
 
-  test("marks a job its context notice was issued for next to its context", () => {
-    const job = view({
-      turns: 4,
-      cost: 0.12,
-      contextTokens: 410_000,
-      contextWindow: 1_000_000,
-      noticed: true,
-    });
+  test("colours a job's context by how full it is", () => {
+    const tagged = {
+      ...theme,
+      fg: (color: string, text: string) => `<${color}>${text}`,
+    };
+    const line = (contextTokens: number) =>
+      JobsWidget.lines(
+        [view({ contextTokens, contextWindow: 1_000_000 })],
+        0,
+        tagged as unknown as typeof theme,
+        WIDTH
+      )[1];
 
-    const [, line] = plain(JobsWidget.lines([job], 125_000, theme, WIDTH));
-
-    expect(line).toBe(row("j1: 4 turns ⬝ $0.12 ⬝ ⚠ 41.0%/1.0M", "2m 5s"));
+    expect(line(400_000)).toContain(" ⬝ 40.0%/1.0M");
+    expect(line(410_000)).toContain("<warning>41.0%/1.0M");
+    expect(line(700_000)).toContain("<error>70.0%/1.0M");
   });
 
   test("caps its rows and fits every line to the width", () => {
@@ -1084,9 +1088,9 @@ describe("context notice", () => {
     ).toEqual(["subagent_notice", "subagent_result"]);
   });
 
-  test("renders as one muted line", async () => {
+  test("renders as a subagent row, its share amber", async () => {
     const harness = await started();
-    const muted: string[] = [];
+    const colors: string[] = [];
     const component = harness.renderer("subagent_notice")?.(
       {
         role: "custom",
@@ -1109,15 +1113,15 @@ describe("context notice", () => {
       {
         ...theme,
         fg: (color: string, text: string) => {
-          muted.push(color);
+          colors.push(`${color}:${text}`);
           return text;
         },
       } as Theme
     );
 
     expect(plain(component?.render(WIDTH))).toEqual([
-      " ⚠ j22 at 40% context ⬝ 69 turns ⬝ $9.80 ⬝ 30m 0s",
+      " ▪ Subagent: j22 ⬝ context at 40%",
     ]);
-    expect(muted).toEqual(["muted"]);
+    expect(colors).toContain("warning:context at 40%");
   });
 });

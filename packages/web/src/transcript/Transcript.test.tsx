@@ -479,19 +479,21 @@ describe("background subagents", () => {
     expect(opened).toEqual(["call_a", "call_a", "call_b", "call_c", "call_d"]);
   });
 
-  test("a context notice is a single plain line, not a card that opens a log", () => {
-    const { host } = paint([
+  test("a context notice is a subagent row that opens its job's log", () => {
+    const { host, opened } = paint([
       settle(1, "call_a", spawnView("call_a", "audit the parser"), {
         child: "call_a",
       }),
       notice(2),
     ] as readonly DurableEvent[]);
 
-    expect(openers(host)).toHaveLength(1);
-    expect(host.textContent).toContain(
-      "⚠ j1 at 40% context ⬝ 2 turns ⬝ $0.40 ⬝ 1m 0s"
-    );
-    expect(host.textContent).not.toContain("INFO");
+    expect(openers(host)).toHaveLength(2);
+    expect(openers(host)[1]?.textContent).toBe("Subagent:j1 ⬝ context at 40%");
+    expect(
+      openers(host)[1]?.querySelector(".text-amber-400")?.textContent
+    ).toBe("context at 40%");
+    openers(host)[1]?.click();
+    expect(opened).toEqual(["call_a"]);
   });
 
   test("only a row the server links to a log opens one; the rest are plain cards", () => {

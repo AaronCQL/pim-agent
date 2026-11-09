@@ -689,9 +689,8 @@ describe("SubagentJobs context notice", () => {
       tool(session, `t${index}`, path);
     }
     clock += 30 * 60_000;
-    session.fill(399_999, 2.5);
+    session.fill(400_000, 2.5);
     expect(notices()).toEqual([]);
-    expect(jobs.list(PARENT)[0]?.noticed).toBeUndefined();
 
     session.fill(1, 2.5);
     session.fill(402_000, 2.5);
@@ -727,25 +726,29 @@ describe("SubagentJobs context notice", () => {
       },
     });
     expect(jobs.hasRunning(PARENT)).toBe(true);
-    expect(jobs.list(PARENT).map((job) => [job.handle, job.noticed])).toEqual([
-      ["j1", true],
-    ]);
     await jobs.stopAll(PARENT, { by: "user" });
   });
 
-  test("never tells it twice, even once the first notice has landed", async () => {
+  test("tells it once more from 70%, and never again, even once the notices have landed", async () => {
     const { jobs, notices, start } = noticing();
     const session = await start();
-    session.fill(400_000);
-    await until(() => !jobs.hasPending(PARENT), "the notice to land");
-
+    session.fill(410_000);
+    await until(() => !jobs.hasPending(PARENT), "the first notice to land");
+    session.fill(810_000);
+    await until(() => !jobs.hasPending(PARENT), "the second notice to land");
     session.fill(600_000);
     session.fill(950_000);
     session.finish("done");
     await until(() => !jobs.hasRunning(PARENT), "the job to finish");
     await until(() => !jobs.hasPending(PARENT), "the result to land");
 
-    expect(notices()).toHaveLength(1);
+    expect(
+      notices().map(({ message }) => message.content.split("\n")[0])
+    ).toEqual([
+      "[subagent job j1 at 41% context, still running]",
+      "[subagent job j1 at 81% context, still running]",
+    ]);
+    expect(notices()[1]?.message.content).toContain("running out of room");
   });
 
   test("says nothing while the context window is unknown", async () => {
@@ -789,7 +792,6 @@ describe("SubagentJobs context notice", () => {
     const stopping = jobs.stop(PARENT, "j1", { by: "agent", reason: "done" });
     await until(() => stubborn.abortCalls === 1, "the stop");
     stubborn.fill(500_000);
-    expect(jobs.list(PARENT)[0]?.noticed).toBeUndefined();
     grace.resolve();
     await stopping;
 

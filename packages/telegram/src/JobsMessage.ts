@@ -4,6 +4,7 @@ import { JobLine } from "#core/extensions/subagent/JobLine";
 import type { JobView } from "#core/extensions/subagent/SubagentJobs";
 import { Format } from "#core/shared/Format";
 import { Timers, type Every } from "#core/shared/Timers";
+import type { Span, Tone } from "#core/view/ViewBlock";
 import { RichMessage, type EditOutcome } from "./RichMessage";
 import type { SessionId } from "./Session";
 import { BR } from "./TelegramHtml";
@@ -36,9 +37,18 @@ function render(jobs: readonly JobView[], now: number): string {
   ].join(BR);
 }
 
+const FILL_MARKS: Partial<Record<Tone, string>> = {
+  warning: "🟡 ",
+  error: "🔴 ",
+};
+
+function stat(span: Span): string {
+  return (FILL_MARKS[span.tone ?? "default"] ?? "") + span.text;
+}
+
 function row(job: JobView, now: number): string {
   const line = JobLine.parts(job, now);
-  return `• <b>${line.handle}</b>: ${[...line.stats, line.elapsed].join(JobLine.SEPARATOR)}`;
+  return `• <b>${line.handle}</b>: ${[...line.stats.map(stat), line.elapsed].join(JobLine.SEPARATOR)}`;
 }
 
 /** One chat message listing the session's running jobs; it outlives the turns that spawn them. */

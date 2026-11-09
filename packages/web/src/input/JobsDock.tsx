@@ -5,6 +5,7 @@ import type { JobView } from "#core/extensions/subagent/SubagentJobs";
 import { Format } from "#core/shared/Format";
 import type { SessionStore } from "../session/SessionStore";
 import { Spinner } from "../ui/Spinner";
+import { SpanText } from "../view/Blocks";
 
 /** More running jobs than this fold behind a one-line summary. */
 const UNFOLDED = 3;
@@ -103,7 +104,14 @@ function JobRow(props: {
         <span class="min-w-0 flex-1 truncate">
           <span class="font-bold text-neutral-100">{props.line.handle}</span>
           <span class="pr-1ch text-neutral-400">:</span>
-          {props.line.stats.join(JobLine.SEPARATOR)}
+          <For each={props.line.stats}>
+            {(span, index) => (
+              <>
+                <Show when={index() > 0}>{JobLine.SEPARATOR}</Show>
+                <SpanText span={span} />
+              </>
+            )}
+          </For>
         </span>
         <span class="shrink-0 tabular-nums text-neutral-400">
           {props.line.elapsed}

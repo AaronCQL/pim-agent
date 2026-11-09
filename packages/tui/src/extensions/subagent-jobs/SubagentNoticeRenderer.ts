@@ -3,13 +3,15 @@ import type {
   MessageRenderOptions,
   Theme,
 } from "@earendil-works/pi-coding-agent";
-import { Text, type Component } from "@earendil-works/pi-tui";
+import type { Component } from "@earendil-works/pi-tui";
 
+import { subagentNoticeView } from "#core/extensions/subagent/render";
 import { SubagentNotice } from "#core/extensions/subagent/SubagentNotice";
+import { SubagentResultRenderer } from "./SubagentResultRenderer";
 
 type Message = Parameters<MessageRenderer>[0];
 
-/** A `subagent_notice` message, as one muted line. */
+/** A `subagent_notice` message, as a subagent row. */
 function render(
   message: Message,
   options: MessageRenderOptions,
@@ -18,10 +20,11 @@ function render(
   const details = SubagentNotice.detailsOf(message);
   return details === undefined
     ? undefined
-    : new Text(
-        theme.fg("muted", SubagentNotice.line(details)),
-        options.outputPad,
-        0
+    : SubagentResultRenderer.paint(
+        subagentNoticeView(details),
+        false,
+        options,
+        theme
       );
 }
 

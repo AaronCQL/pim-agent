@@ -4,6 +4,7 @@ import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { JobLine } from "#core/extensions/subagent/JobLine";
 import type { JobView } from "#core/extensions/subagent/SubagentJobs";
 import { Format } from "#core/shared/Format";
+import { AnsiPainter } from "#core/view/AnsiPainter";
 
 const MAX_ROWS = 5;
 const PAD = " ";
@@ -15,7 +16,12 @@ function row(job: JobView, now: number, theme: Theme, width: number): string {
   const head = `${theme.fg("accent", parts.handle)}${theme.fg("muted", ":")} `;
   const room = width - visibleWidth(head) - visibleWidth(parts.elapsed) - 1;
   const stats = truncateToWidth(
-    parts.stats.join(JobLine.SEPARATOR),
+    parts.stats
+      .map((span) => {
+        const color = AnsiPainter.themeColorFor(span.tone);
+        return color === undefined ? span.text : theme.fg(color, span.text);
+      })
+      .join(JobLine.SEPARATOR),
     Math.max(1, room),
     ELLIPSIS
   );

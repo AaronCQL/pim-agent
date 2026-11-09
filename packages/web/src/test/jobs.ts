@@ -2,6 +2,7 @@ import type { JobView } from "#core/extensions/subagent/SubagentJobs";
 import type { JobState } from "#core/extensions/subagent/JobState";
 import type { SubagentResultMessage } from "#core/extensions/subagent/SubagentResult";
 import {
+  subagentNoticeView,
   subagentResultView,
   subagentView,
 } from "#core/extensions/subagent/render";
@@ -126,12 +127,23 @@ export function result(
   };
 }
 
-export function notice(seq: number): ServerEvent {
+export function notice(seq: number, jobId = "call_a"): ServerEvent {
   return {
     seq,
-    type: "notice",
-    severity: "muted",
-    text: "⚠ j1 at 40% context ⬝ 2 turns ⬝ $0.40 ⬝ 1m 0s",
+    type: "subagent_notice",
+    messageId: `entry-${seq}`,
+    jobId,
+    handle: "j1",
+    view: subagentNoticeView({
+      jobId,
+      handle: "j1",
+      contextTokens: 80_000,
+      contextWindow: 200_000,
+      turns: 2,
+      elapsedMs: 60_000,
+      cost: 0.4,
+      tools: [],
+    }),
   };
 }
 

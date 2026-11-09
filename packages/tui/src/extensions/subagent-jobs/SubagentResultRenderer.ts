@@ -12,6 +12,7 @@ import { MessageText } from "#core/session/MessageText";
 import { Renderer } from "#core/shared/Renderer";
 import { AnsiPainter } from "#core/view/AnsiPainter";
 import { BodyRenderer } from "#core/view/BodyRenderer";
+import type { ToolView } from "#core/view/ViewBlock";
 
 type Message = Parameters<MessageRenderer<SubagentResultDetails>>[0];
 
@@ -29,11 +30,17 @@ function render(
     content: MessageText.textOf(message.content),
     details,
   });
-  const context = {
-    lastComponent: undefined,
-    isPartial: false,
-    isError: JobState.isError(details.state),
-  };
+  return paint(view, JobState.isError(details.state), options, theme);
+}
+
+/** A subagent view laid out like a subagent tool row. */
+function paint(
+  view: ToolView,
+  isError: boolean,
+  options: MessageRenderOptions,
+  theme: Theme
+): Component {
+  const context = { lastComponent: undefined, isPartial: false, isError };
   const title = AnsiPainter.paintTitle(view.title, theme);
   const box = new Box(options.outputPad, 0);
   box.addChild(
@@ -58,4 +65,4 @@ function render(
   return box;
 }
 
-export const SubagentResultRenderer = { render };
+export const SubagentResultRenderer = { render, paint };

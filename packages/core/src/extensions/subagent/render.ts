@@ -13,6 +13,7 @@ import type {
 import type { SubagentDetails } from "./subagent";
 import { JobLine } from "./JobLine";
 import type { JobState } from "./JobState";
+import { SubagentNotice, type SubagentNoticeDetails } from "./SubagentNotice";
 import type { SubagentResultMessage } from "./SubagentResult";
 
 const SEPARATOR: Span = { text: JobLine.SEPARATOR, tone: "muted" };
@@ -80,6 +81,22 @@ export function subagentResultView(
       ...usageSpans(details, false),
     ]),
     body: notice === undefined ? run.body : [notice, ...(run.body ?? [])],
+  };
+}
+
+/** A running job's context notice, as a subagent row. */
+export function subagentNoticeView(details: SubagentNoticeDetails): ToolView {
+  return {
+    label: "Subagent",
+    icon: "robot",
+    labelTone: "accent",
+    title: line([
+      { text: details.handle },
+      {
+        text: SubagentNotice.line(details),
+        tone: JobLine.tone(details) ?? "warning",
+      },
+    ]),
   };
 }
 
@@ -210,7 +227,7 @@ function usageSpans(
   return JobLine.usage({
     ...details.usage,
     contextWindow: details.contextWindow,
-  }).map((text) => ({ text, tone }));
+  }).map((span) => ({ tone, ...span }));
 }
 
 function promptSection(prompt: string | undefined): readonly ViewBlock[] {

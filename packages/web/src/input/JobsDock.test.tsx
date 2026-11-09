@@ -113,25 +113,38 @@ test("a row reads the job's handle, its turns, cost and context, and how long it
   expect(rows(host)[0]!.hasAttribute("title")).toBe(false);
 });
 
-test("a job its context notice was issued for is marked next to its context", () => {
+test("a job's context turns amber past 40% and red from 70%", () => {
   jest.useFakeTimers();
   setSystemTime(new Date(5_000));
   const { store } = connected();
   feed(
     store,
     jobs(
-      job("a", {
+      job("a", { contextTokens: 400_000, contextWindow: 1_000_000 }),
+      job("b", {
+        handle: "j2",
         contextTokens: 410_000,
         contextWindow: 1_000_000,
-        noticed: true,
+      }),
+      job("c", {
+        handle: "j3",
+        contextTokens: 700_000,
+        contextWindow: 1_000_000,
       })
     )
   );
   const host = paint(store);
+  const context = (row: Element) =>
+    [...row.querySelectorAll("span")].findLast((span) =>
+      span.textContent.endsWith("/1.0M")
+    )?.className;
 
-  expect(rows(host).map((row) => row.textContent)).toEqual([
-    "j1:1 turn ⬝ $0.00 ⬝ ⚠ 41.0%/1.0M5s",
+  expect(rows(host).map(context)).toEqual([
+    "",
+    "text-amber-400",
+    "text-rose-400",
   ]);
+  expect(host.textContent).not.toContain("⚠");
 });
 
 test("the elapsed time follows the clock, not the next list", () => {

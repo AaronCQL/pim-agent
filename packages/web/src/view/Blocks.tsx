@@ -93,7 +93,7 @@ function SpansBlock(props: { readonly block: BlockOf<"spans"> }) {
   );
 }
 
-function SpanText(props: { readonly span: Span }) {
+export function SpanText(props: { readonly span: Span }) {
   return (
     <span
       class={{

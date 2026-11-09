@@ -5,7 +5,7 @@ import { JobLine } from "./JobLine";
 import { JobMessage, type Placement, type SessionBranches } from "./JobMessage";
 import { formatCallTitle } from "./render";
 import { applyOutputCap, type SubagentChild } from "./subagent";
-import { SubagentNotice } from "./SubagentNotice";
+import { SubagentNotice, type NoticeLevel } from "./SubagentNotice";
 import {
   SubagentResult,
   type JobOutcome,
@@ -28,8 +28,6 @@ export type JobView = {
   readonly cost: number;
   readonly contextTokens?: number;
   readonly contextWindow?: number;
-  /** Its context notice was issued. */
-  readonly noticed?: true;
 };
 
 /** A job's message, held until it is on the parent's branch. A user stop can clear `wake`, and the job's result replace its notice, while a delivery waits, so read `wake` and `due` when appending. */
@@ -63,7 +61,8 @@ type Job = {
   readonly settled: PromiseWithResolvers<SubagentResultMessage>;
   stop: JobStop | undefined;
   result: SubagentResultMessage | undefined;
-  noticed: boolean;
+  /** The highest notice level already issued. */
+  noticed: NoticeLevel | undefined;
 };
 
 /** At most one per job: its result replaces its notice. */
@@ -135,7 +134,7 @@ export class SubagentJobs {
       settled: Promise.withResolvers(),
       stop: undefined,
       result: undefined,
-      noticed: false,
+      noticed: undefined,
     };
     parent.running.set(job.id, job);
     void child.result.then(
@@ -423,17 +422,22 @@ export class SubagentJobs {
     this.emit(parentSessionId);
   }
 
-  /** Once per job, the first time its context crosses the threshold while it runs unstopped. */
+  /** Once per level, the first time the job's context reaches it while it runs unstopped. */
   private notice(parentSessionId: string, job: Job): void {
-    if (job.noticed || job.stop !== undefined) {
+    if (job.noticed === "full" || job.stop !== undefined) {
       return;
     }
     const { usage, contextWindow } = job.child.capture.snapshot();
-    const reached = { ...usage, contextWindow };
-    if (!SubagentNotice.crossed(reached)) {
+    const { contextTokens } = usage;
+    if (contextTokens === undefined || contextWindow === undefined) {
       return;
     }
-    job.noticed = true;
+    const reached = { ...usage, contextTokens, contextWindow };
+    const level = SubagentNotice.level(reached);
+    if (level === undefined || level === job.noticed) {
+      return;
+    }
+    job.noticed = level;
     this.hold(
       parentSessionId,
       SubagentNotice.of(
@@ -564,7 +568,6 @@ export class SubagentJobs {
         ? {}
         : { contextTokens: usage.contextTokens }),
       ...(contextWindow === undefined ? {} : { contextWindow }),
-      ...(job.noticed ? { noticed: true } : {}),
     };
   }
 

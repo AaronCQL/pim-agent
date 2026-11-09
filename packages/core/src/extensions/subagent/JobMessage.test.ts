@@ -17,6 +17,11 @@ const notice = SubagentNotice.of(
   []
 );
 
+const full = SubagentNotice.of(
+  { ...notice.details, contextTokens: 720_000 },
+  []
+);
+
 const result = {
   customType: "subagent_result",
   content: "[subagent job j1 done]",
@@ -54,6 +59,15 @@ describe("JobMessage.placement", () => {
     );
   });
 
+  test("a 70% notice is due past a landed 40% one, and covers it in turn", () => {
+    expect(JobMessage.placement(session([spawn, entry(notice)]), full)).toBe(
+      "due"
+    );
+    expect(JobMessage.placement(session([spawn, entry(full)]), notice)).toBe(
+      "landed"
+    );
+  });
+
   test("a notice on the branch never stands in for the job's result", () => {
     expect(JobMessage.placement(session([spawn, entry(notice)]), result)).toBe(
       "due"
@@ -68,8 +82,9 @@ describe("JobMessage.placement", () => {
 });
 
 describe("JobMessage.key", () => {
-  test("tells a job's notice from its result, and ignores other messages", () => {
-    expect(JobMessage.key(notice)).toBe("subagent_notice:call-1");
+  test("tells a job's notices apart and from its result, and ignores other messages", () => {
+    expect(JobMessage.key(notice)).toBe("subagent_notice:call-1:warn");
+    expect(JobMessage.key(full)).toBe("subagent_notice:call-1:full");
     expect(JobMessage.key(result)).toBe("subagent_result:call-1");
     expect(JobMessage.keyOf(notice)).toBe(JobMessage.key(notice));
     expect(JobMessage.keyOf({ customType: "other", details: {} })).toBe(
@@ -79,10 +94,18 @@ describe("JobMessage.key", () => {
 });
 
 describe("SubagentNotice", () => {
-  test("its one line names the job and its share, then its usage", () => {
-    expect(SubagentNotice.line(notice.details)).toBe(
-      "⚠ j1 at 40% context ⬝ 69 turns ⬝ $9.80 ⬝ 30m 0s"
-    );
+  test("its line gives the share, and its level follows the context fill", () => {
+    expect(SubagentNotice.line(notice.details)).toBe("context at 40%");
+    expect(SubagentNotice.level(notice.details)).toBe("warn");
+    expect(SubagentNotice.level(full.details)).toBe("full");
+    expect(
+      SubagentNotice.level({
+        turns: 1,
+        cost: 0,
+        contextTokens: 40,
+        contextWindow: 100,
+      })
+    ).toBeUndefined();
   });
 
   test("rejects details missing any field its line reads", () => {

@@ -83,9 +83,19 @@ export type DurableEvent =
   | {
       readonly seq: number;
       readonly type: "notice";
-      /** `muted`: one quiet line, like a background job's context notice. */
-      readonly severity: NoticeSeverity | "muted";
+      readonly severity: NoticeSeverity;
       readonly text: string;
+    }
+  /** A running background subagent's context reached a notice level. */
+  | {
+      readonly seq: number;
+      readonly type: "subagent_notice";
+      readonly messageId: string;
+      /** The spawning call's `callId`; `watch_subagent` reads the child log under it. */
+      readonly jobId: string;
+      /** The job's short name in its session, `j3`. */
+      readonly handle: string;
+      readonly view: ToolView;
     }
   /** A background subagent's one result, appended after its `subagent` spawn call settled. */
   | {
@@ -433,6 +443,7 @@ export function isAttachScoped(event: ServerEvent): boolean {
     case "tool_result":
     case "notice":
     case "subagent_result":
+    case "subagent_notice":
     case "subagent_events":
     case "turn_end":
     case "jobs":

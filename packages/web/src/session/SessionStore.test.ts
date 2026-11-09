@@ -2344,18 +2344,13 @@ describe("background subagents", () => {
       state(),
       ...spawned(1, "a"),
       jobs(job("a")),
-      notice(3)
+      notice(3, "a")
     );
 
     expect(ids(target)).toEqual(["a"]);
     expect(target.isRunning("s1")).toBe(true);
-    expect(rows(target).slice(-1)).toEqual([
-      {
-        kind: "notice",
-        id: "notice-3",
-        severity: "muted",
-        text: "⚠ j1 at 40% context ⬝ 2 turns ⬝ $0.40 ⬝ 1m 0s",
-      },
+    expect(rows(target).slice(-1)).toMatchObject([
+      { kind: "tool", id: "entry-3", child: "a", handle: "j1" },
     ]);
 
     feed(target, result(4, "a", "done"));
@@ -2365,7 +2360,7 @@ describe("background subagents", () => {
       )
     ).toEqual([
       ["a", undefined],
-      ["notice-3", "notice"],
+      ["entry-3", undefined],
       ["entry-4", "done"],
     ]);
     expect(ids(target)).toEqual([]);

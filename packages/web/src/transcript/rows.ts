@@ -1,5 +1,5 @@
 import { JobState } from "#core/extensions/subagent/JobState";
-import type { ToolView } from "#core/view/ViewBlock";
+import type { NoticeSeverity, ToolView } from "#core/view/ViewBlock";
 import type {
   AttachmentView,
   DurableEvent,
@@ -37,7 +37,7 @@ export type ToolRow = {
 export type NoticeRow = {
   readonly kind: "notice";
   readonly id: string;
-  readonly severity: "info" | "warn" | "error" | "muted";
+  readonly severity: NoticeSeverity;
   readonly text: string;
 };
 
@@ -112,6 +112,18 @@ function append(
         child: event.jobId,
         ...(event.handle === undefined ? {} : { handle: event.handle }),
         state: event.state,
+      });
+      break;
+    case "subagent_notice":
+      rows.push({
+        kind: "tool",
+        id: event.messageId,
+        name: "subagent",
+        view: event.view,
+        isError: false,
+        isPartial: false,
+        child: event.jobId,
+        handle: event.handle,
       });
       break;
     case "notice":

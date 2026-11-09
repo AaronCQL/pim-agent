@@ -10,7 +10,7 @@ import {
   type SubagentResultMessage,
 } from "./SubagentResult";
 
-/** What a job sends its parent: one notice while it runs, at most, then its result. */
+/** What a job sends its parent: a notice per context level while it runs, then its result. */
 export type JobMessage = SubagentResultMessage | SubagentNoticeMessage;
 
 /** `landed`: already on the branch. `due`: append it now. `elsewhere`: its spawn is on another branch, so it waits until that branch is current again. */
@@ -22,35 +22,38 @@ export type SessionBranches = Pick<
   "getBranch" | "getEntries"
 >;
 
-/** The job a `subagent_result` or `subagent_notice` names. */
-function jobIdOf(message: CustomMessageLike): string | undefined {
-  return (
-    SubagentResult.detailsOf(message) ?? SubagentNotice.detailsOf(message)
-  )?.jobId;
-}
-
-/** Tells a job's notice from its result. */
-function key(message: JobMessage): string {
-  return `${message.customType}:${message.details.jobId}`;
-}
-
-/** `key`, for a custom message that may not be a job's. */
+/** Tells a job's notices apart from each other and from its result. */
 function keyOf(message: CustomMessageLike): string | undefined {
-  const jobId = jobIdOf(message);
-  return jobId === undefined ? undefined : `${message.customType}:${jobId}`;
+  const result = SubagentResult.detailsOf(message);
+  if (result !== undefined) {
+    return `${message.customType}:${result.jobId}`;
+  }
+  const notice = SubagentNotice.detailsOf(message);
+  return notice === undefined
+    ? undefined
+    : `${message.customType}:${notice.jobId}:${SubagentNotice.level(notice)}`;
 }
 
-/** A result covers its job's notice too. */
+function key(message: JobMessage): string {
+  return keyOf(message)!;
+}
+
+/** A result covers its job's notices too, and a notice those of lower levels. */
 function covers(entry: SessionEntry, message: JobMessage): boolean {
   if (entry.type !== "custom_message") {
     return false;
   }
   const jobId = message.details.jobId;
-  return (
-    SubagentResult.jobIdOf(entry) === jobId ||
-    (message.customType === SubagentNotice.CUSTOM_TYPE &&
-      SubagentNotice.detailsOf(entry)?.jobId === jobId)
-  );
+  if (SubagentResult.jobIdOf(entry) === jobId) {
+    return true;
+  }
+  const wanted = SubagentNotice.detailsOf(message);
+  const landed = SubagentNotice.detailsOf(entry);
+  if (wanted === undefined || landed?.jobId !== jobId) {
+    return false;
+  }
+  const reached = SubagentNotice.level(landed);
+  return reached === "full" || reached === SubagentNotice.level(wanted);
 }
 
 function spawned(entry: SessionEntry, jobId: string): boolean {

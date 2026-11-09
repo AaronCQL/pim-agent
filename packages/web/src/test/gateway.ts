@@ -155,10 +155,10 @@ function subagentTool(
           spans: JobLine.usage({
             turns: result?.details.turns ?? 1,
             cost: 0.02,
-          }).flatMap((text, index) => [
+          }).flatMap((span, index) => [
             ...(index === 0 ? [] : [{ text: " ⬝ ", tone: "muted" as const }]),
             {
-              text,
+              text: span.text,
               tone: isPartial ? ("warning" as const) : ("muted" as const),
             },
           ]),

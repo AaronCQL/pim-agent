@@ -1,8 +1,9 @@
-import { createMemo, Show } from "solid-js";
+import { createMemo, For, Show } from "solid-js";
 
-import type { ToolView, ViewBlock } from "#core/view/ViewBlock";
+import type { Span, ToolView, ViewBlock } from "#core/view/ViewBlock";
 import { Caret } from "../ui/Collapsible";
 import { Spinner } from "../ui/Spinner";
+import { SpanText } from "../view/Blocks";
 import { RowLabel } from "../view/ToolCard";
 import { caretClass } from "../view/tokens";
 import type { ToolRow } from "./rows";
@@ -13,7 +14,7 @@ export function SubagentRow(props: {
 }) {
   // A failed run's usage is a stale mid-run snapshot.
   const stats = createMemo(() =>
-    props.row.isError ? "" : titleText(props.row.view)
+    props.row.isError ? [] : titleSpans(props.row.view)
   );
   const failure = createMemo(() =>
     props.row.isError ? failureText(props.row.view) : undefined
@@ -34,8 +35,10 @@ export function SubagentRow(props: {
         when={props.row.isError}
         fallback={
           <>
-            <Show when={stats() !== ""}>
-              <span class="break-words">{stats()}</span>
+            <Show when={stats().length > 0}>
+              <span class="break-words">
+                <For each={stats()}>{(span) => <SpanText span={span} />}</For>
+              </span>
             </Show>
             <Show when={props.row.isPartial}>
               <span class="ml-1ch inline-flex align-middle">
@@ -57,8 +60,10 @@ export function SubagentRow(props: {
   );
 }
 
-function titleText(view: ToolView): string {
-  return view.title.map(blockText).join("").trim();
+function titleSpans(view: ToolView): readonly Span[] {
+  return view.title.flatMap((block): readonly Span[] =>
+    block.kind === "spans" ? block.spans : [{ text: blockText(block) }]
+  );
 }
 
 function failureText(view: ToolView): string | undefined {

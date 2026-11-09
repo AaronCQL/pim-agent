@@ -8,7 +8,6 @@ import type { LiveMessage, PendingMessage } from "../session/SessionStore";
 import { HideThinking } from "../settings/Settings";
 import { Attachments } from "../view/Attachments";
 import { Notice } from "../view/Blocks";
-import { NOTICE_CLASSES } from "../view/tokens";
 import { ToolCards } from "../view/ToolCard";
 import { SubagentRow } from "./SubagentRow";
 import {
@@ -224,29 +223,18 @@ const NOTICE_LABELS = {
   info: "INFO",
   warn: "WARNING",
   error: "ERROR",
-} as const satisfies Record<Exclude<NoticeRow["severity"], "muted">, string>;
+} as const satisfies Record<NoticeRow["severity"], string>;
 
 function NoticeRowView(props: { readonly row: NoticeRow }) {
   return (
-    <Show
-      when={props.row.severity === "muted" ? undefined : props.row.severity}
-      fallback={
-        <div class={`truncate pl-2ch text-sm ${NOTICE_CLASSES.info}`}>
-          {props.row.text}
-        </div>
+    <Notice
+      severity={props.row.severity}
+      text={props.row.text}
+      tag={
+        <span class="mr-1ch rounded bg-current/10 px-1.5 py-0.5 text-sm font-semibold">
+          {NOTICE_LABELS[props.row.severity]}
+        </span>
       }
-    >
-      {(severity) => (
-        <Notice
-          severity={severity()}
-          text={props.row.text}
-          tag={
-            <span class="mr-1ch rounded bg-current/10 px-1.5 py-0.5 text-sm font-semibold">
-              {NOTICE_LABELS[severity()]}
-            </span>
-          }
-        />
-      )}
-    </Show>
+    />
   );
 }

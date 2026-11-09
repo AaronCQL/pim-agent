@@ -7,7 +7,10 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 import readExtension from "#core/extensions/read/index";
-import { subagentResultView } from "#core/extensions/subagent/render";
+import {
+  subagentNoticeView,
+  subagentResultView,
+} from "#core/extensions/subagent/render";
 import { SubagentNotice } from "#core/extensions/subagent/SubagentNotice";
 import { SubagentResult } from "#core/extensions/subagent/SubagentResult";
 import { SubagentLogs } from "#core/shared/SubagentLogs";
@@ -342,7 +345,7 @@ test("a job's result crosses as its own row, painted like a subagent run and key
   ]);
 });
 
-test("a job's context notice crosses as one line of its own, never as a result", async () => {
+test("a job's context notice crosses as a subagent row linked to its job, never as a result", async () => {
   const notice = SubagentNotice.of(
     {
       jobId: "call_job",
@@ -360,9 +363,11 @@ test("a job's context notice crosses as one line of its own, never as a result",
   expect(await p.drain()).toEqual([
     {
       seq: 1,
-      type: "notice",
-      severity: "muted",
-      text: "⚠ j22 at 40% context ⬝ 69 turns ⬝ $9.80 ⬝ 30m 0s",
+      type: "subagent_notice",
+      messageId: "entry-0",
+      jobId: "call_job",
+      handle: "j22",
+      view: subagentNoticeView(notice.details),
     },
   ]);
 });
