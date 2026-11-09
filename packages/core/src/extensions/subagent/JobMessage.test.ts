@@ -102,15 +102,4 @@ describe("SubagentNotice", () => {
       ).toBeUndefined();
     }
   });
-
-  test("flags a job only once it is past the threshold, with both sides known", () => {
-    const usage = { turns: 1, cost: 0, contextWindow: 1_000 };
-    expect(SubagentNotice.flag({ ...usage, contextTokens: 400 })).toEqual([
-      "⚠ 40%",
-    ]);
-    expect(SubagentNotice.flag({ ...usage, contextTokens: 399 })).toEqual([]);
-    expect(
-      SubagentNotice.flag({ turns: 1, cost: 0, contextTokens: 900 })
-    ).toEqual([]);
-  });
 });

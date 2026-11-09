@@ -2,6 +2,7 @@ import { Format } from "../../shared/Format";
 import { Json } from "../../shared/Json";
 import { JobLine, type JobUsage } from "./JobLine";
 import type { ToolTrace } from "./subagent";
+import type { JobView } from "./SubagentJobs";
 import { SubagentResult } from "./SubagentResult";
 
 const CUSTOM_TYPE = "subagent_notice";
@@ -50,9 +51,9 @@ function crossed(usage: JobUsage): usage is Known {
   );
 }
 
-/** `⚠ 40%` for a job past the threshold. */
-function flag(usage: JobUsage): readonly string[] {
-  return crossed(usage) ? [`⚠ ${THRESHOLD * 100}%`] : [];
+/** `⚠ 40%` for a job whose notice was issued. */
+function flag(job: JobView): readonly string[] {
+  return job.noticed === true ? [`⚠ ${THRESHOLD * 100}%`] : [];
 }
 
 function percent(details: SubagentNoticeDetails): string {

@@ -157,19 +157,19 @@ test("sends one message when the first job starts", async () => {
   ]);
 });
 
-test("flags a job past its context notice's threshold", async () => {
+test("flags a job its context notice was issued for, not one merely past the threshold", async () => {
   const { api, source, message } = setup();
 
   source.set([
-    job({ contextTokens: 402_000, contextWindow: 1_000_000 }),
-    job({ id: "call-2", handle: "j2", contextTokens: 10, contextWindow: 100 }),
+    job({ contextTokens: 402_000, contextWindow: 1_000_000, noticed: true }),
+    job({ id: "call-2", handle: "j2", contextTokens: 50, contextWindow: 100 }),
   ]);
   await message.settled();
 
   expect(api.calls).toEqual([
     {
       kind: "send",
-      text: "🤖 <b>2 jobs running</b><br>• <b>j1</b>: 0 turns ⬝ $0.00 ⬝ 40.2%/1.0M ⬝ 0s ⬝ ⚠ 40%<br>• <b>j2</b>: 0 turns ⬝ $0.00 ⬝ 10.0%/100 ⬝ 0s",
+      text: "🤖 <b>2 jobs running</b><br>• <b>j1</b>: 0 turns ⬝ $0.00 ⬝ 40.2%/1.0M ⬝ 0s ⬝ ⚠ 40%<br>• <b>j2</b>: 0 turns ⬝ $0.00 ⬝ 50.0%/100 ⬝ 0s",
     },
   ]);
 });

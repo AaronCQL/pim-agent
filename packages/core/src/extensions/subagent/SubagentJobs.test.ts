@@ -703,6 +703,7 @@ describe("SubagentJobs context notice", () => {
     clock += 30 * 60_000;
     reach(session, 399_999);
     expect(notices()).toEqual([]);
+    expect(jobs.list(PARENT)[0]?.noticed).toBeUndefined();
 
     reach(session, 1);
     reach(session, 402_000);
@@ -738,7 +739,9 @@ describe("SubagentJobs context notice", () => {
       },
     });
     expect(jobs.hasRunning(PARENT)).toBe(true);
-    expect(jobs.list(PARENT).map((job) => job.handle)).toEqual(["j1"]);
+    expect(jobs.list(PARENT).map((job) => [job.handle, job.noticed])).toEqual([
+      ["j1", true],
+    ]);
     await jobs.stopAll(PARENT, { by: "user" });
   });
 
@@ -796,7 +799,7 @@ describe("SubagentJobs context notice", () => {
     const stopping = jobs.stop(PARENT, "j1", { by: "agent", reason: "done" });
     await until(() => stubborn.abortCalls === 1, "the stop");
     reach(stubborn, 500_000);
-    expect(jobs.hasRunning(PARENT)).toBe(true);
+    expect(jobs.list(PARENT)[0]?.noticed).toBeUndefined();
     grace.resolve();
     await stopping;
 

@@ -28,6 +28,8 @@ export type JobView = {
   readonly cost: number;
   readonly contextTokens?: number;
   readonly contextWindow?: number;
+  /** Its context notice was issued. */
+  readonly noticed?: true;
 };
 
 /** A job's message, held until it is on the parent's branch. A user stop can clear `wake`, and the job's result drop its notice, while a delivery waits, so read both when appending. */
@@ -556,6 +558,7 @@ export class SubagentJobs {
         ? {}
         : { contextTokens: usage.contextTokens }),
       ...(contextWindow === undefined ? {} : { contextWindow }),
+      ...(job.noticed ? { noticed: true } : {}),
     };
   }
 
