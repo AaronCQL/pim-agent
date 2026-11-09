@@ -7,6 +7,7 @@ import {
   HeldSession,
   parent,
   usage,
+  withWindow,
 } from "./fixtures/session";
 import { startSubagent, type SubagentParent } from "./subagent";
 import {
@@ -639,20 +640,7 @@ describe("SubagentJobs", () => {
 });
 
 describe("SubagentJobs context notice", () => {
-  const sized: SubagentParent = {
-    ...parent,
-    model: { contextWindow: 1_000_000 } as never,
-  };
-
-  function reach(session: FakeSession, totalTokens: number): void {
-    session.emit({
-      type: "message_end",
-      message: assistant(["Working."], {
-        stopReason: "toolUse",
-        usage: usage({ totalTokens, cost: { total: 2.5 } }),
-      }),
-    });
-  }
+  const sized = withWindow(parent, 1_000_000);
 
   function tool(session: FakeSession, id: string, path: string): void {
     session.emit({
@@ -701,12 +689,12 @@ describe("SubagentJobs context notice", () => {
       tool(session, `t${index}`, path);
     }
     clock += 30 * 60_000;
-    reach(session, 399_999);
+    session.fill(399_999, 2.5);
     expect(notices()).toEqual([]);
     expect(jobs.list(PARENT)[0]?.noticed).toBeUndefined();
 
-    reach(session, 1);
-    reach(session, 402_000);
+    session.fill(1, 2.5);
+    session.fill(402_000, 2.5);
     await until(() => notices().length === 1, "the notice");
 
     const [{ message, wake }] = notices() as [JobDelivery];
@@ -748,11 +736,11 @@ describe("SubagentJobs context notice", () => {
   test("never tells it twice, even once the first notice has landed", async () => {
     const { jobs, notices, start } = noticing();
     const session = await start();
-    reach(session, 400_000);
+    session.fill(400_000);
     await until(() => !jobs.hasPending(PARENT), "the notice to land");
 
-    reach(session, 600_000);
-    reach(session, 950_000);
+    session.fill(600_000);
+    session.fill(950_000);
     session.finish("done");
     await until(() => !jobs.hasRunning(PARENT), "the job to finish");
     await until(() => !jobs.hasPending(PARENT), "the result to land");
@@ -763,7 +751,7 @@ describe("SubagentJobs context notice", () => {
   test("says nothing while the context window is unknown", async () => {
     const { jobs, delivered, start } = noticing();
     const session = await start(parent);
-    reach(session, 5_000_000);
+    session.fill(5_000_000);
     session.finish("done");
     await until(() => !jobs.hasRunning(PARENT), "the job to finish");
     await until(() => !jobs.hasPending(PARENT), "the result to land");
@@ -777,7 +765,7 @@ describe("SubagentJobs context notice", () => {
     const { jobs, delivered, defer, start } = noticing();
     defer(true);
     const session = await start();
-    reach(session, 500_000);
+    session.fill(500_000);
     await until(() => delivered.length === 1, "the notice's delivery");
     const empty = { getBranch: () => [], getEntries: () => [] };
     expect(delivered[0]?.due(empty)).toBe(true);
@@ -800,7 +788,7 @@ describe("SubagentJobs context notice", () => {
 
     const stopping = jobs.stop(PARENT, "j1", { by: "agent", reason: "done" });
     await until(() => stubborn.abortCalls === 1, "the stop");
-    reach(stubborn, 500_000);
+    stubborn.fill(500_000);
     expect(jobs.list(PARENT)[0]?.noticed).toBeUndefined();
     grace.resolve();
     await stopping;

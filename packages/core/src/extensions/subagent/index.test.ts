@@ -523,23 +523,13 @@ describe("subagent delivery at turn boundaries", () => {
 });
 
 describe("subagent context notice", () => {
-  const reach = (session: HeldSession, totalTokens: number): void => {
-    session.emit({
-      type: "message_end",
-      message: assistant(["Working."], {
-        stopReason: "toolUse",
-        usage: { ...assistant([]).usage, totalTokens },
-      }),
-    });
-  };
-
   test("a busy run's turn boundary appends a job's notice once, continuing the run, and the job runs on", async () => {
     const { boundary, branch, jobs, spawn } = withJobs({
       busy: () => true,
       contextWindow: 100_000,
     });
     const session = await spawn("call-1");
-    reach(session, 40_000);
+    session.fill(40_000);
 
     let proposal: BoundaryResult | undefined;
     await until(async () => {
@@ -578,27 +568,18 @@ describe("subagent context notice", () => {
       contextWindow: 100_000,
     });
     const session = await spawn("call-1");
-    reach(session, 45_000);
+    session.fill(45_000);
     await until(() => noticed.length === 1, "the notice");
 
     expect(noticed[0]?.wake).toBe(true);
     expect(noticed[0]?.notice.details.handle).toBe("j1");
     await emit("session_start", { reason: "reload" });
     await emit("session_tree");
-    reach(session, 90_000);
+    session.fill(90_000);
     await until(() => !jobs.hasDue(PARENT), "the retries");
 
     expect(noticed).toHaveLength(1);
     expect(answers(branch, "call-1", "subagent_notice")).toBe(1);
-    await jobs.stopAll(PARENT, { by: "user" });
-  });
-
-  test("a job without a known context window sends no notice", async () => {
-    const { boundary, jobs, spawn } = withJobs({ busy: () => true });
-    const session = await spawn("call-1");
-    reach(session, 10_000_000);
-
-    expect(await boundary("turn_end")).toBeUndefined();
     await jobs.stopAll(PARENT, { by: "user" });
   });
 });

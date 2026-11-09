@@ -12,6 +12,16 @@ export const parent: SubagentParent = {
   sessionId: undefined,
 };
 
+/** `base`, on a model with this context window when one is given. */
+export function withWindow(
+  base: SubagentParent,
+  contextWindow: number | undefined
+): SubagentParent {
+  return contextWindow === undefined
+    ? base
+    : { ...base, model: { contextWindow } as never };
+}
+
 export function usage(overrides: UsageOverrides = {}): Usage {
   const { cost, ...rest } = overrides;
   return {
@@ -77,6 +87,17 @@ export class FakeSession implements SubagentSession {
   public async prompt(prompt: string): Promise<void> {
     this.promptCalls += 1;
     await this.onPrompt(this, prompt);
+  }
+
+  /** Ends a turn mid-task with its context at `totalTokens`. */
+  public fill(totalTokens: number, cost = 0): void {
+    this.emit({
+      type: "message_end",
+      message: assistant(["Working."], {
+        stopReason: "toolUse",
+        usage: usage({ totalTokens, cost: { total: cost } }),
+      }),
+    });
   }
 
   public async steer(message: string): Promise<void> {

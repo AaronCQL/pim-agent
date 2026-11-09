@@ -21,6 +21,7 @@ import {
   HeldSession,
   parent,
   usage,
+  withWindow,
 } from "#core/extensions/subagent/fixtures/session";
 import type { JobMessage } from "#core/extensions/subagent/JobMessage";
 import { startSubagent } from "#core/extensions/subagent/subagent";
@@ -346,19 +347,10 @@ function createHarness() {
         prompt: `task ${callId}\nwith details`,
         lastHandle: 0,
         start: (onChange) =>
-          startSubagent(
-            callId,
-            options.contextWindow === undefined
-              ? parent
-              : {
-                  ...parent,
-                  model: { contextWindow: options.contextWindow } as never,
-                },
-            {
-              createSession: async () => child,
-              onChange,
-            }
-          ),
+          startSubagent(callId, withWindow(parent, options.contextWindow), {
+            createSession: async () => child,
+            onChange,
+          }),
       });
       await until(() => child.promptCalls === 1, `job ${callId} to start`);
       return child;
@@ -1062,25 +1054,15 @@ describe("result message", () => {
 });
 
 describe("context notice", () => {
-  const fill = (child: HeldSession, totalTokens: number): void => {
-    child.emit({
-      type: "message_end",
-      message: assistant(["working"], {
-        usage: usage({ totalTokens }),
-        stopReason: "toolUse",
-      }),
-    });
-  };
-
   test("wakes an idle session once, and the job stays a running job", async () => {
     const harness = await started();
     const child = await harness.spawn("call-1", { contextWindow: 100_000 });
 
-    fill(child, 45_000);
+    child.fill(45_000);
     await until(() => harness.sent.length === 1, "the notice");
     await harness.settle();
     await until(() => !harness.jobs.hasPending("s1"), "the notice to land");
-    fill(child, 60_000);
+    child.fill(60_000);
 
     expect(harness.sent).toEqual([
       { session: "s1", jobId: "call-1", wake: true },

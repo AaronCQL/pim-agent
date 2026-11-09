@@ -15,10 +15,6 @@ import { join } from "node:path";
 import subagent from "../index";
 import type { SubagentJobs } from "../SubagentJobs";
 import {
-  SubagentNotice,
-  type SubagentNoticeDetails,
-} from "../SubagentNotice";
-import {
   SubagentResult,
   type SubagentResultDetails,
 } from "../SubagentResult";
@@ -51,8 +47,6 @@ export type Parent = {
   readonly children: ReadonlyMap<string, HeldSession>;
   /** The job's `subagent_result` entries, on every branch. */
   results(jobId: string): readonly SubagentResultDetails[];
-  /** The job's `subagent_notice` entries, on every branch. */
-  notices(jobId: string): readonly SubagentNoticeDetails[];
   dispose(): Promise<void>;
 };
 
@@ -186,14 +180,6 @@ export async function startParent(options: {
         const details =
           entry.type === "custom_message"
             ? SubagentResult.detailsOf(entry)
-            : undefined;
-        return details?.jobId === jobId ? [details] : [];
-      }),
-    notices: (jobId) =>
-      session.sessionManager.getEntries().flatMap((entry) => {
-        const details =
-          entry.type === "custom_message"
-            ? SubagentNotice.detailsOf(entry)
             : undefined;
         return details?.jobId === jobId ? [details] : [];
       }),

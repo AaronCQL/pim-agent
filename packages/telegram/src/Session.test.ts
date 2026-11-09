@@ -13,10 +13,9 @@ import {
 } from "bun:test";
 
 import {
-  assistant,
   HeldSession,
   parent,
-  usage,
+  withWindow,
 } from "#core/extensions/subagent/fixtures/session";
 import { startSubagent } from "#core/extensions/subagent/subagent";
 import { SubagentJobs } from "#core/extensions/subagent/SubagentJobs";
@@ -279,16 +278,10 @@ describe("background jobs", () => {
         prompt: `task ${callId}`,
         lastHandle: 0,
         start: (onChange) =>
-          startSubagent(
-            `task ${callId}`,
-            contextWindow === undefined
-              ? parent
-              : { ...parent, model: { contextWindow } as never },
-            {
-              createSession: async () => child,
-              onChange,
-            }
-          ),
+          startSubagent(`task ${callId}`, withWindow(parent, contextWindow), {
+            createSession: async () => child,
+            onChange,
+          }),
       });
       await until(() => child.promptCalls === 1, "the child prompt");
       return child;
@@ -323,13 +316,7 @@ describe("background jobs", () => {
     const child = await spawn("call-1", 10_000);
     await until(() => api.sent.length === 2, "the jobs message");
 
-    child.emit({
-      type: "message_end",
-      message: assistant(["Working."], {
-        stopReason: "toolUse",
-        usage: usage({ totalTokens: 4_500 }),
-      }),
-    });
+    child.fill(4_500);
     await until(() => api.sent.includes("<p>reply 2</p>"), "the woken reply");
 
     expect(prompts[1]).toContain(
