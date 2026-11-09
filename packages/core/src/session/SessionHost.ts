@@ -941,10 +941,8 @@ export class SessionHost {
       if (agent.sessionId !== sessionId || agent.isStreaming) {
         return;
       }
-      const place = (): Placement =>
-        JobMessage.placement(agent.sessionManager, delivery.message);
       try {
-        if (!delivery.dropped && place() === "due") {
+        if (delivery.due(agent.sessionManager)) {
           await agent.sendCustomMessage<JobMessage["details"]>(
             delivery.message,
             {
@@ -953,7 +951,7 @@ export class SessionHost {
           );
         }
       } finally {
-        where = place();
+        where = JobMessage.placement(agent.sessionManager, delivery.message);
       }
     };
     const run = delivery.wake ? this.deps.runWake : undefined;

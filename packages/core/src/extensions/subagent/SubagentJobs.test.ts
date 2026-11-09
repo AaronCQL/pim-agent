@@ -779,11 +779,13 @@ describe("SubagentJobs context notice", () => {
     const session = await start();
     reach(session, 500_000);
     await until(() => delivered.length === 1, "the notice's delivery");
+    const empty = { getBranch: () => [], getEntries: () => [] };
+    expect(delivered[0]?.due(empty)).toBe(true);
 
     session.finish("done");
     await until(() => !jobs.hasRunning(PARENT), "the job to finish");
 
-    expect(delivered[0]?.dropped).toBe(true);
+    expect(delivered[0]?.due(empty)).toBe(false);
     expect(
       jobs.due(PARENT, () => "due").map((d) => d.message.customType)
     ).toEqual(["subagent_result"]);

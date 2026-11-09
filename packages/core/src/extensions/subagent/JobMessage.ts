@@ -12,7 +12,8 @@ export type JobMessage = SubagentResultMessage | SubagentNoticeMessage;
 /** `landed`: already on the branch. `due`: append it now. `elsewhere`: its spawn is on another branch, so it waits until that branch is current again. */
 export type Placement = "landed" | "due" | "elsewhere";
 
-type Session = Pick<
+/** What `JobMessage.placement` reads of a session. */
+export type SessionBranches = Pick<
   ExtensionContext["sessionManager"],
   "getBranch" | "getEntries"
 >;
@@ -57,7 +58,7 @@ function spawned(entry: SessionEntry, jobId: string): boolean {
 }
 
 /** Where this message belongs. Check it right before appending, with no await between. */
-function placement(session: Session, message: JobMessage): Placement {
+function placement(session: SessionBranches, message: JobMessage): Placement {
   const branch = session.getBranch();
   if (branch.some((entry) => covers(entry, message))) {
     return "landed";

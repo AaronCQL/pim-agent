@@ -2,7 +2,7 @@ import { Format } from "../../shared/Format";
 import { OutputBudget } from "../../shared/OutputBudget";
 import { Timers } from "../../shared/Timers";
 import { JobLine } from "./JobLine";
-import type { JobMessage, Placement } from "./JobMessage";
+import { JobMessage, type Placement, type SessionBranches } from "./JobMessage";
 import { formatCallTitle } from "./render";
 import { applyOutputCap, type SubagentChild } from "./subagent";
 import { SubagentNotice } from "./SubagentNotice";
@@ -32,14 +32,15 @@ export type JobView = {
   readonly noticed?: true;
 };
 
-/** A job's message, held until it is on the parent's branch. A user stop can clear `wake`, and the job's result drop its notice, while a delivery waits, so read both when appending. */
+/** A job's message, held until it is on the parent's branch. A user stop can clear `wake`, and the job's result replace its notice, while a delivery waits, so read `wake` and `due` when appending. */
 export type JobDelivery = {
   readonly message: JobMessage;
   readonly wake: boolean;
-  readonly dropped: boolean;
+  /** Still held, and `JobMessage.placement` says it is due on `session`. Check it right before appending, with no await between. */
+  readonly due: (session: SessionBranches) => boolean;
 };
 
-/** Appends only while the parent is idle, and only an undropped message `JobMessage.placement` says is due right before it; a busy parent's turn boundary takes the message instead. Until it settles, it alone may append that message. Resolves to the message's placement afterwards: `due` means try again later. */
+/** Appends only while the parent is idle, and only a message `JobDelivery.due` says is due right before it; a busy parent's turn boundary takes the message instead. Until it settles, it alone may append that message. Resolves to the message's placement afterwards: `due` means try again later. */
 export type JobDeliverer = (delivery: JobDelivery) => Promise<Placement>;
 
 export type JobSpec = {
@@ -66,10 +67,8 @@ type Job = {
 };
 
 /** At most one per job: its result replaces its notice. */
-type Pending = {
-  readonly message: JobMessage;
+type Pending = JobDelivery & {
   wake: boolean;
-  dropped: boolean;
   delivering: boolean;
   /** A flush came while it was delivering. */
   again: boolean;
@@ -125,9 +124,10 @@ export class SubagentJobs {
         JobLine.handleNumber(item.message.details.handle)
       ),
     ];
-    const child = spec.start(() => this.changed(parentSessionId, spec.callId));
+    const jobId = spec.callId;
+    const child = spec.start(() => this.changed(parentSessionId, jobId));
     const job: Job = {
-      id: spec.callId,
+      id: jobId,
       handle: `j${Math.max(...taken) + 1}`,
       prompt: spec.prompt,
       startedAt: this.now(),
@@ -308,10 +308,9 @@ export class SubagentJobs {
   }
 
   private deliver(parentSessionId: string, item: Pending): void {
-    const parent = this.parents.get(parentSessionId);
     const jobId = item.message.details.jobId;
-    const deliverer = parent?.deliverer;
-    if (deliverer === undefined || parent?.pending.get(jobId) !== item) {
+    const deliverer = this.parents.get(parentSessionId)?.deliverer;
+    if (deliverer === undefined || !this.holds(parentSessionId, item)) {
       return;
     }
     if (item.delivering) {
@@ -426,11 +425,12 @@ export class SubagentJobs {
 
   /** Once per job, the first time its context crosses the threshold while it runs unstopped. */
   private notice(parentSessionId: string, job: Job): void {
-    if (job.noticed || job.stop !== undefined || job.result !== undefined) {
+    if (job.noticed || job.stop !== undefined) {
       return;
     }
-    const view = this.view(job);
-    if (!SubagentNotice.crossed(view)) {
+    const { usage, contextWindow } = job.child.capture.snapshot();
+    const reached = { ...usage, contextWindow };
+    if (!SubagentNotice.crossed(reached)) {
       return;
     }
     job.noticed = true;
@@ -438,8 +438,9 @@ export class SubagentJobs {
       parentSessionId,
       SubagentNotice.of(
         {
-          ...view,
+          ...reached,
           jobId: job.id,
+          handle: job.handle,
           elapsedMs: this.now() - job.startedAt,
         },
         job.child.capture.recentTools()
@@ -448,42 +449,47 @@ export class SubagentJobs {
     );
   }
 
-  /** Drops the job's held notice, if any. */
+  /** Replaces the job's held notice, if any. */
   private hold(
     parentSessionId: string,
     message: JobMessage,
     wake: boolean
   ): void {
-    const pending = this.parentFor(parentSessionId).pending;
-    const jobId = message.details.jobId;
-    const held = pending.get(jobId);
-    if (held !== undefined) {
-      held.dropped = true;
-    }
-    pending.set(jobId, {
+    const item: Pending = {
       message,
       wake,
-      dropped: false,
+      due: (session) =>
+        this.holds(parentSessionId, item) &&
+        JobMessage.placement(session, message) === "due",
       delivering: false,
       again: false,
       away: false,
-    });
+    };
+    this.parentFor(parentSessionId).pending.set(message.details.jobId, item);
     this.flush(parentSessionId);
   }
 
-  /** Settles a landed message; otherwise records whether its spawn is on another branch. Ignores a dropped one. */
+  /** The job's held message is still this one. */
+  private holds(parentSessionId: string, item: Pending): boolean {
+    return (
+      this.parents
+        .get(parentSessionId)
+        ?.pending.get(item.message.details.jobId) === item
+    );
+  }
+
+  /** Settles a landed message; otherwise records whether its spawn is on another branch. Ignores a replaced one. */
   private apply(
     parentSessionId: string,
     item: Pending,
     where: Placement
   ): void {
-    const pending = this.parents.get(parentSessionId)?.pending;
-    const jobId = item.message.details.jobId;
-    if (pending?.get(jobId) !== item) {
+    if (!this.holds(parentSessionId, item)) {
       return;
     }
+    const jobId = item.message.details.jobId;
     if (where === "landed") {
-      pending.delete(jobId);
+      this.parentFor(parentSessionId).pending.delete(jobId);
       this.prune(parentSessionId);
       this.drainChanged();
       return;
