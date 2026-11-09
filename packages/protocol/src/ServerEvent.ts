@@ -83,7 +83,8 @@ export type DurableEvent =
   | {
       readonly seq: number;
       readonly type: "notice";
-      readonly severity: NoticeSeverity;
+      /** `muted`: one quiet line, like a background job's context notice. */
+      readonly severity: NoticeSeverity | "muted";
       readonly text: string;
     }
   /** A background subagent's one result, appended after its `subagent` spawn call settled. */
@@ -99,14 +100,6 @@ export type DurableEvent =
       readonly view: ToolView;
       /** Epoch ms. */
       readonly timestamp: number;
-    }
-  /** A running background subagent's one notice that its context is filling up. */
-  | {
-      readonly seq: number;
-      readonly type: "subagent_notice";
-      readonly messageId: string;
-      /** One line, the same on every surface. */
-      readonly text: string;
     };
 
 /** Progress of a `reload`. */
@@ -440,7 +433,6 @@ export function isAttachScoped(event: ServerEvent): boolean {
     case "tool_result":
     case "notice":
     case "subagent_result":
-    case "subagent_notice":
     case "subagent_events":
     case "turn_end":
     case "jobs":

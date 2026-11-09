@@ -360,8 +360,8 @@ test("a job's context notice crosses as one line of its own, never as a result",
   expect(await p.drain()).toEqual([
     {
       seq: 1,
-      type: "subagent_notice",
-      messageId: "entry-0",
+      type: "notice",
+      severity: "muted",
       text: "⚠ j22 at 40% context ⬝ 69 turns ⬝ $9.80 ⬝ 30m 0s",
     },
   ]);

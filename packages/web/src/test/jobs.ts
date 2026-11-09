@@ -129,9 +129,9 @@ export function result(
 export function notice(seq: number): ServerEvent {
   return {
     seq,
-    type: "subagent_notice",
-    messageId: `entry-${seq}`,
-    text: "⚠ j1 at 40% context · 2 turns · $0.40 · 1m 0s",
+    type: "notice",
+    severity: "muted",
+    text: "⚠ j1 at 40% context ⬝ 2 turns ⬝ $0.40 ⬝ 1m 0s",
   };
 }
 

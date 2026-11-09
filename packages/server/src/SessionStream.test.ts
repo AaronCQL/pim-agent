@@ -6,7 +6,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 
 import type { JobView } from "#core/extensions/subagent/SubagentJobs";
-import { SubagentNotice } from "#core/extensions/subagent/SubagentNotice";
 import { SubagentResult } from "#core/extensions/subagent/SubagentResult";
 import type { SessionHost } from "#core/session/SessionHost";
 import type { GitState } from "#core/shared/Git";
@@ -825,43 +824,6 @@ test("carries a job's result to the client as soon as pi appends it", async () =
     jobId: JOB.id,
     state: "interrupted",
   });
-});
-
-test("carries a job's context notice to the client as soon as pi appends it", async () => {
-  const notice = SubagentNotice.of(
-    {
-      jobId: JOB.id,
-      handle: JOB.handle,
-      contextTokens: 40_000,
-      contextWindow: 100_000,
-      turns: 3,
-      cost: 0.5,
-      elapsedMs: 0,
-    },
-    []
-  );
-  const message = { role: "custom", ...notice, timestamp: 0 };
-
-  await append({
-    type: "custom_message",
-    id: "n1",
-    parentId: null,
-    timestamp: new Date().toISOString(),
-    ...notice,
-  });
-  emit(agentEvent({ type: "message_start", message }));
-  emit(agentEvent({ type: "message_end", message }));
-  await until(
-    () => received().some((event) => event.type === "subagent_notice"),
-    "the job's notice"
-  );
-
-  expect(
-    received().find((event) => event.type === "subagent_notice")
-  ).toMatchObject({ messageId: "n1" });
-  expect(received().some((event) => event.type === "subagent_result")).toBe(
-    false
-  );
 });
 
 test("a lease left by a terminal that died holds nothing", async () => {

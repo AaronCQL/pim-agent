@@ -37,18 +37,11 @@ export type ToolRow = {
 export type NoticeRow = {
   readonly kind: "notice";
   readonly id: string;
-  readonly severity: "info" | "warn" | "error";
+  readonly severity: "info" | "warn" | "error" | "muted";
   readonly text: string;
 };
 
-/** A running job's context notice: one muted line, not a card. */
-export type JobNoticeRow = {
-  readonly kind: "job_notice";
-  readonly id: string;
-  readonly text: string;
-};
-
-export type Row = MessageRow | ToolRow | NoticeRow | JobNoticeRow;
+export type Row = MessageRow | ToolRow | NoticeRow;
 
 export type RowBuild = {
   readonly rows: readonly Row[];
@@ -128,9 +121,6 @@ function append(
         severity: event.severity,
         text: event.text,
       });
-      break;
-    case "subagent_notice":
-      rows.push({ kind: "job_notice", id: event.messageId, text: event.text });
       break;
   }
 }

@@ -2351,9 +2351,10 @@ describe("background subagents", () => {
     expect(target.isRunning("s1")).toBe(true);
     expect(rows(target).slice(-1)).toEqual([
       {
-        kind: "job_notice",
-        id: "entry-3",
-        text: "⚠ j1 at 40% context · 2 turns · $0.40 · 1m 0s",
+        kind: "notice",
+        id: "notice-3",
+        severity: "muted",
+        text: "⚠ j1 at 40% context ⬝ 2 turns ⬝ $0.40 ⬝ 1m 0s",
       },
     ]);
 
@@ -2364,7 +2365,7 @@ describe("background subagents", () => {
       )
     ).toEqual([
       ["a", undefined],
-      ["entry-3", "job_notice"],
+      ["notice-3", "notice"],
       ["entry-4", "done"],
     ]);
     expect(ids(target)).toEqual([]);

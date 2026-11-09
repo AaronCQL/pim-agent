@@ -489,8 +489,9 @@ describe("background subagents", () => {
 
     expect(openers(host)).toHaveLength(1);
     expect(host.textContent).toContain(
-      "⚠ j1 at 40% context · 2 turns · $0.40 · 1m 0s"
+      "⚠ j1 at 40% context ⬝ 2 turns ⬝ $0.40 ⬝ 1m 0s"
     );
+    expect(host.textContent).not.toContain("INFO");
   });
 
   test("only a row the server links to a log opens one; the rest are plain cards", () => {

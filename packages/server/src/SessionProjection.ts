@@ -218,8 +218,8 @@ function subagentNotice(
   }
   return {
     seq,
-    type: "subagent_notice",
-    messageId: entry.id,
+    type: "notice",
+    severity: "muted",
     text: SubagentNotice.line(details),
   };
 }
