@@ -8,6 +8,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import { subagentResultView } from "#core/extensions/subagent/render";
+import { SubagentNotice } from "#core/extensions/subagent/SubagentNotice";
 import { SubagentResult } from "#core/extensions/subagent/SubagentResult";
 import { EventLog, type LoggedEntry } from "#core/session/EventLog";
 import { MessageText } from "#core/session/MessageText";
@@ -82,7 +83,7 @@ export class SessionProjection {
       };
     }
     if (entry.type === "custom_message") {
-      return subagentResult(seq, entry);
+      return subagentResult(seq, entry) ?? subagentNotice(seq, entry);
     }
     if (!isMessageEntry(entry)) {
       return undefined;
@@ -203,6 +204,25 @@ function subagentResult(
       content: MessageText.textOf(entry.content),
       details,
     }),
+    timestamp: Date.parse(entry.timestamp),
+  };
+}
+
+function subagentNotice(
+  seq: number,
+  entry: CustomMessageEntry
+): DurableEvent | undefined {
+  const details = SubagentNotice.detailsOf(entry);
+  if (details === undefined) {
+    return undefined;
+  }
+  return {
+    seq,
+    type: "subagent_notice",
+    messageId: entry.id,
+    jobId: details.jobId,
+    handle: details.handle,
+    text: SubagentNotice.line(details),
     timestamp: Date.parse(entry.timestamp),
   };
 }

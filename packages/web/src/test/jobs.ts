@@ -126,6 +126,18 @@ export function result(
   };
 }
 
+export function notice(seq: number, jobId: string): ServerEvent {
+  return {
+    seq,
+    type: "subagent_notice",
+    messageId: `entry-${seq}`,
+    jobId,
+    handle: "j1",
+    text: "⚠ j1 at 40% context · 80K/200K · 2 turns · 1m 0s",
+    timestamp: 0,
+  };
+}
+
 export function job(id: string, extra: Partial<JobView> = {}): JobView {
   return {
     id,

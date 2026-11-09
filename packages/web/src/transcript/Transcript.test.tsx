@@ -11,6 +11,7 @@ import { FIXTURE_EVENTS } from "../replay/fixture";
 import { HideThinking } from "../settings/Settings";
 import { mountPoint } from "../test/dom";
 import {
+  notice,
   result,
   spawnView,
   statusView,
@@ -476,6 +477,20 @@ describe("background subagents", () => {
       button.click();
     }
     expect(opened).toEqual(["call_a", "call_a", "call_b", "call_c", "call_d"]);
+  });
+
+  test("a context notice is a single plain line, not a card that opens a log", () => {
+    const { host } = paint([
+      settle(1, "call_a", spawnView("call_a", "audit the parser"), {
+        child: "call_a",
+      }),
+      notice(2, "call_a"),
+    ] as readonly DurableEvent[]);
+
+    expect(openers(host)).toHaveLength(1);
+    expect(host.textContent).toContain(
+      "⚠ j1 at 40% context · 80K/200K · 2 turns · 1m 0s"
+    );
   });
 
   test("only a row the server links to a log opens one; the rest are plain cards", () => {

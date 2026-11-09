@@ -8,6 +8,7 @@ import { Type } from "typebox";
 
 import readExtension from "#core/extensions/read/index";
 import { subagentResultView } from "#core/extensions/subagent/render";
+import { SubagentNotice } from "#core/extensions/subagent/SubagentNotice";
 import { SubagentResult } from "#core/extensions/subagent/SubagentResult";
 import { SubagentLogs } from "#core/shared/SubagentLogs";
 import { Tools } from "#core/shared/Tools";
@@ -341,6 +342,34 @@ test("a job's result crosses as its own row, painted like a subagent run and key
   ]);
 });
 
+test("a job's context notice crosses as one line of its own, never as a result", async () => {
+  const notice = SubagentNotice.of(
+    {
+      jobId: "call_job",
+      handle: "j22",
+      contextTokens: 402_000,
+      contextWindow: 1_000_000,
+      turns: 69,
+      cost: 9.8,
+      elapsedMs: 30 * 60_000,
+    },
+    [{ title: "bash zig build test", state: "done" }]
+  );
+  const p = await entriesOf({ type: "custom_message", ...notice });
+
+  expect(await p.drain()).toEqual([
+    {
+      seq: 1,
+      type: "subagent_notice",
+      messageId: "entry-0",
+      jobId: "call_job",
+      handle: "j22",
+      text: "⚠ j22 at 40% context · 402K/1.0M · 69 turns · 30m 0s",
+      timestamp: Date.parse("2026-08-01T10:17:47.104Z"),
+    },
+  ]);
+});
+
 test("a call links the child log it owns: a spawn its job, a run the log it wrote, a failed spawn and the other actions nothing", async () => {
   const previousHome = process.env.PIM_HOME_DIR;
   const calls = {
@@ -455,7 +484,7 @@ test("a call links the child log it owns: a spawn its job, a run the log it wrot
   }
 });
 
-test("other custom messages, and a result with no job, project nothing", async () => {
+test("other custom messages, and a result or notice with no job, project nothing", async () => {
   const p = await entriesOf(
     {
       type: "custom_message",
@@ -468,9 +497,16 @@ test("other custom messages, and a result with no job, project nothing", async (
       customType: SubagentResult.CUSTOM_TYPE,
       content: "[subagent job ? done]",
       display: true,
+    },
+    {
+      type: "custom_message",
+      customType: SubagentNotice.CUSTOM_TYPE,
+      content: "[subagent job ? at 40% context, still running]",
+      display: true,
+      details: { jobId: "call_job" },
     }
   );
 
   expect(await p.drain()).toEqual([]);
-  expect(p.head).toBe(2);
+  expect(p.head).toBe(3);
 });

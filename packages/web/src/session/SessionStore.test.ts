@@ -10,7 +10,7 @@ import type {
   ServerEvent,
   SessionSummaryView,
 } from "#protocol/ServerEvent";
-import { job, jobs, result, spawnView, statusView } from "../test/jobs";
+import { job, jobs, notice, result, spawnView, statusView } from "../test/jobs";
 import { toRows, type ToolRow } from "../transcript/rows";
 import { SessionStore } from "./SessionStore";
 
@@ -2334,6 +2334,40 @@ describe("background subagents", () => {
     expect(ids(target)).toEqual([]);
     expect(target.isStoppable()).toBe(false);
     expect(target.isRunning("s1")).toBe(false);
+  });
+
+  test("a context notice is one line of its own that leaves its job running and its result to come", () => {
+    const target = store();
+    feed(
+      target,
+      attached("s1"),
+      state(),
+      ...spawned(1, "a"),
+      jobs(job("a")),
+      notice(3, "a")
+    );
+
+    expect(ids(target)).toEqual(["a"]);
+    expect(target.isRunning("s1")).toBe(true);
+    expect(rows(target).slice(-1)).toEqual([
+      {
+        kind: "job_notice",
+        id: "entry-3",
+        text: "⚠ j1 at 40% context · 80K/200K · 2 turns · 1m 0s",
+      },
+    ]);
+
+    feed(target, result(4, "a", "done"));
+    expect(
+      rows(target).flatMap((row) =>
+        row.kind === "tool" ? [[row.id, row.state]] : [[row.id, row.kind]]
+      )
+    ).toEqual([
+      ["a", undefined],
+      ["entry-3", "job_notice"],
+      ["entry-4", "done"],
+    ]);
+    expect(ids(target)).toEqual([]);
   });
 
   test("a session running only jobs counts as running, here and in the sidebar", () => {

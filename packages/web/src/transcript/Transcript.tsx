@@ -13,6 +13,7 @@ import { SubagentRow } from "./SubagentRow";
 import {
   buildRows,
   extendRows,
+  type JobNoticeRow,
   type MessageRow,
   type NoticeRow,
   type Row,
@@ -56,6 +57,7 @@ export function Transcript(props: {
       <ToolRowView row={tool.row} onOpenSubagent={props.onOpenSubagent} />
     ),
     notice: NoticeRowView,
+    job_notice: JobNoticeRowView,
   };
 
   return (
@@ -224,6 +226,12 @@ const NOTICE_LABELS = {
   warn: "WARNING",
   error: "ERROR",
 } as const satisfies Record<NoticeRow["severity"], string>;
+
+function JobNoticeRowView(props: { readonly row: JobNoticeRow }) {
+  return (
+    <div class="truncate pl-2ch text-sm text-neutral-400">{props.row.text}</div>
+  );
+}
 
 function NoticeRowView(props: { readonly row: NoticeRow }) {
   return (
