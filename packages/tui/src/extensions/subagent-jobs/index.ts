@@ -196,6 +196,7 @@ function open(
       return "due";
     }
     const message = delivery.message;
+    // Accepted race: a notice sent while the parent's run settles enters pi's deferred queue, past this check. If its job finishes in that window, the result queues behind it and the parent spends a turn on a stale "still running" notice; pi's queue cannot be retracted.
     if (!delivery.dropped && place(message) === "due") {
       pi.sendMessage<JobMessage["details"]>(message, {
         triggerTurn: delivery.wake,
