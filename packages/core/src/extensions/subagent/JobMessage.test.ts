@@ -78,10 +78,29 @@ describe("JobMessage.key", () => {
 });
 
 describe("SubagentNotice", () => {
-  test("its one line names the job, its share and its usage, without the cost", () => {
+  test("its one line names the job and its share, then its usage", () => {
     expect(SubagentNotice.line(notice.details)).toBe(
-      "⚠ j1 at 40% context · 402K/1.0M · 69 turns · 30m 0s"
+      "⚠ j1 at 40% context · 69 turns · $9.80 · 30m 0s"
     );
+  });
+
+  test("rejects details missing any field its line reads", () => {
+    expect(SubagentNotice.detailsOf(notice)).toEqual(notice.details);
+    for (const [field, value] of [
+      ["handle", undefined],
+      ["turns", undefined],
+      ["cost", "9.8"],
+      ["elapsedMs", Number.NaN],
+      ["contextTokens", undefined],
+      ["contextWindow", 0],
+    ] as const) {
+      expect(
+        SubagentNotice.detailsOf({
+          ...notice,
+          details: { ...notice.details, [field]: value },
+        })
+      ).toBeUndefined();
+    }
   });
 
   test("flags a job only once it is past the threshold, with both sides known", () => {

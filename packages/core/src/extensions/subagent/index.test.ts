@@ -554,7 +554,7 @@ describe("subagent context notice", () => {
           customType: "subagent_notice",
           display: true,
           content: expect.stringContaining(
-            "[subagent job j1 at 40% context, still running]\n40K/100K · 1 turn · 0s · $0.00\n"
+            "[subagent job j1 at 40% context, still running]\n1 turn · $0.00 · 40.0%/100K · 0s\n"
           ),
           details: { jobId: "call-1", handle: "j1", contextTokens: 40_000 },
         },

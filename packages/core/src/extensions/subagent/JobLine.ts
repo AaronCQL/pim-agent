@@ -33,16 +33,6 @@ function oneLine(text: string): string {
     .trim();
 }
 
-/** `$0.12`. */
-function cost(value: number): string {
-  return `$${value.toFixed(2)}`;
-}
-
-/** `402K/1.0M`. */
-function fill(contextTokens: number, contextWindow: number): string {
-  return `${Format.formatTokens(contextTokens)}/${Format.formatTokens(contextWindow)}`;
-}
-
 function context(usage: JobUsage): readonly string[] {
   const { contextTokens, contextWindow } = usage;
   return contextWindow === undefined ||
@@ -56,7 +46,11 @@ function context(usage: JobUsage): readonly string[] {
 
 /** `4 turns`, `$0.12`, then `5.0%/1.0M` when the context is known. */
 function usage(job: JobUsage): readonly string[] {
-  return [Format.count(job.turns, "turn"), cost(job.cost), ...context(job)];
+  return [
+    Format.count(job.turns, "turn"),
+    `$${job.cost.toFixed(2)}`,
+    ...context(job),
+  ];
 }
 
 function parts(job: JobView, now: number): JobLineParts {
@@ -77,12 +71,4 @@ function text(job: JobView, now: number): string {
   ].join(" · ");
 }
 
-export const JobLine = {
-  SEPARATOR,
-  parts,
-  usage,
-  cost,
-  fill,
-  text,
-  handleNumber,
-};
+export const JobLine = { SEPARATOR, parts, usage, text, handleNumber };

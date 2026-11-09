@@ -59,12 +59,8 @@ function percent(details: SubagentNoticeDetails): string {
   return `${Math.floor((details.contextTokens / details.contextWindow) * 100)}%`;
 }
 
-function stats(details: SubagentNoticeDetails): readonly string[] {
-  return [
-    JobLine.fill(details.contextTokens, details.contextWindow),
-    Format.count(details.turns, "turn"),
-    Format.formatElapsed(details.elapsedMs),
-  ];
+function stats(usage: JobUsage, elapsedMs: number): readonly string[] {
+  return [...JobLine.usage(usage), Format.formatElapsed(elapsedMs)];
 }
 
 function of(
@@ -85,24 +81,28 @@ function of(
     customType: CUSTOM_TYPE,
     content: [
       `[subagent job ${details.handle} at ${percent(details)} context, still running]`,
-      [...stats(details), JobLine.cost(details.cost)].join(" · "),
+      stats(details, details.elapsedMs).join(" · "),
       ...SubagentResult.toolLines(details.tools),
-      "Your call: let it finish, steer it to wrap up, or steer it to hand off. If you hand off, it commits work in progress and reports what's done, what's left, its decisions and anything failing. Doing nothing is fine.",
+      "Your call: let it finish, steer it to wrap up, or steer it to hand off (tell it to commit work in progress and report what's done, what's left, its decisions and anything failing). Doing nothing is fine.",
     ].join("\n"),
     display: true,
     details,
   };
 }
 
-/** The one muted line every surface shows for a notice. */
+/** The one muted line every surface shows for a notice; its head already gives the share. */
 function line(details: SubagentNoticeDetails): string {
   return [
     `⚠ ${details.handle} at ${percent(details)} context`,
-    ...stats(details),
+    ...stats({ turns: details.turns, cost: details.cost }, details.elapsedMs),
   ].join(" · ");
 }
 
-/** A custom message's details, if it is a `subagent_notice` naming its job. */
+function isCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+/** A custom message's details, if it is a `subagent_notice` with every field `line` reads. */
 function detailsOf(message: {
   readonly customType: string;
   readonly details?: unknown;
@@ -112,8 +112,13 @@ function detailsOf(message: {
   }
   const details = Json.asRecord(message.details);
   return typeof details?.["jobId"] === "string" &&
-    typeof details["contextTokens"] === "number" &&
-    typeof details["contextWindow"] === "number"
+    typeof details["handle"] === "string" &&
+    isCount(details["contextTokens"]) &&
+    isCount(details["contextWindow"]) &&
+    details["contextWindow"] > 0 &&
+    isCount(details["turns"]) &&
+    isCount(details["cost"]) &&
+    isCount(details["elapsedMs"])
     ? (details as SubagentNoticeDetails)
     : undefined;
 }

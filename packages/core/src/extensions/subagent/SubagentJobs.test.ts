@@ -715,12 +715,12 @@ describe("SubagentJobs context notice", () => {
       display: true,
       content: [
         "[subagent job j1 at 40% context, still running]",
-        "402K/1.0M · 3 turns · 30m 0s · $7.50",
+        "3 turns · $7.50 · 40.2%/1.0M · 30m 0s",
         "Recent tool calls:",
         "- mcp_read b (done)",
         "- mcp_read c (done)",
         "- mcp_read d (done)",
-        "Your call: let it finish, steer it to wrap up, or steer it to hand off. If you hand off, it commits work in progress and reports what's done, what's left, its decisions and anything failing. Doing nothing is fine.",
+        "Your call: let it finish, steer it to wrap up, or steer it to hand off (tell it to commit work in progress and report what's done, what's left, its decisions and anything failing). Doing nothing is fine.",
       ].join("\n"),
       details: {
         jobId: "call-1",
