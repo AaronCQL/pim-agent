@@ -105,13 +105,8 @@ export type DurableEvent =
       readonly seq: number;
       readonly type: "subagent_notice";
       readonly messageId: string;
-      readonly jobId: string;
-      /** The job's short name in its session, `j3`. */
-      readonly handle: string;
       /** One line, the same on every surface. */
       readonly text: string;
-      /** Epoch ms. */
-      readonly timestamp: number;
     };
 
 /** Progress of a `reload`. */

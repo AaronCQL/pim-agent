@@ -484,12 +484,12 @@ describe("background subagents", () => {
       settle(1, "call_a", spawnView("call_a", "audit the parser"), {
         child: "call_a",
       }),
-      notice(2, "call_a"),
+      notice(2),
     ] as readonly DurableEvent[]);
 
     expect(openers(host)).toHaveLength(1);
     expect(host.textContent).toContain(
-      "⚠ j1 at 40% context · 80K/200K · 2 turns · 1m 0s"
+      "⚠ j1 at 40% context · 2 turns · $0.40 · 1m 0s"
     );
   });
 

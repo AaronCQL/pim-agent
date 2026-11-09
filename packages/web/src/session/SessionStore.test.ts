@@ -2344,7 +2344,7 @@ describe("background subagents", () => {
       state(),
       ...spawned(1, "a"),
       jobs(job("a")),
-      notice(3, "a")
+      notice(3)
     );
 
     expect(ids(target)).toEqual(["a"]);
@@ -2353,7 +2353,7 @@ describe("background subagents", () => {
       {
         kind: "job_notice",
         id: "entry-3",
-        text: "⚠ j1 at 40% context · 80K/200K · 2 turns · 1m 0s",
+        text: "⚠ j1 at 40% context · 2 turns · $0.40 · 1m 0s",
       },
     ]);
 

@@ -220,10 +220,7 @@ function subagentNotice(
     seq,
     type: "subagent_notice",
     messageId: entry.id,
-    jobId: details.jobId,
-    handle: details.handle,
     text: SubagentNotice.line(details),
-    timestamp: Date.parse(entry.timestamp),
   };
 }
 

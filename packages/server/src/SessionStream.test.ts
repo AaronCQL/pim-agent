@@ -858,7 +858,7 @@ test("carries a job's context notice to the client as soon as pi appends it", as
 
   expect(
     received().find((event) => event.type === "subagent_notice")
-  ).toMatchObject({ messageId: "n1", jobId: JOB.id, handle: JOB.handle });
+  ).toMatchObject({ messageId: "n1" });
   expect(received().some((event) => event.type === "subagent_result")).toBe(
     false
   );
