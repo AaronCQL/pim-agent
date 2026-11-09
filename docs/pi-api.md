@@ -26,7 +26,7 @@
 
 **Boundary entries are not messages**: entries a `turn_end`/`agent_before_settle` handler returns are committed by `_commitBoundaryDrafts`, which emits only `entry_appended` — no `message_start`/`message_end`. A renderer that only watches `message_end` never sees them.
 
-**Custom messages and the queues**: an idle `sendCustomMessage(m)` appends synchronously; with `triggerTurn: true` it does *not* append before `_prepareRun` (compaction check, `before_agent_start`), and is lost if that throws. While streaming it goes to `agent.steer`/`followUp`, and `clearQueue()` drops it silently — it returns only the user texts. pim's subagent results never go through those queues: `turn_end`/`agent_before_settle` handlers append them mid-run, the host's deliverer while idle (`SubagentResult.placement` checked right before every append).
+**Custom messages and the queues**: an idle `sendCustomMessage(m)` appends synchronously; with `triggerTurn: true` it does *not* append before `_prepareRun` (compaction check, `before_agent_start`), and is lost if that throws. While streaming it goes to `agent.steer`/`followUp`, and `clearQueue()` drops it silently — it returns only the user texts. pim's subagent results and notices never go through those queues: `turn_end`/`agent_before_settle` handlers append them mid-run, the host's deliverer while idle (`JobMessage.placement` checked right before every append).
 
 **Escape belongs to pi**: `app.interrupt` is a reserved binding, so an extension shortcut on `escape` is skipped. `ctx.ui.onTerminalInput` listeners run before pi-tui filters key releases, so under the Kitty protocol they see a press's repeats and release too.
 

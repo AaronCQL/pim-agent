@@ -69,4 +69,4 @@ function placement(session: Session, message: JobMessage): Placement {
   return away ? "elsewhere" : "due";
 }
 
-export const JobMessage = { jobIdOf, key, placement };
+export const JobMessage = { key, placement };
