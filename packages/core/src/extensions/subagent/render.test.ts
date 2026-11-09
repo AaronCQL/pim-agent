@@ -2,9 +2,23 @@ import { describe, expect, test } from "bun:test";
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import type { ToolViewInput } from "../../shared/Tools";
 import { AnsiPainter } from "../../view/AnsiPainter";
-import type { subagentSchema } from "./schema";
+import type { ViewBlock } from "../../view/ViewBlock";
+import type {
+  SubagentInput,
+  subagentSchema,
+  SubagentToolDetails,
+} from "./schema";
+import type {
+  SubagentResultDetails,
+  SubagentResultMessage,
+} from "./SubagentResult";
 import type { SubagentDetails } from "./subagent";
-import { formatCallTitle, formatTopLine, subagentView } from "./render";
+import {
+  formatCallTitle,
+  formatTopLine,
+  subagentResultView,
+  subagentView,
+} from "./render";
 
 type SubagentViewInput = ToolViewInput<typeof subagentSchema, SubagentDetails>;
 
@@ -50,7 +64,8 @@ function viewInput(args: {
 }): SubagentViewInput {
   const settled = args.settled ?? true;
   return {
-    args: { prompt: args.prompt ?? "investigate" },
+    // Old sessions stored no `action`.
+    args: { prompt: args.prompt ?? "investigate" } as SubagentInput,
     ...(settled
       ? {
           result: {
@@ -76,15 +91,21 @@ describe("subagent render formatting", () => {
   });
 });
 
+const promptSection = (text: string): ViewBlock => ({
+  kind: "section",
+  label: "Prompt",
+  content: [{ kind: "text", text }],
+});
+
 describe("subagentView", () => {
-  test("titles the row with the prompt as markdown", () => {
-    const view = subagentView(
-      viewInput({ prompt: "Review **bold** and `code`", details: baseDetails })
-    );
+  test("a run is labelled Subagent and titled with what it cost, muted, with muted dots", () => {
+    const view = subagentView(viewInput({ details: baseDetails }));
 
     expect(view.label).toBe("Subagent");
-    expect(view.title).toEqual([
-      { kind: "markdown", text: "Review **bold** and `code`" },
+    expect(view.summary).toBeUndefined();
+    expect(AnsiPainter.paint(view.title, stubTheme)).toEqual([
+      "<muted>3 turns</muted><muted> ⬝ </muted><muted>$0.23</muted>" +
+        "<muted> ⬝ </muted><muted>0.4%/1.0M</muted>",
     ]);
   });
 
@@ -102,16 +123,7 @@ describe("subagentView", () => {
     expect(subagentView(viewInput({ text: "boom" })).labelTone).toBe("error");
   });
 
-  test("summarizes what the run cost, muted, with muted dots", () => {
-    const view = subagentView(viewInput({ details: baseDetails }));
-
-    expect(AnsiPainter.paint(view.summary ?? [], stubTheme)).toEqual([
-      "<muted>3 turns</muted><muted> ⬝ </muted><muted>$0.23</muted>" +
-        "<muted> ⬝ </muted><muted>0.4%/1.0M</muted>",
-    ]);
-  });
-
-  test("summarizes turns and cost alone when no context was reported", () => {
+  test("titles turns and cost alone when no context was reported", () => {
     const view = subagentView(
       viewInput({
         details: detailsWith({
@@ -120,65 +132,53 @@ describe("subagentView", () => {
       })
     );
 
-    expect(AnsiPainter.paint(view.summary ?? [], stubTheme)).toEqual([
+    expect(AnsiPainter.paint(view.title, stubTheme)).toEqual([
       "<muted>3 turns</muted><muted> ⬝ </muted><muted>$0.23</muted>",
     ]);
   });
 
-  test("warns on the summary while the run is still streaming", () => {
+  test("warns on the title while the run is still streaming", () => {
     const view = subagentView(
       viewInput({ details: baseDetails, isPartial: true })
     );
 
-    expect(AnsiPainter.paint(view.summary ?? [], stubTheme)[0]).toContain(
+    expect(AnsiPainter.paint(view.title, stubTheme)[0]).toContain(
       "<warning>3 turns</warning>"
     );
   });
 
-  test("has no summary before any details land", () => {
-    expect(subagentView(viewInput({ settled: false })).summary).toEqual([]);
+  test("has an empty title before any details land", () => {
+    expect(subagentView(viewInput({ settled: false })).title).toEqual([]);
   });
 
-  test("has no summary for a failure pi stripped the details from", () => {
+  test("has an empty title for a failure pi stripped the details from", () => {
     const stripped = {} as SubagentDetails;
 
-    expect(subagentView(viewInput({ details: stripped })).summary).toEqual([]);
+    expect(subagentView(viewInput({ details: stripped })).title).toEqual([]);
   });
 
-  test("bodies the child's whole narration, not the model-facing content", () => {
+  test("bodies the prompt, then the child's whole narration, not the model-facing content", () => {
     const details = detailsWith({
       fullOutput: "I'll grep first.\n\nFinal **answer**",
       returnedOutput: "Final **answer**",
     });
     const view = subagentView(viewInput({ text: "Final **answer**", details }));
 
-    expect(view.body?.[0]).toEqual({
-      kind: "markdown",
-      text: "I'll grep first.\n\nFinal **answer**",
-    });
+    expect(view.body?.slice(0, 2)).toEqual([
+      promptSection("investigate"),
+      { kind: "markdown", text: "I'll grep first.\n\nFinal **answer**" },
+    ]);
   });
 
-  test("keeps a multi-line prompt whole as a body section", () => {
-    const view = subagentView(
-      viewInput({
-        prompt: "Find parseConfig\nand say which are tests",
-        details: baseDetails,
-      })
-    );
+  test("keeps a multi-line prompt whole, and shows it before any result", () => {
+    const prompt = "Find parseConfig\nand say which are tests";
 
-    expect(view.body?.[0]).toEqual({
-      kind: "section",
-      label: "Prompt",
-      content: [
-        { kind: "text", text: "Find parseConfig\nand say which are tests" },
-      ],
-    });
-  });
-
-  test("leaves a single-line prompt to the title alone", () => {
-    const view = subagentView(viewInput({ details: baseDetails }));
-
-    expect(view.body?.some((block) => block.kind === "section")).toBe(false);
+    expect(
+      subagentView(viewInput({ prompt, details: baseDetails })).body?.[0]
+    ).toEqual(promptSection(prompt));
+    expect(subagentView(viewInput({ prompt, settled: false })).body).toEqual([
+      promptSection(prompt),
+    ]);
   });
 
   test("foots the body with the model the child ran on", () => {
@@ -192,11 +192,190 @@ describe("subagentView", () => {
 
   test("falls back to the error text when pi stripped the details", () => {
     expect(subagentView(viewInput({ text: "boom" })).body).toEqual([
+      promptSection("investigate"),
       { kind: "markdown", text: "boom" },
     ]);
   });
 
   test("omits a body with nothing in it", () => {
-    expect(subagentView(viewInput({ text: "" })).body).toEqual([]);
+    expect(subagentView(viewInput({ prompt: " ", text: "" })).body).toEqual([]);
+  });
+});
+
+describe("subagentView, background jobs", () => {
+  const spawnDetails = {
+    action: "spawn",
+    jobId: "call-1",
+    handle: "j1",
+    prompt: "Audit the parser\nand its callers",
+    owner: { pid: 1, hostname: "h" },
+  } as const;
+
+  function call(
+    args: Record<string, unknown>,
+    details?: SubagentToolDetails,
+    text = ""
+  ) {
+    return subagentView({
+      args: args as SubagentInput,
+      ...(details === undefined
+        ? {}
+        : { result: { content: [{ type: "text", text }], details } }),
+      isPartial: false,
+      cwd: "/repo",
+    });
+  }
+
+  test("a spawn is titled by its handle, then started, with the prompt in the body", () => {
+    const view = call(
+      { action: "spawn", prompt: spawnDetails.prompt },
+      spawnDetails,
+      "Started job j1"
+    );
+
+    expect(view.label).toBe("Subagent");
+    expect(view.labelTone).toBe("accent");
+    expect(view.summary).toBeUndefined();
+    expect(AnsiPainter.paint(view.title, stubTheme)).toEqual([
+      "j1<muted> ⬝ </muted><muted>started</muted>",
+    ]);
+    expect(view.body).toEqual([promptSection(spawnDetails.prompt)]);
+  });
+
+  test("a synchronous spawn still renders as the run it awaited", () => {
+    const view = call(
+      { action: "spawn", prompt: "investigate" },
+      baseDetails,
+      "body"
+    );
+
+    expect(view.label).toBe("Subagent");
+    expect(view.body?.[1]).toEqual({ kind: "markdown", text: "body" });
+  });
+
+  test("status, stop and steer are titled by the job they name, then their action", () => {
+    const status = call(
+      { action: "status" },
+      { action: "status", jobs: [] },
+      "No subagent jobs are running."
+    );
+    const stop = call(
+      { action: "stop", id: "j1", reason: "wrong approach" },
+      { action: "stop", jobIds: ["call-1"], reason: "wrong approach" },
+      "[stopped]"
+    );
+    const steer = call(
+      { action: "steer", id: "j1", message: "skip docs" },
+      { action: "steer", jobId: "call-1", message: "skip docs" },
+      "Sent"
+    );
+
+    expect(status.label).toBe("Subagent");
+    expect(status.title).toEqual([
+      { kind: "spans", spans: [{ text: "status" }] },
+    ]);
+    expect(status.body).toEqual([
+      { kind: "text", text: "No subagent jobs are running." },
+    ]);
+    expect(stop.label).toBe("Subagent");
+    expect(AnsiPainter.paint(stop.title, stubTheme)).toEqual([
+      "j1<muted> ⬝ </muted>stop<muted> ⬝ </muted><muted>wrong approach</muted>",
+    ]);
+    expect(steer.label).toBe("Subagent");
+    expect(AnsiPainter.paint(steer.title, stubTheme)).toEqual([
+      "j1<muted> ⬝ </muted>steer",
+    ]);
+    expect(steer.body?.[0]).toEqual({
+      kind: "section",
+      label: "Message",
+      content: [{ kind: "text", text: "skip docs" }],
+    });
+  });
+
+  test("an action still running, or one that failed, keeps its own label and title", () => {
+    const view = call({ action: "status", id: "j1" });
+
+    expect(view.labelTone).toBe("warning");
+    expect(view.label).toBe("Subagent");
+    expect(AnsiPainter.paint(view.title, stubTheme)).toEqual([
+      "j1<muted> ⬝ </muted>status",
+    ]);
+    expect(view.body).toEqual([]);
+  });
+});
+
+describe("subagentResultView", () => {
+  function result(
+    details: Partial<SubagentResultDetails>,
+    content = "[subagent job j1 done]\nbody"
+  ): SubagentResultMessage {
+    return {
+      customType: "subagent_result",
+      content,
+      display: true,
+      details: {
+        ...baseDetails,
+        jobId: "call-1",
+        handle: "j1",
+        prompt: "investigate",
+        state: "done",
+        ...details,
+      },
+    };
+  }
+
+  test("lays a finished job out as its run, titled by handle and usage", () => {
+    const view = subagentResultView(result({}));
+
+    expect(view.label).toBe("Subagent");
+    expect(view.labelTone).toBe("accent");
+    expect(view.summary).toBeUndefined();
+    expect(AnsiPainter.paint(view.title, stubTheme)).toEqual([
+      "j1<muted> ⬝ </muted>" +
+        "<muted>3 turns</muted><muted> ⬝ </muted><muted>$0.23</muted><muted> ⬝ </muted><muted>0.4%/1.0M</muted>",
+    ]);
+    expect(view.body?.slice(0, 2)).toEqual([
+      promptSection("investigate"),
+      { kind: "markdown", text: "body" },
+    ]);
+  });
+
+  test("titles the handle alone when a finished run reported no usage", () => {
+    const view = subagentResultView(
+      result({ usage: undefined } as unknown as Partial<SubagentResultDetails>)
+    );
+
+    expect(AnsiPainter.paint(view.title, stubTheme)).toEqual(["j1"]);
+  });
+
+  test("tones and explains a job that did not finish", () => {
+    const failed = subagentResultView(
+      result(
+        { state: "failed" },
+        "[subagent job j1 failed]\nSubagent failed: error. Error: boom.\nPartial output before failure:\nbody"
+      )
+    );
+    const stopped = subagentResultView(
+      result({ state: "stopped", stoppedBy: "agent", reason: "wrong approach" })
+    );
+
+    expect(failed.labelTone).toBe("error");
+    expect(AnsiPainter.paint(failed.title, stubTheme)[0]).toStartWith(
+      "j1<muted> ⬝ </muted><error>failed</error>"
+    );
+    expect(failed.body?.[0]).toEqual({
+      kind: "notice",
+      severity: "error",
+      text: "Subagent failed: error. Error: boom.",
+    });
+    expect(stopped.labelTone).toBe("warning");
+    expect(AnsiPainter.paint(stopped.title, stubTheme)[0]).toStartWith(
+      "j1<muted> ⬝ </muted><warning>stopped by agent</warning>"
+    );
+    expect(stopped.body?.[0]).toEqual({
+      kind: "notice",
+      severity: "info",
+      text: "wrong approach",
+    });
   });
 });

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { appendFile, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { appendFileSync } from "node:fs";
+import { appendFile, mkdtemp, rm, utimes } from "node:fs/promises";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type {
@@ -9,18 +10,25 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import { SessionLease } from "#core/session/SessionLease";
-import registerSessionLease from "./index";
+import { until } from "#core/shared/fixtures/wait";
+import sessionLease from "./index";
+import { SessionGate } from "./SessionGate";
 
 type Notification = { readonly message: string; readonly level: string };
 type Handler = (event: never, ctx: never) => unknown;
 
 type Harness = {
+  readonly gate: SessionGate;
   readonly notifications: readonly Notification[];
   readonly sent: readonly string[];
   readonly switched: readonly string[];
   aborts(): number;
   setIdle(next: boolean): void;
   setSession(file: string | undefined, entryCount?: number): void;
+  /** Appends the way pi does: into memory, then synchronously onto the file. */
+  append(index: number): void;
+  /** Has pi append `count` entries just before the extension next reads pi's memory. */
+  appendBeforeNextRead(count: number): void;
   emit(event: string, payload?: object): Promise<unknown>;
   input(text: string): Promise<InputEventResult>;
   run(name: string, args?: string): Promise<void>;
@@ -63,13 +71,33 @@ async function holdForeignLease(path: string): Promise<void> {
   await Bun.write(SessionLease.pathFor(path), `${JSON.stringify(FOREIGN)}\n`);
 }
 
+/** A lease `acquire` would steal: its process on this host is gone, or it stopped heartbeating. */
+async function holdAbandonedLease(
+  path: string,
+  how: "dead" | "silent"
+): Promise<void> {
+  const exited = Bun.spawn(["true"]);
+  await exited.exited;
+  const pid = how === "dead" ? exited.pid : process.ppid;
+  const lease = SessionLease.pathFor(path);
+  await Bun.write(
+    lease,
+    `${JSON.stringify({ ...FOREIGN, pid, hostname: hostname() })}\n`
+  );
+  if (how === "silent") {
+    const longAgo = new Date(Date.now() - 60 * 60_000);
+    await utimes(lease, longAgo, longAgo);
+  }
+}
+
 function nextMacrotask(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 function createHarness(): Harness {
   let sessionFile: string | undefined;
-  let entries: unknown[] = [];
+  let ids: string[] = [];
+  let beforeRead: (() => void) | undefined;
   let idle = true;
   let aborts = 0;
   const notifications: Notification[] = [];
@@ -85,7 +113,8 @@ function createHarness(): Harness {
     },
     sessionManager: {
       getSessionFile: () => sessionFile,
-      getEntries: () => entries,
+      getEntries: () => known().map((id) => ({ id })),
+      getEntry: (id: string) => (known().includes(id) ? { id } : undefined),
     },
     isIdle: () => idle,
     abort(): void {
@@ -96,6 +125,13 @@ function createHarness(): Harness {
       return { cancelled: false };
     },
   };
+
+  function known(): readonly string[] {
+    const hook = beforeRead;
+    beforeRead = undefined;
+    hook?.();
+    return ids;
+  }
 
   const handlers = new Map<string, Handler[]>();
   const commands = new Map<string, (args: string, ctx: never) => unknown>();
@@ -114,9 +150,11 @@ function createHarness(): Harness {
     },
   } as unknown as ExtensionAPI;
 
-  registerSessionLease(api);
+  const gate = new SessionGate();
+  sessionLease({ gate })(api);
 
   const harness: Harness = {
+    gate,
     notifications,
     sent,
     switched,
@@ -126,7 +164,20 @@ function createHarness(): Harness {
     },
     setSession(file: string | undefined, entryCount = 0): void {
       sessionFile = file;
-      entries = Array.from({ length: entryCount }, (_, i) => i);
+      ids = Array.from({ length: entryCount }, (_, i) => `e${i}`);
+    },
+    append(index: number): void {
+      ids.push(`e${index}`);
+      if (sessionFile !== undefined) {
+        appendFileSync(sessionFile, entryLine(index));
+      }
+    },
+    appendBeforeNextRead(count: number): void {
+      beforeRead = () => {
+        for (let i = 0; i < count; i++) {
+          harness.append(ids.length);
+        }
+      };
     },
     async emit(event: string, payload: object = {}): Promise<unknown> {
       let result: unknown;
@@ -212,10 +263,19 @@ test("input is swallowed and auto-synced once another writer appends", async () 
 });
 
 test("an out-of-turn write from this terminal is not staleness", async () => {
-  const { harness, path } = await started("self-write", 2);
+  const { harness } = await started("self-write", 2);
 
-  await appendEntries(path, 1);
-  harness.setSession(path, 3);
+  harness.append(2);
+
+  await expect(harness.input("hello")).resolves.toEqual({ action: "continue" });
+  expect(harness.notifications).toEqual([]);
+});
+
+test("results pi appends while the gate measures the file are not staleness", async () => {
+  const { harness } = await started("racing-results", 2);
+
+  harness.appendBeforeNextRead(2);
+  await expect(harness.gate.check()).resolves.toBe("open");
 
   await expect(harness.input("hello")).resolves.toEqual({ action: "continue" });
   expect(harness.notifications).toEqual([]);
@@ -379,4 +439,81 @@ test("a session switch re-points the gate at the new file", async () => {
   await holdForeignLease(next);
 
   await expect(harness.input("hello")).resolves.toEqual({ action: "handled" });
+});
+
+test("the gate is open while nobody else has touched the session", async () => {
+  const { harness } = await started("gate-open", 2);
+
+  await expect(harness.gate.check()).resolves.toBe("open");
+});
+
+test("the gate is held while another surface runs a turn", async () => {
+  const { harness, path } = await started("gate-held", 2);
+  await holdForeignLease(path);
+
+  await expect(harness.gate.check()).resolves.toBe("held");
+  expect(harness.sent).toEqual([]);
+});
+
+test("a stale gate catches up once, however often it is asked", async () => {
+  const { harness, path } = await started("gate-stale", 2);
+  await appendEntries(path, 1);
+
+  await expect(harness.gate.check()).resolves.toBe("stale");
+  await expect(harness.gate.check()).resolves.toBe("stale");
+  await nextMacrotask();
+
+  expect(harness.sent).toEqual(["/sync"]);
+  expect(harness.notifications[0]?.message).toContain("continued elsewhere");
+});
+
+test("a lease another surface is still writing holds the gate", async () => {
+  const { harness, path } = await started("gate-torn", 2);
+  await Bun.write(SessionLease.pathFor(path), '{"pid": 12');
+
+  await expect(harness.gate.check()).resolves.toBe("held");
+  await expect(harness.input("hello")).resolves.toEqual({ action: "handled" });
+  expect(harness.notifications[0]?.message).toBe(
+    "Another surface is running a turn. Try again when it finishes."
+  );
+});
+
+test.each(["dead", "silent"] as const)(
+  "a lease left by a %s process on this host holds nothing",
+  async (how) => {
+    const { harness, path } = await started(`abandoned-${how}`, 2);
+    await holdAbandonedLease(path, how);
+
+    await expect(harness.gate.check()).resolves.toBe("open");
+    await expect(harness.input("hello")).resolves.toEqual({
+      action: "continue",
+    });
+    await harness.run("sync");
+    expect(harness.switched).toEqual([path]);
+  }
+);
+
+test("a stale gate asked while the session closes does not catch up", async () => {
+  const { harness, path } = await started("gate-closing", 2);
+  await appendEntries(path, 1);
+
+  await harness.emit("session_shutdown");
+  await expect(harness.gate.check()).resolves.toBe("stale");
+  await nextMacrotask();
+
+  expect(harness.sent).toEqual([]);
+  expect(harness.notifications).toEqual([]);
+});
+
+test("the gate reports a change when the lease file does", async () => {
+  const { harness, path } = await started("gate-change", 2);
+  let changes = 0;
+  harness.gate.onChange(() => {
+    changes += 1;
+  });
+
+  await holdForeignLease(path);
+
+  await until(() => changes > 0, "the gate to report the new lease");
+  await expect(harness.gate.check()).resolves.toBe("held");
 });

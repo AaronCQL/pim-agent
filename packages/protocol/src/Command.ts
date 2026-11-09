@@ -29,6 +29,7 @@ export type Command =
       readonly text: string;
       readonly attachments?: readonly AttachmentRef[];
     }
+  /** Stops the turn and every background subagent; fails only when neither was running. */
   | { readonly id: string; readonly type: "cancel"; readonly sessionId: string }
   /** Take back queued messages without stopping the turn; returned in `restored`. */
   | {
@@ -161,7 +162,7 @@ export type Command =
       readonly path: string;
       readonly spans: readonly LineSpan[];
     }
-  /** Refused while any session in the same cwd is mid-turn. */
+  /** Refused while any session in the same cwd is mid-turn or running subagents. */
   | {
       readonly id: string;
       readonly type: "checkout";
@@ -183,7 +184,7 @@ export type Command =
       /** Include both names of a renamed file. */
       readonly paths: readonly string[];
     }
-  /** `callId` is the parent's tool call; `sessionId` must be this connection's session. */
+  /** `callId` is the parent's tool call, which is also a job's `id`; `sessionId` must be this connection's session. */
   | {
       readonly id: string;
       readonly type: "watch_subagent";
@@ -197,7 +198,7 @@ export type Command =
       readonly type: "unwatch_subagent";
       readonly callId: string;
     }
-  /** Update and restart; refused while any session is mid-turn unless `force`. */
+  /** Update and restart; refused while any session is mid-turn or running subagents, unless `force`. */
   | { readonly id: string; readonly type: "reload"; readonly force?: boolean }
   /** Answers a `ui_request`; refused once it is settled. */
   | {

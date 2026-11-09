@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 
+import { SubagentJobs } from "#core/extensions/subagent/SubagentJobs";
 import { Daemon, type Surface } from "./Daemon";
 import { build } from "./index";
 import type { SurfaceName } from "./Surfaces";
@@ -36,7 +37,9 @@ test.each<Case>([
   [["--mode", "telegram"], ["telegram"]],
   [["--mode", "daemon", "--surfaces", "telegram"], ["telegram"]],
 ])("%p builds the %p surfaces and no others", (args, expected) => {
-  expect(build(args).map((surface) => surface.name)).toEqual(expected);
+  expect(
+    build(args, new SubagentJobs()).map((surface) => surface.name)
+  ).toEqual(expected);
 });
 
 test("a telegram surface with no token anywhere leaves the web surface serving", async () => {
@@ -49,8 +52,11 @@ test("a telegram surface with no token anywhere leaves the web surface serving",
       return { stop: async () => {} };
     },
   };
-  const [telegram] = build(["--mode", "telegram", "--config-dir", tmp]);
-  const daemon = new Daemon([web, telegram!]);
+  const [telegram] = build(
+    ["--mode", "telegram", "--config-dir", tmp],
+    new SubagentJobs()
+  );
+  const daemon = new Daemon([web, telegram!], new SubagentJobs());
 
   expect(await daemon.start()).toEqual(["web"]);
   expect(serving).toBe(true);

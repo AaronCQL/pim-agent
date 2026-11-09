@@ -10,6 +10,7 @@ import type {
   ServerEvent,
   SessionSummaryView,
 } from "#protocol/ServerEvent";
+import { job, jobs, result, spawnView, statusView } from "../test/jobs";
 import { toRows, type ToolRow } from "../transcript/rows";
 import { SessionStore } from "./SessionStore";
 
@@ -1983,5 +1984,402 @@ describe("the server's queue", () => {
     expect(trailing(target)).toEqual([
       ["use the other file\n\nand mention the tide", true],
     ]);
+  });
+});
+
+describe("background subagents", () => {
+  function state(
+    extra: Partial<Extract<ServerEvent, { type: "session_state" }>> = {}
+  ): ServerEvent {
+    return {
+      type: "session_state",
+      writable: true,
+      cwd: "/repo",
+      model: "sonnet",
+      thinking: "off",
+      cost: 0,
+      status: "idle",
+      ...extra,
+    };
+  }
+
+  type Sent = { readonly type: string } & Record<string, unknown>;
+
+  function sent(
+    target: SessionStore,
+    answer: (command: Sent) => Partial<ResponseEvent> = () => ({})
+  ): readonly Sent[] {
+    const seen: Sent[] = [];
+    target.client.send = (async (command: Sent) => {
+      seen.push(command);
+      return { type: "response", id: "1", success: true, ...answer(command) };
+    }) as typeof target.client.send;
+    return seen;
+  }
+
+  function ids(target: SessionStore): readonly string[] {
+    return target.state.jobs.map((one) => one.id);
+  }
+
+  function spawned(seq: number, callId: string): readonly ServerEvent[] {
+    const view = spawnView(callId, `task ${callId}`);
+    return [
+      {
+        seq,
+        type: "message",
+        messageId: `m${seq}`,
+        role: "assistant",
+        text: "",
+        timestamp: 0,
+        toolCalls: [
+          { callId, name: "subagent", view, child: { jobId: callId } },
+        ],
+      },
+      {
+        seq: seq + 1,
+        type: "tool_result",
+        callId,
+        name: "subagent",
+        view,
+        isError: false,
+        child: { jobId: callId, handle: "j1" },
+      },
+    ];
+  }
+
+  test("each list replaces the last, and a switch leaves the old session's behind", () => {
+    const target = store();
+    feed(target, attached("s1"), jobs(job("a"), job("b")));
+    expect(ids(target)).toEqual(["a", "b"]);
+
+    feed(target, jobs(job("b")));
+    expect(ids(target)).toEqual(["b"]);
+
+    // A resume keeps the list on screen until its handshake brings the new one.
+    feed(target, attached("s1", 4));
+    expect(ids(target)).toEqual(["b"]);
+    feed(target, jobs(), state());
+    expect(ids(target)).toEqual([]);
+
+    feed(target, jobs(job("c")));
+    feed(target, attached("s2"));
+    expect(ids(target)).toEqual([]);
+  });
+
+  test("stop is offered while a turn or a job runs, and not once both are done", () => {
+    const target = store();
+    feed(target, attached("s1"), state());
+    expect(target.isStoppable()).toBe(false);
+
+    feed(target, jobs(job("a")));
+    expect(target.isBusy()).toBe(false);
+    expect(target.isStoppable()).toBe(true);
+
+    feed(target, state({ status: "streaming" }), jobs());
+    expect(target.isStoppable()).toBe(true);
+
+    feed(target, state());
+    expect(target.isStoppable()).toBe(false);
+  });
+
+  test("a message sent while only jobs run starts a turn instead of queueing", async () => {
+    const target = store();
+    const commands = sent(target);
+    feed(target, attached("s1"), state(), jobs(job("a")));
+
+    await target.prompt("what are they doing?");
+    flush();
+    expect(commands.map((command) => command.type)).toEqual(["user_message"]);
+    expect(target.trailing().map((row) => row.queued === true)).toEqual([
+      false,
+    ]);
+
+    feed(target, state({ status: "streaming" }));
+    await target.prompt("and then?");
+    flush();
+    expect(target.trailing().map((row) => row.queued === true)).toEqual([
+      false,
+      true,
+    ]);
+  });
+
+  test("an idle cancel stops the jobs, and their results land with nothing left to stop", async () => {
+    const target = store();
+    const commands = sent(target, (command) => {
+      if (command.type === "cancel") {
+        // The server empties the list before it answers.
+        target.ingest(jobs());
+      }
+      return { restored: [] };
+    });
+    feed(
+      target,
+      attached("s1"),
+      ...spawned(1, "a"),
+      ...spawned(3, "b"),
+      state(),
+      jobs(job("a"), job("b"))
+    );
+
+    expect(await target.cancel()).toBe("");
+    flush();
+    expect(commands).toEqual([{ type: "cancel", sessionId: "s1" }]);
+    expect(target.isStoppable()).toBe(false);
+
+    feed(target, result(5, "a", "stopped"), result(6, "b", "stopped"));
+    expect(target.isStoppable()).toBe(false);
+    expect(
+      rows(target).flatMap((row) =>
+        row.kind === "tool" ? [[row.id, row.child, row.state]] : []
+      )
+    ).toEqual([
+      ["a", "a", undefined],
+      ["b", "b", undefined],
+      ["entry-5", "a", "stopped"],
+      ["entry-6", "b", "stopped"],
+    ]);
+  });
+
+  test("a result is its own row, keyed by its entry and opening its job's log", () => {
+    const target = store();
+    feed(
+      target,
+      attached("s1"),
+      ...spawned(1, "a"),
+      result(3, "a", "done"),
+      result(4, "b", "failed"),
+      result(5, "c", "interrupted"),
+      result(6, "d", "stopped")
+    );
+
+    expect(
+      rows(target).flatMap((row) =>
+        row.kind === "tool"
+          ? [[row.id, row.name, row.child, row.isError, row.isPartial]]
+          : []
+      )
+    ).toEqual([
+      ["a", "subagent", "a", false, false],
+      ["entry-3", "subagent", "a", false, false],
+      ["entry-4", "subagent", "b", true, false],
+      ["entry-5", "subagent", "c", true, false],
+      ["entry-6", "subagent", "d", false, false],
+    ]);
+  });
+
+  test("a result delivered twice is drawn once", () => {
+    const target = store();
+    feed(
+      target,
+      attached("s1"),
+      result(3, "a", "done"),
+      result(3, "a", "done")
+    );
+
+    expect(rows(target).map((row) => row.id)).toEqual(["entry-3"]);
+  });
+
+  test("a result that lands mid-turn sits where a replay of it would", () => {
+    const user: ServerEvent = {
+      seq: 1,
+      type: "message",
+      messageId: "u1",
+      role: "user",
+      text: "audit it",
+      timestamp: 0,
+    };
+    const [call, settled] = spawned(2, "a") as [ServerEvent, ServerEvent];
+    const waiting: ServerEvent = {
+      seq: 5,
+      type: "message",
+      messageId: "m5",
+      role: "assistant",
+      text: "it is back",
+      timestamp: 0,
+    };
+    const view = spawnView("a", "task a");
+
+    const live = store();
+    const frames = painted(
+      live,
+      [
+        attached("s1"),
+        user,
+        state({ status: "streaming" }),
+        { type: "message_start", role: "assistant", messageId: "live-1" },
+        {
+          type: "tool_call",
+          callId: "a",
+          name: "subagent",
+          messageId: "live-1",
+          view,
+          child: { jobId: "a" },
+        },
+        {
+          type: "tool_end",
+          callId: "a",
+          view,
+          isError: false,
+          child: { jobId: "a", handle: "j1" },
+        },
+      ],
+      [call, settled, { type: "message_retire", messageId: "live-1" }],
+      [
+        { type: "message_start", role: "assistant", messageId: "live-2" },
+        { type: "text_delta", messageId: "live-2", delta: "it is back" },
+        result(4, "a", "done"),
+      ],
+      [waiting, { type: "message_retire", messageId: "live-2" }, state()]
+    );
+    expect(frames).toEqual([
+      ["u1", "a"],
+      ["u1", "a"],
+      ["u1", "a", "entry-4", "live-2"],
+      ["u1", "a", "entry-4", "m5"],
+    ]);
+
+    const replayed = store();
+    feed(
+      replayed,
+      attached("s1", 5),
+      user,
+      call,
+      settled,
+      result(4, "a", "done"),
+      waiting,
+      state()
+    );
+    expect(rows(replayed)).toEqual(rows(live));
+  });
+
+  test("a row opens the log the server names, and stops when the call fails", () => {
+    const target = store();
+    const view = spawnView("a", "audit the parser");
+    feed(
+      target,
+      attached("s1"),
+      state({ status: "streaming" }),
+      { type: "message_start", role: "assistant", messageId: "live-1" },
+      {
+        type: "tool_call",
+        callId: "a",
+        name: "subagent",
+        messageId: "live-1",
+        view,
+        child: { jobId: "a" },
+      },
+      {
+        type: "tool_call",
+        callId: "b",
+        name: "subagent",
+        messageId: "live-1",
+        view,
+        child: { jobId: "b" },
+      },
+      {
+        type: "tool_call",
+        callId: "c",
+        name: "subagent",
+        messageId: "live-1",
+        view: statusView("a"),
+      }
+    );
+    const opens = (): readonly unknown[] =>
+      ["a", "b", "c"].map((callId) => {
+        const row = toolRow(target, callId);
+        return [row?.child, row?.handle];
+      });
+    expect(opens()).toEqual([
+      ["a", undefined],
+      ["b", undefined],
+      [undefined, undefined],
+    ]);
+
+    feed(
+      target,
+      {
+        type: "tool_end",
+        callId: "a",
+        view,
+        isError: false,
+        child: { jobId: "a", handle: "j1" },
+      },
+      { type: "tool_end", callId: "b", view, isError: true }
+    );
+    expect(opens()).toEqual([
+      ["a", "j1"],
+      [undefined, undefined],
+      [undefined, undefined],
+    ]);
+
+    feed(target, {
+      seq: 1,
+      type: "tool_result",
+      callId: "b",
+      name: "subagent",
+      view,
+      isError: true,
+    });
+    expect(toolRow(target, "b")?.child).toBeUndefined();
+  });
+
+  test("a result takes its job off the list, even before the next list says so", () => {
+    const target = store();
+    feed(target, attached("s1"), state(), jobs(job("a"), job("b")));
+    expect(target.isRunning("s1")).toBe(true);
+
+    feed(target, result(1, "a", "done"));
+    expect(ids(target)).toEqual(["b"]);
+    feed(target, result(2, "b", "stopped"));
+    expect(ids(target)).toEqual([]);
+    expect(target.isStoppable()).toBe(false);
+    expect(target.isRunning("s1")).toBe(false);
+  });
+
+  test("a session running only jobs counts as running, here and in the sidebar", () => {
+    const target = store();
+    feed(target, attached("s1"), state(), {
+      type: "session_activity",
+      sessionId: "s2",
+      status: "idle",
+      jobs: 2,
+    });
+    expect(target.runningIds()).toEqual(["s2"]);
+
+    feed(target, jobs(job("a")));
+    expect(target.runningIds()).toEqual(["s1", "s2"]);
+
+    feed(
+      target,
+      { type: "session_activity", sessionId: "s2", status: "idle" },
+      jobs()
+    );
+    expect(target.runningIds()).toEqual([]);
+  });
+
+  test("a file in a result's view is fetchable by the time a painter sees it", () => {
+    const target = store();
+    const event = result(1, "a", "done") as Extract<
+      ServerEvent,
+      { type: "subagent_result" }
+    >;
+    feed(target, attached("s1"), {
+      ...event,
+      view: {
+        ...event.view,
+        body: [
+          {
+            kind: "attachment",
+            name: "a.png",
+            url: "/attachment/s1/a.png",
+            isImage: true,
+          },
+        ],
+      },
+    });
+
+    expect(toolRow(target, "entry-1")?.view.body?.[0]).toMatchObject({
+      url: "http://127.0.0.1:1/attachment/s1/a.png",
+    });
   });
 });

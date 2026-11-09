@@ -10,7 +10,7 @@ const UPDATE_CHECK_TIMEOUT_MS = 3_000;
 
 const shortcuts = [
   ["Ctrl+C", "Clear editor (first) / exit (second)"],
-  ["Escape", "Cancel autocomplete / abort streaming"],
+  ["Escape", "Cancel autocomplete / abort streaming / stop subagent jobs"],
   ["/<command>", "Slash commands", "<command>"],
   ["/hotkeys", "Show all keyboard shortcuts"],
   ["/settings", "Open settings menu"],

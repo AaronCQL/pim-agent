@@ -102,12 +102,24 @@ describe("SessionLease", () => {
     await release(stolen);
 
     // Alive pid (as after pid reuse) but no heartbeat for 60s.
-    const silent = await plant({ pid: process.pid }, 60_000);
-    expect(SessionLease.isStale(silent, Date.now() - 60_000)).toBe(true);
+    await plant({ pid: process.pid }, 60_000);
 
     const reclaimed = await SessionLease.acquire(session, "tui");
     expect(reclaimed.ok).toBe(true);
     await release(reclaimed);
+  });
+
+  test("the holder is whoever acquire would not steal from", async () => {
+    expect(await SessionLease.holder(session)).toBeUndefined();
+
+    const live = await plant({ pid: process.ppid });
+    expect(await SessionLease.holder(session)).toEqual({ record: live });
+
+    await plant({ pid: await deadPid() });
+    expect(await SessionLease.holder(session)).toBeUndefined();
+
+    await plant({ pid: process.ppid }, 60_000);
+    expect(await SessionLease.holder(session)).toBeUndefined();
   });
 
   test("hold releases the lease when the work throws", async () => {
@@ -177,11 +189,13 @@ describe("SessionLease", () => {
     await writeFile(SessionLease.pathFor(session), '{"pid": 12');
 
     expect(await SessionLease.read(session)).toBeUndefined();
+    expect(await SessionLease.holder(session)).toEqual({});
     const denied = await SessionLease.acquire(session, "tui");
     expect(denied.ok).toBe(false);
     expect(denied.ok === false && denied.holder).toBeUndefined();
 
     await age(60_000);
+    expect(await SessionLease.holder(session)).toBeUndefined();
     const stolen = await SessionLease.acquire(session, "tui");
     expect(stolen.ok).toBe(true);
     await release(stolen);
@@ -193,7 +207,7 @@ describe("SessionLease", () => {
       60_000
     );
 
-    expect(SessionLease.isStale(foreign, 0)).toBe(false);
+    expect(await SessionLease.holder(session)).toEqual({ record: foreign });
     const denied = await SessionLease.acquire(session, "tui");
 
     expect(denied.ok).toBe(false);

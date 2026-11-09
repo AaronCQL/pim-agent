@@ -105,6 +105,20 @@ class FakeStream implements AttachableStream {
     }
   }
 
+  public jobs(...ids: readonly string[]): void {
+    const jobs = ids.map((id, at) => ({
+      id,
+      handle: `j${at + 1}`,
+      title: "find every call site",
+      startedAt: 0,
+      turns: 1,
+      cost: 0,
+    }));
+    for (const listener of this.listeners) {
+      listener({ type: "jobs", jobs });
+    }
+  }
+
   public ephemeral(): void {
     for (const listener of this.listeners) {
       listener({ type: "text_delta", messageId: "live", delta: "x" });
@@ -328,6 +342,26 @@ test("drains the child log when the parent reports its call moved", async () => 
   expect(
     socket.watched[1]?.map((event) => "seq" in event && event.seq)
   ).toEqual([2]);
+});
+
+test("drains a finished job's last lines on the list that drops it, before its result", async () => {
+  const { socket, stream, connection } = build();
+  const { projection, append } = await childLog();
+  await append("user", "find every call site");
+  await connection.attach(stream, 0);
+  await connection.watchSubagent("call_1", projection, 0);
+  stream.jobs("call_1");
+  await until(() => socket.watched.length === 1, "the first read");
+
+  await append("assistant", "FINAL ANSWER");
+  stream.jobs();
+  await until(() => socket.watched.length === 2, "the final read");
+
+  expect(
+    socket.watched
+      .flat()
+      .flatMap((event) => (event.type === "message" ? [event.text] : []))
+  ).toContain("FINAL ANSWER");
 });
 
 test("stops draining once the watch is dropped", async () => {

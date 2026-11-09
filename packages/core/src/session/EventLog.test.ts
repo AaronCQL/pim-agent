@@ -331,6 +331,12 @@ describe("EventLog session name", () => {
     expect((await log.digest()).title).toBe(`${"n".repeat(120)}…`);
   });
 
+  test("trims a long name between characters, never inside one", async () => {
+    const log = await write(named(1, `${"n".repeat(119)}😀 and more`));
+
+    expect((await log.digest()).title).toBe(`${"n".repeat(119)}😀…`);
+  });
+
   test("a name still being written is not a name", async () => {
     const log = await write(
       said(1, "the first thing I asked"),

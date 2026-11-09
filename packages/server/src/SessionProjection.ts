@@ -2,28 +2,37 @@ import type {
   AgentMessage,
   AgentToolResult,
 } from "@earendil-works/pi-agent-core";
-import type { FileEntry } from "@earendil-works/pi-coding-agent";
+import type {
+  CustomMessageEntry,
+  FileEntry,
+} from "@earendil-works/pi-coding-agent";
 
+import { subagentResultView } from "#core/extensions/subagent/render";
+import { SubagentResult } from "#core/extensions/subagent/SubagentResult";
 import { EventLog, type LoggedEntry } from "#core/session/EventLog";
 import { MessageText } from "#core/session/MessageText";
 import { UserPrompt } from "#core/session/UserPrompt";
 import { Tools } from "#core/shared/Tools";
 import type { DurableEvent, ToolCallView } from "#protocol/ServerEvent";
 import { attachmentView } from "./AttachmentEndpoint";
+import { SubagentChild } from "./SubagentChild";
 
 /** Projects pi's session file into durable events: at most one per line, tagged with the line ordinal. */
 export class SessionProjection {
   private readonly log: EventLog;
   private readonly cwd: () => string;
+  private readonly sessionId: string | undefined;
   private readonly events: DurableEvent[] = [];
   /** Tool call args by call id. */
   private readonly callArgs = new Map<string, unknown>();
   private draining: Promise<void> = Promise.resolve();
   private highest = 0;
 
-  public constructor(path: string, cwd: () => string) {
+  /** `sessionId` is the session the log belongs to; its synchronous subagent runs open their logs. */
+  public constructor(path: string, cwd: () => string, sessionId?: string) {
     this.log = new EventLog(path);
     this.cwd = cwd;
+    this.sessionId = sessionId;
   }
 
   /** Highest line ordinal projected, whether or not it emitted. */
@@ -72,6 +81,9 @@ export class SessionProjection {
         text: `Context compacted (${entry.tokensBefore} tokens before).`,
       };
     }
+    if (entry.type === "custom_message") {
+      return subagentResult(seq, entry);
+    }
     if (!isMessageEntry(entry)) {
       return undefined;
     }
@@ -108,6 +120,14 @@ export class SessionProjection {
               isPartial: true,
               cwd: this.cwd(),
             }),
+            ...SubagentChild.of({
+              name: part.name,
+              callId: part.id,
+              args: part.arguments,
+              details: undefined,
+              settled: false,
+              sessionId: this.sessionId,
+            }),
           });
         }
         const thinking = MessageText.textOf(message.content, "thinking");
@@ -128,6 +148,11 @@ export class SessionProjection {
         };
       }
       case "toolResult": {
+        const args = this.callArgs.get(message.toolCallId) ?? {};
+        const result = {
+          content: withoutImages(message.content),
+          details: message.details,
+        } as AgentToolResult<unknown>;
         return {
           seq,
           type: "tool_result",
@@ -137,14 +162,19 @@ export class SessionProjection {
           durationMs: message.durationMs,
           view: Tools.viewOf({
             name: message.toolName,
-            args: this.callArgs.get(message.toolCallId) ?? {},
+            args,
             isError: message.isError,
-            result: {
-              content: withoutImages(message.content),
-              details: message.details,
-            } as AgentToolResult<unknown>,
+            result,
             isPartial: false,
             cwd: this.cwd(),
+          }),
+          ...SubagentChild.of({
+            name: message.toolName,
+            callId: message.toolCallId,
+            args,
+            details: message.details,
+            settled: true,
+            sessionId: this.sessionId,
           }),
         };
       }
@@ -152,6 +182,29 @@ export class SessionProjection {
         return undefined;
     }
   }
+}
+
+function subagentResult(
+  seq: number,
+  entry: CustomMessageEntry
+): DurableEvent | undefined {
+  const details = SubagentResult.detailsOf(entry);
+  if (details === undefined) {
+    return undefined;
+  }
+  return {
+    seq,
+    type: "subagent_result",
+    messageId: entry.id,
+    jobId: details.jobId,
+    ...(typeof details.handle === "string" ? { handle: details.handle } : {}),
+    state: details.state,
+    view: subagentResultView({
+      content: MessageText.textOf(entry.content),
+      details,
+    }),
+    timestamp: Date.parse(entry.timestamp),
+  };
 }
 
 type MessageEntry = {

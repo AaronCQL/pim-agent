@@ -6,6 +6,7 @@ import type {
   QueuedView,
   ServerEvent,
   StreamEvent,
+  SubagentChildView,
 } from "#protocol/ServerEvent";
 import { isDurableEvent } from "#protocol/ServerEvent";
 
@@ -15,6 +16,7 @@ export type LiveTool = {
   readonly view: ToolView;
   readonly isError: boolean;
   readonly isPartial: boolean;
+  readonly child: SubagentChildView | undefined;
 };
 
 /** One assistant message of the in-flight turn. */
@@ -90,18 +92,23 @@ export function applyLive(target: LiveHolder, event: EphemeralEvent): void {
           view: event.view,
           isError: false,
           isPartial: true,
+          child: event.child,
         });
       }
       return;
     }
     case "tool_update":
-      patchLiveTool(target.live, event.callId, { view: event.view });
+      patchLiveTool(target.live, event.callId, {
+        view: event.view,
+        child: event.child,
+      });
       return;
     case "tool_end":
       patchLiveTool(target.live, event.callId, {
         view: event.view,
         isError: event.isError,
         isPartial: false,
+        child: event.child,
       });
       return;
     case "message_retire":
@@ -283,6 +290,7 @@ export function resolveUrls<TEvent extends ServerEvent>(
     case "tool_update":
     case "tool_end":
     case "tool_result":
+    case "subagent_result":
       return { ...event, view: resolveViewUrls(event.view, absolute) };
     default:
       return event;

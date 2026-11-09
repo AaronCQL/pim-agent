@@ -328,7 +328,7 @@ test("a commit is refused while the session's agent is mid-turn", async () => {
     });
 
     expect(refused.success).toBe(false);
-    expect(refused.error).toContain("working");
+    expect(refused.error).toContain('"edit something" (mid-turn) is working');
     expect(await shaOf()).toBe(before);
   } finally {
     release();

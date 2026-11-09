@@ -9,11 +9,11 @@ import type { ToolRow } from "./rows";
 
 export function SubagentRow(props: {
   readonly row: ToolRow;
-  readonly onOpen: (callId: string) => void;
+  readonly onOpen: () => void;
 }) {
-  // A failed run's summary is a stale mid-run snapshot.
+  // A failed run's usage is a stale mid-run snapshot.
   const stats = createMemo(() =>
-    props.row.isError ? "" : summaryText(props.row.view)
+    props.row.isError ? "" : titleText(props.row.view)
   );
   const failure = createMemo(() =>
     props.row.isError ? failureText(props.row.view) : undefined
@@ -25,7 +25,7 @@ export function SubagentRow(props: {
       aria-haspopup="dialog"
       class="relative w-full min-w-0 flow-root pl-2ch text-left opacity-80 focus-visible:opacity-100 hover:opacity-100"
       onClick={() => {
-        props.onOpen(props.row.id);
+        props.onOpen();
       }}
     >
       <Caret class={caretClass(props.row.isPartial, props.row.isError)} />
@@ -46,7 +46,10 @@ export function SubagentRow(props: {
         }
       >
         <span class="block truncate text-rose-400">
-          failed
+          <Show when={props.row.handle}>
+            {(handle) => <span class="text-neutral-400">{handle()} ⬝ </span>}
+          </Show>
+          {props.row.state ?? "failed"}
           <Show when={failure()}>{(reason) => <> · {reason()}</>}</Show>
         </span>
       </Show>
@@ -54,8 +57,8 @@ export function SubagentRow(props: {
   );
 }
 
-function summaryText(view: ToolView): string {
-  return (view.summary ?? []).map(blockText).join("").trim();
+function titleText(view: ToolView): string {
+  return view.title.map(blockText).join("").trim();
 }
 
 function failureText(view: ToolView): string | undefined {

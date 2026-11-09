@@ -127,8 +127,9 @@ function lastAgentTime(lines: readonly string[]): number | undefined {
 }
 
 function clamp(text: string): string {
-  return text.length > TITLE_LIMIT
-    ? `${text.slice(0, TITLE_LIMIT).trimEnd()}…`
+  const characters = [...text];
+  return characters.length > TITLE_LIMIT
+    ? `${characters.slice(0, TITLE_LIMIT).join("").trimEnd()}…`
     : text;
 }
 

@@ -1,4 +1,12 @@
+import type { SubagentJobs } from "#core/extensions/subagent/SubagentJobs";
+import type { AgentRuntime } from "#core/session/AgentRuntime";
 import type { SurfaceName } from "./Surfaces";
+
+/** Process-wide state every surface shares. */
+export type SurfaceDeps = {
+  readonly runtime: AgentRuntime;
+  readonly jobs: SubagentJobs;
+};
 
 export type SurfaceHandle = {
   readonly stop: () => Promise<void>;
@@ -13,10 +21,12 @@ export type Surface = {
 /** Runs every surface in one process; one failing never stops the others. */
 export class Daemon {
   private readonly surfaces: ReadonlyArray<Surface>;
+  private readonly jobs: SubagentJobs;
   private readonly live = new Map<SurfaceName, SurfaceHandle>();
 
-  public constructor(surfaces: ReadonlyArray<Surface>) {
+  public constructor(surfaces: ReadonlyArray<Surface>, jobs: SubagentJobs) {
     this.surfaces = surfaces;
+    this.jobs = jobs;
   }
 
   public get running(): ReadonlyArray<SurfaceName> {
@@ -42,9 +52,15 @@ export class Daemon {
     return this.running;
   }
 
+  /** Stops background subagents before any surface disposes the sessions they report to. */
   public async stop(): Promise<void> {
     const live = [...this.live];
     this.live.clear();
+    try {
+      await this.jobs.stopEverything();
+    } catch (err) {
+      console.error("[daemon] stopping background subagents failed:", err);
+    }
     await Promise.all(
       live.map(async ([name, handle]) => {
         try {

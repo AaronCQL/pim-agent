@@ -1,3 +1,5 @@
+import { Shutdown } from "./Shutdown";
+
 const installed = new Set<() => void>();
 
 function install(options: {
@@ -14,19 +16,7 @@ function install(options: {
   setInterval(() => {
     cleanup();
   }, intervalMs).unref?.();
-  process.once("exit", () => {
-    cleanup();
-  });
-
-  // Signals skip "exit": clean up, then re-raise so the process still dies.
-  for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
-    process.once(sig, () => {
-      try {
-        cleanup();
-      } catch {}
-      process.kill(process.pid, sig);
-    });
-  }
+  Shutdown.onExit(cleanup);
 }
 
 export const Sweeper = { install };

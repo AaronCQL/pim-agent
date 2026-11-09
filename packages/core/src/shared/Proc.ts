@@ -1,3 +1,10 @@
+import { hostname } from "node:os";
+
+import { FsErrors } from "./FsErrors";
+
+/** A process anywhere: a pid only means something on its own host. */
+export type ProcOwner = { readonly pid: number; readonly hostname: string };
+
 export type ProcOptions = {
   readonly cwd?: string | undefined;
   readonly stdout?: "pipe" | "inherit";
@@ -46,4 +53,30 @@ async function run(
   return { code, stdout, stderr, timedOut };
 }
 
-export const Proc = { run };
+/** EPERM means the process exists but belongs to another user. */
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return FsErrors.code(err) !== "ESRCH";
+  }
+}
+
+const HOST = hostname();
+
+/** This process. */
+function self(): ProcOwner {
+  return { pid: process.pid, hostname: HOST };
+}
+
+function isSelf(owner: ProcOwner | undefined): boolean {
+  return owner?.pid === process.pid && owner.hostname === HOST;
+}
+
+/** On this host, where its pid can be checked. */
+function isLocal(owner: ProcOwner): boolean {
+  return owner.hostname === HOST;
+}
+
+export const Proc = { run, isAlive, self, isSelf, isLocal };

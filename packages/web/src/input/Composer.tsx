@@ -18,6 +18,7 @@ import { Menu } from "../ui/Menu";
 import { Attachments, type AttachmentTile } from "../view/Attachments";
 import { ClankChip } from "./ClankChip";
 import { Readouts } from "./Readouts";
+import { JobsDock } from "./JobsDock";
 import { createUploads } from "./uploads";
 
 function sends(event: KeyboardEvent, keyboard: boolean): boolean {
@@ -94,7 +95,9 @@ export function Composer(props: {
   });
   const stops = createMemo(
     () =>
-      props.store.isBusy() && text().trim() === "" && attachments().length === 0
+      props.store.isStoppable() &&
+      text().trim() === "" &&
+      attachments().length === 0
   );
   const held = createMemo(() => props.store.heldNotice());
   const pending = createMemo(() =>
@@ -256,6 +259,8 @@ export function Composer(props: {
         <Readouts store={props.store} />
       </div>
 
+      <JobsDock store={props.store} />
+
       <Show when={props.store.state.error ?? uploads.failed()}>
         {(message) => (
           <p class="mb-2 truncate text-sm text-rose-400">{message()}</p>
@@ -348,6 +353,9 @@ export function Composer(props: {
             }
           }}
           onKeyDown={(event: KeyboardEvent) => {
+            if (event.isComposing) {
+              return;
+            }
             if (navigation.onKeyDown(event)) {
               return;
             }
@@ -356,16 +364,12 @@ export function Composer(props: {
               void props.store.cycleThinking();
               return;
             }
-            if (event.key === "Escape" && props.store.isBusy()) {
+            if (event.key === "Escape" && props.store.isStoppable()) {
               event.preventDefault();
               void stop();
               return;
             }
-            if (
-              event.key === "Enter" &&
-              !event.isComposing &&
-              sends(event, keyboard())
-            ) {
+            if (event.key === "Enter" && sends(event, keyboard())) {
               event.preventDefault();
               void submit();
             }

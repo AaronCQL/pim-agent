@@ -2,7 +2,6 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 import { AttachmentStore } from "#core/attachments/AttachmentStore";
 import { AttachmentSweep } from "#core/attachments/AttachmentSweep";
-import type { AgentRuntime } from "#core/session/AgentRuntime";
 import { SessionMeta } from "#core/session/SessionMeta";
 import { SessionRegistry } from "#core/session/SessionRegistry";
 import { Tools } from "#core/shared/Tools";
@@ -10,9 +9,9 @@ import { defaultAttachmentsRoot } from "#server/AttachmentEndpoint";
 import { SendFileTool } from "#server/SendFileTool";
 import { WebOptions } from "#server/WebOptions";
 import { WsGateway } from "#server/WsGateway";
-import type { Surface } from "./Daemon";
+import type { Surface, SurfaceDeps } from "./Daemon";
 
-function create(args: ReadonlyArray<string>, runtime: AgentRuntime): Surface {
+function create(args: ReadonlyArray<string>, deps: SurfaceDeps): Surface {
   return {
     name: "web",
     start: async () => {
@@ -20,7 +19,8 @@ function create(args: ReadonlyArray<string>, runtime: AgentRuntime): Surface {
       const attachmentsRoot = defaultAttachmentsRoot();
       const store = new AttachmentStore(attachmentsRoot);
       const registry = new SessionRegistry({
-        runtime,
+        runtime: deps.runtime,
+        jobs: deps.jobs,
         defaults: { cwd: options.cwd },
         customTools: ({ cwd, sessionId }) => [
           Tools.wrap(

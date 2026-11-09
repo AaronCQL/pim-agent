@@ -1,18 +1,17 @@
 import { readFileSync, unlinkSync } from "node:fs";
-import { mkdir, open, stat, unlink, utimes } from "node:fs/promises";
-import { hostname } from "node:os";
+import { mkdir, open, unlink, utimes } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { FileWatch } from "../shared/FileWatch";
 import { FsErrors } from "../shared/FsErrors";
 import { Fs } from "../shared/Fs";
 import { Json } from "../shared/Json";
+import { Proc, type ProcOwner } from "../shared/Proc";
+import { Shutdown } from "../shared/Shutdown";
 
 export type LeaseFrontend = "tui" | "daemon";
 
-export type LeaseRecord = {
-  readonly pid: number;
-  readonly hostname: string;
+export type LeaseRecord = ProcOwner & {
   readonly frontend: LeaseFrontend;
   readonly startedAt: number;
 };
@@ -25,6 +24,10 @@ export type AcquireResult =
   | { readonly ok: true; readonly handle: LeaseHandle }
   /** Absent when the lease file is torn or vanished mid-read. */
   | { readonly ok: false; readonly holder?: LeaseRecord };
+
+export type LeaseHolder = {
+  readonly record?: LeaseRecord;
+};
 
 export type LeaseOptions = {
   readonly heartbeatMs?: number;
@@ -41,10 +44,7 @@ const TIMEOUT_MS = 5 * 60_000;
 const STEAL_ATTEMPTS = 3;
 const STEAL_BACKOFF_MS = 50;
 
-const HOST = hostname();
-
 const held = new Set<string>();
-let exitHooked = false;
 
 function pathFor(sessionPath: string): string {
   return `${sessionPath}.lease`;
@@ -77,47 +77,41 @@ async function read(sessionPath: string): Promise<LeaseRecord | undefined> {
   return await recordAt(pathFor(sessionPath));
 }
 
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    // EPERM means the process exists but belongs to another user.
-    return FsErrors.code(err) !== "ESRCH";
-  }
-}
-
 /** Stale when its pid is gone or it stopped heartbeating. Never stale across hosts. */
-function isStale(
-  record: LeaseRecord,
-  mtimeMs: number,
-  now = Date.now()
-): boolean {
-  if (record.hostname !== HOST) {
+function isStale(record: LeaseRecord, mtimeMs: number): boolean {
+  if (!Proc.isLocal(record)) {
     return false;
   }
-  return !isAlive(record.pid) || now - mtimeMs > STALE_MS;
+  return !Proc.isAlive(record.pid) || Date.now() - mtimeMs > STALE_MS;
 }
 
 function isOurs(record: LeaseRecord | undefined): boolean {
-  return record?.pid === process.pid && record.hostname === HOST;
+  return Proc.isSelf(record);
 }
 
-async function stealable(
-  path: string,
-  record: LeaseRecord | undefined
-): Promise<boolean> {
-  const mtimeMs = await stat(path).then(
-    (stats) => stats.mtimeMs,
-    () => undefined
-  );
-  if (mtimeMs === undefined) {
-    return true;
+/**
+ * The lease's holder, unless `acquire` would steal it: absent, or left by a dead
+ * or silent process on this host. `record` is absent while the file is torn.
+ */
+async function holder(sessionPath: string): Promise<LeaseHolder | undefined> {
+  const file = await open(pathFor(sessionPath)).catch(() => undefined);
+  if (file === undefined) {
+    return undefined;
   }
-  // A torn file may be mid-write; only steal it once its heartbeat stops.
-  return record === undefined
-    ? Date.now() - mtimeMs > STALE_MS
-    : isStale(record, mtimeMs);
+  try {
+    const [stats, text] = await Promise.all([
+      file.stat(),
+      file.readFile("utf8"),
+    ]);
+    const record = toRecord(Json.tryParseJson(text));
+    // A torn file may be mid-write; it holds until its heartbeat stops.
+    if (record === undefined) {
+      return Date.now() - stats.mtimeMs > STALE_MS ? undefined : {};
+    }
+    return isStale(record, stats.mtimeMs) ? undefined : { record };
+  } finally {
+    await file.close();
+  }
 }
 
 async function claim(
@@ -125,8 +119,7 @@ async function claim(
   frontend: LeaseFrontend
 ): Promise<LeaseRecord | undefined> {
   const record: LeaseRecord = {
-    pid: process.pid,
-    hostname: HOST,
+    ...Proc.self(),
     frontend,
     startedAt: Date.now(),
   };
@@ -153,25 +146,19 @@ async function claim(
   return record;
 }
 
-function hookExit(): void {
-  if (exitHooked) {
-    return;
+function unlinkHeld(): void {
+  for (const path of held) {
+    try {
+      if (isOurs(toRecord(Json.tryParseJson(readFileSync(path, "utf8"))))) {
+        unlinkSync(path);
+      }
+    } catch {}
   }
-  exitHooked = true;
-  process.on("exit", () => {
-    for (const path of held) {
-      try {
-        if (isOurs(toRecord(Json.tryParseJson(readFileSync(path, "utf8"))))) {
-          unlinkSync(path);
-        }
-      } catch {}
-    }
-  });
 }
 
 function handleFor(path: string, options: LeaseOptions): LeaseHandle {
   held.add(path);
-  hookExit();
+  Shutdown.onExit(unlinkHeld);
   // Touch mtime only; rewriting could clobber the next holder's file.
   const beat = setInterval(() => {
     const now = new Date();
@@ -206,9 +193,11 @@ async function acquire(
     if (await claim(path, frontend)) {
       return { ok: true, handle: handleFor(path, options) };
     }
-    const holder = await recordAt(path);
-    if (attempt >= STEAL_ATTEMPTS || !(await stealable(path, holder))) {
-      return holder === undefined ? { ok: false } : { ok: false, holder };
+    const current = await holder(sessionPath);
+    if (current !== undefined || attempt >= STEAL_ATTEMPTS) {
+      return current?.record === undefined
+        ? { ok: false }
+        : { ok: false, holder: current.record };
     }
     await unlink(path).catch(() => undefined);
     await Bun.sleep(STEAL_BACKOFF_MS);
@@ -271,6 +260,6 @@ export const SessionLease = {
   hold,
   waitFor,
   watch,
-  isStale,
+  holder,
   isOurs,
 };

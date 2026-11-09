@@ -15,6 +15,7 @@ import { SessionMeta } from "#core/session/SessionMeta";
 import type { SessionRegistry } from "#core/session/SessionRegistry";
 import { PimVersion } from "#core/shared/PimVersion";
 import { SubagentLogs } from "#core/shared/SubagentLogs";
+import { Format } from "#core/shared/Format";
 import type { UpdateOutcome } from "#core/shared/Updater";
 import type { Command } from "#protocol/Command";
 import type { ResponseEvent, ServerEvent } from "#protocol/ServerEvent";
@@ -89,6 +90,8 @@ export class WsGateway {
   private readonly client: StaticClient;
   private readonly streams = new Map<string, SessionStream>();
   private readonly opening = new Map<string, Promise<SessionStream>>();
+  /** Sessions clients are opening or attaching to, with how many are. */
+  private readonly attaching = new Map<string, number>();
   private readonly connections = new Map<
     ServerWebSocket<undefined>,
     ClientConnection
@@ -104,11 +107,20 @@ export class WsGateway {
 
   public constructor(deps: WsGatewayDeps) {
     this.registry = deps.registry;
-    this.registry.setUi((host) =>
-      host.sessionId === undefined
-        ? undefined
-        : this.streams.get(host.sessionId)
-    );
+    this.registry.bind({
+      ui: (host) =>
+        host.sessionId === undefined
+          ? undefined
+          : this.streams.get(host.sessionId),
+      holds: (sessionId) =>
+        this.attaching.has(sessionId) ||
+        this.isAttached(sessionId) ||
+        this.isWorking(sessionId),
+      evicted: (sessionId) => {
+        this.streams.get(sessionId)?.dispose();
+        this.streams.delete(sessionId);
+      },
+    });
     this.hostname = deps.hostname ?? DEFAULT_HOSTNAME;
     this.requestedPort = deps.port ?? DEFAULT_PORT;
     this.pollMs = deps.pollMs;
@@ -125,7 +137,10 @@ export class WsGateway {
       registry: deps.registry,
       cursors: new ReadCursors(deps.readCursorsPath),
       meta: this.meta,
-      liveStatus: (sessionId) => this.streams.get(sessionId)?.host.status,
+      liveActivity: (sessionId) => {
+        const host = this.streams.get(sessionId)?.host;
+        return host && { status: host.status, jobs: host.jobCount };
+      },
       liveSessionIds: () => this.streams.keys(),
       isBeingRead: (sessionId) => this.isBeingRead(sessionId),
       announce: (event) => {
@@ -208,6 +223,7 @@ export class WsGateway {
     }
     this.streams.clear();
     this.opening.clear();
+    this.attaching.clear();
     this.git.dispose();
     this.busyRepos.clear();
     this.catalogue.watch(false);
@@ -429,7 +445,7 @@ export class WsGateway {
         connection.unwatchSubagent(command.callId);
         return {};
       case "reload":
-        return this.reload(command.force === true);
+        return await this.reload(command.force === true);
       case "user_message":
         return await this.promptWithAttachments(
           this.requireStream(connection),
@@ -571,25 +587,27 @@ export class WsGateway {
       command.like === undefined
         ? undefined
         : this.streams.get(command.like)?.host;
-    const [stream, [pimVersion, piVersion]] = await Promise.all([
-      this.ensureStream({
-        ...(command.sessionId === undefined
-          ? {}
-          : { sessionId: command.sessionId }),
-        ...(command.cwd === undefined ? {} : { cwd: command.cwd }),
-        ...(like === undefined ? {} : { like }),
-      }),
-      this.versions(),
-    ]);
-    connection.send({
-      type: "attached",
-      sessionId: stream.sessionId,
-      cwd: stream.host.cwd,
-      head: await stream.refresh(),
-      pimVersion,
-      piVersion,
+    const { stream, release } = await this.ensureStream({
+      ...(command.sessionId === undefined
+        ? {}
+        : { sessionId: command.sessionId }),
+      ...(command.cwd === undefined ? {} : { cwd: command.cwd }),
+      ...(like === undefined ? {} : { like }),
     });
-    await connection.attach(stream, command.fromSeq, attentive);
+    try {
+      const [pimVersion, piVersion] = await this.versions();
+      connection.send({
+        type: "attached",
+        sessionId: stream.sessionId,
+        cwd: stream.host.cwd,
+        head: await stream.refresh(),
+        pimVersion,
+        piVersion,
+      });
+      await connection.attach(stream, command.fromSeq, attentive);
+    } finally {
+      release();
+    }
     this.syncWatches();
     if (attentive) {
       await this.catalogue.markRead(stream.sessionId);
@@ -606,16 +624,17 @@ export class WsGateway {
     this.catalogue.watch(this.connections.size > 0);
   }
 
-  /** `movesTree` operations are refused while an agent in the cwd is mid-turn. */
+  /** `movesTree` operations are refused while an agent in the cwd is mid-turn or running subagents. */
   private async runGit<T = never>(
     stream: SessionStream,
     movesTree: boolean,
     operation: (cwd: string) => Promise<GitRun<T>>
   ): Promise<Outcome & { readonly value?: T }> {
     const cwd = stream.host.cwd;
-    if (movesTree && this.repoBusy(cwd)) {
+    const busy = movesTree ? this.busyIn(cwd) : [];
+    if (busy.length > 0) {
       return {
-        error: `an agent is working in ${cwd}; wait for its turn to end`,
+        error: `${await this.busyText(busy)} working in ${cwd}; wait for ${busy.length > 1 ? "them" : "it"} to finish`,
       };
     }
     const result = await this.git.run<T>(cwd, () => operation(cwd));
@@ -645,17 +664,59 @@ export class WsGateway {
     return value === undefined ? outcome : { commit: { sha: value } };
   }
 
-  private repoBusy(cwd: string): boolean {
-    for (const stream of this.streams.values()) {
-      if (stream.host.cwd === cwd && stream.host.status !== "idle") {
-        return true;
-      }
-    }
-    return false;
+  /** Mid-turn, or running background subagents for any surface in this process. */
+  private isWorking(sessionId: string): boolean {
+    const host = this.streams.get(sessionId)?.host;
+    return (
+      (host !== undefined && host.status !== "idle") ||
+      this.registry.jobs?.hasRunning(sessionId) === true
+    );
   }
 
-  /** Pushes fresh state to the other sessions in `cwd` when its busy flag flips. */
-  private syncRepoBusy(cwd: string, source: string): void {
+  /** Every working session; with `cwd`, those known to work there. */
+  private busyIn(cwd?: string): readonly string[] {
+    const sessionIds = new Set([
+      ...this.streams.keys(),
+      ...(this.registry.jobs?.runningSessions() ?? []),
+    ]);
+    return [...sessionIds].filter(
+      (sessionId) =>
+        (cwd === undefined || this.streams.get(sessionId)?.host.cwd === cwd) &&
+        this.isWorking(sessionId)
+    );
+  }
+
+  /** `"fix the parser" (mid-turn) is` / `"a" (2 subagents), b8f1… (mid-turn) are`. */
+  private async busyText(busy: readonly string[]): Promise<string> {
+    const named = await Promise.all(
+      busy.map(async (sessionId) => {
+        const stream = this.streams.get(sessionId);
+        const jobs = this.registry.jobs?.count(sessionId) ?? 0;
+        const doing = [
+          ...(stream === undefined || stream.host.status === "idle"
+            ? []
+            : ["mid-turn"]),
+          ...(jobs === 0 ? [] : [Format.count(jobs, "subagent")]),
+        ];
+        const title =
+          stream &&
+          (await this.catalogue.titleOf(sessionId, stream.sessionPath));
+        const name =
+          title === undefined
+            ? sessionId
+            : `"${title.replace(/\s+/gu, " ").trim()}"`;
+        return `${name} (${doing.join(", ")})`;
+      })
+    );
+    return `${named.join(", ")} ${busy.length > 1 ? "are" : "is"}`;
+  }
+
+  private repoBusy(cwd: string): boolean {
+    return this.busyIn(cwd).length > 0;
+  }
+
+  /** Pushes fresh state to the sessions in `cwd`, bar `source`, when its busy flag flips. */
+  private syncRepoBusy(cwd: string, source?: string): void {
     const busy = this.repoBusy(cwd);
     if (this.busyRepos.has(cwd) === busy) {
       return;
@@ -672,14 +733,11 @@ export class WsGateway {
     }
   }
 
-  private reload(force: boolean): Outcome {
-    const busy = [...this.streams.values()]
-      .filter((stream) => stream.host.status !== "idle")
-      .map((stream) => stream.sessionId);
-    if (!force && busy.length > 0) {
-      const many = busy.length > 1;
+  private async reload(force: boolean): Promise<Outcome> {
+    const busy = force ? [] : this.busyIn();
+    if (busy.length > 0) {
       return {
-        error: `${many ? "sessions" : "session"} ${busy.join(", ")} ${many ? "are" : "is"} mid-turn; reloading would kill ${many ? "those turns" : "that turn"}. Send \`reload\` with \`force\` to do it anyway`,
+        error: `${await this.busyText(busy)} working; reloading would kill that work. Send \`reload\` with \`force\` to do it anyway`,
       };
     }
     return {
@@ -715,32 +773,63 @@ export class WsGateway {
     }
   }
 
-  private async ensureStream(target: StreamTarget): Promise<SessionStream> {
+  /** The stream for `target`, kept from eviction until `release` runs. */
+  private async ensureStream(
+    target: StreamTarget
+  ): Promise<{ readonly stream: SessionStream; readonly release: () => void }> {
     const sessionId = target.sessionId;
-    if (sessionId) {
-      const live = this.streams.get(sessionId);
-      if (live) {
-        return live;
-      }
-      const pending = this.opening.get(sessionId);
-      if (pending) {
-        return await pending;
-      }
-    }
-    const build = this.buildStream(target);
-    if (sessionId) {
-      this.opening.set(sessionId, build);
-    }
+    let release = sessionId ? this.hold(sessionId) : (): void => {};
     try {
-      return await build;
-    } finally {
-      if (sessionId) {
-        this.opening.delete(sessionId);
-      }
+      const stream = sessionId
+        ? await this.openStream(sessionId, target)
+        : await this.buildStream(target, (id) => {
+            release = this.hold(id);
+          });
+      return { stream, release };
+    } catch (err) {
+      release();
+      throw err;
     }
   }
 
-  private async buildStream(target: StreamTarget): Promise<SessionStream> {
+  private async openStream(
+    sessionId: string,
+    target: StreamTarget
+  ): Promise<SessionStream> {
+    const live = this.streams.get(sessionId);
+    if (live) {
+      return live;
+    }
+    const pending = this.opening.get(sessionId);
+    if (pending) {
+      return await pending;
+    }
+    const build = this.buildStream(target);
+    this.opening.set(sessionId, build);
+    try {
+      return await build;
+    } finally {
+      this.opening.delete(sessionId);
+    }
+  }
+
+  private hold(sessionId: string): () => void {
+    this.attaching.set(sessionId, (this.attaching.get(sessionId) ?? 0) + 1);
+    return () => {
+      const left = (this.attaching.get(sessionId) ?? 1) - 1;
+      if (left === 0) {
+        this.attaching.delete(sessionId);
+      } else {
+        this.attaching.set(sessionId, left);
+      }
+    };
+  }
+
+  /** `named` runs as soon as the session's id is known, before anything else can run. */
+  private async buildStream(
+    target: StreamTarget,
+    named?: (sessionId: string) => void
+  ): Promise<SessionStream> {
     const sessionId = target.sessionId;
     const host = sessionId
       ? await this.registry.open(sessionId)
@@ -755,6 +844,7 @@ export class WsGateway {
     if (!path) {
       throw new Error(`session ${sessionId ?? "(new)"} has no agent`);
     }
+    named?.(id);
     const existing = this.streams.get(id);
     if (existing) {
       return existing;
@@ -767,12 +857,21 @@ export class WsGateway {
       detachGraceMs: this.detachGraceMs,
     });
     stream.start();
-    this.catalogue.track(id, host.status);
+    this.catalogue.track(id, { status: host.status, jobs: host.jobCount });
     // Observe, not subscribe, so this doesn't count as an attached client.
     stream.observe((event) => {
       if (event.type === "session_state") {
-        this.catalogue.onStatus(id, event.status);
+        this.catalogue.onActivity(id, {
+          status: event.status,
+          jobs: stream.host.jobCount,
+        });
         this.syncRepoBusy(stream.host.cwd, id);
+      } else if (event.type === "jobs") {
+        this.catalogue.onActivity(id, {
+          status: stream.host.status,
+          jobs: event.jobs.length,
+        });
+        this.syncRepoBusy(stream.host.cwd);
       }
     });
     this.streams.set(id, stream);

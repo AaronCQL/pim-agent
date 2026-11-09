@@ -1,5 +1,6 @@
 import { createStore, untrack, type Store, type StoreSetter } from "solid-js";
 
+import type { JobView } from "#core/extensions/subagent/SubagentJobs";
 import type { PickerItem } from "#core/picker/PickerItem";
 import { rankCommands } from "#core/picker/commandRanker";
 import { RemoteFilePickerSuggestionEngine } from "#core/picker/RemoteFilePickerSuggestionEngine";
@@ -129,7 +130,11 @@ export type SessionState = {
   durable: DurableEvent[];
   live: LiveMessage[];
   optimistic: OptimisticMessage[];
+  /** This session's running background subagents, oldest first. */
+  jobs: readonly JobView[];
   activity: Record<string, SessionStatus>;
+  /** Running background subagents by session; absent is none. */
+  jobCounts: Record<string, number>;
   /** Bumped when sessions on disk change. */
   catalogue: number;
   /** Bumped when any window toggles an extension. */
@@ -265,7 +270,9 @@ export class SessionStore {
       durable: [],
       live: [],
       optimistic: [],
+      jobs: [],
       activity: {},
+      jobCounts: {},
       catalogue: 0,
       extensions: 0,
       loading: false,
@@ -378,6 +385,11 @@ export class SessionStore {
     return this.state.agent !== "idle";
   }
 
+  /** A turn or a background subagent is running, so `cancel` has something to stop. */
+  public isStoppable(): boolean {
+    return this.isBusy() || this.state.jobs.length > 0;
+  }
+
   private isHeld(): boolean {
     return !this.state.writable;
   }
@@ -394,8 +406,12 @@ export class SessionStore {
     return `Running ${where} — you can continue when this turn ends.`;
   }
 
+  /** Mid-turn, or running background subagents. */
   public isRunning(sessionId: string): boolean {
-    return (this.state.activity[sessionId] ?? "idle") !== "idle";
+    return (
+      (this.state.activity[sessionId] ?? "idle") !== "idle" ||
+      (this.state.jobCounts[sessionId] ?? 0) > 0
+    );
   }
 
   /** Sorted, so it is stable as a dependency. */
@@ -497,7 +513,7 @@ export class SessionStore {
     return true;
   }
 
-  /** Stops the turn; resolves to the queued text that was never sent. */
+  /** Stops the turn and every background subagent; resolves to the queued text that was never sent. */
   public cancel(): Promise<string> {
     return this.reclaim({ type: "cancel", sessionId: this.state.sessionId });
   }
@@ -795,6 +811,7 @@ export class SessionStore {
     this.setState((draft) => {
       for (const session of sessions) {
         draft.activity[session.sessionId] = session.status ?? "idle";
+        draft.jobCounts[session.sessionId] = session.jobs ?? 0;
         this.seed(draft, "unread", session.sessionId, session.unread ?? false);
         this.seed(
           draft,
@@ -1302,6 +1319,12 @@ export class SessionStore {
     if (isDurableEvent(event)) {
       this.setState((draft) => {
         ingestDurable(draft, event);
+        if (event.type === "subagent_result") {
+          setJobs(
+            draft,
+            draft.jobs.filter((job) => job.id !== event.jobId)
+          );
+        }
       });
       return;
     }
@@ -1313,6 +1336,7 @@ export class SessionStore {
           if (draft.sessionId !== event.sessionId) {
             draft.durable = [];
             draft.optimistic = [];
+            draft.jobs = [];
             draft.agent = draft.activity[event.sessionId] ?? "idle";
             draft.writable = true;
             draft.heldBy = undefined;
@@ -1345,6 +1369,11 @@ export class SessionStore {
       case "tool_end":
         this.setState((draft) => {
           applyLive(draft, event);
+        });
+        return;
+      case "jobs":
+        this.setState((draft) => {
+          setJobs(draft, event.jobs);
         });
         return;
       case "subagent_events":
@@ -1391,6 +1420,7 @@ export class SessionStore {
       case "session_activity":
         this.setState((draft) => {
           draft.activity[event.sessionId] = event.status;
+          draft.jobCounts[event.sessionId] = event.jobs ?? 0;
         });
         return;
       case "session_read":
@@ -1538,4 +1568,9 @@ export class SessionStore {
       draft.optimistic = draft.optimistic.filter((pending) => !pending.queued);
     });
   }
+}
+
+function setJobs(draft: SessionState, jobs: readonly JobView[]): void {
+  draft.jobs = jobs;
+  draft.jobCounts[draft.sessionId] = jobs.length;
 }

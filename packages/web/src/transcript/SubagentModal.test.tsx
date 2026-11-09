@@ -7,7 +7,9 @@ import { flush } from "solid-js";
 import { Shell } from "../App";
 import { SessionStore } from "../session/SessionStore";
 import { Settings } from "../settings/Settings";
+import type { ServerEvent } from "#protocol/ServerEvent";
 import { mountPoint } from "../test/dom";
+import { job, jobs, result, spawnView } from "../test/jobs";
 import {
   CHILD_PATCH_LINE,
   GatewayHarness,
@@ -16,6 +18,7 @@ import {
   SUBAGENT_PROMPT,
 } from "../test/gateway";
 import { until } from "#core/shared/fixtures/wait";
+import { SubagentModal } from "./SubagentModal";
 
 let harness: GatewayHarness;
 let store: SessionStore;
@@ -305,4 +308,55 @@ test("the child's scroller unpins when scrolled up", async () => {
   expect(scroller.textContent).toContain("and one more thing");
   expect(scroller.scrollTop).toBe(-120);
   expect(scroller.classList.contains("[overflow-anchor:none]")).toBe(false);
+});
+
+test("a background job runs in the header until its result, which then speaks for it", async () => {
+  const offline = new SessionStore({
+    url: "ws://127.0.0.1:1",
+    pickerDebounceMs: 0,
+  });
+  offline.client.send = (async () => ({
+    type: "response",
+    id: "1",
+    success: true,
+  })) as typeof offline.client.send;
+  const view = spawnView("call_a", "audit the parser");
+  const events: readonly ServerEvent[] = [
+    {
+      type: "attached",
+      sessionId: "s1",
+      cwd: "/repo",
+      head: 0,
+      pimVersion: "1.2.3",
+      piVersion: "0.9.0",
+    },
+    {
+      seq: 1,
+      type: "tool_result",
+      callId: "call_a",
+      name: "subagent",
+      view,
+      isError: false,
+      child: { jobId: "call_a", handle: "j1" },
+    },
+    jobs(job("call_a")),
+  ];
+  for (const event of events) {
+    offline.ingest(event);
+  }
+  const host = mountPoint();
+  render(() => <SubagentModal store={offline} />, host);
+  await offline.watch("call_a");
+  flush();
+  const header = (): string =>
+    modal(host).querySelector("header")!.textContent ?? "";
+
+  expect(modal(host).open).toBe(true);
+  expect(header()).toBe("SubagentRunningj1 ⬝ started");
+
+  offline.ingest(jobs());
+  offline.ingest(result(2, "call_a", "done"));
+  flush();
+  expect(header()).toBe("Subagentj1 ⬝ 2 turns ⬝ $0.04 ⬝ 2.0%/200K");
+  offline.dispose();
 });

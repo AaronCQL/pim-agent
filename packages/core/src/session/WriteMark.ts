@@ -1,42 +1,47 @@
 import type { EventLog } from "./EventLog";
 
-/** Lines in a session file (`head`) and entries pi holds in memory (`entries`). */
+/** The last line of a session file already accounted for. */
 export type WriteMark = {
   readonly head: number;
-  readonly entries: number;
+};
+
+export type WriteScan = {
+  readonly next: WriteMark;
+  /** Another process appended something other than a rename. */
+  readonly foreign: boolean;
+  /** Another process renamed the session: nothing to replay, but a name read before is stale. */
+  readonly renamed: boolean;
 };
 
 type EntrySource = {
-  getEntries(): readonly unknown[];
+  getEntry(id: string): unknown;
 };
 
-const UNREAD: WriteMark = { head: 0, entries: 0 };
+const UNREAD: WriteMark = { head: 0 };
 
-/** Reads head first so a concurrent append under-counts the file, never over-counts. */
-async function of(log: EventLog, source: EntrySource): Promise<WriteMark> {
-  return { head: await log.head(), entries: source.getEntries().length };
+async function at(log: EventLog): Promise<WriteMark> {
+  return { head: await log.head() };
 }
 
 /**
- * Whether another process appended lines since `mark`. Our own writes move both
- * counts together. A mark taken before pi created the file (`head` 0) counts
- * the header plus every buffered entry as ours.
+ * Pi holds an entry in memory before it writes the line, so a line whose id pi
+ * does not hold is another process's. Its renames need no replay.
  */
-function foreignSince(mark: WriteMark, next: WriteMark): boolean {
-  const base = mark.head === 0 ? { head: 1, entries: 0 } : mark;
-  return next.head - base.head - (next.entries - base.entries) > 0;
-}
-
-/**
- * Whether every line added since `mark` is a `session_info` (a rename), so no
- * replay is needed. Only meaningful between turns.
- */
-async function benignSince(log: EventLog, mark: WriteMark): Promise<boolean> {
+async function scan(
+  log: EventLog,
+  mark: WriteMark,
+  source: EntrySource
+): Promise<WriteScan> {
   const added = await log.read(mark.head);
-  return (
-    added.length > 0 &&
-    added.every(({ entry }) => entry.type === "session_info")
+  const theirs = added.filter(
+    ({ entry }) =>
+      entry.type !== "session" && source.getEntry(entry.id) === undefined
   );
+  return {
+    next: { head: added.at(-1)?.seq ?? mark.head },
+    foreign: theirs.some(({ entry }) => entry.type !== "session_info"),
+    renamed: theirs.some(({ entry }) => entry.type === "session_info"),
+  };
 }
 
-export const WriteMark = { UNREAD, of, foreignSince, benignSince };
+export const WriteMark = { UNREAD, at, scan };

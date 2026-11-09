@@ -8,6 +8,7 @@ import type { PickerItem } from "#core/picker/PickerItem";
 import type { ServerEvent } from "#protocol/ServerEvent";
 import { SessionStore } from "../session/SessionStore";
 import { mountPoint } from "../test/dom";
+import { job, jobs } from "../test/jobs";
 import { until } from "#core/shared/fixtures/wait";
 import { Composer } from "./Composer";
 
@@ -538,6 +539,52 @@ test("the one button sends, steers or stops, and never takes the focus", async (
   flush();
   expect(said).toEqual(["hello", ""]);
   release();
+});
+
+test("jobs alone offer Stop, words typed over them are a send, and an idle cancel puts Send back", async () => {
+  const store = offline();
+  const seen = answers(store, (command) => {
+    if (command.type === "cancel") {
+      store.ingest(jobs());
+    }
+    return { restored: [] };
+  });
+  store.ingest(attached());
+  store.ingest(sessionState());
+  store.ingest(jobs(job("a")));
+  const { host, input } = paint(store);
+  const button = (label: string): HTMLButtonElement | null =>
+    host.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`);
+
+  expect(button("Stop")).not.toBeNull();
+  expect(
+    host.querySelector("section[aria-label='Background subagents']")
+  ).not.toBeNull();
+
+  type(input, "what is it doing?");
+  expect(button("Send")).not.toBeNull();
+  expect(button("Steer")).toBeNull();
+
+  type(input, "");
+  button("Stop")!.click();
+  await until(() => seen.length === 1, "the cancel");
+  flush();
+  expect(seen).toEqual([{ type: "cancel", sessionId: "s1" }]);
+  expect(button("Stop")).toBeNull();
+  expect(button("Send")).not.toBeNull();
+
+  store.ingest(jobs(job("b")));
+  flush();
+  expect(press(input, "Escape", { isComposing: true }).defaultPrevented).toBe(
+    false
+  );
+  expect(seen).toHaveLength(1);
+  expect(press(input, "Escape").defaultPrevented).toBe(true);
+  await until(() => seen.length === 2, "the second cancel");
+  flush();
+  expect(button("Send")).not.toBeNull();
+
+  expect(press(input, "Escape").defaultPrevented).toBe(false);
 });
 
 test("the pills say spend and context fill, coloured by the ramp", () => {

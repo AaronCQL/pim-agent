@@ -28,7 +28,7 @@ for (const extension of [
   applyPatchExtension,
   editExtension,
   readExtension,
-  subagentExtension,
+  subagentExtension(),
   todoExtension,
   writeExtension,
 ]) {
@@ -583,7 +583,7 @@ describe("Telegram Renderer todo status", () => {
 });
 
 describe("Telegram Renderer subagent status", () => {
-  test("appends the subagent's progress line to its prompt", async () => {
+  test("shows the subagent's progress line, then its prompt", async () => {
     const { api, renderer } = makeRenderer();
 
     renderer.handleEvent(
@@ -604,7 +604,7 @@ describe("Telegram Renderer subagent status", () => {
     await renderer.finish("", "ok");
 
     expect(api.sent.map((msg) => msg.text)).toEqual([
-      "🤖 review the diff 1 turn ⬝ $0.01 ⬝ 2.0%/1.0M",
+      "🤖 1 turn ⬝ $0.01 ⬝ 2.0%/1.0M<br><b>Prompt</b> review the diff",
     ]);
   });
 
@@ -729,5 +729,95 @@ describe("Telegram Renderer status length", () => {
     expect(api.sent[0]!.text).not.toContain("paragraph 0");
     expect(api.sent[0]!.text).toContain("<p>paragraph 1");
     expect(api.sent[0]!.text).toContain("<p>paragraph 3");
+  });
+});
+
+describe("Telegram Renderer job results", () => {
+  function result(
+    state: string,
+    customType = "subagent_result"
+  ): AgentSessionEvent {
+    return {
+      type: "message_end",
+      message: {
+        role: "custom",
+        customType,
+        content: `[subagent job j1 ${state}]\nthe answer`,
+        display: true,
+        details: {
+          jobId: "call-1",
+          handle: "j1",
+          prompt: "review the diff\nin detail",
+          state,
+          usage: { cost: 0.02, turns: 2, contextTokens: 0 },
+        },
+        timestamp: 0,
+      },
+    } as AgentSessionEvent;
+  }
+
+  test("shows the result that woke the turn as one compact row", async () => {
+    const { api, renderer } = makeRenderer();
+
+    renderer.handleEvent(result("done"));
+    renderer.handleEvent(toolStart("read", { path: "/repo/a.ts" }, "r-1"));
+    await renderer.finish("reply", "ok");
+
+    expect(api.sent.map((msg) => msg.text)).toEqual([
+      "🤖 j1 ⬝ 2 turns ⬝ $0.02<br>📄 <code>a.ts</code>",
+      "<p>reply</p>",
+    ]);
+  });
+
+  test("shows a result appended at a turn boundary once, however it arrives", async () => {
+    const { api, renderer } = makeRenderer();
+    const { message } = result("done") as Extract<
+      AgentSessionEvent,
+      { type: "message_end" }
+    >;
+
+    renderer.handleEvent({
+      type: "entry_appended",
+      entry: {
+        ...(message as object),
+        type: "custom_message",
+        id: "e-1",
+        parentId: null,
+        timestamp: "",
+      },
+    } as AgentSessionEvent);
+    await flush(renderer);
+    const shown = api.sent.map((msg) => msg.text);
+    renderer.handleEvent(result("done"));
+    await renderer.finish("", "ok");
+
+    expect(shown).toEqual(["🤖 j1 ⬝ 2 turns ⬝ $0.02"]);
+    expect(api.sent.map((msg) => msg.text)).toEqual(shown);
+    expect(api.edited).toEqual([]);
+  });
+
+  test("marks no result row as running", async () => {
+    const { api, renderer } = makeRenderer();
+
+    renderer.handleEvent(result("failed"));
+    await flush(renderer);
+    await renderer.finish("", "ok");
+
+    expect(api.sent.map((msg) => msg.text)).toEqual([
+      "🤖 j1 ⬝ <b>failed</b> ⬝ 2 turns ⬝ $0.02",
+    ]);
+  });
+
+  test("shows nothing with logs off, or for other custom messages", async () => {
+    const off = makeRenderer("off");
+    off.renderer.handleEvent(result("done"));
+    await off.renderer.finish("", "ok");
+
+    const other = makeRenderer();
+    other.renderer.handleEvent(result("done", "pim-datetime"));
+    await other.renderer.finish("", "ok");
+
+    expect(off.api.sent).toEqual([]);
+    expect(other.api.sent).toEqual([]);
   });
 });

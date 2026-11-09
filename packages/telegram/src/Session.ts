@@ -4,9 +4,11 @@ import type { Api } from "grammy";
 import { rename } from "node:fs/promises";
 import { join } from "node:path";
 
+import type { SubagentJobs } from "#core/extensions/subagent/SubagentJobs";
 import type { AgentRuntime } from "#core/session/AgentRuntime";
 import {
   SessionHost,
+  type CancelResult,
   type HostSettings,
   type SessionCompactResult,
   type SetCwdResult,
@@ -14,9 +16,11 @@ import {
 } from "#core/session/SessionHost";
 import { Tools } from "#core/shared/Tools";
 import type { LogsMode, TelegramConfig, ThinkingLevelOpt } from "./Config";
+import { JobsMessage } from "./JobsMessage";
 import { SendFileTool } from "./SendFileTool";
 import type { TaskScheduler } from "./TaskScheduler";
 import { TaskTool } from "./TaskTool";
+import { Turn } from "./Turn";
 
 export type { SessionCompactResult };
 
@@ -39,6 +43,9 @@ type SessionDeps = {
   readonly scheduler: TaskScheduler;
   readonly persistSettings: (patch: Partial<SessionSettings>) => Promise<void>;
   readonly getBotUsername: () => string | undefined;
+  readonly jobs?: SubagentJobs;
+  /** How long `dispose` waits for the jobs message's edits. */
+  readonly grace?: () => Promise<void>;
 };
 
 const MAIN = "main";
@@ -52,6 +59,7 @@ export class Session {
   public readonly id: SessionId;
   private readonly deps: SessionDeps;
   private readonly host: SessionHost;
+  private readonly jobsMessage: JobsMessage;
   private chatSettings: Pick<SessionSettings, "logsMode" | "temporary">;
 
   public constructor(deps: SessionDeps) {
@@ -86,6 +94,19 @@ export class Session {
         ),
       ],
       onRetire: (path) => this.archive(path),
+      ...(deps.jobs === undefined
+        ? {}
+        : {
+            jobs: deps.jobs,
+            runWake: (work) =>
+              this.run((agent) => Turn.run(this, deps.api, agent, work)),
+          }),
+    });
+    this.jobsMessage = new JobsMessage({
+      api: deps.api,
+      chat: deps.id,
+      source: this.host,
+      ...(deps.grace === undefined ? {} : { grace: deps.grace }),
     });
   }
 
@@ -107,6 +128,11 @@ export class Session {
 
   public get isStreaming(): boolean {
     return this.host.isStreaming;
+  }
+
+  /** Never evicted while its background jobs run. */
+  public get pinned(): boolean {
+    return this.host.pinned;
   }
 
   public usage(): ReturnType<SessionHost["usage"]> {
@@ -140,8 +166,9 @@ export class Session {
     return this.host.run(work, opts);
   }
 
-  public async cancel(): Promise<boolean> {
-    return (await this.host.cancel()).cancelled;
+  /** Stops the running turn and every background job. */
+  public cancel(): Promise<CancelResult> {
+    return this.host.cancel();
   }
 
   public clear(): Promise<void> {
@@ -184,8 +211,8 @@ export class Session {
     });
   }
 
-  public dispose(): Promise<void> {
-    return this.host.dispose();
+  public async dispose(): Promise<void> {
+    await Promise.all([this.jobsMessage.dispose(), this.host.dispose()]);
   }
 
   private sessionPath(dir: string, suffix = ""): string {

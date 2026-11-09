@@ -1,14 +1,13 @@
-import type { AgentRuntime } from "#core/session/AgentRuntime";
 import { Bot } from "#telegram/Bot";
 import { Config } from "#telegram/Config";
-import type { Surface } from "./Daemon";
+import type { Surface, SurfaceDeps } from "./Daemon";
 
-function create(args: ReadonlyArray<string>, runtime: AgentRuntime): Surface {
+function create(args: ReadonlyArray<string>, deps: SurfaceDeps): Surface {
   return {
     name: "telegram",
     start: async () => {
       const config = await Config.load(Config.parseArgs(args));
-      const bot = new Bot(config, runtime);
+      const bot = new Bot(config, deps.runtime, { jobs: deps.jobs });
       await bot.start();
       return { stop: () => bot.stop() };
     },

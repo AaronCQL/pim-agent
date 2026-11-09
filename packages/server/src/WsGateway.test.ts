@@ -375,7 +375,7 @@ test("loses nothing when a probe dies mid-turn and resumes by seq", async () => 
   const second = await connect({ sessionId, fromSeq: resumeSeq });
   const tail = durable(second);
   expect(tail.every((e) => e.seq > resumeSeq)).toBe(true);
-  await idle(second, second.events.length);
+  await idle(second, 0);
 
   const seen = [...durable(first), ...durable(second)];
   const seqs = seen.map((e) => e.seq);

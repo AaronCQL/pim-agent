@@ -1,3 +1,5 @@
+import type { JobView } from "#core/extensions/subagent/SubagentJobs";
+import type { JobState } from "#core/extensions/subagent/JobState";
 import type { DirectoryListing } from "#core/shared/Directories";
 import type { CommitResult, GitBranch } from "#core/shared/Git";
 import type { PickerItem } from "#core/picker/PickerItem";
@@ -18,10 +20,19 @@ export type TurnStats = {
   readonly durationMs: number;
 };
 
+/** The subagent log a row opens: `watch_subagent` takes `jobId` as its `callId`. */
+export type SubagentChildView = {
+  readonly jobId: string;
+  /** The job's short name in its session, `j3`; absent for a synchronous run. */
+  readonly handle?: string;
+};
+
 export type ToolCallView = {
   readonly callId: string;
   readonly name: string;
   readonly view: ToolView;
+  /** Set while the call owns, or may yet own, a subagent log. */
+  readonly child?: SubagentChildView;
 };
 
 /** A file a user message carried; `url` is server-relative. */
@@ -64,6 +75,8 @@ export type DurableEvent =
       readonly name: string;
       readonly view: ToolView;
       readonly isError: boolean;
+      /** Set on a spawn or a synchronous run that owns a subagent log; never on a failed one. */
+      readonly child?: SubagentChildView;
       /** Absent when the tool did not run, or for results recorded before pi measured it. */
       readonly durationMs?: number;
     }
@@ -72,6 +85,20 @@ export type DurableEvent =
       readonly type: "notice";
       readonly severity: NoticeSeverity;
       readonly text: string;
+    }
+  /** A background subagent's one result, appended after its `subagent` spawn call settled. */
+  | {
+      readonly seq: number;
+      readonly type: "subagent_result";
+      readonly messageId: string;
+      /** The spawning call's `callId`; `watch_subagent` reads the child log under it. */
+      readonly jobId: string;
+      /** The job's short name in its session, `j3`. */
+      readonly handle?: string;
+      readonly state: JobState;
+      readonly view: ToolView;
+      /** Epoch ms. */
+      readonly timestamp: number;
     };
 
 /** Progress of a `reload`. */
@@ -139,11 +166,15 @@ export type EphemeralEvent =
       readonly name: string;
       readonly messageId: string;
       readonly view: ToolView;
+      /** As in `ToolCallView`. */
+      readonly child?: SubagentChildView;
     }
+  /** Each update restates `child`; the latest event wins. */
   | {
       readonly type: "tool_update";
       readonly callId: string;
       readonly view: ToolView;
+      readonly child?: SubagentChildView;
     }
   /** Superseded by the `tool_result` with the same `callId`. */
   | {
@@ -151,6 +182,8 @@ export type EphemeralEvent =
       readonly callId: string;
       readonly view: ToolView;
       readonly isError: boolean;
+      /** As in `tool_result`. */
+      readonly child?: SubagentChildView;
       readonly durationMs?: number;
     }
   /** Cached picker answers for this cwd are stale. */
@@ -166,6 +199,8 @@ export type EphemeralEvent =
       readonly events: readonly StreamEvent[];
     }
   | { readonly type: "turn_end"; readonly stats: TurnStats }
+  /** The session's running background subagents, oldest first; replaces the previous list. */
+  | { readonly type: "jobs"; readonly jobs: readonly JobView[] }
   /** Markdown from an extension; not written to the session. */
   | {
       readonly type: "ui_notice";
@@ -193,6 +228,8 @@ export type EphemeralEvent =
       readonly type: "session_activity";
       readonly sessionId: string;
       readonly status: SessionStatus;
+      /** Running background subagents; absent when none. */
+      readonly jobs?: number;
     }
   /** Broadcast; the read cursor is per session, not per client. */
   | { readonly type: "session_read"; readonly sessionId: string }
@@ -233,7 +270,7 @@ export type EphemeralEvent =
       readonly status: SessionStatus;
       /** False while another process holds this session's turn lease. */
       readonly writable: boolean;
-      /** A session in the same cwd is mid-turn, so git actions are refused. */
+      /** A session in the same cwd is mid-turn or running subagents, so git actions are refused. */
       readonly repoBusy?: boolean;
       /** Absent when unheld or the lease record is corrupt. */
       readonly heldBy?: {
@@ -275,6 +312,8 @@ export type SessionSummaryView = {
   readonly unread?: boolean;
   /** Absent when idle or not held open by this server. */
   readonly status?: SessionStatus;
+  /** Running background subagents; absent when none or not held open by this server. */
+  readonly jobs?: number;
 };
 
 export type ProjectView = {
@@ -392,8 +431,10 @@ export function isAttachScoped(event: ServerEvent): boolean {
     case "tool_end":
     case "tool_result":
     case "notice":
+    case "subagent_result":
     case "subagent_events":
     case "turn_end":
+    case "jobs":
     case "session_state":
     case "ui_notice":
     case "ui_request":
