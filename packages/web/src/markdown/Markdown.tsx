@@ -74,38 +74,45 @@ function renderer(host: HTMLElement): smd.Default_Renderer {
   };
 }
 
-async function copyInline(code: Element): Promise<void> {
-  if (!(await copyText(code.textContent ?? ""))) {
+// `innerText` for a quote: it keeps the breaks between its paragraphs and
+// list items, and skips a diagram's hidden source. Inline code keeps its spaces.
+async function copyBlock(block: HTMLElement): Promise<void> {
+  const text = block.tagName === "CODE" ? block.textContent : block.innerText;
+  if (!(await copyText(text ?? ""))) {
     return;
   }
-  code.removeAttribute("data-copied");
-  // Force layout so a second click on a still-lit token replays the flash.
-  code.getBoundingClientRect();
-  code.addEventListener(
+  block.removeAttribute("data-copied");
+  // Force layout so a second click on a still-lit block replays the flash.
+  block.getBoundingClientRect();
+  block.addEventListener(
     "animationend",
     () => {
-      code.removeAttribute("data-copied");
+      block.removeAttribute("data-copied");
     },
     { once: true }
   );
-  code.setAttribute("data-copied", "");
+  block.setAttribute("data-copied", "");
 }
 
 // Delegated: the parser owns and rewrites this DOM.
-function onCodeClick(event: MouseEvent): void {
+function onCopyClick(event: MouseEvent): void {
   const from = event.target;
   if (!(from instanceof Element)) {
     return;
   }
-  const code = from.closest("code");
-  if (code === null || code.closest("pre, a") !== null) {
+  // Links and fences (with their buttons and diagrams) answer clicks themselves.
+  if (from.closest("a, pre, .pim-fence") !== null) {
+    return;
+  }
+  const block = from.closest<HTMLElement>("code, blockquote");
+  if (block === null) {
     return;
   }
   // A click that ends a drag is a selection.
   if (window.getSelection()?.isCollapsed === false) {
     return;
   }
-  void copyInline(code);
+  void copyBlock(block);
 }
 
 // Wrapped because a button inside the scrolling `<pre>` would scroll with the code.
@@ -120,7 +127,7 @@ function mountCopyButtons(
     }
     pre.setAttribute("data-copy", "");
     const wrapper = document.createElement("div");
-    wrapper.className = "relative";
+    wrapper.className = "pim-fence relative";
     pre.replaceWith(wrapper);
     wrapper.append(pre);
     disposers.push(
@@ -228,7 +235,7 @@ export function Markdown(props: {
       ref={(element) => {
         host = element;
       }}
-      onClick={onCodeClick}
+      onClick={onCopyClick}
       class={`pim-markdown min-w-0 ${props.wrap ?? "break-words"}`}
     />
   );
