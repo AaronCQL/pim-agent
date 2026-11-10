@@ -129,10 +129,13 @@ export function childLoaderOptions(cwd: string): {
   };
 }
 
-export function subagentParent(ctx: ExtensionContext): SubagentParent {
+export function subagentParent(
+  ctx: ExtensionContext,
+  model: Model<Api> | undefined
+): SubagentParent {
   return {
     cwd: ctx.cwd,
-    model: ctx.model,
+    model,
     sessionId: ctx.sessionManager.getSessionId(),
   };
 }

@@ -493,6 +493,7 @@ export class SessionStream implements SessionUi {
       model: this.host.currentModelId ?? "",
       ...(modelLabel === undefined ? {} : { modelLabel }),
       thinking: this.host.currentThinkingLevel,
+      subagent: this.host.subagentChoice,
       cost: this.host.settings.cumulativeCost ?? 0,
       status: this.host.status,
       ...this.leaseState(),

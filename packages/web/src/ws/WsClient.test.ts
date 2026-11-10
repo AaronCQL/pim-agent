@@ -419,7 +419,12 @@ test("the model catalogue is asked for once and switching it lands on state", as
 
   const first = await store.listModels();
   expect(first.models).toEqual([
-    { id: "test/echo", label: "echo", provider: "test" },
+    {
+      id: "test/echo",
+      label: "echo",
+      provider: "test",
+      thinkingLevels: ["off"],
+    },
   ]);
   expect(first.thinkingLevels).toBeArray();
   expect(await store.listModels()).toBe(first);

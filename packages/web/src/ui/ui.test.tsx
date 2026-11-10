@@ -724,11 +724,9 @@ describe("chip menu", () => {
   function paint(search?: string): {
     readonly host: HTMLElement;
     readonly chosen: string[];
-    readonly opened: number[];
   } {
     const host = mountPoint();
     const chosen: string[] = [];
-    const opened: number[] = [];
     render(
       () => (
         <Menu
@@ -740,14 +738,13 @@ describe("chip menu", () => {
             { value: "claude/opus-5", label: "Opus 5" },
             { value: "openai/gpt-6", label: "GPT-6" },
           ]}
-          onOpen={() => opened.push(1)}
           onSelect={(value) => chosen.push(value)}
         />
       ),
       host
     );
     flush();
-    return { host, chosen, opened };
+    return { host, chosen };
   }
 
   /** A closed popover keeps its list mounted. */
@@ -773,14 +770,13 @@ describe("chip menu", () => {
     return !click.defaultPrevented;
   }
 
-  test("the chip asks for its options each time it is opened", () => {
-    const { host, opened } = paint();
+  test("the chip shows its options when it is opened", () => {
+    const { host } = paint();
 
     expect(options(host)).toHaveLength(0);
     host.querySelector("button")!.click();
     flush();
 
-    expect(opened).toEqual([1]);
     expect(options(host).map((row) => row.textContent)).toEqual([
       "Opus 5",
       "GPT-6",

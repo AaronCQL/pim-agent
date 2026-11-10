@@ -57,6 +57,14 @@ export type Command =
       readonly sessionId: string;
       readonly value: string;
     }
+  /** What this session's subagents run on, from the next spawn. `null` follows the main agent; an absent field is left alone. */
+  | {
+      readonly id: string;
+      readonly type: "set_subagent";
+      readonly sessionId: string;
+      readonly model?: string | null;
+      readonly thinking?: string | null;
+    }
   /** Works before any `attach`. */
   | {
       readonly id: string;

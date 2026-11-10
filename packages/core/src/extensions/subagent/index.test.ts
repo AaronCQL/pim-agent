@@ -190,6 +190,39 @@ describe("subagent tool, synchronous", () => {
     expect(tool().description).toContain("return its answer");
   });
 
+  test("the child runs on the session's subagent choice, and on the main agent's where there is none", async () => {
+    const main = { provider: "test", id: "large" };
+    const small = { provider: "test", id: "small" };
+    const ran: { model: unknown; thinkingLevel: unknown }[] = [];
+    const { call, ctx, branch } = load({
+      createSession: async (parent, spec) => {
+        ran.push({ model: parent.model, thinkingLevel: spec.thinkingLevel });
+        const session = new HeldSession();
+        session.finish("done");
+        return session;
+      },
+    });
+    Object.assign(ctx, {
+      model: main,
+      modelRegistry: { getAvailable: () => [main, small] },
+    });
+    const choose = (data: Record<string, unknown>): void => {
+      branch.push({ type: "custom", customType: "pim-subagent-choice", data });
+    };
+
+    await call("call-1", { prompt: "inherit" });
+    choose({ model: "test/small", thinking: "high" });
+    await call("call-2", { prompt: "chosen" });
+    choose({ model: "test/gone" });
+    await call("call-3", { prompt: "unavailable" });
+
+    expect(ran).toEqual([
+      { model: main, thinkingLevel: "low" },
+      { model: small, thinkingLevel: "high" },
+      { model: main, thinkingLevel: "low" },
+    ]);
+  });
+
   test("the schema offers no job actions", async () => {
     const { call } = load({});
 

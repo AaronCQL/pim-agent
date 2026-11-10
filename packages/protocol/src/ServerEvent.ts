@@ -277,6 +277,11 @@ export type EphemeralEvent =
       /** Display name for `model`; absent until one resolves. */
       readonly modelLabel?: string;
       readonly thinking: string;
+      /** What subagents run on; an absent field follows the main agent. */
+      readonly subagent?: {
+        readonly model?: string;
+        readonly thinking?: string;
+      };
       readonly cost: number;
       readonly status: SessionStatus;
       /** False while another process holds this session's turn lease. */
@@ -373,6 +378,7 @@ export type ModelView = {
   readonly label: string;
   /** The provider half of `id`. */
   readonly provider: string;
+  readonly thinkingLevels?: readonly string[];
 };
 
 /** Answer to one `Command`, correlated by `id`. */

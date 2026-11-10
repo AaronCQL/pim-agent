@@ -763,6 +763,62 @@ test("switching session swaps the box, the rows and the files", async () => {
   await until(() => options(host).length > 0, "the rows for the next token");
 });
 
+test("one pill opens the main agent's and the subagents' model and effort", async () => {
+  const store = offline();
+  const seen = answers(store, () => ({
+    models: [
+      {
+        id: "sonnet",
+        label: "Sonnet",
+        provider: "test",
+        thinkingLevels: ["off", "medium"],
+      },
+      {
+        id: "haiku",
+        label: "Haiku",
+        provider: "test",
+        thinkingLevels: ["off", "low"],
+      },
+    ],
+  }));
+  store.ingest(attached());
+  store.ingest(sessionState());
+  const { host } = paint(store);
+  const titled = (title: string): HTMLButtonElement =>
+    host.querySelector<HTMLButtonElement>(`button[title="${title}"]`)!;
+  const choose = async (title: string, label: string): Promise<void> => {
+    const menu = titled(title);
+    menu.click();
+    flush();
+    const row = (): HTMLElement | undefined =>
+      [
+        ...menu.parentElement!.querySelectorAll<HTMLElement>('[role="option"]'),
+      ].find((option) => option.textContent.includes(label));
+    await until(() => row() !== undefined, `${label} under ${title}`);
+    row()!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    flush();
+  };
+
+  const pill = titled("Model and effort");
+  expect(pill.textContent).toBe("sonnet(medium)");
+  pill.click();
+  flush();
+  expect(titled("Subagent model").textContent).toBe("Inherit");
+
+  await choose("Subagent model", "Haiku");
+  expect(seen.at(-1)).toMatchObject({ type: "set_subagent", model: "haiku" });
+
+  store.ingest(sessionState({ subagent: { model: "haiku", thinking: "low" } }));
+  flush();
+  expect(titled("Subagent model").textContent).toBe("Haiku");
+  expect(titled("Model and effort · subagents differ").textContent).toBe(
+    "sonnet(medium)*"
+  );
+
+  await choose("Subagent effort", "Inherit");
+  expect(seen.at(-1)).toMatchObject({ type: "set_subagent", thinking: null });
+});
+
 test("a foreign lease wears the reason and keeps the words typed", async () => {
   const store = offline();
   const seen = answers(store, () => ({}));

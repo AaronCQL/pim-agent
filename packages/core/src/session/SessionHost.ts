@@ -25,12 +25,17 @@ import {
   type CoreExtensionOptions,
 } from "../extensions/CoreExtensions";
 import { JobMessage, type Placement } from "../extensions/subagent/JobMessage";
+import {
+  SubagentChoice,
+  type SubagentChoicePatch,
+} from "../extensions/subagent/SubagentChoice";
 import type {
   JobDelivery,
   JobView,
   SubagentJobs,
 } from "../extensions/subagent/SubagentJobs";
 import { Directories } from "../shared/Directories";
+import { ModelId } from "../shared/ModelId";
 import { FuzzyMatcher, type FuzzyCandidate } from "../shared/FuzzyMatcher";
 import type { Surface } from "../shared/Surface";
 import { EventLog } from "./EventLog";
@@ -163,6 +168,7 @@ export class SessionHost {
   private cachedUnsubscribe: (() => void) | undefined;
   private cachedSystemInstruction: string | undefined;
   private cachedLog: EventLog | undefined;
+  private subagent: SubagentChoice = {};
   private queue: Promise<unknown> = Promise.resolve();
   private seqLog: EventLog | undefined;
   /** File head after this host's last write. */
@@ -321,7 +327,7 @@ export class SessionHost {
 
   public get currentModelId(): string | undefined {
     const model = this.currentModel();
-    return model ? qualifiedModelId(model) : undefined;
+    return model ? ModelId.of(model) : undefined;
   }
 
   /** Display name, e.g. "Claude Opus 5.0". */
@@ -448,7 +454,7 @@ export class SessionHost {
       if (result.kind === "none" || result.kind === "ambiguous") {
         return { ok: false, kind: result.kind, candidates: result.candidates };
       }
-      const id = qualifiedModelId(result.model);
+      const id = ModelId.of(result.model);
       if (this.currentSettings.model === id) {
         return { ok: true, id };
       }
@@ -467,6 +473,26 @@ export class SessionHost {
       }
       await this.patchSettings({ thinkingLevel: level });
       this.cached?.setThinkingLevel(level);
+    });
+  }
+
+  public get subagentChoice(): SubagentChoice {
+    return this.subagent;
+  }
+
+  /** Applies to subagents spawned from now on. */
+  public setSubagentChoice(patch: SubagentChoicePatch): Promise<void> {
+    return this.withLease(async () => {
+      const agent = await this.ensureCached();
+      const next = SubagentChoice.patched(this.subagent, patch);
+      if (
+        next.model === this.subagent.model &&
+        next.thinking === this.subagent.thinking
+      ) {
+        return;
+      }
+      SubagentChoice.append(agent.sessionManager, next);
+      this.subagent = next;
     });
   }
 
@@ -696,6 +722,7 @@ export class SessionHost {
       ? new EventLog(agent.sessionFile)
       : undefined;
     this.cachedUnsubscribe = this.observe(agent);
+    this.subagent = SubagentChoice.read(agent.sessionManager.getEntries());
     this.attachJobs(agent.sessionId);
     if (this.deps.lease !== undefined && agent.sessionFile) {
       await this.markSeen(agent.sessionFile);
@@ -973,6 +1000,7 @@ export class SessionHost {
   private async tearDownCached(): Promise<void> {
     const sessionId = this.jobsSessionId;
     await this.invalidate();
+    this.subagent = {};
     this.detachJobs();
     if (sessionId !== undefined) {
       await this.deps.jobs?.stopAll(sessionId, { by: "user" });
@@ -1023,8 +1051,7 @@ export class SessionHost {
     const available = this.deps.modelRegistry.getAvailable();
     const wanted = pattern.trim();
     const exact = available.find(
-      (m) =>
-        qualifiedModelId(m) === wanted || m.id === wanted || m.name === wanted
+      (m) => ModelId.of(m) === wanted || m.id === wanted || m.name === wanted
     );
     if (exact) {
       return { kind: "ok", model: exact };
@@ -1033,14 +1060,14 @@ export class SessionHost {
     const candidates: FuzzyCandidate<Model<ModelApi>>[] = available.map(
       (m) => ({
         item: m,
-        haystacks: [qualifiedModelId(m), m.id, m.name],
+        haystacks: [ModelId.of(m), m.id, m.name],
       })
     );
     const hits = FuzzyMatcher.rank(pattern, candidates, { limit: 5 });
     if (hits.length === 0) {
       return {
         kind: "none",
-        candidates: available.slice(0, 8).map(qualifiedModelId),
+        candidates: available.slice(0, 8).map(ModelId.of),
       };
     }
     if (hits.length === 1) {
@@ -1053,13 +1080,9 @@ export class SessionHost {
     }
     return {
       kind: "ambiguous",
-      candidates: hits.map((h) => qualifiedModelId(h.item)),
+      candidates: hits.map((h) => ModelId.of(h.item)),
     };
   }
-}
-
-function qualifiedModelId(model: Model<ModelApi>): string {
-  return `${model.provider}/${model.id}`;
 }
 
 async function disposeAgent(agent: AgentSession): Promise<void> {

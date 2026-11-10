@@ -48,7 +48,7 @@ export type SessionRegistryDeps = {
 
 export type SessionCreateOptions = {
   readonly cwd?: string;
-  /** Copies model, thinking level and (if `cwd` is unset) cwd from this host. */
+  /** Copies model, thinking level, subagent choice and (if `cwd` is unset) cwd from this host. */
   readonly like?: SessionHost;
 };
 
@@ -191,6 +191,9 @@ export class SessionRegistry {
       ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
     });
     const agent = await host.ensureAgent();
+    if (like !== undefined) {
+      await host.setSubagentChoice(like.subagentChoice);
+    }
     return this.hosts.adopt(agent.sessionId, host);
   }
 

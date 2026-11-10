@@ -22,6 +22,7 @@ import {
 import { JobLine } from "./JobLine";
 import { JobMessage } from "./JobMessage";
 import { LongCache } from "./LongCache";
+import { SubagentChoice } from "./SubagentChoice";
 import type { JobView, SubagentJobs } from "./SubagentJobs";
 import { SubagentReconcile } from "./SubagentReconcile";
 import {
@@ -44,7 +45,7 @@ type Result = AgentToolResult<SubagentToolDetails>;
 type ParentSession = ExtensionContext["sessionManager"];
 
 const SHARED =
-  "Subagents inherit the current model, thinking level and active tools, except subagent; output is capped at 32KB.";
+  "Subagents inherit the active tools, except subagent, and run on the model and thinking level this session sets for them; output is capped at 32KB.";
 
 const SYNC_DESCRIPTION =
   "Run a task in an isolated subagent with a fresh context and return its answer. " +
@@ -227,24 +228,28 @@ export default function (options: SubagentOptions = {}): ExtensionFactory {
           '{"action":"spawn","prompt":"Find every caller of parseConfig and say which are tests"}'
         );
       }
+      const entries = ctx.sessionManager.getEntries();
+      const child = SubagentChoice.resolve(
+        SubagentChoice.read(entries),
+        { model: ctx.model, thinkingLevel: pi.getThinkingLevel() },
+        () => ctx.modelRegistry.getAvailable()
+      );
       const run = {
         callId,
         activeToolNames: pi.getActiveTools(),
-        thinkingLevel: pi.getThinkingLevel(),
+        thinkingLevel: child.thinkingLevel,
         ...(options.createSession === undefined
           ? {}
           : { createSession: options.createSession }),
       };
-      const parent = subagentParent(ctx);
+      const parent = subagentParent(ctx, child.model);
       if (jobs === undefined) {
         return await runSubagent(prompt, parent, { ...run, signal, onUpdate });
       }
       const job = jobs.spawn(ctx.sessionManager.getSessionId(), {
         callId,
         prompt,
-        lastHandle: SubagentReconcile.lastHandle(
-          ctx.sessionManager.getEntries()
-        ),
+        lastHandle: SubagentReconcile.lastHandle(entries),
         start: (onChange) =>
           startSubagent(prompt, parent, { ...run, onChange }),
       });

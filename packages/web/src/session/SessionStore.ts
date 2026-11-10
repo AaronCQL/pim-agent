@@ -110,6 +110,9 @@ export type SessionState = {
   model: string;
   modelLabel: string;
   thinking: string;
+  /** Empty while subagents follow the main agent. */
+  subagentModel: string;
+  subagentThinking: string;
   cost: number;
   agent: SessionStatus;
   /** False while another process holds the turn lease. */
@@ -253,6 +256,8 @@ export class SessionStore {
       model: "",
       modelLabel: "",
       thinking: "",
+      subagentModel: "",
+      subagentThinking: "",
       cost: 0,
       agent: "idle",
       writable: true,
@@ -983,11 +988,19 @@ export class SessionStore {
   }
 
   public async setModel(id: string): Promise<void> {
-    await this.set("set_model", id);
+    await this.set({ type: "set_model", value: id });
   }
 
   public async setThinking(level: string): Promise<void> {
-    await this.set("set_thinking", level);
+    await this.set({ type: "set_thinking", value: level });
+  }
+
+  /** `null` follows the main agent. */
+  public async setSubagent(choice: {
+    readonly model?: string | null;
+    readonly thinking?: string | null;
+  }): Promise<void> {
+    await this.set({ type: "set_subagent", ...choice });
   }
 
   public async cycleThinking(): Promise<void> {
@@ -1221,14 +1234,19 @@ export class SessionStore {
   }
 
   private async set(
-    type: "set_model" | "set_thinking",
-    value: string
+    choice:
+      | { readonly type: "set_model" | "set_thinking"; readonly value: string }
+      | {
+          readonly type: "set_subagent";
+          readonly model?: string | null;
+          readonly thinking?: string | null;
+        }
   ): Promise<void> {
     if (this.isHeld()) {
       return;
     }
     await this.client
-      .send({ type, sessionId: this.state.sessionId, value })
+      .send({ ...choice, sessionId: this.state.sessionId })
       .catch(() => undefined);
   }
 
@@ -1491,6 +1509,8 @@ export class SessionStore {
           draft.model = event.model;
           draft.modelLabel = event.modelLabel ?? event.model;
           draft.thinking = event.thinking;
+          draft.subagentModel = event.subagent?.model ?? "";
+          draft.subagentThinking = event.subagent?.thinking ?? "";
           draft.cost = event.cost;
           const settled = draft.agent !== "idle" && event.status === "idle";
           draft.agent = event.status;

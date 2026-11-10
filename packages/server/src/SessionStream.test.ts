@@ -48,6 +48,7 @@ function host(): SessionHost {
       return () => {};
     },
     leaseState: { writable: true },
+    subagentChoice: {},
     onLeaseChange: () => () => {},
     onForeignWrite: () => () => {},
     subscribe: (listener: (event: AgentSessionEvent) => void) => {

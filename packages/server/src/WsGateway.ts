@@ -491,6 +491,22 @@ export class WsGateway {
         stream.push(stream.sessionState());
         return {};
       }
+      case "set_subagent": {
+        const stream = this.requireStream(connection);
+        const { model, thinking } = command;
+        if (
+          typeof model === "string" &&
+          !this.registry.models().some((choice) => choice.id === model)
+        ) {
+          return { error: `unknown model "${model}"` };
+        }
+        await stream.host.setSubagentChoice({
+          model,
+          thinking: thinking as ThinkingLevel | null | undefined,
+        });
+        stream.push(stream.sessionState());
+        return {};
+      }
       case "pick_files":
         return {
           items: await this.requireStream(connection).picker.files(

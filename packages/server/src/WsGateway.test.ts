@@ -829,7 +829,12 @@ test("answers with the model catalogue and this model's thinking levels", async 
 
   const { models, thinkingLevels } = await probe.listModels();
   expect(models).toEqual([
-    { id: "test/echo", label: "echo", provider: "test" },
+    {
+      id: "test/echo",
+      label: "echo",
+      provider: "test",
+      thinkingLevels: ["off"],
+    },
   ]);
   const state = probe.events.findLast(
     (event) => event.type === "session_state"

@@ -209,6 +209,47 @@ test("a new session opened `like` another runs its model in its directory", asyn
   expect(state).toMatchObject({ cwd, model: OTHER_MODEL });
 });
 
+test("a session's subagent choice lands on its state, and on a session opened `like` it", async () => {
+  const probe = await connect();
+  const first = probe.sessionId!;
+  const subagentOf = (state: ServerEvent): unknown =>
+    state.type === "session_state" ? state.subagent : undefined;
+  const stateAfter = (from: number): Promise<ServerEvent> =>
+    probe.waitFor((event) => event.type === "session_state", { from });
+
+  expect(
+    (
+      await probe.send({
+        type: "set_subagent",
+        sessionId: first,
+        model: "no/such",
+      })
+    ).success
+  ).toBe(false);
+
+  let mark = probe.events.length;
+  await probe.send({
+    type: "set_subagent",
+    sessionId: first,
+    model: OTHER_MODEL,
+    thinking: "low",
+  });
+  expect(subagentOf(await stateAfter(mark))).toEqual({
+    model: OTHER_MODEL,
+    thinking: "low",
+  });
+
+  mark = probe.events.length;
+  await probe.send({ type: "set_subagent", sessionId: first, thinking: null });
+  expect(subagentOf(await stateAfter(mark))).toEqual({ model: OTHER_MODEL });
+
+  mark = probe.events.length;
+  await probe.send({ type: "attach", like: first, fromSeq: 0 });
+  const copied = await stateAfterAttach(probe, mark);
+  expect(probe.sessionId).not.toBe(first);
+  expect(subagentOf(copied)).toEqual({ model: OTHER_MODEL });
+});
+
 test("a directory given alongside `like` is the one that wins", async () => {
   const probe = await connect();
   const first = probe.sessionId!;
