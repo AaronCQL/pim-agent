@@ -311,6 +311,13 @@ export class SessionStore {
           draft.connection = connection;
         });
       },
+      onRefused: (response) => {
+        void this.recover(response).catch((error: unknown) => {
+          this.setState((draft) => {
+            draft.error = (error as Error).message;
+          });
+        });
+      },
     });
     this.files = new RemoteFilePickerSuggestionEngine(
       (query, limit) => this.pickFiles(query, limit ?? FILE_PICKER_LIMIT),
@@ -325,7 +332,11 @@ export class SessionStore {
   }
 
   public async connect(): Promise<void> {
-    const response = await this.client.connect();
+    await this.recover(await this.client.connect());
+  }
+
+  /** A refused attach, on load or on reconnect: a new chat the server never wrote is started again. */
+  private async recover(response: ResponseEvent): Promise<void> {
     if (response.success) {
       return;
     }

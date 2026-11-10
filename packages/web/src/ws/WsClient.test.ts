@@ -14,12 +14,13 @@ import {
   TOOL_PROSE,
 } from "../test/gateway";
 import { until } from "#core/shared/fixtures/wait";
-import { WsClient } from "./WsClient";
+import { WsClient, type WsClientOptions } from "./WsClient";
 
 let harness: GatewayHarness;
 let stores: SessionStore[] = [];
 let recorder: FrameRecorder | undefined;
 let clients: WsClient[] = [];
+let restoreSocket: (() => void) | undefined;
 
 function open(
   options: { readonly sessionId?: string; readonly cwd?: string } = {}
@@ -70,6 +71,8 @@ afterEach(async () => {
     one.close();
   }
   clients = [];
+  restoreSocket?.();
+  restoreSocket = undefined;
   await recorder?.stop();
   recorder = undefined;
   await harness.stop();
@@ -548,6 +551,9 @@ class FrameRecorder {
   private readonly server: ReturnType<typeof Bun.serve>;
   // Frames sent before the next `attached`.
   public readonly ahead: ServerEvent[] = [];
+  /** Records frames but answers none, like a socket the network dropped silently. */
+  public muted = false;
+  public refusing = false;
 
   public constructor() {
     this.server = Bun.serve({
@@ -576,6 +582,10 @@ class FrameRecorder {
     return `ws://127.0.0.1:${String(this.server.port)}`;
   }
 
+  public get connected(): number {
+    return this.sockets.size;
+  }
+
   public of(type: string): readonly Frame[] {
     return this.frames.filter((frame) => frame.type === type);
   }
@@ -594,6 +604,20 @@ class FrameRecorder {
   private answer(socket: ServerWebSocket<unknown>, raw: string): void {
     const frame = JSON.parse(raw) as Frame;
     this.frames.push(frame);
+    if (this.muted) {
+      return;
+    }
+    if (frame.type === "attach" && this.refusing) {
+      socket.send(
+        JSON.stringify({
+          type: "response",
+          id: frame.id,
+          success: false,
+          error: "no such session",
+        })
+      );
+      return;
+    }
     if (frame.type === "attach") {
       for (const event of this.ahead.splice(0)) {
         socket.send(JSON.stringify(event));
@@ -622,13 +646,15 @@ function record(): FrameRecorder {
 
 function client(
   server: FrameRecorder,
-  onEvent: (event: ServerEvent) => void = () => {}
+  onEvent: (event: ServerEvent) => void = () => {},
+  options: Partial<WsClientOptions> = {}
 ): WsClient {
   const one = new WsClient({
     url: server.url,
     sessionId: "s1",
     onEvent,
     retryMs: 1,
+    ...options,
   });
   clients.push(one);
   return one;
@@ -749,13 +775,46 @@ test("a connect that never answers is abandoned and retried", async () => {
     url: `ws://127.0.0.1:${String(silent.port)}`,
     onEvent: () => undefined,
     retryMs: 1,
-    connectTimeoutMs: 20,
+    timeoutMs: 20,
   });
   clients.push(one);
   try {
     await expect(one.connect()).rejects.toThrow("could not connect");
     await until(() => dials >= 2, "a second dial");
     expect(one.status).toBe("reconnecting");
+  } finally {
+    silent.stop(true);
+  }
+});
+
+test("a dial that times out is redialled at once, and each miss waits longer", async () => {
+  const dials: number[] = [];
+  const silent = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open: () => {
+        dials.push(performance.now());
+      },
+      data: () => undefined,
+    },
+  });
+  const one = new WsClient({
+    url: `ws://127.0.0.1:${String(silent.port)}`,
+    onEvent: () => undefined,
+    retryMs: 300,
+    timeoutMs: 300,
+  });
+  clients.push(one);
+  try {
+    void one.connect().catch(() => undefined);
+    await until(() => dials.length >= 4, "four dials");
+    const gaps = dials.slice(1).map((at, i) => at - (dials[i] ?? 0));
+
+    // Timed out after 300ms, then no retry wait on top.
+    expect(gaps[0]).toBeLessThan(500);
+    expect(gaps[1]).toBeGreaterThanOrEqual(550);
+    expect(gaps[2]).toBeGreaterThanOrEqual(1100);
   } finally {
     silent.stop(true);
   }
@@ -780,14 +839,160 @@ test("waking skips the wait for the next retry", async () => {
   expect(one.status).toBe("open");
 });
 
-test("waking an open client does nothing", async () => {
+test("waking a live client checks the socket and keeps it", async () => {
   const server = record();
-  const one = client(server);
+  const one = client(server, () => {}, { timeoutMs: 50 });
   await one.connect();
 
   one.wake();
-  one.setAttention(false);
-  await until(() => server.of("attention").length === 1, "a later frame");
+  await until(() => server.of("attention").length === 1, "the probe");
+  await Bun.sleep(100);
 
+  expect(server.of("attention")[0]?.value).toBe(true);
   expect(server.of("attach")).toHaveLength(1);
+  expect(one.status).toBe("open");
+});
+
+/** A browser that loses `close`, as a suspended mobile page can. Counts every dial. */
+function deafToClose(): { readonly dials: () => number } {
+  const Real = globalThis.WebSocket;
+  let dials = 0;
+  class Deaf extends Real {
+    public constructor(url: string | URL) {
+      super(url);
+      dials++;
+    }
+    public override addEventListener(
+      ...args: Parameters<WebSocket["addEventListener"]>
+    ): void {
+      if (args[0] !== "close") {
+        super.addEventListener(...args);
+      }
+    }
+  }
+  globalThis.WebSocket = Deaf as typeof WebSocket;
+  restoreSocket = () => {
+    globalThis.WebSocket = Real;
+  };
+  return { dials: () => dials };
+}
+
+test("waking replaces a socket that died without a close event", async () => {
+  const server = record();
+  deafToClose();
+  const one = client(server, () => {}, { timeoutMs: 50 });
+  await one.connect();
+
+  server.drop();
+  await until(() => server.connected === 0, "the drop");
+  expect(one.status).toBe("open");
+  one.wake();
+
+  await until(() => server.of("attach").length === 2, "the reconnect");
+  await until(() => one.status === "open", "the reopen");
+});
+
+test("a dial that errors without a close event is still retried", async () => {
+  const free = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: { data: () => undefined },
+  });
+  const port = free.port;
+  free.stop(true);
+  const { dials } = deafToClose();
+  const one = new WsClient({
+    url: `ws://127.0.0.1:${String(port)}`,
+    onEvent: () => undefined,
+    retryMs: 1,
+  });
+  clients.push(one);
+
+  await expect(one.connect()).rejects.toThrow("could not connect");
+  await until(() => dials() >= 3, "more dials");
+  expect(one.status).toBe("reconnecting");
+});
+
+test("waking drops an open socket that no longer answers", async () => {
+  const server = record();
+  const one = client(server, () => {}, { timeoutMs: 50 });
+  await one.connect();
+
+  server.muted = true;
+  one.wake();
+  await until(() => server.of("attention").length === 1, "the probe");
+  server.muted = false;
+
+  await until(() => server.of("attach").length === 2, "the reconnect");
+  await until(() => one.status === "open", "the reopen");
+});
+
+test("a reconnect the server refuses is handed back", async () => {
+  const server = record();
+  const refused: (string | undefined)[] = [];
+  const one = client(server, () => {}, {
+    onRefused: (response) => {
+      refused.push(response.error);
+    },
+  });
+  await one.connect();
+
+  server.refusing = true;
+  server.drop();
+
+  await until(() => refused.length === 1, "the refusal");
+  expect(refused).toEqual(["no such session"]);
+  expect(one.status).toBe("open");
+});
+
+test("a reconnect whose attach is never answered is dropped and redialled", async () => {
+  const server = record();
+  const one = client(server, () => {}, { timeoutMs: 20 });
+  await one.connect();
+
+  server.muted = true;
+  server.drop();
+  await until(() => server.of("attach").length === 2, "the silent attach");
+  await until(() => server.of("attach").length === 3, "the redial");
+  server.muted = false;
+
+  await until(() => server.of("attach").length === 4, "the answered attach");
+  await until(() => one.status === "open", "the reopen");
+  await Bun.sleep(150);
+  expect(server.of("attach")).toHaveLength(4);
+});
+
+test("waking redials a dial that began before the sleep", async () => {
+  const dials: number[] = [];
+  const silent = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open: () => {
+        dials.push(performance.now());
+      },
+      data: () => undefined,
+    },
+  });
+  const one = new WsClient({
+    url: `ws://127.0.0.1:${String(silent.port)}`,
+    onEvent: () => undefined,
+    retryMs: 1,
+    timeoutMs: 150,
+  });
+  clients.push(one);
+  try {
+    void one.connect().catch(() => undefined);
+    // The third dial has 600ms to answer.
+    await until(() => dials.length === 3, "three dials");
+    one.wake();
+    await Bun.sleep(200);
+    expect(dials).toHaveLength(3);
+
+    one.wake();
+    await until(() => dials.length === 4, "the redial");
+    expect((dials[3] ?? 0) - (dials[2] ?? 0)).toBeLessThan(450);
+  } finally {
+    silent.stop(true);
+  }
 });
