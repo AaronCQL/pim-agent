@@ -91,10 +91,10 @@ describe("subagent render formatting", () => {
   });
 });
 
-const promptSection = (text: string): ViewBlock => ({
-  kind: "section",
-  label: "Prompt",
-  content: [{ kind: "text", text }],
+const echo = (text: string): ViewBlock => ({
+  kind: "markdown",
+  text,
+  echo: true,
 });
 
 describe("subagentView", () => {
@@ -165,7 +165,7 @@ describe("subagentView", () => {
     const view = subagentView(viewInput({ text: "Final **answer**", details }));
 
     expect(view.body?.slice(0, 2)).toEqual([
-      promptSection("investigate"),
+      echo("investigate"),
       { kind: "markdown", text: "I'll grep first.\n\nFinal **answer**" },
     ]);
   });
@@ -175,9 +175,9 @@ describe("subagentView", () => {
 
     expect(
       subagentView(viewInput({ prompt, details: baseDetails })).body?.[0]
-    ).toEqual(promptSection(prompt));
+    ).toEqual(echo(prompt));
     expect(subagentView(viewInput({ prompt, settled: false })).body).toEqual([
-      promptSection(prompt),
+      echo(prompt),
     ]);
   });
 
@@ -192,7 +192,7 @@ describe("subagentView", () => {
 
   test("falls back to the error text when pi stripped the details", () => {
     expect(subagentView(viewInput({ text: "boom" })).body).toEqual([
-      promptSection("investigate"),
+      echo("investigate"),
       { kind: "markdown", text: "boom" },
     ]);
   });
@@ -239,7 +239,7 @@ describe("subagentView, background jobs", () => {
     expect(AnsiPainter.paint(view.title, stubTheme)).toEqual([
       "j1<muted> ⬝ </muted><muted>started</muted>",
     ]);
-    expect(view.body).toEqual([promptSection(spawnDetails.prompt)]);
+    expect(view.body).toEqual([echo(spawnDetails.prompt)]);
   });
 
   test("a synchronous spawn still renders as the run it awaited", () => {
@@ -285,11 +285,9 @@ describe("subagentView, background jobs", () => {
     expect(AnsiPainter.paint(steer.title, stubTheme)).toEqual([
       "j1<muted> ⬝ </muted>steer",
     ]);
-    expect(steer.body?.[0]).toEqual({
-      kind: "section",
-      label: "Message",
-      content: [{ kind: "text", text: "skip docs" }],
-    });
+    expect(steer.body).toEqual([
+      { kind: "markdown", text: "skip docs", echo: true },
+    ]);
   });
 
   test("an action still running, or one that failed, keeps its own label and title", () => {
@@ -335,7 +333,7 @@ describe("subagentResultView", () => {
         "<muted>3 turns</muted><muted> ⬝ </muted><muted>$0.23</muted><muted> ⬝ </muted><muted>0.4%/1.0M</muted>",
     ]);
     expect(view.body?.slice(0, 2)).toEqual([
-      promptSection("investigate"),
+      echo("investigate"),
       { kind: "markdown", text: "body" },
     ]);
   });

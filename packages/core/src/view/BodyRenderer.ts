@@ -63,7 +63,7 @@ function gutter(prefix: PrefixSpec, lineColor?: ThemeColor): FrameBuilder {
           text: group.markdown,
           theme,
           prefix,
-          lineColor,
+          lineColor: group.echo ? "muted" : lineColor,
         }),
       ];
     }

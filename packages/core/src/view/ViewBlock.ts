@@ -42,7 +42,12 @@ export type KvPair = readonly [string, string];
 export type ViewBlock =
   | { readonly kind: "text"; readonly text: string; readonly tone?: Tone }
   /** Never re-coloured or re-wrapped. */
-  | { readonly kind: "markdown"; readonly text: string }
+  | {
+      readonly kind: "markdown";
+      readonly text: string;
+      /** The call's own input echoed back, painted dimmed. */
+      readonly echo?: boolean;
+    }
   /** One line of mixed-tone text, e.g. a `+5`/`-2` diff stat. */
   | { readonly kind: "spans"; readonly spans: readonly Span[] }
   | {

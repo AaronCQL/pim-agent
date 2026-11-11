@@ -153,7 +153,7 @@ function spawnedView(details: SpawnDetails): ToolView {
     icon: "robot",
     labelTone: "accent",
     title: line([{ text: details.handle }, { text: "started", tone: "muted" }]),
-    body: promptSection(details.prompt),
+    body: echo(details.prompt),
   };
 }
 
@@ -163,7 +163,10 @@ function actionView(
   result: AgentToolResult<unknown> | undefined,
   isPartial: boolean
 ): ToolView {
-  const text = result === undefined ? "" : Renderer.firstText(result);
+  const text =
+    result === undefined || action === "steer"
+      ? ""
+      : Renderer.firstText(result);
   const reason = action === "stop" ? call.reason : undefined;
   return {
     label: "Subagent",
@@ -177,15 +180,7 @@ function actionView(
         : [{ text: reason, tone: "muted" as const }]),
     ]),
     body: [
-      ...(action === "steer" && call.message !== undefined
-        ? [
-            {
-              kind: "section" as const,
-              label: "Message",
-              content: [{ kind: "text" as const, text: call.message }],
-            },
-          ]
-        : []),
+      ...(action === "steer" ? echo(call.message) : []),
       ...(text === "" ? [] : [{ kind: "text" as const, text }]),
     ],
   };
@@ -230,15 +225,10 @@ function usageSpans(
   }).map((span) => ({ tone, ...span }));
 }
 
-function promptSection(prompt: string | undefined): readonly ViewBlock[] {
-  return prompt !== undefined && prompt.trim() !== ""
-    ? [
-        {
-          kind: "section",
-          label: "Prompt",
-          content: [{ kind: "text", text: prompt.trim() }],
-        },
-      ]
+/** The call's own words, as dimmed markdown. */
+function echo(text: string | undefined): readonly ViewBlock[] {
+  return text !== undefined && text.trim() !== ""
+    ? [{ kind: "markdown", text: text.trim(), echo: true }]
     : [];
 }
 
@@ -246,7 +236,7 @@ function bodyBlocks(
   prompt: string | undefined,
   result: RunViewInput["result"]
 ): readonly ViewBlock[] {
-  const blocks: ViewBlock[] = [...promptSection(prompt)];
+  const blocks: ViewBlock[] = [...echo(prompt)];
   if (result === undefined) {
     return blocks;
   }

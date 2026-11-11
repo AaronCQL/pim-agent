@@ -52,7 +52,7 @@ function paintTool(view: ToolView): PaintedTool {
     .filter((text) => text !== "")
     .join(" ");
   const outline = outlined(view.body ?? []).flatMap((block) =>
-    paintBlock(block, "block")
+    paintBlock(block, block.kind === "markdown" ? "inline" : "block")
   );
 
   return {
@@ -61,12 +61,13 @@ function paintTool(view: ToolView): PaintedTool {
   };
 }
 
-/** Body blocks shown in a chat row: headings and single-line payloads. */
+/** Body blocks shown in a chat row: headings, echoed input as one line, and single-line payloads. */
 function outlined(blocks: readonly ViewBlock[]): readonly ViewBlock[] {
   return blocks.filter((block) => {
     const frame = Painting.FRAMES[block.kind];
     return (
       frame === "heading" ||
+      (block.kind === "markdown" && block.echo === true) ||
       (frame === "flow" && Painting.WEIGHT[block.kind] === "payload")
     );
   });

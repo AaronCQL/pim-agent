@@ -604,7 +604,7 @@ describe("Telegram Renderer subagent status", () => {
     await renderer.finish("", "ok");
 
     expect(api.sent.map((msg) => msg.text)).toEqual([
-      "🤖 1 turn ⬝ $0.01 ⬝ 2.0%/1.0M<br><b>Prompt</b> review the diff",
+      "🤖 1 turn ⬝ $0.01 ⬝ 2.0%/1.0M<br>review the diff",
     ]);
   });
 
