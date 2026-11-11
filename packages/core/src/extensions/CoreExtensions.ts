@@ -28,7 +28,7 @@ export type PimInlineExtension = {
 };
 
 export type CoreExtensionOptions = {
-  /** Background subagents; omit for synchronous ones (print mode, children). */
+  /** Background subagents; omit for synchronous ones (print mode). Children get no subagent extension at all. */
   readonly jobs?: SubagentJobs;
 };
 

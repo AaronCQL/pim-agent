@@ -33,6 +33,14 @@ describe("childLoaderOptions", () => {
     expect(names).toContain("web-search");
     expect(names).toContain("apply-patch");
   });
+
+  test("leaves out subagent, so a child can never spawn one", () => {
+    const names = childLoaderOptions("/work").extensionFactories.map(
+      (entry) => entry.name
+    );
+
+    expect(names).not.toContain("subagent");
+  });
 });
 
 describe("SubagentEventCapture", () => {
@@ -309,15 +317,26 @@ describe("runSubagent", () => {
     expect(fake.disposeCalls).toBe(1);
   });
 
-  test("nested subagent calls are rejected by the async-local recursion ban", async () => {
-    const outer = new FakeSession(async () => {
-      const inner = new FakeSession(async () => {});
-      await runSubagent("inner", parent, { createSession: async () => inner });
+  // A job notice wakes the parent from inside the child's onChange; that turn's spawns are the parent's own.
+  test("the parent can spawn from a callback the child fires", async () => {
+    let spawned: Promise<unknown> | undefined;
+    const child = new FakeSession(async (session) => {
+      session.emit({ type: "message_end", message: assistant(["done"]) });
     });
 
-    await expect(
-      runSubagent("outer", parent, { createSession: async () => outer })
-    ).rejects.toThrow("subagents cannot call subagent tool");
+    await runSubagent("outer", parent, {
+      createSession: async () => child,
+      onChange: () => {
+        spawned ??= runSubagent("sibling", parent, {
+          createSession: async () =>
+            new FakeSession(async (session) => {
+              session.emit({ type: "message_end", message: assistant(["ok"]) });
+            }),
+        });
+      },
+    });
+
+    expect(await spawned).toMatchObject({ content: [{ text: "ok" }] });
   });
 });
 

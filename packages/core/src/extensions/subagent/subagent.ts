@@ -1,4 +1,3 @@
-import { AsyncLocalStorage } from "node:async_hooks";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type {
   AgentSession,
@@ -16,6 +15,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Api, Model, Usage } from "@earendil-works/pi-ai";
 import { Errors } from "../../shared/Errors";
+import type { PimExtensionName } from "../../shared/ExtensionToggles";
 import { SubagentLogs } from "../../shared/SubagentLogs";
 import { Tools } from "../../shared/Tools";
 import { MessageText } from "../../session/MessageText";
@@ -25,10 +25,10 @@ import { formatTopLine } from "./render";
 
 const PER_TASK_OUTPUT_CAP = 32 * 1024;
 const SUBAGENT_TOOL_NAME = "subagent";
+// Typed, so renaming the extension breaks the build instead of silently lifting the ban.
+const SUBAGENT_EXTENSION: PimExtensionName = "subagent";
 const RECENT_TOOLS = 10;
 export const UPDATE_INTERVAL_MS = 100;
-
-const inSubagent = new AsyncLocalStorage<true>();
 
 export type SubagentUsage = {
   readonly input: number;
@@ -110,6 +110,7 @@ export type SubagentChild = {
   readonly stop: () => Promise<void>;
 };
 
+/** Keeps the allowlist naming only tools the child can have. */
 export function childToolNames(
   activeToolNames: readonly string[]
 ): readonly string[] {
@@ -117,6 +118,7 @@ export function childToolNames(
 }
 
 // The child inherits no registrations; without these its `tools` allowlist drops every pim tool.
+// Leaving out `subagent` is the recursion ban: a child cannot call a tool it never registered.
 export function childLoaderOptions(cwd: string): {
   readonly cwd: string;
   readonly agentDir: string;
@@ -125,7 +127,9 @@ export function childLoaderOptions(cwd: string): {
   return {
     cwd,
     agentDir: getAgentDir(),
-    extensionFactories: CoreExtensions.gated(),
+    extensionFactories: CoreExtensions.gated().filter(
+      ({ name }) => name !== SUBAGENT_EXTENSION
+    ),
   };
 }
 
@@ -202,16 +206,11 @@ export async function runSubagent(
   return await startSubagent(prompt, parent, run).result;
 }
 
-/** Throws at once when called from inside a subagent. */
 export function startSubagent(
   prompt: string,
   parent: SubagentParent,
   run: SubagentRun = {}
 ): SubagentChild {
-  if (inSubagent.getStore()) {
-    throw new Error("subagents cannot call subagent tool");
-  }
-
   const capture = new SubagentEventCapture(run.onUpdate, {
     ...(run.onChange === undefined ? {} : { onChange: run.onChange }),
     contextWindow: parent.model?.contextWindow,
@@ -224,9 +223,7 @@ export function startSubagent(
       ? stopper.signal
       : AbortSignal.any([run.signal, stopper.signal]);
   const started = Promise.withResolvers<SubagentSession | undefined>();
-  const result = inSubagent.run(true, () =>
-    drive(prompt, parent, run, { capture, signal, started })
-  );
+  const result = drive(prompt, parent, run, { capture, signal, started });
   const settled = result.then(
     () => undefined,
     () => undefined
