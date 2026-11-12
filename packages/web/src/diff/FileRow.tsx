@@ -33,6 +33,8 @@ export function FileRow(props: {
   readonly open: boolean;
   readonly onToggle: () => void;
   readonly onOpen: (gap: DiffGap) => void;
+  /** Absent where the file can't be opened. */
+  readonly onView?: () => void;
   readonly split: boolean;
 }) {
   const notes = useContext(ReviewComments)();
@@ -73,15 +75,18 @@ export function FileRow(props: {
   const badge = createMemo(() => notes?.count(props.file.path) ?? 0);
 
   return (
-    <div class="border-b border-neutral-850 last:border-b-0">
+    <div
+      data-path={props.file.path}
+      class="border-b border-neutral-850 last:border-b-0"
+    >
       <div
-        class={`sticky top-0 z-1 flex w-full items-center gap-2 px-3 text-sm ${props.open ? "bg-neutral-850" : "bg-neutral-925 hover:bg-neutral-900"}`}
+        class={`sticky top-0 z-1 flex w-full items-center text-sm ${props.open ? "bg-neutral-850" : "bg-neutral-925 hover:bg-neutral-900"}`}
       >
         <button
           type="button"
           aria-expanded={props.open ? "true" : "false"}
           aria-label={props.file.path}
-          class="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left"
+          class={`flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-3 text-left ${props.file.status !== "deleted" && props.onView !== undefined ? "pr-1" : "pr-3"}`}
           onClick={props.onToggle}
         >
           <span
@@ -104,6 +109,21 @@ export function FileRow(props: {
             <Stat added={props.file.added} removed={props.file.removed} />
           </Show>
         </button>
+        <Show
+          when={props.file.status !== "deleted" && props.onView !== undefined}
+        >
+          <button
+            type="button"
+            aria-label={`View ${props.file.path}`}
+            title="View the whole file"
+            class="flex w-8 shrink-0 items-center justify-center self-stretch text-neutral-400 hover:text-neutral-50"
+            onClick={() => {
+              props.onView?.();
+            }}
+          >
+            <span class="i-griddy-icons:file-code size-4" aria-hidden="true" />
+          </button>
+        </Show>
       </div>
 
       <Show when={props.open}>

@@ -360,6 +360,14 @@ export class DiffStore {
     }
   }
 
+  /** Opens a file's row whether or not it was open. */
+  public reveal(path: string): void {
+    this.setOpened((draft) => {
+      draft[path] = true;
+    });
+    void this.expand(path);
+  }
+
   /** Reads a file's hunks once; later calls use the cache. */
   public async expand(path: string): Promise<void> {
     if (untrack(() => this.diffs[path]) !== undefined) {

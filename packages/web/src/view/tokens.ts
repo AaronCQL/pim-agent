@@ -2,6 +2,7 @@ import { Painting } from "#core/view/Painting";
 import type { NoticeSeverity, Tone, ViewBlock } from "#core/view/ViewBlock";
 import type { ToolDiffLineKind } from "#core/shared/DiffLines";
 import type { AnchorState } from "./anchors";
+import type { ChangeMark } from "./ChangeMarks";
 import type { SyntaxRole } from "./highlight";
 
 /** `embed` is a payload that must not re-wrap. */
@@ -69,6 +70,13 @@ export const DIFF_GUTTER_CLASSES = {
   added: "text-emerald-400",
   removed: "text-rose-400",
 } as const satisfies Record<ToolDiffLineKind, string>;
+
+export const CHANGE_MARK_CLASSES = {
+  added: "inset-y-0 w-[3px] bg-emerald-500",
+  modified: "inset-y-0 w-[3px] bg-sky-500",
+  removedAbove: "top-0 h-[2px] w-[1ch] -translate-y-1/2 bg-rose-500",
+  removedBelow: "bottom-0 h-[2px] w-[1ch] translate-y-1/2 bg-rose-500",
+} as const satisfies Record<ChangeMark, string>;
 
 /** `.pim-diff-held` (styles.css) is opaque, hiding the row tint behind the gutter. */
 export const DIFF_ANCHOR_CLASSES = {

@@ -255,7 +255,7 @@ describe("the shell, painted from events alone", () => {
     expect(host.textContent).toContain("feat/new-stuff");
     expect(host.innerHTML).toContain("i-griddy-icons:file-edit");
     expect(
-      host.querySelector('[aria-label^="Review changes"]')?.textContent
+      host.querySelector('[aria-label^="Files and Diffs"]')?.textContent
     ).toBe("3");
     expect(host.textContent).toContain("↑2");
     expect(host.textContent).toContain("↓1");

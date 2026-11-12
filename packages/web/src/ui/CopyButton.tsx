@@ -8,6 +8,7 @@ export function CopyButton(props: {
   readonly text: () => string;
   readonly label?: string;
   readonly class?: string;
+  readonly plain?: boolean;
 }) {
   const [copied, setCopied] = createSignal(false);
   let flash: ReturnType<typeof setTimeout> | undefined;
@@ -30,7 +31,7 @@ export function CopyButton(props: {
       type="button"
       title={props.label ?? "Copy"}
       aria-label={props.label ?? "Copy"}
-      class={`flex size-7 shrink-0 items-center justify-center rounded-lg bg-neutral-850 text-neutral-350 hover:bg-neutral-800 hover:text-neutral-50 ${props.class ?? ""}`}
+      class={`flex shrink-0 items-center justify-center hover:text-neutral-50 ${props.plain ? "size-6 text-neutral-400" : "size-7 rounded-lg bg-neutral-850 text-neutral-350 hover:bg-neutral-800"} ${props.class ?? ""}`}
       onClick={(event: MouseEvent) => {
         event.stopPropagation();
         event.preventDefault();

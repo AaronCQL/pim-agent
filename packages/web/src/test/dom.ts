@@ -19,7 +19,15 @@ if (!("document" in globalThis)) {
   const native = Object.fromEntries(
     NETWORK_GLOBALS.map((name) => [name, globalThis[name]])
   );
-  GlobalRegistrator.register();
+  GlobalRegistrator.register({
+    settings: {
+      navigation: {
+        disableMainFrameNavigation: true,
+        disableChildFrameNavigation: true,
+        disableChildPageNavigation: true,
+      },
+    },
+  });
   Object.assign(globalThis, native);
 }
 

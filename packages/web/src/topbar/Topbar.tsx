@@ -11,14 +11,17 @@ import { DirectoryModal } from "./DirectoryModal";
 
 const GRACE_MS = 1500;
 
-function changesLabel(count: number, reviewing: boolean): string {
+function changesLabel(count: number, reviewing: boolean, git: boolean): string {
   if (reviewing) {
     return "Back to the conversation";
   }
-  if (count === 0) {
-    return "Review changes, working tree clean";
+  if (!git) {
+    return "Files and Diffs";
   }
-  return `Review changes, ${Format.count(count, "changed file")}`;
+  if (count === 0) {
+    return "Files and Diffs, working tree clean";
+  }
+  return `Files and Diffs, ${Format.count(count, "changed file")}`;
 }
 
 export function Topbar(props: {
@@ -38,7 +41,11 @@ export function Topbar(props: {
   const paths = (cwd: string): readonly string[] =>
     props.compact ? [baseName(cwd)] : [abbreviateHome(cwd), baseName(cwd)];
   const changes = (): string =>
-    changesLabel(props.store.state.dirtyCount, props.reviewing);
+    changesLabel(
+      props.store.state.dirtyCount,
+      props.reviewing,
+      !!props.store.state.branch
+    );
 
   return (
     <div class="flex h-12 shrink-0 items-center gap-2 border-b border-neutral-700 px-3">
@@ -83,36 +90,36 @@ export function Topbar(props: {
         </button>
       </Show>
 
-      <Show when={props.store.state.branch}>
-        {(branch) => (
-          <div class={CHIP_GROUP}>
+      <div class={CHIP_GROUP}>
+        <Show when={props.store.state.branch}>
+          {(branch) => (
             <BranchMenu
               store={props.store}
               branch={branch()}
               compact={props.compact}
             />
-            <button
-              type="button"
-              aria-pressed={props.reviewing ? "true" : "false"}
-              class={`${CHIP_SEGMENT} shrink-0 rounded-r-lg border-l border-neutral-750`}
-              aria-label={changes()}
-              title={changes()}
-              onClick={props.onToggleDiff}
-            >
-              <span
-                class={`i-griddy-icons:file-edit size-4 shrink-0 ${
-                  props.store.state.dirtyCount > 0 ? "text-amber-400" : ""
-                }`}
-              />
-              <Show when={props.store.state.dirtyCount > 0}>
-                <span class="shrink-0 text-amber-400">
-                  {props.store.state.dirtyCount}
-                </span>
-              </Show>
-            </button>
-          </div>
-        )}
-      </Show>
+          )}
+        </Show>
+        <button
+          type="button"
+          aria-pressed={props.reviewing ? "true" : "false"}
+          class={`${CHIP_SEGMENT} shrink-0 ${props.store.state.branch ? "rounded-r-lg border-l border-neutral-750" : "rounded-lg"}`}
+          aria-label={changes()}
+          title="Files and Diffs"
+          onClick={props.onToggleDiff}
+        >
+          <span
+            class={`i-griddy-icons:file-edit size-4 shrink-0 ${
+              props.store.state.dirtyCount > 0 ? "text-amber-400" : ""
+            }`}
+          />
+          <Show when={props.store.state.dirtyCount > 0}>
+            <span class="shrink-0 text-amber-400">
+              {props.store.state.dirtyCount}
+            </span>
+          </Show>
+        </button>
+      </div>
 
       <DirectoryModal
         open={choosing()}

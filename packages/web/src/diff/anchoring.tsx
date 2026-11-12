@@ -61,7 +61,7 @@ function spanOf(picked: Picked): Span | undefined {
 
 export function createAnchoring(options: {
   readonly comments: Comments;
-  readonly file: () => ChangeSummary;
+  readonly file: () => Pick<ChangeSummary, "path" | "fingerprint">;
   readonly hunks: () => readonly ToolDiffHunk[];
 }): Anchoring {
   const comments = options.comments;
