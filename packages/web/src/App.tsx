@@ -122,6 +122,9 @@ export function Shell(props: {
       converse();
       return;
     }
+    if (!props.store.state.branch) {
+      setMode("files");
+    }
     review();
   };
 

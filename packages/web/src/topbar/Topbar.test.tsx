@@ -138,7 +138,7 @@ describe("the topbar's chips", () => {
     );
 
     expect(changes(host).getAttribute("aria-label")).toBe(
-      "Review changes, 3 changed files"
+      "Files and Diffs, 3 changed files"
     );
     changes(host).click();
     expect(toggled).toHaveLength(1);
@@ -159,11 +159,19 @@ describe("the topbar's chips", () => {
     );
   });
 
+  test("outside Git the files button stays visible without a branch", () => {
+    const host = paint(stocked("/home/ada/files", "", 0), false);
+    expect(changes(host).getAttribute("aria-label")).toBe("Files and Diffs");
+    expect(changes(host).title).toBe("Files and Diffs");
+    expect(changes(host).textContent).toBe("");
+    expect(host.querySelector(".i-griddy-icons\\:code-branch")).toBeNull();
+  });
+
   test("a clean tree keeps the segment, without the count", () => {
     const host = paint(stocked("/home/ada/src/pim-agent", "main", 0), false);
 
     expect(changes(host).getAttribute("aria-label")).toBe(
-      "Review changes, working tree clean"
+      "Files and Diffs, working tree clean"
     );
     expect(changes(host).textContent).toBe("");
     expect(host.querySelector(".text-amber-400")).toBeNull();

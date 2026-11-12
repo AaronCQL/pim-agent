@@ -5,20 +5,18 @@ import {
   For,
   onCleanup,
   Show,
-  untrack,
 } from "solid-js";
 
 import type { Settings } from "../settings/Settings";
-import { ACTION, ICON, QUIET } from "../ui/classes";
+import { ICON, QUIET } from "../ui/classes";
 import { Fade } from "../ui/Fade";
 import { Menu, type MenuOption } from "../ui/Menu";
 import { observeWidth } from "../ui/scroll";
-import { CommitModal } from "./CommitModal";
+import { CommitActions } from "./CommitActions";
 import { DiffStore, type BaseKind } from "./DiffStore";
 import { FileRow } from "./FileRow";
 import { ModeSwitch, type ReviewMode } from "./ModeSwitch";
 import { SplitMode } from "./SplitMode";
-import { Stat } from "./Stat";
 
 const BASES = [
   { value: "worktree", label: "Worktree" },
@@ -51,7 +49,6 @@ export function DiffView(props: {
 }) {
   const [visible, setVisible] = createSignal(PAGE);
   const [width, setWidth] = createSignal(0);
-  const [writing, setWriting] = createSignal(false);
   let scroller!: HTMLDivElement;
   const measure = observeWidth(setWidth);
 
@@ -125,15 +122,6 @@ export function DiffView(props: {
 
   const all = createMemo(() => props.diff.files().length);
 
-  // Only a failed commit keeps the modal open.
-  const commit = (paths: readonly string[]): void => {
-    void props.diff.commit(paths).then(() => {
-      if (untrack(() => props.diff.state.failure) === undefined) {
-        setWriting(false);
-      }
-    });
-  };
-
   return (
     <section aria-label="Changes" class="flex h-full min-h-0 flex-col">
       <header class="flex shrink-0 flex-col border-b border-neutral-700">
@@ -148,7 +136,7 @@ export function DiffView(props: {
           </button>
           <ModeSwitch mode={props.mode} onMode={props.onMode} />
           <Menu
-            icon="i-griddy-icons:code-compare"
+            icon="i-griddy-icons:compare"
             options={BASES}
             value={props.diff.state.base}
             title="What the changes are measured against"
@@ -171,25 +159,7 @@ export function DiffView(props: {
               }}
             />
           </div>
-          <div class="ml-auto flex shrink-0 items-center gap-2">
-            <Stat
-              added={props.diff.state.added}
-              removed={props.diff.state.removed}
-            />
-            <Show when={all() > 0}>
-              <button
-                type="button"
-                class={ACTION}
-                title="Write a commit from these changes"
-                onClick={() => {
-                  props.diff.forgetCommit();
-                  setWriting(true);
-                }}
-              >
-                Commit
-              </button>
-            </Show>
-          </div>
+          <CommitActions diff={props.diff} />
         </div>
         <Show when={props.diff.state.committed}>
           {(sha) => (
@@ -269,21 +239,6 @@ export function DiffView(props: {
         </div>
         <Fade height={props.inset} />
       </div>
-
-      <CommitModal
-        open={writing()}
-        files={props.diff.files()}
-        message={props.diff.state.message}
-        committing={props.diff.state.committing}
-        failure={props.diff.state.failure}
-        onClose={() => {
-          setWriting(false);
-        }}
-        onMessage={(message) => {
-          props.diff.setMessage(message);
-        }}
-        onCommit={commit}
-      />
     </section>
   );
 }

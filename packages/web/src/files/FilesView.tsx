@@ -7,9 +7,10 @@ import {
 } from "solid-js";
 
 import type { ChangeSummary } from "#protocol/Diff";
+import { CommitActions } from "../diff/CommitActions";
 import type { DiffStore } from "../diff/DiffStore";
 import { ModeSwitch, type ReviewMode } from "../diff/ModeSwitch";
-import { ICON } from "../ui/classes";
+import { ICON, QUIET } from "../ui/classes";
 import { Drawer } from "../ui/Drawer";
 import { createMediaQuery, DESKTOP } from "../ui/media";
 import { ChangeMarks, type ChangeMarkMap } from "../view/ChangeMarks";
@@ -124,6 +125,21 @@ export function FilesView(props: {
           <span class="i-griddy-icons:arrow-left size-5" aria-hidden="true" />
         </button>
         <ModeSwitch mode={props.mode} onMode={props.onMode} />
+        <Show when={!wide()}>
+          <button
+            type="button"
+            class={`${QUIET} flex items-center gap-2`}
+            aria-label="Browse"
+            aria-expanded={picking() || browsing() ? "true" : "false"}
+            onClick={() => {
+              setBrowsing(true);
+            }}
+          >
+            <span class="i-griddy-icons:folders size-4" aria-hidden="true" />
+            Browse
+          </button>
+        </Show>
+        <CommitActions diff={props.diff} />
       </header>
       <div class="flex min-h-0 flex-1">
         <Show
@@ -154,13 +170,6 @@ export function FilesView(props: {
               marks={marks()}
               inset={props.inset}
               onDiff={props.onDiff}
-              {...(wide()
-                ? {}
-                : {
-                    onBrowse: () => {
-                      setBrowsing(true);
-                    },
-                  })}
             />
           </div>
         </Show>

@@ -6,7 +6,7 @@ export type ReviewMode = "changes" | "files";
 
 const MODES = [
   { value: "changes", label: "Changes", icon: "i-griddy-icons:code-compare" },
-  { value: "files", label: "Files", icon: "i-griddy-icons:folder" },
+  { value: "files", label: "Files", icon: "i-griddy-icons:file-code" },
 ] as const satisfies readonly {
   readonly value: ReviewMode;
   readonly label: string;
@@ -26,7 +26,7 @@ export function ModeSwitch(props: {
             aria-pressed={props.mode === mode.value ? "true" : "false"}
             aria-label={mode.label}
             title={mode.label}
-            class={`${CHIP_SEGMENT} first:rounded-l-lg last:rounded-r-lg ${props.mode === mode.value ? "bg-neutral-700 text-neutral-50 hover:bg-neutral-700" : ""}`}
+            class={`${CHIP_SEGMENT} first:rounded-l-lg last:rounded-r-lg ${props.mode === mode.value ? "bg-neutral-700 text-neutral-50 [&[aria-pressed=true]:hover]:bg-neutral-700" : ""}`}
             onClick={() => {
               props.onMode(mode.value);
             }}

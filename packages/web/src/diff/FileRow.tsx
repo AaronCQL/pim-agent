@@ -80,13 +80,13 @@ export function FileRow(props: {
       class="border-b border-neutral-850 last:border-b-0"
     >
       <div
-        class={`sticky top-0 z-1 flex w-full items-center gap-2 px-3 text-sm ${props.open ? "bg-neutral-850" : "bg-neutral-925 hover:bg-neutral-900"}`}
+        class={`sticky top-0 z-1 flex w-full items-center text-sm ${props.open ? "bg-neutral-850" : "bg-neutral-925 hover:bg-neutral-900"}`}
       >
         <button
           type="button"
           aria-expanded={props.open ? "true" : "false"}
           aria-label={props.file.path}
-          class="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left"
+          class={`flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-3 text-left ${props.file.status !== "deleted" && props.onView !== undefined ? "pr-1" : "pr-3"}`}
           onClick={props.onToggle}
         >
           <span
@@ -116,12 +116,12 @@ export function FileRow(props: {
             type="button"
             aria-label={`View ${props.file.path}`}
             title="View the whole file"
-            class="-mr-1.5 flex size-7 shrink-0 items-center justify-center rounded-md text-neutral-400 hover:bg-neutral-800 hover:text-neutral-50"
+            class="flex w-8 shrink-0 items-center justify-center self-stretch text-neutral-400 hover:text-neutral-50"
             onClick={() => {
               props.onView?.();
             }}
           >
-            <span class="i-griddy-icons:file-text size-4" aria-hidden="true" />
+            <span class="i-griddy-icons:file-code size-4" aria-hidden="true" />
           </button>
         </Show>
       </div>

@@ -356,7 +356,7 @@ function transcript(host: HTMLElement): HTMLElement | null {
 
 function openDiff(host: HTMLElement): void {
   host
-    .querySelector<HTMLButtonElement>("[aria-label^='Review changes']")
+    .querySelector<HTMLButtonElement>("[aria-label^='Files and Diffs']")
     ?.click();
   flush();
 }
@@ -381,7 +381,7 @@ test("the changes segment opens the change set while an agent is working", async
   flush();
 
   const diff = host.querySelector<HTMLButtonElement>(
-    "[aria-label^='Review changes']"
+    "[aria-label^='Files and Diffs']"
   );
   expect(diff?.disabled).toBe(false);
   expect(diff?.textContent).toBe("2");

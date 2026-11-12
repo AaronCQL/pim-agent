@@ -6,9 +6,9 @@ import type { ChangeSummary } from "#protocol/Diff";
 import { createAnchoring } from "../diff/anchoring";
 import { ReviewComments } from "../diff/Comments";
 import { FileTitle } from "../diff/FileTitle";
-import { LETTER_CLASSES, LETTERS, ROLES } from "../diff/FileLabel";
+import { ROLES } from "../diff/FileLabel";
 import { Stat } from "../diff/Stat";
-import { Format } from "#core/shared/Format";
+import { Markdown } from "../markdown/Markdown";
 import { CopyButton } from "../ui/CopyButton";
 import { Fade } from "../ui/Fade";
 import { Fitted } from "../ui/Fitted";
@@ -49,7 +49,7 @@ function chunks(lines: readonly string[]): readonly ToolDiffHunk[] {
 function PathTitle(props: { readonly path: string }) {
   const readings = createMemo(() => FileTitle.readings(props.path, undefined));
   return (
-    <Fitted class="flex-1" texts={[FileTitle.widest(readings())]}>
+    <Fitted texts={[FileTitle.widest(readings())]}>
       {(columns) => (
         <For each={FileTitle.fit(readings(), columns)}>
           {(piece) => <span class={ROLES[piece.role]}>{piece.text}</span>}
@@ -93,6 +93,7 @@ function FileLines(props: {
       </div>
       <div
         class="w-max min-w-full pt-1 leading-[--line] text-neutral-300 [tab-size:3]"
+        data-file-lines
         style={{ "--gutter": `${width() + 4}ch` }}
       >
         <For each={shown()}>
@@ -135,8 +136,6 @@ export function FileViewer(props: {
   readonly marks: ChangeMarkMap | undefined;
   readonly inset: number;
   readonly onDiff: (path: string) => void;
-  /** Present where the tree is out of sight. */
-  readonly onBrowse?: () => void;
 }) {
   const ready = createMemo(() => {
     const view = props.files.view();
@@ -151,17 +150,6 @@ export function FileViewer(props: {
   const fingerprint = (): string =>
     props.change?.fingerprint ?? ready()?.file.fingerprint ?? "";
 
-  const meta = createMemo(() => {
-    const view = ready();
-    if (view === undefined) {
-      return "";
-    }
-    const bytes = Format.bytes(view.file.bytes);
-    return view.file.text === undefined
-      ? bytes
-      : `${Format.count(view.lines.length, "line")} · ${bytes}`;
-  });
-
   return (
     <Show
       when={props.files.state.selected}
@@ -172,104 +160,104 @@ export function FileViewer(props: {
         </p>
       }
     >
-      {(path) => (
-        <div class="flex h-full min-h-0 flex-col">
-          <div class="flex h-10 shrink-0 items-center gap-2 border-b border-neutral-800 px-3 text-sm">
-            <Show when={props.onBrowse !== undefined}>
-              <button
-                type="button"
-                aria-label="Show the files"
-                title="Show the files"
-                class="-ml-1.5 flex size-7 shrink-0 items-center justify-center rounded-md text-neutral-400 hover:bg-neutral-800 hover:text-neutral-50"
-                onClick={() => {
-                  props.onBrowse?.();
-                }}
-              >
-                <span class="i-griddy-icons:folder size-4" aria-hidden="true" />
-              </button>
-            </Show>
-            <PathTitle path={path} />
-            <span class="hidden shrink-0 text-neutral-500 tabular-nums md:inline">
-              {meta()}
-            </span>
-            <Show when={props.change}>
-              {(change) => (
-                <>
-                  <span
-                    class={`shrink-0 font-bold ${LETTER_CLASSES[change().status]}`}
-                    role="img"
-                    aria-label={change().status}
-                  >
-                    {LETTERS[change().status]}
-                  </span>
-                  <Show when={!change().binary}>
-                    <Stat added={change().added} removed={change().removed} />
-                  </Show>
-                  <button
-                    type="button"
-                    title="Show this file's changes"
-                    class={`${QUIET} h-7 px-2`}
-                    onClick={() => {
-                      props.onDiff(path);
-                    }}
-                  >
-                    Diff
-                  </button>
-                </>
-              )}
-            </Show>
-            <CopyButton text={() => path} label="Copy path" />
-          </div>
-          <div class="isolate min-h-0 flex-1 overflow-auto">
-            <div style={{ "padding-bottom": `${props.inset}px` }}>
-              <Show when={props.files.view()?.kind === "loading"}>
-                <span
-                  class={`flex items-center gap-2 px-3 py-2 text-sm ${LEAD}`}
-                >
-                  <Spinner />
-                  reading the file
-                </span>
-              </Show>
-              <Show when={failed()}>
-                {(view) => (
-                  <p class="px-3 py-2 text-sm whitespace-pre-wrap text-rose-400">
-                    {view().message}
-                  </p>
-                )}
-              </Show>
-              <Show when={ready()}>
-                {(view) => (
-                  <Show
-                    when={view().file.text !== undefined}
-                    fallback={
-                      <p class={`px-3 py-2 text-sm ${LEAD}`}>
-                        {view().file.binary === true
-                          ? "binary file — nothing to show"
-                          : "too large to show"}
-                      </p>
-                    }
-                  >
-                    <Show
-                      when={view().lines.length > 0}
-                      fallback={
-                        <p class={`px-3 py-2 text-sm ${LEAD}`}>empty file</p>
-                      }
-                    >
-                      <FileLines
-                        path={path}
-                        fingerprint={fingerprint()}
-                        lines={view().lines}
-                        marks={props.marks}
-                      />
+      {(path) => {
+        const markdown = () => Languages.fromPath(path) === "markdown";
+        return (
+          <div class="flex h-full min-h-0 flex-col">
+            <div class="flex h-10 shrink-0 items-center gap-2 border-b border-neutral-800 px-3 text-sm">
+              <div class="flex min-w-0 flex-1 items-center gap-1">
+                <PathTitle path={path} />
+                <CopyButton text={() => path} label="Copy path" plain />
+              </div>
+              <Show when={props.change}>
+                {(change) => (
+                  <>
+                    <Show when={!change().binary}>
+                      <Stat added={change().added} removed={change().removed} />
                     </Show>
-                  </Show>
+                    <button
+                      type="button"
+                      title="Show this file's changes"
+                      aria-label="Show this file's changes"
+                      class="flex size-6 shrink-0 items-center justify-center text-neutral-400 hover:text-neutral-50"
+                      onClick={() => {
+                        props.onDiff(path);
+                      }}
+                    >
+                      <span
+                        class="i-griddy-icons:code-compare size-4"
+                        aria-hidden="true"
+                      />
+                    </button>
+                  </>
                 )}
               </Show>
             </div>
-            <Fade height={props.inset} />
+            <div class="isolate min-h-0 flex-1 overflow-auto">
+              <div style={{ "padding-bottom": `${props.inset}px` }}>
+                <Show when={props.files.view()?.kind === "loading"}>
+                  <span
+                    class={`flex items-center gap-2 px-3 py-2 text-sm ${LEAD}`}
+                  >
+                    <Spinner />
+                    reading the file
+                  </span>
+                </Show>
+                <Show when={failed()}>
+                  {(view) => (
+                    <p class="px-3 py-2 text-sm whitespace-pre-wrap text-rose-400">
+                      {view().message}
+                    </p>
+                  )}
+                </Show>
+                <Show when={ready()}>
+                  {(view) => (
+                    <Show
+                      when={
+                        view().file.binary !== true &&
+                        view().file.text !== undefined
+                      }
+                      fallback={
+                        <p
+                          class={`px-3 py-2 text-sm ${view().file.binary === true ? "text-amber-400" : LEAD}`}
+                        >
+                          {view().file.binary === true
+                            ? "Unable to view binary file"
+                            : "too large to show"}
+                        </p>
+                      }
+                    >
+                      <Show
+                        when={view().lines.length > 0}
+                        fallback={
+                          <p class={`px-3 py-2 text-sm ${LEAD}`}>empty file</p>
+                        }
+                      >
+                        <Show
+                          when={markdown()}
+                          fallback={
+                            <FileLines
+                              path={path}
+                              fingerprint={fingerprint()}
+                              lines={view().lines}
+                              marks={props.marks}
+                            />
+                          }
+                        >
+                          <div class="px-4 py-3 text-sm leading-[--line] text-neutral-300">
+                            <Markdown text={view().file.text ?? ""} />
+                          </div>
+                        </Show>
+                      </Show>
+                    </Show>
+                  )}
+                </Show>
+              </div>
+              <Fade height={props.inset} />
+            </div>
           </div>
-        </div>
-      )}
+        );
+      }}
     </Show>
   );
 }
