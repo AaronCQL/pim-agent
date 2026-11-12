@@ -87,7 +87,7 @@ Pim revamps Pi's default tools (`bash`, `read`, `write`, `edit`) so they produce
 - **`grep`** - regex search across files with context lines, multiline matching, respects `.gitignore`
 - **`web_search`** - search the web via [Exa](https://exa.ai)/[Firecrawl](https://www.firecrawl.dev/)/[DuckDuckGo](https://duckduckgo.com/) with ranked results and snippets
 - **`web_fetch`** - fetch websites as Markdown via [Jina](https://jina.ai/reader/), with browser-rendered fallback via [`Bun.WebView`](https://bun.com/docs/runtime/webview)
-- **`subagent`** - delegate complex work to isolated sub-sessions with full tool access
+- **`subagent`** - delegate complex work to isolated async sub-sessions with full tool access
 
 ## Terminal UI
 
