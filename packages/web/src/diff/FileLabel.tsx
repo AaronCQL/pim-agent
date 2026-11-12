@@ -1,8 +1,5 @@
-import { createMemo, For } from "solid-js";
-
 import type { ChangeStatus, ChangeSummary } from "#protocol/Diff";
-import { Fitted } from "../ui/Fitted";
-import { FileTitle, type Role } from "./FileTitle";
+import { PathTitle } from "./PathTitle";
 
 export const LETTERS = {
   added: "A",
@@ -20,17 +17,7 @@ export const LETTER_CLASSES = {
   untracked: "text-neutral-400",
 } as const satisfies Record<ChangeStatus, string>;
 
-export const ROLES = {
-  lead: "text-neutral-400",
-  name: "text-neutral-100",
-  gone: "text-neutral-400 line-through",
-} as const satisfies Record<Role, string>;
-
 export function FileLabel(props: { readonly file: ChangeSummary }) {
-  const readings = createMemo(() =>
-    FileTitle.readings(props.file.path, props.file.oldPath)
-  );
-
   return (
     <>
       <span
@@ -38,13 +25,11 @@ export function FileLabel(props: { readonly file: ChangeSummary }) {
       >
         {LETTERS[props.file.status]}
       </span>
-      <Fitted class="flex-1" texts={[FileTitle.widest(readings())]}>
-        {(columns) => (
-          <For each={FileTitle.fit(readings(), columns)}>
-            {(piece) => <span class={ROLES[piece.role]}>{piece.text}</span>}
-          </For>
-        )}
-      </Fitted>
+      <PathTitle
+        path={props.file.path}
+        oldPath={props.file.oldPath}
+        class="flex-1"
+      />
     </>
   );
 }

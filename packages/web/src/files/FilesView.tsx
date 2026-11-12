@@ -1,17 +1,10 @@
-import {
-  createEffect,
-  createMemo,
-  createSignal,
-  onCleanup,
-  Show,
-} from "solid-js";
+import { createEffect, createMemo, onCleanup, Show } from "solid-js";
 
 import type { ChangeSummary } from "#protocol/Diff";
 import { CommitActions } from "../diff/CommitActions";
 import type { DiffStore } from "../diff/DiffStore";
 import { ModeSwitch, type ReviewMode } from "../diff/ModeSwitch";
-import { ICON, QUIET } from "../ui/classes";
-import { Drawer } from "../ui/Drawer";
+import { CHIP_BUTTON, ICON } from "../ui/classes";
 import { createMediaQuery, DESKTOP } from "../ui/media";
 import { ChangeMarks, type ChangeMarkMap } from "../view/ChangeMarks";
 import type { FileStore } from "./FileStore";
@@ -29,7 +22,6 @@ export function FilesView(props: {
   readonly onClose: () => void;
 }) {
   const wide = createMediaQuery(DESKTOP);
-  const [browsing, setBrowsing] = createSignal(false);
 
   props.files.watch(true);
   props.diff.watch(true);
@@ -99,20 +91,6 @@ export function FilesView(props: {
   const picking = (): boolean =>
     wide() || props.files.state.selected === undefined;
 
-  const pick = (path: string): void => {
-    props.files.select(path);
-    setBrowsing(false);
-  };
-
-  const tree = (inset: number) => (
-    <FileTreeView
-      files={props.files}
-      changes={changes()}
-      inset={inset}
-      onPick={pick}
-    />
-  );
-
   return (
     <section aria-label="Files" class="flex h-full min-h-0 flex-col">
       <header class="flex h-12 min-w-0 shrink-0 items-center gap-2 border-b border-neutral-700 px-3">
@@ -128,38 +106,32 @@ export function FilesView(props: {
         <Show when={!wide()}>
           <button
             type="button"
-            class={`${QUIET} flex items-center gap-2`}
+            class={CHIP_BUTTON}
             aria-label="Browse"
-            aria-expanded={picking() || browsing() ? "true" : "false"}
             onClick={() => {
-              setBrowsing(true);
+              props.files.select(undefined);
             }}
           >
-            <span class="i-griddy-icons:folders size-4" aria-hidden="true" />
+            <span
+              class="i-griddy-icons:folders size-4 shrink-0"
+              aria-hidden="true"
+            />
             Browse
           </button>
         </Show>
         <CommitActions diff={props.diff} />
       </header>
       <div class="flex min-h-0 flex-1">
-        <Show
-          when={picking()}
-          fallback={
-            <Drawer
-              open={browsing()}
-              label="Files"
-              onClose={() => {
-                setBrowsing(false);
-              }}
-            >
-              <Show when={browsing()}>{tree(0)}</Show>
-            </Drawer>
-          }
-        >
+        <Show when={picking()}>
           <div
             class={`min-h-0 ${wide() ? "w-72 shrink-0 border-r border-neutral-800" : "flex-1"}`}
           >
-            {tree(props.inset)}
+            <FileTreeView
+              files={props.files}
+              changes={changes()}
+              inset={props.inset}
+              onPick={(path) => props.files.select(path)}
+            />
           </div>
         </Show>
         <Show when={wide() || !picking()}>

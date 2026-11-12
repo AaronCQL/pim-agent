@@ -74,7 +74,11 @@ export class FileStore {
       selected: undefined,
       filter: "",
     });
-    const [paths, setPaths] = createSignal<readonly string[]>([]);
+    const [paths, setPaths] = createSignal<readonly string[]>([], {
+      equals: (before, after) =>
+        before.length === after.length &&
+        before.every((path, index) => path === after[index]),
+    });
     const [view, setView] = createSignal<FileView>();
     const [opened, setOpened] = createStore<Record<string, boolean>>({});
     this.state = state;
@@ -156,15 +160,17 @@ export class FileStore {
     this.select(path);
   }
 
-  public select(path: string): void {
+  public select(path: string | undefined): void {
     if (untrack(() => this.state.selected) === path) {
       return;
     }
     this.setState((draft) => {
       draft.selected = path;
     });
-    this.setView({ kind: "loading", path });
-    void this.read(path);
+    this.setView(path === undefined ? undefined : { kind: "loading", path });
+    if (path !== undefined) {
+      void this.read(path);
+    }
   }
 
   public reset(): void {

@@ -1,63 +1,25 @@
 import { createMemo, createSignal, For, Show, useContext } from "solid-js";
 
-import type { ToolDiffHunk } from "#core/shared/DiffLines";
 import { Languages } from "#core/shared/Languages";
 import type { ChangeSummary } from "#protocol/Diff";
 import { createAnchoring } from "../diff/anchoring";
 import { ReviewComments } from "../diff/Comments";
-import { FileTitle } from "../diff/FileTitle";
-import { ROLES } from "../diff/FileLabel";
+import { PathTitle } from "../diff/PathTitle";
 import { Stat } from "../diff/Stat";
 import { Markdown } from "../markdown/Markdown";
 import { CopyButton } from "../ui/CopyButton";
 import { Fade } from "../ui/Fade";
-import { Fitted } from "../ui/Fitted";
 import { QUIET } from "../ui/classes";
 import { Spinner } from "../ui/Spinner";
 import { UnifiedLines } from "../view/Blocks";
 import type { ChangeMarkMap } from "../view/ChangeMarks";
+import { FileChunks } from "./FileChunks";
 import type { FileStore } from "./FileStore";
-
-/** Lines per highlighted block; the highlighter gives up on longer ones. */
-const CHUNK = 1000;
 
 /** Blocks painted per page. */
 const PAGE = 3;
 
 const LEAD = "text-neutral-400";
-
-function chunks(lines: readonly string[]): readonly ToolDiffHunk[] {
-  const out: ToolDiffHunk[] = [];
-  for (let start = 0; start < lines.length; start += CHUNK) {
-    const slice = lines.slice(start, start + CHUNK);
-    out.push({
-      oldStart: start + 1,
-      oldLines: slice.length,
-      newStart: start + 1,
-      newLines: slice.length,
-      lines: slice.map((text, at) => ({
-        kind: "context",
-        oldLine: start + at + 1,
-        newLine: start + at + 1,
-        text,
-      })),
-    });
-  }
-  return out;
-}
-
-function PathTitle(props: { readonly path: string }) {
-  const readings = createMemo(() => FileTitle.readings(props.path, undefined));
-  return (
-    <Fitted texts={[FileTitle.widest(readings())]}>
-      {(columns) => (
-        <For each={FileTitle.fit(readings(), columns)}>
-          {(piece) => <span class={ROLES[piece.role]}>{piece.text}</span>}
-        </For>
-      )}
-    </Fitted>
-  );
-}
 
 /** The file's lines, with gutters that take comments like the diff's. */
 function FileLines(props: {
@@ -69,8 +31,8 @@ function FileLines(props: {
   const notes = useContext(ReviewComments)();
   const [pages, setPages] = createSignal(1);
   const lang = createMemo(() => Languages.fromPath(props.path));
-  const all = createMemo(() => chunks(props.lines));
-  const shown = createMemo(() => all().slice(0, pages() * PAGE));
+  const chunks = createMemo(() => new FileChunks(props.lines));
+  const shown = createMemo(() => chunks().take(pages() * PAGE));
   const width = createMemo(() => String(props.lines.length).length);
 
   const anchoring =

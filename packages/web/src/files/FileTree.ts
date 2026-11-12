@@ -110,12 +110,16 @@ function match(paths: readonly string[], query: string): readonly string[] {
       continue;
     }
     const name = baseName(lower);
-    (words.some((word) => name.includes(word)) ? named : nested).push(path);
+    if (words.some((word) => name.includes(word))) {
+      named.push(path);
+    } else if (nested.length < MATCH_LIMIT) {
+      nested.push(path);
+    }
     if (named.length >= MATCH_LIMIT) {
       break;
     }
   }
-  return [...named, ...nested].slice(0, MATCH_LIMIT);
+  return [...named, ...nested.slice(0, MATCH_LIMIT - named.length)];
 }
 
 export const FileTree = { build, rows, ancestors, match };

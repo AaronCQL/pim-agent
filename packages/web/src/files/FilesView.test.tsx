@@ -14,6 +14,7 @@ import { SessionStore } from "../session/SessionStore";
 import { Settings } from "../settings/Settings";
 import { mountPoint } from "../test/dom";
 import { GatewayHarness } from "../test/gateway";
+import { FileTree } from "./FileTree";
 
 let harness: GatewayHarness;
 let store: SessionStore;
@@ -332,11 +333,13 @@ test("a file that changes on disk is read again in place", async () => {
   const host = await files();
   press(host, "[data-path='README.md']");
   await settle(() => code(host).includes("readme"), "the file's lines");
+  const build = spyOn(FileTree, "build");
 
   await Bun.write(join(repo, "README.md"), "# rewritten\n");
   await store.refreshGit();
 
   await settle(() => code(host).includes("rewritten"), "the new lines");
+  expect(build).not.toHaveBeenCalled();
 });
 
 test("a binary file says so instead of painting bytes", async () => {
@@ -355,7 +358,7 @@ test("a binary file says so instead of painting bytes", async () => {
   expect(notice?.classList.contains("text-amber-400")).toBe(true);
 });
 
-test("on a narrow screen the file takes the page and the tree slides in over it", async () => {
+test("on a narrow screen Browse returns to the file list instead of opening a drawer", async () => {
   narrow();
   const host = await files();
   press(host, "[data-path='README.md']");
@@ -379,15 +382,18 @@ test("on a narrow screen the file takes the page and the tree slides in over it"
   ).toBe(true);
   expect(host.querySelector("[aria-label='Show the files']")).toBeNull();
   press(host, "[aria-label='Browse']");
-  const drawer = host.querySelector<HTMLDialogElement>(
-    "dialog[aria-label='Files']"
-  );
-  expect(drawer?.open).toBe(true);
+  expect(host.querySelector("dialog[aria-label='Files']")).toBeNull();
+  expect(code(host)).toBe("");
   expect(treeRows(host)).toEqual(["src", "README.md"]);
+
+  press(host, "[data-path='README.md']");
+  await settle(() => code(host).includes("readme"), "the same file reopened");
+  expect(treeRows(host)).toEqual([]);
+  press(host, "[aria-label='Browse']");
 
   press(host, "[data-path='src']");
   press(host, "[data-path='src/alpha.ts']");
   await settle(() => code(host).includes("THREE"), "the other file");
-  expect(drawer?.open).toBe(false);
+  expect(host.querySelector("dialog[aria-label='Files']")).toBeNull();
   expect(treeRows(host)).toEqual([]);
 });

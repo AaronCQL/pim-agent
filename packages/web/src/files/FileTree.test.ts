@@ -68,3 +68,11 @@ test("match wants every word and ranks name hits over folder hits", () => {
   expect(FileTree.match(paths, "ui mod")).toEqual(["src/ui/Modal.tsx"]);
   expect(FileTree.match(paths, "  ")).toEqual([]);
 });
+
+test("match keeps late name hits ahead of capped folder hits", () => {
+  const nested = Array.from({ length: 250 }, (_, index) => `match/${index}.ts`);
+  expect(FileTree.match([...nested, "src/match.ts"], "match")).toEqual([
+    "src/match.ts",
+    ...nested.slice(0, 199),
+  ]);
+});
