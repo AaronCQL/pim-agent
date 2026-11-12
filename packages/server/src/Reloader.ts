@@ -1,4 +1,5 @@
 import { DaemonUnit } from "#core/shared/DaemonUnit";
+import { Shutdown } from "#core/shared/Shutdown";
 import { Supervisor } from "#core/shared/Supervisor";
 import { Updater, type UpdateOutcome } from "#core/shared/Updater";
 import type { ServerEvent } from "#protocol/ServerEvent";
@@ -10,10 +11,9 @@ export type ReloaderDeps = {
   readonly shutdown?: () => Promise<void>;
 };
 
-// SIGTERM rather than exit, so the handler stops the gateway and flushes read cursors.
 async function restartAndExit(): Promise<void> {
   await Supervisor.restartSiblings(DaemonUnit);
-  process.kill(process.pid, "SIGTERM");
+  Shutdown.requestStop();
 }
 
 /** Runs update then restart, announcing each phase. */

@@ -1,11 +1,15 @@
 import type { Api, Context, Filter } from "grammy";
 import { afterAll, beforeEach, expect, spyOn, test } from "bun:test";
 
+import { Shutdown } from "#core/shared/Shutdown";
+import { Supervisor } from "#core/shared/Supervisor";
 import { Updater } from "#core/shared/Updater";
 import { BOT_COMMANDS, Commands } from "./Commands";
 import { THINKING_LEVELS, type TelegramConfig } from "./Config";
+import type { CancelResult } from "#core/session/SessionHost";
 import type { Session, SessionId } from "./Session";
 import type { SessionRegistry } from "./SessionRegistry";
+import { UpdateConfirm } from "./UpdateConfirm";
 
 const quietLog = spyOn(console, "log").mockImplementation(() => {});
 const quietWarn = spyOn(console, "warn").mockImplementation(() => {});
@@ -112,7 +116,7 @@ type SessionStub = {
   supportedThinkingLevels: readonly string[];
   usage: () => Usage | undefined;
   sessionCost: () => number | undefined;
-  cancel: () => Promise<boolean>;
+  cancel: () => Promise<CancelResult>;
   clear: () => Promise<void>;
   compact: (custom?: string) => Promise<unknown>;
   setCwd: (cwd: string) => Promise<unknown>;
@@ -121,6 +125,10 @@ type SessionStub = {
   setLogsMode: (mode: string) => Promise<void>;
   setTemporary: (value: boolean) => Promise<void>;
 };
+
+function cancelled(aborted: boolean, stopped: number): CancelResult {
+  return { cancelled: aborted || stopped > 0, aborted, stopped, restored: [] };
+}
 
 function fakeSession(overrides: Partial<SessionStub> = {}): SessionStub {
   return {
@@ -133,7 +141,7 @@ function fakeSession(overrides: Partial<SessionStub> = {}): SessionStub {
     supportedThinkingLevels: THINKING_LEVELS,
     usage: () => undefined,
     sessionCost: () => undefined,
-    cancel: async () => true,
+    cancel: async () => cancelled(true, 0),
     clear: async () => {},
     compact: async () => ({
       compaction: { tokensBefore: 123456 },
@@ -253,7 +261,7 @@ test("/chatid names the chat, and the thread when there is one", async () => {
 
 test("/cancel reports both outcomes as plain text", async () => {
   const stopped = await run(
-    fakeSession({ cancel: async () => true }),
+    fakeSession({ cancel: async () => cancelled(true, 0) }),
     "/cancel"
   );
   expect(stopped.api.sent).toEqual([
@@ -269,11 +277,31 @@ test("/cancel reports both outcomes as plain text", async () => {
   ]);
 
   const nothing = await run(
-    fakeSession({ cancel: async () => false }),
+    fakeSession({ cancel: async () => cancelled(false, 0) }),
     "/cancel"
   );
   expect(nothing.api.sent[0]?.text).toBe("Nothing to cancel.");
   expect(nothing.api.sent[0]?.options.parse_mode).toBeUndefined();
+});
+
+test("/cancel counts the background jobs it stopped, with or without a turn", async () => {
+  const replies = await Promise.all(
+    [cancelled(false, 1), cancelled(false, 3), cancelled(true, 2)].map(
+      async (outcome) => {
+        const { api } = await run(
+          fakeSession({ cancel: async () => outcome }),
+          "/cancel"
+        );
+        return api.sent.map((sent) => sent.text);
+      }
+    )
+  );
+
+  expect(replies).toEqual([
+    ["❌ Stopped 1 job."],
+    ["❌ Stopped 3 jobs."],
+    ["❌ Cancelled. Stopped 2 jobs."],
+  ]);
 });
 
 test("an unknown name is echoed back stripped of the bot handle", async () => {
@@ -650,6 +678,37 @@ test("every registered command dispatches somewhere other than the unknown path"
     }
   } finally {
     update.mockRestore();
+  }
+});
+
+test("/update stops through the process's graceful shutdown, never a bare exit", async () => {
+  const update = spyOn(Updater, "run").mockResolvedValue({
+    ok: true,
+    from: "1.0.0",
+    to: "1.1.0",
+    skipped: [],
+    error: undefined,
+  });
+  const siblings = spyOn(Supervisor, "restartSiblings").mockResolvedValue();
+  const supervised = spyOn(Supervisor, "isSupervised").mockReturnValue(true);
+  const confirm = spyOn(UpdateConfirm, "append").mockResolvedValue();
+  const stop = spyOn(Shutdown, "requestStop").mockImplementation(() => {});
+  const exit = spyOn(process, "exit").mockImplementation(() => {
+    throw new Error("exited");
+  });
+  try {
+    await run(fakeSession(), "/update");
+    expect(confirm).toHaveBeenCalledWith("/config", {
+      chatId: 1,
+      threadId: undefined,
+      messageId: 501,
+    });
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(exit).not.toHaveBeenCalled();
+  } finally {
+    for (const spy of [update, siblings, supervised, confirm, stop, exit]) {
+      spy.mockRestore();
+    }
   }
 });
 

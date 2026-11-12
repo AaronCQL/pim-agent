@@ -1,5 +1,10 @@
-import type { ToolView } from "#core/view/ViewBlock";
-import type { AttachmentView, DurableEvent } from "#protocol/ServerEvent";
+import { JobState } from "#core/extensions/subagent/JobState";
+import type { NoticeSeverity, ToolView } from "#core/view/ViewBlock";
+import type {
+  AttachmentView,
+  DurableEvent,
+  SubagentChildView,
+} from "#protocol/ServerEvent";
 import type { LiveMessage, PendingMessage } from "../session/SessionStore";
 
 export type MessageRow = {
@@ -21,12 +26,18 @@ export type ToolRow = {
   readonly view: ToolView;
   readonly isError: boolean;
   readonly isPartial: boolean;
+  /** The call id whose subagent log the row opens. */
+  readonly child?: string;
+  /** The job's short name, `j3`. */
+  readonly handle?: string;
+  /** Set on a background subagent's result. */
+  readonly state?: JobState;
 };
 
 export type NoticeRow = {
   readonly kind: "notice";
   readonly id: string;
-  readonly severity: "info" | "warn" | "error";
+  readonly severity: NoticeSeverity;
   readonly text: string;
 };
 
@@ -82,28 +93,39 @@ function append(
         });
       }
       for (const call of event.toolCalls ?? []) {
-        upsertTool(rows, toolIndex, {
-          kind: "tool",
-          id: call.callId,
-          name: call.name,
-          view: call.view,
-          isError: false,
-          isPartial: true,
-        });
+        upsertTool(rows, toolIndex, toolRow(call, false, true));
       }
       break;
     }
     case "tool_result": {
-      upsertTool(rows, toolIndex, {
-        kind: "tool",
-        id: event.callId,
-        name: event.name,
-        view: event.view,
-        isError: event.isError,
-        isPartial: false,
-      });
+      upsertTool(rows, toolIndex, toolRow(event, event.isError, false));
       break;
     }
+    case "subagent_result":
+      upsertTool(rows, toolIndex, {
+        kind: "tool",
+        id: event.messageId,
+        name: "subagent",
+        view: event.view,
+        isError: JobState.isError(event.state),
+        isPartial: false,
+        child: event.jobId,
+        ...(event.handle === undefined ? {} : { handle: event.handle }),
+        state: event.state,
+      });
+      break;
+    case "subagent_notice":
+      rows.push({
+        kind: "tool",
+        id: event.messageId,
+        name: "subagent",
+        view: event.view,
+        isError: false,
+        isPartial: false,
+        child: event.jobId,
+        handle: event.handle,
+      });
+      break;
     case "notice":
       rows.push({
         kind: "notice",
@@ -113,6 +135,33 @@ function append(
       });
       break;
   }
+}
+
+function toolRow(
+  {
+    callId,
+    name,
+    view,
+    child,
+  }: {
+    readonly callId: string;
+    readonly name: string;
+    readonly view: ToolView;
+    readonly child?: SubagentChildView | undefined;
+  },
+  isError: boolean,
+  isPartial: boolean
+): ToolRow {
+  return {
+    kind: "tool",
+    id: callId,
+    name,
+    view,
+    isError,
+    isPartial,
+    ...(child === undefined ? {} : { child: child.jobId }),
+    ...(child?.handle === undefined ? {} : { handle: child.handle }),
+  };
 }
 
 // Never downgrades a settled row back to partial.
@@ -151,14 +200,7 @@ function appendLive(
       });
     }
     for (const tool of message.tools) {
-      upsertTool(rows, toolIndex, {
-        kind: "tool",
-        id: tool.callId,
-        name: tool.name,
-        view: tool.view,
-        isError: tool.isError,
-        isPartial: tool.isPartial,
-      });
+      upsertTool(rows, toolIndex, toolRow(tool, tool.isError, tool.isPartial));
     }
   }
 }

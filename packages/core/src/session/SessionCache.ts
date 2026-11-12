@@ -1,6 +1,15 @@
 export type CachedSession = {
   lastUsed: number;
+  /** A pinned entry is never evicted, even past capacity. */
+  readonly pinned?: boolean;
   dispose(): Promise<void>;
+};
+
+export type EvictionHooks = {
+  /** Keys in use elsewhere, kept like pinned entries. */
+  readonly held?: (key: string) => boolean;
+  /** Runs as an entry leaves, before it is disposed. */
+  readonly evicted?: (key: string) => void;
 };
 
 const CAPACITY = 16;
@@ -8,10 +17,12 @@ const CAPACITY = 16;
 /** LRU cache of live sessions; evicted entries are disposed. */
 export class SessionCache<T extends CachedSession> {
   private readonly capacity: number;
+  private readonly hooks: EvictionHooks;
   private readonly entries = new Map<string, T>();
 
-  public constructor(capacity: number = CAPACITY) {
+  public constructor(capacity: number = CAPACITY, hooks: EvictionHooks = {}) {
     this.capacity = capacity;
+    this.hooks = hooks;
   }
 
   public get size(): number {
@@ -44,27 +55,33 @@ export class SessionCache<T extends CachedSession> {
   }
 
   private evictIfNeeded(): void {
-    if (this.entries.size < this.capacity) {
-      return;
+    while (this.entries.size >= this.capacity) {
+      const key = this.oldestUnpinned();
+      if (key === undefined) {
+        return;
+      }
+      const evicted = this.entries.get(key)!;
+      this.entries.delete(key);
+      this.hooks.evicted?.(key);
+      evicted.dispose().catch((err: unknown) => {
+        console.warn(`[pim] failed to dispose evicted session ${key}:`, err);
+      });
     }
+  }
+
+  private oldestUnpinned(): string | undefined {
     let oldestKey: string | undefined;
     let oldest = Infinity;
     for (const [key, entry] of this.entries) {
-      if (entry.lastUsed < oldest) {
+      if (
+        entry.pinned !== true &&
+        this.hooks.held?.(key) !== true &&
+        entry.lastUsed < oldest
+      ) {
         oldest = entry.lastUsed;
         oldestKey = key;
       }
     }
-    if (oldestKey === undefined) {
-      return;
-    }
-    const evicted = this.entries.get(oldestKey)!;
-    this.entries.delete(oldestKey);
-    evicted.dispose().catch((err: unknown) => {
-      console.warn(
-        `[pim] failed to dispose evicted session ${oldestKey}:`,
-        err
-      );
-    });
+    return oldestKey;
   }
 }

@@ -17,7 +17,11 @@ export type PaintedGroup =
       readonly frame: Exclude<BlockFrame, "embed">;
       readonly lines: readonly string[];
     }
-  | { readonly frame: "embed"; readonly markdown: string };
+  | {
+      readonly frame: "embed";
+      readonly markdown: string;
+      readonly echo: boolean;
+    };
 
 function paint(blocks: readonly ViewBlock[], theme: Theme): string[] {
   return blocks.flatMap((block) => paintBlock(block, theme));
@@ -51,7 +55,11 @@ function paintBody(blocks: readonly ViewBlock[], theme: Theme): PaintedGroup[] {
   ).map((group): PaintedGroup => {
     const [first] = group.blocks;
     if (first?.kind === "markdown") {
-      return { frame: "embed", markdown: first.text };
+      return {
+        frame: "embed",
+        markdown: first.text,
+        echo: first.echo === true,
+      };
     }
     return {
       frame: group.frame as Exclude<BlockFrame, "embed">,

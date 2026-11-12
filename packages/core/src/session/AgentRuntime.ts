@@ -1,4 +1,5 @@
 import type { Api as ModelApi, Model } from "@earendil-works/pi-ai";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import {
   getAgentDir,
   ModelRegistry,
@@ -7,11 +8,14 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
 
+import { ModelId } from "../shared/ModelId";
+
 export type ModelChoice = {
   /** `provider/id`, as `setModel` takes it. */
   readonly id: string;
   readonly label: string;
   readonly provider: string;
+  readonly thinkingLevels: readonly string[];
 };
 
 /**
@@ -49,9 +53,10 @@ export class AgentRuntime {
   /** Models with credentials available. */
   public models(): readonly ModelChoice[] {
     return this.modelRegistry.getAvailable().map((model: Model<ModelApi>) => ({
-      id: `${model.provider}/${model.id}`,
+      id: ModelId.of(model),
       label: model.name,
       provider: model.provider,
+      thinkingLevels: getSupportedThinkingLevels(model),
     }));
   }
 

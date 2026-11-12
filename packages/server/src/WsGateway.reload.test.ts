@@ -219,8 +219,7 @@ test("refuses to reload out from under a running turn, unless forced", async () 
 
   const refused = await probe.send({ type: "reload" });
   expect(refused.success).toBe(false);
-  expect(refused.error).toContain(sessionId);
-  expect(refused.error).toContain("mid-turn");
+  expect(refused.error).toContain('"say hello" (mid-turn) is working');
   expect(updates).toBe(0);
 
   const forced = await probe.send({ type: "reload", force: true });

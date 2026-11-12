@@ -1,17 +1,23 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { Bot as Grammy } from "grammy";
 
+import type { SubagentJobs } from "#core/extensions/subagent/SubagentJobs";
 import type { AgentRuntime } from "#core/session/AgentRuntime";
 import { PimVersion } from "#core/shared/PimVersion";
 import { Commands } from "./Commands";
 import type { TelegramConfig } from "./Config";
 import { Message, type Prompt } from "./Message";
-import { Renderer, type TurnEndState } from "./Renderer";
 import { Session, type SessionId } from "./Session";
 import { SessionRegistry } from "./SessionRegistry";
 import type { ScheduledTask } from "./TaskSchema";
 import { TaskScheduler } from "./TaskScheduler";
+import { Turn } from "./Turn";
 import { UpdateConfirm } from "./UpdateConfirm";
+
+export type BotOptions = {
+  /** Background subagents, shared with the process's other surfaces; omit for synchronous ones. */
+  readonly jobs?: SubagentJobs;
+};
 
 export class Bot {
   private readonly grammy: Grammy;
@@ -23,7 +29,11 @@ export class Bot {
   /** Settles only once the bot is stopped. */
   private polling: Promise<void> | undefined;
 
-  public constructor(config: TelegramConfig, runtime: AgentRuntime) {
+  public constructor(
+    config: TelegramConfig,
+    runtime: AgentRuntime,
+    options: BotOptions = {}
+  ) {
     this.config = config;
     this.grammy = new Grammy(config.token);
     this.allowSet = new Set(config.allow);
@@ -35,7 +45,8 @@ export class Bot {
       config,
       this.grammy.api,
       this.scheduler,
-      runtime
+      runtime,
+      options.jobs
     );
     this.commands = new Commands(config, this.grammy.api, this.registry);
 
@@ -176,64 +187,13 @@ export class Bot {
     await UpdateConfirm.clear(this.config.configDir);
   }
 
-  private async handleTurn(
+  private handleTurn(
     session: Session,
     agent: AgentSession,
     prompt: Prompt
   ): Promise<void> {
-    const renderer = new Renderer(session, this.grammy.api);
-    let aborted = false;
-    const unsubscribe = agent.subscribe((event) => {
-      if (event.type === "agent_settled") {
-        aborted = event.aborted;
-      }
-      renderer.handleEvent(event);
-    });
-    await renderer.start();
-    try {
-      await agent.prompt(prompt.text, {
-        ...prompt.options,
-        source: "rpc",
-      });
-      const final = extractFinalResult(agent);
-      if (aborted && final.state === "ok") {
-        await renderer.finish("", "cancelled");
-      } else {
-        await renderer.finish(final.text, final.state);
-      }
-    } catch (err) {
-      const msg = (err as Error).message ?? String(err);
-      console.error(`[bot] turn failed:`, err);
-      await renderer.finish(`⚠️ ${msg}`, "error");
-    } finally {
-      unsubscribe();
-    }
+    return Turn.run(session, this.grammy.api, agent, (a) =>
+      a.prompt(prompt.text, { ...prompt.options, source: "rpc" })
+    );
   }
-}
-
-function extractFinalResult(agent: AgentSession): {
-  readonly text: string;
-  readonly state: TurnEndState;
-} {
-  const messages = agent.messages;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i]!;
-    if (msg.role !== "assistant") {
-      continue;
-    }
-    if (msg.stopReason === "error") {
-      return { text: msg.errorMessage ?? "", state: "error" };
-    }
-    if (msg.stopReason === "aborted") {
-      return { text: msg.errorMessage ?? "", state: "cancelled" };
-    }
-    const parts: string[] = [];
-    for (const block of msg.content) {
-      if (block.type === "text") {
-        parts.push(block.text);
-      }
-    }
-    return { text: parts.join("").trim(), state: "ok" };
-  }
-  return { text: "", state: "ok" };
 }

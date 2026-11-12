@@ -1,98 +1,27 @@
 import { describe, expect, jest, test } from "bun:test";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+import bashExtension from "../bash/index";
+import readExtension from "../read/index";
 import {
   applyOutputCap,
   childLoaderOptions,
+  childSession,
   runSubagent,
+  startSubagent,
   SubagentEventCapture,
   UPDATE_INTERVAL_MS,
   type SubagentDetails,
-  type SubagentSession,
   type SubagentSessionSpec,
 } from "./subagent";
 import { until } from "../../shared/fixtures/wait";
-
-type UsageOverrides = Omit<Partial<Usage>, "cost"> & {
-  readonly cost?: Partial<Usage["cost"]>;
-};
-
-const usage = (overrides: UsageOverrides = {}): Usage => {
-  const { cost, ...rest } = overrides;
-  return {
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    totalTokens: 0,
-    cost: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      total: 0,
-      ...cost,
-    },
-    ...rest,
-  };
-};
-
-function assistant(
-  textParts: readonly string[],
-  overrides: Partial<AssistantMessage> = {}
-): AssistantMessage {
-  return {
-    role: "assistant",
-    content: textParts.map((text) => ({ type: "text", text })),
-    api: "anthropic-messages",
-    provider: "anthropic",
-    model: "claude-test",
-    usage: usage(),
-    stopReason: "stop",
-    timestamp: 1,
-    ...overrides,
-  };
-}
-
-const ctx = { cwd: "/work" } as ExtensionContext;
-
-class FakeSession implements SubagentSession {
-  public promptCalls = 0;
-  public abortCalls = 0;
-  public disposeCalls = 0;
-  private listener: ((event: never) => void) | undefined;
-
-  public constructor(
-    private readonly onPrompt: (
-      session: FakeSession,
-      prompt: string
-    ) => Promise<void>
-  ) {}
-
-  public subscribe(listener: (event: never) => void): () => void {
-    this.listener = listener;
-    return () => {
-      this.listener = undefined;
-    };
-  }
-
-  public emit(event: unknown): void {
-    this.listener?.(event as never);
-  }
-
-  public async prompt(prompt: string): Promise<void> {
-    this.promptCalls += 1;
-    await this.onPrompt(this, prompt);
-  }
-
-  public async abort(): Promise<void> {
-    this.abortCalls += 1;
-  }
-
-  public dispose(): void {
-    this.disposeCalls += 1;
-  }
-}
+import {
+  assistant,
+  FakeSession,
+  HeldSession,
+  parent,
+  usage,
+} from "./fixtures/session";
 
 describe("childLoaderOptions", () => {
   test("gives the child pim's own roster, not pi's built-ins alone", () => {
@@ -103,6 +32,14 @@ describe("childLoaderOptions", () => {
     expect(names).toContain("glob");
     expect(names).toContain("web-search");
     expect(names).toContain("apply-patch");
+  });
+
+  test("leaves out subagent, so a child can never spawn one", () => {
+    const names = childLoaderOptions("/work").extensionFactories.map(
+      (entry) => entry.name
+    );
+
+    expect(names).not.toContain("subagent");
   });
 });
 
@@ -275,7 +212,7 @@ describe("runSubagent", () => {
       });
     });
 
-    const result = await runSubagent("say hi", ctx, {
+    const result = await runSubagent("say hi", parent, {
       createSession: async () => fake,
     });
 
@@ -290,9 +227,9 @@ describe("runSubagent", () => {
     const fake = new FakeSession(async () => {});
     const specs: SubagentSessionSpec[] = [];
 
-    await runSubagent("think", ctx, {
+    await runSubagent("think", parent, {
       thinkingLevel: "high",
-      createSession: async (_ctx, spec) => {
+      createSession: async (_parent, spec) => {
         specs.push(spec);
         return fake;
       },
@@ -307,7 +244,7 @@ describe("runSubagent", () => {
       session.emit({ type: "message_end", message: assistant([]) });
     });
 
-    const result = await runSubagent("empty", ctx, {
+    const result = await runSubagent("empty", parent, {
       createSession: async () => fake,
     });
 
@@ -329,7 +266,7 @@ describe("runSubagent", () => {
     });
 
     await expect(
-      runSubagent("fail", ctx, { createSession: async () => fake })
+      runSubagent("fail", parent, { createSession: async () => fake })
     ).rejects.toThrow(
       "Subagent failed: error. Error: provider exploded.\nPartial output before failure:\npartial"
     );
@@ -341,7 +278,7 @@ describe("runSubagent", () => {
     const fake = new FakeSession(async () => {});
 
     await expect(
-      runSubagent("abort", ctx, {
+      runSubagent("abort", parent, {
         signal: controller.signal,
         createSession: async () => fake,
       })
@@ -366,7 +303,7 @@ describe("runSubagent", () => {
         })
     );
     const controller = new AbortController();
-    const promise = runSubagent("long", ctx, {
+    const promise = runSubagent("long", parent, {
       signal: controller.signal,
       createSession: async () => fake,
     });
@@ -380,14 +317,180 @@ describe("runSubagent", () => {
     expect(fake.disposeCalls).toBe(1);
   });
 
-  test("nested subagent calls are rejected by the async-local recursion ban", async () => {
-    const outer = new FakeSession(async () => {
-      const inner = new FakeSession(async () => {});
-      await runSubagent("inner", ctx, { createSession: async () => inner });
+  // A job notice wakes the parent from inside the child's onChange; that turn's spawns are the parent's own.
+  test("the parent can spawn from a callback the child fires", async () => {
+    let spawned: Promise<unknown> | undefined;
+    const child = new FakeSession(async (session) => {
+      session.emit({ type: "message_end", message: assistant(["done"]) });
     });
 
-    await expect(
-      runSubagent("outer", ctx, { createSession: async () => outer })
-    ).rejects.toThrow("subagents cannot call subagent tool");
+    await runSubagent("outer", parent, {
+      createSession: async () => child,
+      onChange: () => {
+        spawned ??= runSubagent("sibling", parent, {
+          createSession: async () =>
+            new FakeSession(async (session) => {
+              session.emit({ type: "message_end", message: assistant(["ok"]) });
+            }),
+        });
+      },
+    });
+
+    expect(await spawned).toMatchObject({ content: [{ text: "ok" }] });
+  });
+});
+
+describe("SubagentEventCapture tools", () => {
+  const fakePi = {
+    registerTool: () => {},
+    on: () => {},
+    getActiveTools: () => [],
+    getAllTools: () => [],
+  } as unknown as ExtensionAPI;
+  readExtension(fakePi);
+  bashExtension(fakePi);
+
+  function toolStart(id: string, toolName: string, args: unknown): never {
+    return {
+      type: "tool_execution_start",
+      toolCallId: id,
+      toolName,
+      args,
+    } as never;
+  }
+
+  function toolEnd(id: string, toolName: string, isError = false): never {
+    return {
+      type: "tool_execution_end",
+      toolCallId: id,
+      toolName,
+      result: {},
+      isError,
+    } as never;
+  }
+
+  test("names each tool by its row title, or the generic one without a view", () => {
+    const capture = new SubagentEventCapture(undefined, { cwd: "/work" });
+
+    capture.handle(toolStart("1", "read", { path: "/work/src/app.ts" }));
+    capture.handle(toolStart("2", "mcp_lookup", { query: "foo" }));
+
+    expect(capture.recentTools()).toEqual([
+      { title: "Read src/app.ts", state: "running" },
+      { title: "mcp_lookup foo", state: "running" },
+    ]);
+  });
+
+  test("remembers the last ten tool calls with their outcome", () => {
+    const capture = new SubagentEventCapture(undefined, { cwd: "/work" });
+
+    for (let i = 0; i < 12; i += 1) {
+      capture.handle(toolStart(`${i}`, "bash", { command: `step ${i}` }));
+      capture.handle(toolEnd(`${i}`, "bash", i === 11));
+    }
+    capture.handle(toolStart("12", "bash", { command: "step 12" }));
+
+    const recent = capture.recentTools();
+    expect(recent).toHaveLength(10);
+    expect(recent[0]).toEqual({ title: "Bash step 3", state: "done" });
+    expect(recent.at(-2)).toEqual({ title: "Bash step 11", state: "error" });
+    expect(recent.at(-1)).toEqual({ title: "Bash step 12", state: "running" });
+  });
+
+  test("a tool starting or ending is an update of its own", () => {
+    const updates: string[] = [];
+    const capture = new SubagentEventCapture(() => {
+      updates.push(capture.recentTools().at(-1)?.state ?? "");
+    });
+
+    capture.handle(toolStart("1", "bash", { command: "ls" }));
+    capture.handle(toolEnd("1", "bash", true));
+
+    expect(updates).toEqual(["running", "error"]);
+    expect(capture.recentTools()).toEqual([
+      { title: "Bash ls", state: "error" },
+    ]);
+  });
+});
+
+describe("childSession", () => {
+  test("steers the child's agent with the text as is, never as a command or template", async () => {
+    const steered: unknown[] = [];
+    const agent = {
+      sessionId: "child",
+      agent: { steer: (message: unknown) => steered.push(message) },
+      steer: () => {
+        throw new Error("expands templates");
+      },
+    };
+
+    await childSession(agent as never).steer("/review the parser");
+
+    expect(steered).toMatchObject([
+      {
+        role: "user",
+        content: [{ type: "text", text: "/review the parser" }],
+      },
+    ]);
+  });
+});
+
+describe("startSubagent", () => {
+  test("returns before the child finishes, with its capture reachable", async () => {
+    const held = new HeldSession();
+    const child = startSubagent("long", parent, {
+      createSession: async () => held,
+    });
+
+    await until(() => held.promptCalls === 1, "the child to be prompted");
+    held.emit({ type: "message_update", message: assistant(["thinking"]) });
+    expect(child.capture.narration()).toBe("thinking");
+
+    held.finish("done");
+    expect((await child.result).details.returnedOutput).toBe("done");
+  });
+
+  test("steers the child's session, waiting for it to exist", async () => {
+    const held = new HeldSession();
+    const created = Promise.withResolvers<void>();
+    const child = startSubagent("long", parent, {
+      createSession: async () => {
+        await created.promise;
+        return held;
+      },
+    });
+
+    const steered = child.steer("also check the tests");
+    created.resolve();
+    await steered;
+
+    expect(held.steered).toEqual(["also check the tests"]);
+    held.finish("done");
+    await child.result;
+  });
+
+  test("stop aborts the child and resolves once it has settled", async () => {
+    const held = new HeldSession();
+    const child = startSubagent("long", parent, {
+      createSession: async () => held,
+    });
+    await until(() => held.promptCalls === 1, "the child to be prompted");
+
+    await child.stop();
+
+    expect(held.abortCalls).toBe(1);
+    expect(held.disposeCalls).toBe(1);
+    await expect(child.result).rejects.toThrow("Subagent failed: aborted");
+  });
+
+  test("a child that never started cannot be steered", async () => {
+    const child = startSubagent("boom", parent, {
+      createSession: async () => {
+        throw new Error("no model");
+      },
+    });
+
+    await expect(child.result).rejects.toThrow("no model");
+    await expect(child.steer("hello")).rejects.toThrow("never started");
   });
 });

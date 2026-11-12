@@ -19,8 +19,6 @@ import {
   type ToolRow,
 } from "./rows";
 
-const SUBAGENT = "subagent";
-
 type RowOf<TKind extends Row["kind"]> = Extract<Row, { kind: TKind }>;
 
 type RowMap = {
@@ -201,7 +199,7 @@ function ToolRowView(props: {
 }) {
   return (
     <Show
-      when={props.row.name === SUBAGENT && props.onOpenSubagent !== undefined}
+      when={props.onOpenSubagent && props.row.child}
       fallback={
         <ToolCards
           view={props.row.view}
@@ -211,10 +209,12 @@ function ToolRowView(props: {
         />
       }
     >
-      <SubagentRow
-        row={props.row}
-        onOpen={(callId) => props.onOpenSubagent?.(callId)}
-      />
+      {(child) => (
+        <SubagentRow
+          row={props.row}
+          onOpen={() => props.onOpenSubagent?.(child())}
+        />
+      )}
     </Show>
   );
 }

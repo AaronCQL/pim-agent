@@ -4,11 +4,21 @@ import { render } from "@solidjs/web";
 import { describe, expect, test } from "bun:test";
 import { flush } from "solid-js";
 
+import type { ToolView } from "#core/view/ViewBlock";
 import type { DurableEvent } from "#protocol/ServerEvent";
 import { clockTime } from "../format";
 import { FIXTURE_EVENTS } from "../replay/fixture";
 import { HideThinking } from "../settings/Settings";
 import { mountPoint } from "../test/dom";
+import {
+  notice,
+  result,
+  spawnView,
+  statusView,
+  steerView,
+  stopView,
+  syncRunView,
+} from "../test/jobs";
 import { DIFF_ROW_CLASSES } from "../view/tokens";
 import { Transcript } from "./Transcript";
 import { toRows } from "./rows";
@@ -392,5 +402,116 @@ describe("static replay of a real session", () => {
 
     card.click();
     expect(edits).toBe(1);
+  });
+});
+
+describe("background subagents", () => {
+  function settle(
+    seq: number,
+    callId: string,
+    view: ToolView,
+    options: { readonly child?: string; readonly isError?: boolean } = {}
+  ): DurableEvent {
+    return {
+      seq,
+      type: "tool_result",
+      callId,
+      name: "subagent",
+      view,
+      isError: options.isError ?? false,
+      ...(options.child === undefined
+        ? {}
+        : { child: { jobId: options.child, handle: "j1" } }),
+    };
+  }
+
+  function paint(source: readonly DurableEvent[]): {
+    readonly host: HTMLElement;
+    readonly opened: readonly string[];
+  } {
+    const host = mountPoint();
+    const opened: string[] = [];
+    render(
+      () => (
+        <Transcript
+          events={source}
+          onOpenSubagent={(callId) => {
+            opened.push(callId);
+          }}
+        />
+      ),
+      host
+    );
+    flush();
+    return { host, opened };
+  }
+
+  function openers(host: HTMLElement): readonly HTMLButtonElement[] {
+    return [
+      ...host.querySelectorAll<HTMLButtonElement>(
+        "button[aria-haspopup='dialog']"
+      ),
+    ];
+  }
+
+  test("a result is a subagent row that reads its state and opens its job's log", () => {
+    const { host, opened } = paint([
+      settle(1, "call_a", spawnView("call_a", "audit the parser"), {
+        child: "call_a",
+      }),
+      result(2, "call_a", "done"),
+      result(3, "call_b", "stopped"),
+      result(4, "call_c", "interrupted", { line: "The process ended." }),
+      result(5, "call_d", "failed", { line: "Subagent failed: boom" }),
+    ] as readonly DurableEvent[]);
+
+    expect(openers(host).map((button) => button.textContent)).toEqual([
+      "Subagent:j1 ⬝ started",
+      "Subagent:j1 ⬝ 2 turns ⬝ $0.04 ⬝ 2.0%/200K",
+      "Subagent:j1 ⬝ stopped by user ⬝ 2 turns ⬝ $0.04 ⬝ 2.0%/200K",
+      "Subagent:j1 ⬝ interrupted · The process ended.",
+      "Subagent:j1 ⬝ failed · Subagent failed: boom",
+    ]);
+
+    for (const button of openers(host)) {
+      button.click();
+    }
+    expect(opened).toEqual(["call_a", "call_a", "call_b", "call_c", "call_d"]);
+  });
+
+  test("a context notice is a subagent row that opens its job's log", () => {
+    const { host, opened } = paint([
+      settle(1, "call_a", spawnView("call_a", "audit the parser"), {
+        child: "call_a",
+      }),
+      notice(2),
+    ] as readonly DurableEvent[]);
+
+    expect(openers(host)).toHaveLength(2);
+    expect(openers(host)[1]?.textContent).toBe("Subagent:j1 ⬝ context at 40%");
+    expect(
+      openers(host)[1]?.querySelector(".text-amber-400")?.textContent
+    ).toBe("context at 40%");
+    openers(host)[1]?.click();
+    expect(opened).toEqual(["call_a"]);
+  });
+
+  test("only a row the server links to a log opens one; the rest are plain cards", () => {
+    const { host, opened } = paint([
+      settle(1, "call_s", statusView("j1")),
+      settle(2, "call_t", stopView("j1")),
+      settle(3, "call_u", steerView("j1")),
+      settle(4, "call_f", syncRunView("audit the parser"), { isError: true }),
+      settle(5, "call_old", syncRunView("audit the parser"), {
+        child: "call_old",
+      }),
+    ]);
+
+    expect(host.textContent).toContain("Subagent:j1 ⬝ status");
+    expect(host.textContent).toContain("Subagent:j1 ⬝ stop ⬝ wrong file");
+    expect(host.textContent).toContain("Subagent:j1 ⬝ steer");
+    expect(openers(host)).toHaveLength(1);
+    openers(host)[0]!.click();
+    expect(opened).toEqual(["call_old"]);
   });
 });

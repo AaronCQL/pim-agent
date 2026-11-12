@@ -83,7 +83,16 @@ function TextBlock(props: { readonly block: BlockOf<"text"> }) {
 }
 
 function MarkdownBlock(props: { readonly block: BlockOf<"markdown"> }) {
-  return <Markdown text={props.block.text} />;
+  return (
+    <Show
+      when={props.block.echo === true}
+      fallback={<Markdown text={props.block.text} />}
+    >
+      <div class="opacity-60">
+        <Markdown text={props.block.text} />
+      </div>
+    </Show>
+  );
 }
 
 // Spacing is baked into the span text.
@@ -95,7 +104,7 @@ function SpansBlock(props: { readonly block: BlockOf<"spans"> }) {
   );
 }
 
-function SpanText(props: { readonly span: Span }) {
+export function SpanText(props: { readonly span: Span }) {
   return (
     <span
       class={{

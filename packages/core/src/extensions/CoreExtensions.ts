@@ -15,6 +15,7 @@ import glob from "./glob/index";
 import grep from "./grep/index";
 import read from "./read/index";
 import subagent from "./subagent/index";
+import type { SubagentJobs } from "./subagent/SubagentJobs";
 import systemPrompt from "./system-prompt/index";
 import todo from "./todo/index";
 import webFetch from "./web-fetch/index";
@@ -26,8 +27,16 @@ export type PimInlineExtension = {
   readonly factory: ExtensionFactory;
 };
 
+export type CoreExtensionOptions = {
+  /** Background subagents; omit for synchronous ones (print mode). Children get no subagent extension at all. */
+  readonly jobs?: SubagentJobs;
+};
+
 // Listed explicitly so the published package needs no directory scan.
-function list(surface?: Surface): readonly PimInlineExtension[] {
+function list(
+  surface?: Surface,
+  options: CoreExtensionOptions = {}
+): readonly PimInlineExtension[] {
   return [
     { name: "apply-patch", factory: applyPatch },
     { name: "bash", factory: bash },
@@ -35,7 +44,7 @@ function list(surface?: Surface): readonly PimInlineExtension[] {
     { name: "glob", factory: glob },
     { name: "grep", factory: grep },
     { name: "read", factory: read },
-    { name: "subagent", factory: subagent },
+    { name: "subagent", factory: subagent(options) },
     { name: "system-prompt", factory: systemPrompt(surface) },
     { name: "todo", factory: todo },
     { name: "web-fetch", factory: webFetch },
@@ -44,8 +53,11 @@ function list(surface?: Surface): readonly PimInlineExtension[] {
   ];
 }
 
-function gated(surface?: Surface): InlineExtension[] {
-  return list(surface).map(({ name, factory }) => ({
+function gated(
+  surface?: Surface,
+  options: CoreExtensionOptions = {}
+): InlineExtension[] {
+  return list(surface, options).map(({ name, factory }) => ({
     name,
     factory: ExtensionToggles.gate(name, factory),
   }));

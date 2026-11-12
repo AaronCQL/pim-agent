@@ -1,26 +1,31 @@
 import type {
   ExtensionAPI,
   ExtensionContext,
+  ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
 
 import { EventLog } from "#core/session/EventLog";
 import {
   type LeaseHandle,
-  type LeaseRecord,
+  type LeaseHolder,
   SessionLease,
 } from "#core/session/SessionLease";
 import { WriteMark } from "#core/session/WriteMark";
+import type { SessionGate } from "./SessionGate";
 
 const POLL_MS = 2_000;
 
 /** Module-level because `switchSession` re-runs every factory. */
 let carried: { readonly path: string; readonly text: string } | undefined;
 
-function isForeign(record: LeaseRecord | undefined): record is LeaseRecord {
-  return record !== undefined && !SessionLease.isOurs(record);
+function isForeign(holder: LeaseHolder | undefined): holder is LeaseHolder {
+  return holder !== undefined && !SessionLease.isOurs(holder.record);
 }
 
-function describe(record: LeaseRecord): string {
+function describe({ record }: LeaseHolder): string {
+  if (record === undefined) {
+    return "Another surface";
+  }
   return record.frontend === "daemon" ? "The browser" : "Another terminal";
 }
 
@@ -34,46 +39,54 @@ function notify(
   }
 }
 
-export default function (pi: ExtensionAPI): void {
+export type SessionLeaseOptions = {
+  readonly gate?: SessionGate;
+};
+
+export default function sessionLease(
+  options: SessionLeaseOptions = {}
+): ExtensionFactory {
+  return (pi) => register(pi, options);
+}
+
+function register(pi: ExtensionAPI, { gate }: SessionLeaseOptions): void {
   let manager: ExtensionContext["sessionManager"] | undefined;
   let path: string | undefined;
   let log: EventLog | undefined;
   let mark: WriteMark = WriteMark.UNREAD;
   let stale = false;
-  let holder: LeaseRecord | undefined;
+  let holder: LeaseHolder | undefined;
   let handle: LeaseHandle | undefined;
   let syncing = false;
+  let closing = false;
   let stopWatch: (() => void) | undefined;
   let poll: ReturnType<typeof setInterval> | undefined;
 
-  const measure = async (): Promise<WriteMark | undefined> => {
-    if (log === undefined || manager === undefined) {
-      return undefined;
-    }
-    return await WriteMark.of(log, manager);
-  };
-
-  /** Marks the session stale when another surface wrote it; our own appends and benign renames are absorbed. */
+  /** Marks the session stale when another surface wrote it. Only `anchor()` clears staleness. */
   const reconcile = async (): Promise<void> => {
     const current = log;
-    const next = await measure();
-    // Only `anchor()` clears staleness.
-    if (stale || current === undefined || next === undefined) {
+    if (stale || current === undefined || manager === undefined) {
       return;
     }
-    if (
-      WriteMark.foreignSince(mark, next) &&
-      !(await WriteMark.benignSince(current, mark))
-    ) {
+    const { next, foreign } = await WriteMark.scan(current, mark, manager);
+    if (current !== log) {
+      return;
+    }
+    if (foreign) {
       stale = true;
-      return;
+    } else {
+      mark = next;
     }
-    mark = next;
   };
 
   const anchor = async (): Promise<void> => {
-    mark = (await measure()) ?? WriteMark.UNREAD;
-    stale = false;
+    const current = log;
+    const next =
+      current === undefined ? WriteMark.UNREAD : await WriteMark.at(current);
+    if (current === log) {
+      mark = next;
+      stale = false;
+    }
   };
 
   const refresh = async (): Promise<void> => {
@@ -81,7 +94,7 @@ export default function (pi: ExtensionAPI): void {
     if (current === undefined) {
       return;
     }
-    holder = await SessionLease.read(current);
+    holder = await SessionLease.holder(current);
     await reconcile();
   };
 
@@ -102,7 +115,9 @@ export default function (pi: ExtensionAPI): void {
       return;
     }
     const tick = (): void => {
-      void refresh().catch(() => undefined);
+      void refresh()
+        .then(() => gate?.changed())
+        .catch(() => undefined);
     };
     stopWatch = SessionLease.watch(current, tick);
     poll = setInterval(tick, POLL_MS);
@@ -115,6 +130,18 @@ export default function (pi: ExtensionAPI): void {
     mark = WriteMark.UNREAD;
     stale = false;
     holder = undefined;
+  };
+
+  const catchUp = (ctx: ExtensionContext): void => {
+    notify(ctx, "This session was continued elsewhere — catching up.");
+    if (syncing) {
+      return;
+    }
+    syncing = true;
+    // Deferred: dispatching inside `emitInput` tears the session down under its own stack.
+    setTimeout(() => {
+      pi.sendUserMessage("/sync", { expandPromptTemplates: true });
+    }, 0);
   };
 
   const release = async (): Promise<void> => {
@@ -130,6 +157,19 @@ export default function (pi: ExtensionAPI): void {
     pointAt(ctx.sessionManager.getSessionFile());
     await anchor();
     startIdleWatch();
+    gate?.bind(async () => {
+      await refresh();
+      if (isForeign(holder)) {
+        return "held";
+      }
+      if (stale) {
+        if (!closing) {
+          catchUp(ctx);
+        }
+        return "stale";
+      }
+      return "open";
+    });
 
     const stash = carried;
     carried = undefined;
@@ -158,14 +198,7 @@ export default function (pi: ExtensionAPI): void {
     if (event.text.trim() !== "") {
       carried = { path, text: event.text };
     }
-    notify(ctx, "This session was continued elsewhere — catching up.");
-    if (!syncing) {
-      syncing = true;
-      // Deferred: dispatching inside `emitInput` tears the session down under its own stack.
-      setTimeout(() => {
-        pi.sendUserMessage("/sync", { expandPromptTemplates: true });
-      }, 0);
-    }
+    catchUp(ctx);
     return { action: "handled" };
   });
 
@@ -180,10 +213,11 @@ export default function (pi: ExtensionAPI): void {
       handle = result.handle;
       return;
     }
+    const by: LeaseHolder = { record: result.holder };
     notify(
       ctx,
-      isForeign(result.holder)
-        ? `${describe(result.holder)} just started a turn. Try again when it finishes.`
+      isForeign(by)
+        ? `${describe(by)} just started a turn. Try again when it finishes.`
         : "This session's turn lease is held elsewhere. Try again in a moment."
     );
     ctx.abort();
@@ -201,6 +235,7 @@ export default function (pi: ExtensionAPI): void {
   });
 
   pi.on("session_shutdown", async () => {
+    closing = true;
     stopIdleWatch();
     await release();
   });
@@ -223,7 +258,7 @@ export default function (pi: ExtensionAPI): void {
         notify(ctx, `Session file is gone: ${current}`, "error");
         return;
       }
-      const held = await SessionLease.read(current);
+      const held = await SessionLease.holder(current);
       if (isForeign(held)) {
         notify(
           ctx,

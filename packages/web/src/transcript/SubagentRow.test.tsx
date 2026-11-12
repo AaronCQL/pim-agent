@@ -61,7 +61,7 @@ function modal(host: HTMLElement): HTMLDialogElement {
 
 function spent(face: HTMLButtonElement): HTMLElement {
   return [...face.querySelectorAll("span")].find((span) =>
-    /turns/u.test(span.textContent ?? "")
+    /turn/u.test(span.textContent ?? "")
   )!;
 }
 
@@ -108,7 +108,7 @@ test("a running run spins, and reads what it has spent so far in amber", async (
     await delegate(host, "delegate this");
 
     const face = row(host)!;
-    expect(face.textContent).toBe("Subagent:1 turns ⬝ $0.02");
+    expect(face.textContent).toBe("Subagent:1 turn ⬝ $0.02");
     expect(face.innerHTML).toContain("text-amber-400");
     expect(face.innerHTML).toContain("animate-spin");
     expect(face.innerHTML).toContain("bg-amber-400");

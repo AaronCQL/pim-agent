@@ -29,7 +29,8 @@ function matching(
 }
 
 export function Menu(props: {
-  readonly label: string;
+  /** Defaults to the label of the option `value` names. */
+  readonly label?: string;
   readonly icon: string;
   readonly options: readonly MenuOption[];
   readonly value?: string;
@@ -39,7 +40,6 @@ export function Menu(props: {
   readonly place?: "above" | "below";
   /** Placeholder for an optional filter box. */
   readonly search?: string;
-  readonly onOpen?: () => void;
   readonly onSelect: (value: string) => void;
 }) {
   const [query, setQuery] = createSignal("");
@@ -52,6 +52,11 @@ export function Menu(props: {
       selected: option.value === props.value,
     }))
   );
+
+  const label = (): string | undefined =>
+    props.label ??
+    props.options.find((option) => option.value === props.value)?.label ??
+    props.value;
 
   const choose = (index: number): void => {
     const option = shown()[index];
@@ -67,7 +72,6 @@ export function Menu(props: {
       setQuery("");
     },
     onOpen: () => {
-      props.onOpen?.();
       const at = untrack(() =>
         shown().findIndex((option) => option.value === props.value)
       );
@@ -97,7 +101,7 @@ export function Menu(props: {
         }}
       >
         <span class={`${props.icon} size-4 shrink-0`} aria-hidden="true" />
-        <span class="max-w-40 truncate text-sm">{props.label}</span>
+        <span class="max-w-40 truncate text-sm">{label()}</span>
       </button>
 
       <Combobox

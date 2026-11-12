@@ -1,4 +1,5 @@
 import { type ImageMimeType, Images } from "../../shared/Images";
+import { Shutdown } from "../../shared/Shutdown";
 import { SpillCache } from "../../shared/SpillCache";
 import { StreamCapture } from "./capture";
 import { isErrorResult } from "./format";
@@ -114,6 +115,7 @@ export async function runBashCommand(
   });
   if (proc.pid !== undefined) {
     activePids.add(proc.pid);
+    Shutdown.onExit(killAllActiveBashGroups);
   }
 
   let timedOut = false;

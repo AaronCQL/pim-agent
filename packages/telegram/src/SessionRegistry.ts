@@ -2,6 +2,7 @@ import type { Api } from "grammy";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
+import type { SubagentJobs } from "#core/extensions/subagent/SubagentJobs";
 import { AgentRuntime } from "#core/session/AgentRuntime";
 import { SessionCache } from "#core/session/SessionCache";
 import { Fs } from "#core/shared/Fs";
@@ -19,6 +20,7 @@ export class SessionRegistry {
   private readonly api: Api;
   private readonly scheduler: TaskScheduler;
   private readonly runtime: AgentRuntime;
+  private readonly jobs: SubagentJobs | undefined;
   private readonly cache = new SessionCache<Session>();
   private settings: Map<string, SessionSettings> = new Map();
   private initialized = false;
@@ -29,12 +31,14 @@ export class SessionRegistry {
     config: TelegramConfig,
     api: Api,
     scheduler: TaskScheduler,
-    runtime: AgentRuntime
+    runtime: AgentRuntime,
+    jobs?: SubagentJobs
   ) {
     this.config = config;
     this.api = api;
     this.scheduler = scheduler;
     this.runtime = runtime;
+    this.jobs = jobs;
   }
 
   public setBotUsername(username: string): void {
@@ -70,6 +74,7 @@ export class SessionRegistry {
         scheduler: this.scheduler,
         persistSettings: (patch) => this.persistSettings(key, patch),
         getBotUsername: () => this.botUsername,
+        ...(this.jobs === undefined ? {} : { jobs: this.jobs }),
       })
     );
   }

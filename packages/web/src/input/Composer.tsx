@@ -8,16 +8,17 @@ import {
 
 import type { PickerItem } from "#core/picker/PickerItem";
 import { activeToken, applyCompletion, tokenKey } from "#core/picker/token";
-import type { ModelCatalogue, SessionStore } from "../session/SessionStore";
+import type { SessionStore } from "../session/SessionStore";
 import { comments } from "../diff/Comments";
 import { Review } from "../diff/Review";
 import { PILL } from "../ui/classes";
 import { Combobox, createComboboxNavigation } from "../ui/Combobox";
 import { createMediaQuery, KEYBOARD } from "../ui/media";
-import { Menu } from "../ui/Menu";
 import { Attachments, type AttachmentTile } from "../view/Attachments";
 import { ClankChip } from "./ClankChip";
 import { Readouts } from "./Readouts";
+import { JobsDock } from "./JobsDock";
+import { ModelModal } from "./ModelModal";
 import { createUploads } from "./uploads";
 
 function sends(event: KeyboardEvent, keyboard: boolean): boolean {
@@ -54,10 +55,7 @@ export function Composer(props: {
   const [dropping, setDropping] = createSignal(false);
   const uploads = createUploads(props.store);
   const keyboard = createMediaQuery(KEYBOARD);
-  const [catalogue, setCatalogue] = createSignal<ModelCatalogue>({
-    models: [],
-    thinkingLevels: [],
-  });
+  const [choosing, setChoosing] = createSignal(false);
   let input!: HTMLTextAreaElement;
   let chooser!: HTMLInputElement;
   let card!: HTMLDivElement;
@@ -94,7 +92,9 @@ export function Composer(props: {
   });
   const stops = createMemo(
     () =>
-      props.store.isBusy() && text().trim() === "" && attachments().length === 0
+      props.store.isStoppable() &&
+      text().trim() === "" &&
+      attachments().length === 0
   );
   const held = createMemo(() => props.store.heldNotice());
   const pending = createMemo(() =>
@@ -102,15 +102,10 @@ export function Composer(props: {
       ? props.review
       : undefined
   );
-  const modelOptions = createMemo(() =>
-    catalogue().models.map(({ id, label, provider }) => ({
-      value: id,
-      label,
-      tag: provider,
-    }))
-  );
-  const levelOptions = createMemo(() =>
-    catalogue().thinkingLevels.map((level) => ({ value: level, label: level }))
+  const ownSubagents = createMemo(
+    () =>
+      props.store.state.subagentModel !== "" ||
+      props.store.state.subagentThinking !== ""
   );
 
   createEffect(
@@ -245,16 +240,14 @@ export function Composer(props: {
     input.focus();
   }
 
-  function loadCatalogue(): void {
-    void props.store.listModels().then(setCatalogue);
-  }
-
   return (
     <div class="pointer-events-auto relative w-full max-w-3xl">
       <div class="pointer-events-none absolute inset-x-0 bottom-full mb-2 flex items-center gap-2">
         <ClankChip store={props.store} />
         <Readouts store={props.store} />
       </div>
+
+      <JobsDock store={props.store} />
 
       <Show when={props.store.state.error ?? uploads.failed()}>
         {(message) => (
@@ -348,6 +341,9 @@ export function Composer(props: {
             }
           }}
           onKeyDown={(event: KeyboardEvent) => {
+            if (event.isComposing) {
+              return;
+            }
             if (navigation.onKeyDown(event)) {
               return;
             }
@@ -356,16 +352,12 @@ export function Composer(props: {
               void props.store.cycleThinking();
               return;
             }
-            if (event.key === "Escape" && props.store.isBusy()) {
+            if (event.key === "Escape" && props.store.isStoppable()) {
               event.preventDefault();
               void stop();
               return;
             }
-            if (
-              event.key === "Enter" &&
-              !event.isComposing &&
-              sends(event, keyboard())
-            ) {
+            if (event.key === "Enter" && sends(event, keyboard())) {
               event.preventDefault();
               void submit();
             }
@@ -404,36 +396,41 @@ export function Composer(props: {
             <span class="i-griddy-icons:attachment size-4" aria-hidden="true" />
           </button>
           <Show when={props.store.state.model}>
-            {(model) => (
-              <Menu
-                label={props.store.state.modelLabel}
-                title="Model"
-                icon="i-griddy-icons:robot"
-                search="Search models"
-                value={model()}
-                options={modelOptions()}
-                onOpen={loadCatalogue}
-                onSelect={(id) => {
-                  void props.store.setModel(id);
-                }}
+            <button
+              type="button"
+              aria-haspopup="dialog"
+              title={
+                ownSubagents()
+                  ? "Model and effort · subagents differ"
+                  : "Model and effort"
+              }
+              class={`${PILL} min-w-0 px-3 py-1.5 text-sm`}
+              onClick={() => {
+                setChoosing(true);
+              }}
+            >
+              <span
+                class="i-griddy-icons:robot size-4 shrink-0"
+                aria-hidden="true"
               />
-            )}
+              <span class="max-w-40 truncate">
+                {props.store.state.modelLabel}
+              </span>
+              <span class="shrink-0">({props.store.state.thinking})</span>
+              <Show when={ownSubagents()}>
+                <span class="shrink-0 text-neutral-500" aria-hidden="true">
+                  *
+                </span>
+              </Show>
+            </button>
           </Show>
-          <Show when={props.store.state.thinking}>
-            {(thinking) => (
-              <Menu
-                label={thinking()}
-                title="Thinking"
-                icon="i-griddy-icons:lightbulb-on"
-                value={thinking()}
-                options={levelOptions()}
-                onOpen={loadCatalogue}
-                onSelect={(level) => {
-                  void props.store.setThinking(level);
-                }}
-              />
-            )}
-          </Show>
+          <ModelModal
+            open={choosing()}
+            onClose={() => {
+              setChoosing(false);
+            }}
+            store={props.store}
+          />
 
           <div class="flex-1" />
 

@@ -205,10 +205,6 @@ function isSupervised(): boolean {
   return flag !== undefined && flag !== "" && flag !== "0";
 }
 
-function restart(): never {
-  process.exit(0);
-}
-
 // After a global update, other daemons must restart or they keep running old code.
 async function restartSiblings(self: Unit): Promise<void> {
   if (process.platform === "linux") {
@@ -439,7 +435,6 @@ export const Supervisor = {
   installedArgs,
   uninstallSteps,
   unitFile,
-  restart,
   restartSiblings,
   isSupervised,
   detectInstall,

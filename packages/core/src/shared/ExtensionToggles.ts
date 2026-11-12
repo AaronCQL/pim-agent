@@ -17,6 +17,7 @@ const EXTENSIONS = {
   read: "read tool",
   "session-lease": "Cross-surface turn lease and /sync",
   subagent: "subagent tool",
+  "subagent-jobs": "Background subagent results, jobs widget, Escape to stop",
   "system-prompt": "Pim system prompt",
   todo: "todo tool",
   tps: "Per-turn decode/prefill tps report",
@@ -32,7 +33,12 @@ const NAMES = Object.keys(EXTENSIONS) as readonly PimExtensionName[];
 
 const DEFAULT_DISABLED: readonly PimExtensionName[] = ["todo", "tps"];
 
-const REQUIRED: readonly PimExtensionName[] = ["_init", "pim", "session-lease"];
+const REQUIRED: readonly PimExtensionName[] = [
+  "_init",
+  "pim",
+  "session-lease",
+  "subagent-jobs",
+];
 
 // The only toggles the browser shows.
 const WEB = [{ name: "todo", label: "Todo Tool" }] as const satisfies readonly {

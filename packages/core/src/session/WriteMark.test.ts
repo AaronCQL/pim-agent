@@ -1,3 +1,4 @@
+import { appendFileSync } from "node:fs";
 import { appendFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,71 +29,116 @@ async function writeSession(entryCount: number): Promise<string> {
   return path;
 }
 
-function holding(count: number): { getEntries(): readonly unknown[] } {
-  return { getEntries: () => Array.from({ length: count }, (_, i) => i) };
+function holding(...ids: string[]): { getEntry(id: string): unknown } {
+  return { getEntry: (id) => (ids.includes(id) ? { id } : undefined) };
 }
+
+const PI_WROTE = holding("e0", "e1", "e2");
 
 async function append(path: string, entry: object): Promise<void> {
   await appendFile(path, `${JSON.stringify(entry)}\n`);
 }
 
-test("counts the file's durable lines against pi's entries in memory", async () => {
+test("a mark sits on the file's last durable line", async () => {
   const path = await writeSession(3);
 
-  expect(await WriteMark.of(new EventLog(path), holding(3))).toEqual({
-    head: 4,
-    entries: 3,
+  expect(await WriteMark.at(new EventLog(path))).toEqual({ head: 4 });
+});
+
+test("lines pi holds in memory are never foreign, and move the mark past them", async () => {
+  const path = await writeSession(3);
+  const log = new EventLog(path);
+
+  expect(await WriteMark.scan(log, { head: 2 }, PI_WROTE)).toEqual({
+    next: { head: 4 },
+    foreign: false,
+    renamed: false,
   });
 });
 
-test("appends pi made from memory are never foreign", () => {
-  const mark = { head: 4, entries: 3 };
-
-  expect(WriteMark.foreignSince(mark, { head: 6, entries: 5 })).toBe(false);
-});
-
-test("a line pi did not append is foreign", () => {
-  const mark = { head: 4, entries: 3 };
-
-  expect(WriteMark.foreignSince(mark, { head: 5, entries: 3 })).toBe(true);
-  expect(WriteMark.foreignSince(mark, { head: 7, entries: 5 })).toBe(true);
-});
-
-test("the whole of a file that did not exist at the mark is pi's own", () => {
-  expect(
-    WriteMark.foreignSince(WriteMark.UNREAD, { head: 5, entries: 4 })
-  ).toBe(false);
-  expect(
-    WriteMark.foreignSince(WriteMark.UNREAD, { head: 6, entries: 4 })
-  ).toBe(true);
-});
-
-test("a rename somebody else appended is a line nobody has to replay", async () => {
+test("lines pi appends while a scan reads are pi's on the next scan", async () => {
   const path = await writeSession(3);
   const log = new EventLog(path);
-  const mark = await WriteMark.of(log, holding(3));
+  const ids = ["e0", "e1", "e2"];
+  const racing = {
+    getEntry(id: string): unknown {
+      if (ids.length === 3) {
+        for (const late of ["r0", "r1"]) {
+          ids.push(late);
+          appendFileSync(
+            path,
+            `${JSON.stringify({ type: "message", id: late })}\n`
+          );
+        }
+      }
+      return ids.includes(id) ? { id } : undefined;
+    },
+  };
+
+  const first = await WriteMark.scan(log, { head: 2 }, racing);
+
+  expect(first).toEqual({
+    next: { head: 4 },
+    foreign: false,
+    renamed: false,
+  });
+  expect(await WriteMark.scan(log, first.next, racing)).toEqual({
+    next: { head: 6 },
+    foreign: false,
+    renamed: false,
+  });
+});
+
+test("a line pi does not hold is foreign", async () => {
+  const path = await writeSession(3);
+  const log = new EventLog(path);
+  const mark = await WriteMark.at(log);
+  await append(path, { type: "message", id: "x1" });
+
+  expect(await WriteMark.scan(log, mark, PI_WROTE)).toEqual({
+    next: { head: 5 },
+    foreign: true,
+    renamed: false,
+  });
+});
+
+test("the whole of a file that did not exist at the mark is pi's own", async () => {
+  const path = await writeSession(3);
+  const log = new EventLog(path);
+
+  expect(await WriteMark.scan(log, WriteMark.UNREAD, PI_WROTE)).toMatchObject({
+    foreign: false,
+    renamed: false,
+  });
+  expect(
+    await WriteMark.scan(log, WriteMark.UNREAD, holding("e0", "e1"))
+  ).toMatchObject({ foreign: true });
+});
+
+test("a rename somebody else appended is a line nobody has to replay, but is reported", async () => {
+  const path = await writeSession(3);
+  const log = new EventLog(path);
+  const mark = await WriteMark.at(log);
   await append(path, { type: "session_info", id: "n1", name: "renamed" });
 
-  expect(await WriteMark.benignSince(log, mark)).toBe(true);
+  expect(await WriteMark.scan(log, mark, PI_WROTE)).toEqual({
+    next: { head: 5 },
+    foreign: false,
+    renamed: true,
+  });
+  expect(
+    await WriteMark.scan(log, mark, holding("e0", "e1", "e2", "n1"))
+  ).toMatchObject({ renamed: false });
 });
 
-test("a message beside the rename is not benign, and neither is history alone", async () => {
+test("a message beside the rename is foreign", async () => {
   const path = await writeSession(3);
   const log = new EventLog(path);
-  const mark = await WriteMark.of(log, holding(3));
+  const mark = await WriteMark.at(log);
   await append(path, { type: "session_info", id: "n1", name: "renamed" });
   await append(path, { type: "message", id: "x1" });
 
-  expect(await WriteMark.benignSince(log, mark)).toBe(false);
-  expect(
-    await WriteMark.benignSince(log, await WriteMark.of(log, holding(3)))
-  ).toBe(false);
-});
-
-test("a whole file that appeared since the mark is never benign", async () => {
-  const path = await writeSession(3);
-
-  expect(
-    await WriteMark.benignSince(new EventLog(path), WriteMark.UNREAD)
-  ).toBe(false);
+  expect(await WriteMark.scan(log, mark, PI_WROTE)).toMatchObject({
+    foreign: true,
+  });
 });

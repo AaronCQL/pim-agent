@@ -1,14 +1,20 @@
 #!/usr/bin/env bun
 import { Readable } from "node:stream";
 
-import { main } from "@earendil-works/pi-coding-agent";
+import {
+  type ExtensionFactory,
+  main,
+  parseArgs,
+} from "@earendil-works/pi-coding-agent";
 
 import {
   CoreExtensions,
   type PimInlineExtension,
 } from "#core/extensions/CoreExtensions";
+import { SubagentJobs } from "#core/extensions/subagent/SubagentJobs";
 import { ExtensionToggles } from "#core/shared/ExtensionToggles";
 import { PimVersion } from "#core/shared/PimVersion";
+import { Shutdown } from "#core/shared/Shutdown";
 import { Supervisor } from "#core/shared/Supervisor";
 import { Updater } from "#core/shared/Updater";
 import init from "#tui/extensions/_init/index";
@@ -17,22 +23,11 @@ import filePicker from "#tui/extensions/file-picker/index";
 import footer from "#tui/extensions/footer/index";
 import pim from "#tui/extensions/pim/index";
 import sessionLease from "#tui/extensions/session-lease/index";
+import { SessionGate } from "#tui/extensions/session-lease/SessionGate";
+import subagentJobs from "#tui/extensions/subagent-jobs/index";
 import tps from "#tui/extensions/tps/index";
 import workingIndicator from "#tui/extensions/working-indicator/index";
 import { themeCliArgs } from "#tui/themes/themeCliArgs";
-
-// `_init` must stay first: it installs the runtime guard.
-const extensionFactories: readonly PimInlineExtension[] = [
-  { name: "_init", factory: init },
-  ...CoreExtensions.list("terminal"),
-  { name: "command-picker", factory: commandPicker },
-  { name: "file-picker", factory: filePicker },
-  { name: "footer", factory: footer },
-  { name: "pim", factory: pim },
-  { name: "session-lease", factory: sessionLease },
-  { name: "tps", factory: tps },
-  { name: "working-indicator", factory: workingIndicator },
-];
 
 async function runUpdate(force: boolean): Promise<number> {
   const at = await Supervisor.detectInstall();
@@ -141,6 +136,34 @@ process.title = "pi";
 process.env["PI_CODING_AGENT"] = "true";
 process.env["AI_AGENT"] = "pi";
 process.emitWarning = () => {};
+
+const parsed = parseArgs(cliArgs);
+const interactive =
+  parsed.mode !== "rpc" &&
+  parsed.mode !== "json" &&
+  parsed.print !== true &&
+  process.stdin.isTTY === true &&
+  process.stdout.isTTY === true;
+const jobs = interactive ? new SubagentJobs() : undefined;
+const gate = new SessionGate();
+const jobsFactory: ExtensionFactory =
+  jobs === undefined ? () => {} : subagentJobs({ jobs, gate });
+
+// `_init` must stay first: it installs the runtime guard.
+const extensionFactories: readonly PimInlineExtension[] = [
+  { name: "_init", factory: init },
+  ...CoreExtensions.list("terminal", jobs === undefined ? {} : { jobs }),
+  { name: "command-picker", factory: commandPicker },
+  { name: "file-picker", factory: filePicker },
+  { name: "footer", factory: footer },
+  { name: "pim", factory: pim },
+  { name: "session-lease", factory: sessionLease({ gate }) },
+  { name: "subagent-jobs", factory: jobsFactory },
+  { name: "tps", factory: tps },
+  { name: "working-indicator", factory: workingIndicator },
+];
+
+Shutdown.exitOn(["SIGINT"]);
 
 // Pi never applies its `enabled` filter to inline factories, so the toggle must gate inside the factory.
 await main([...themeCliArgs(cliArgs), ...cliArgs], {

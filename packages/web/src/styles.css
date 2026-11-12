@@ -200,7 +200,7 @@ button {
   color: rgb(244 114 182);
 }
 
-/* A click on inline code copies it, so it is drawn as something that answers
+/* A click on inline code or a quote copies it, so it is drawn as something that answers
    one, and answers it in place: the tint fades out from under the token and
    leaves nothing behind. The cursor is the whole resting-state affordance: a
    hover tint would paint a box under every token a pointer crosses on its way
@@ -208,12 +208,20 @@ button {
    reserves space — a highlight that grew a box would reflow the sentence
    around it, and the rule is that prose stays on the --line grid. Scoped by
    parent rather than reset on `pre code`, since a fence carries a copy button
-   instead and its text is meant to be selected. */
-.pim-markdown :not(pre) > code {
+   instead and its text is meant to be selected — in a quote too, so the
+   quote's cursor stops at it. */
+.pim-markdown :not(pre) > code,
+.pim-markdown blockquote {
   cursor: pointer;
+}
+.pim-markdown :not(pre) > code {
   border-radius: 3px;
 }
-.pim-markdown :not(pre) > code[data-copied] {
+.pim-markdown blockquote .pim-fence {
+  cursor: auto;
+}
+.pim-markdown :not(pre) > code[data-copied],
+.pim-markdown blockquote[data-copied] {
   animation: pim-copied 550ms ease-out;
 }
 @keyframes pim-copied {

@@ -1,10 +1,12 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { mkdtemp, rm } from "node:fs/promises";
 import * as fs from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 
+import type { JobView } from "#core/extensions/subagent/SubagentJobs";
+import { SubagentResult } from "#core/extensions/subagent/SubagentResult";
 import type { SessionHost } from "#core/session/SessionHost";
 import type { GitState } from "#core/shared/Git";
 import { GitMonitor } from "#core/shared/GitMonitor";
@@ -19,6 +21,8 @@ let seen: ServerEvent[];
 let stopListening: () => void;
 let emit: (event: AgentSessionEvent) => void;
 let queued: string[];
+let jobs: readonly JobView[];
+let jobsChanged: () => void;
 
 /** Unique so no other test file's registered view paints these calls. */
 const TOOL = "stream_probe";
@@ -36,7 +40,15 @@ function host(): SessionHost {
     get queued() {
       return queued;
     },
+    get jobs() {
+      return jobs;
+    },
+    onJobsChange: (listener: () => void) => {
+      jobsChanged = listener;
+      return () => {};
+    },
     leaseState: { writable: true },
+    subagentChoice: {},
     onLeaseChange: () => () => {},
     onForeignWrite: () => () => {},
     subscribe: (listener: (event: AgentSessionEvent) => void) => {
@@ -54,21 +66,24 @@ function thinkingMessage(thinking: string): Record<string, unknown> {
   return { role: "assistant", content: [{ type: "thinking", thinking }] };
 }
 
+async function append(entry: Record<string, unknown>): Promise<void> {
+  await Bun.write(
+    path,
+    `${await Bun.file(path).text()}${JSON.stringify(entry)}\n`
+  );
+}
+
 async function persist(
   id: string,
   message: Record<string, unknown>
 ): Promise<void> {
-  const entry = {
+  await append({
     type: "message",
     id,
     parentId: null,
     timestamp: new Date().toISOString(),
     message,
-  };
-  await Bun.write(
-    path,
-    `${await Bun.file(path).text()}${JSON.stringify(entry)}\n`
-  );
+  });
 }
 
 async function persistAssistant(
@@ -197,6 +212,7 @@ beforeEach(async () => {
     })}\n`
   );
   queued = [];
+  jobs = [];
   stream = new SessionStream("s1", host(), path);
   seen = [];
   stopListening = stream.subscribe((event) => {
@@ -681,4 +697,153 @@ test("settles every waiting dialog when the session stops", async () => {
   stream.dispose();
 
   expect(await asking).toBeUndefined();
+});
+
+const JOB: JobView = {
+  id: "call_job",
+  handle: "j1",
+  title: "audit the parser",
+  startedAt: 1_000,
+  turns: 1,
+  cost: 0.01,
+};
+
+function jobLists(): readonly (readonly JobView[])[] {
+  return received().flatMap((event) =>
+    event.type === "jobs" ? [event.jobs] : []
+  );
+}
+
+test("tells clients which jobs run as they start and finish", () => {
+  jobs = [JOB];
+  jobsChanged();
+  jobs = [];
+  jobsChanged();
+
+  expect(jobLists()).toEqual([[JOB], []]);
+});
+
+test("hands a reattaching client the running jobs, just before the state", async () => {
+  jobs = [JOB];
+
+  const replayed = await stream.replay(0);
+
+  expect(replayed.slice(-2).map((event) => event.type)).toEqual([
+    "jobs",
+    "session_state",
+  ]);
+  expect(replayed.at(-2)).toEqual({ type: "jobs", jobs: [JOB] });
+});
+
+test("a live spawn links its job, and a spawn that fails links nothing", async () => {
+  const start = (toolCallId: string): void => {
+    emit(
+      agentEvent({
+        type: "tool_execution_start",
+        toolCallId,
+        toolName: "subagent",
+        args: { action: "spawn", prompt: "audit the parser" },
+      })
+    );
+  };
+  const end = (toolCallId: string, details: unknown): void => {
+    emit(
+      agentEvent({
+        type: "tool_execution_end",
+        toolCallId,
+        toolName: "subagent",
+        result: { content: [{ type: "text", text: "" }], details },
+        isError: details === undefined,
+      })
+    );
+  };
+  start("call_ok");
+  start("call_bad");
+  end("call_ok", {
+    action: "spawn",
+    jobId: "call_ok",
+    handle: "j3",
+    prompt: "audit the parser",
+    owner: { pid: 1, hostname: "box" },
+  });
+  end("call_bad", undefined);
+  const links = (events: readonly ServerEvent[]): readonly unknown[] =>
+    events.flatMap((event) =>
+      event.type === "tool_call" || event.type === "tool_end"
+        ? [[event.type, event.callId, event.child]]
+        : []
+    );
+
+  expect(links(received())).toEqual([
+    ["tool_call", "call_ok", { jobId: "call_ok" }],
+    ["tool_call", "call_bad", { jobId: "call_bad" }],
+    ["tool_end", "call_ok", { jobId: "call_ok", handle: "j3" }],
+    ["tool_end", "call_bad", undefined],
+  ]);
+  expect(links(await stream.replay(99))).toEqual([
+    ["tool_call", "call_ok", { jobId: "call_ok", handle: "j3" }],
+    ["tool_end", "call_ok", { jobId: "call_ok", handle: "j3" }],
+    ["tool_call", "call_bad", undefined],
+    ["tool_end", "call_bad", undefined],
+  ]);
+});
+
+test("counts a running job as a running call, so its log can be watched", () => {
+  jobs = [JOB];
+  expect(stream.isRunning(JOB.id)).toBe(true);
+
+  jobs = [];
+  expect(stream.isRunning(JOB.id)).toBe(false);
+});
+
+test("carries a job's result to the client as soon as pi appends it", async () => {
+  const result = await SubagentResult.fromLog(
+    { jobId: JOB.id, handle: JOB.handle, prompt: JOB.title },
+    "/missing/child.jsonl"
+  );
+  const message = { role: "custom", ...result, timestamp: 0 };
+
+  await append({
+    type: "custom_message",
+    id: "c1",
+    parentId: null,
+    timestamp: new Date().toISOString(),
+    ...result,
+  });
+  emit(agentEvent({ type: "message_start", message }));
+  emit(agentEvent({ type: "message_end", message }));
+  await until(
+    () => received().some((event) => event.type === "subagent_result"),
+    "the job's result"
+  );
+
+  expect(
+    received().find((event) => event.type === "subagent_result")
+  ).toMatchObject({
+    type: "subagent_result",
+    messageId: "c1",
+    jobId: JOB.id,
+    state: "interrupted",
+  });
+});
+
+test("a lease left by a terminal that died holds nothing", async () => {
+  const exited = Bun.spawn(["true"]);
+  await exited.exited;
+  await Bun.write(
+    `${path}.lease`,
+    JSON.stringify({
+      pid: exited.pid,
+      hostname: hostname(),
+      frontend: "tui",
+      startedAt: Date.now(),
+    })
+  );
+
+  const state = (await stream.replay(0)).find(
+    (event) => event.type === "session_state"
+  );
+
+  expect(state).toMatchObject({ writable: true });
+  expect(state).not.toHaveProperty("heldBy");
 });

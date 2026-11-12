@@ -190,6 +190,42 @@ describe("Markdown", () => {
     expect(await navigator.clipboard.readText()).toBe("untouched");
   });
 
+  test("clicking a quote copies it whole and flashes it", async () => {
+    const view = mount("> First line.\n>\n> Second `bit`.\n");
+    const quote = view.find("blockquote");
+
+    click(view.find("blockquote p"));
+    await settle();
+
+    const copied = await navigator.clipboard.readText();
+    expect(copied).toContain("First line.");
+    expect(copied).toContain("Second bit.");
+    expect(quote?.hasAttribute("data-copied")).toBe(true);
+  });
+
+  test("inline code in a quote copies just the code", async () => {
+    const view = mount("> Run `bun run check` first.\n");
+
+    click(view.find("blockquote code"));
+    await settle();
+
+    expect(await navigator.clipboard.readText()).toBe("bun run check");
+    expect(view.find("blockquote")?.hasAttribute("data-copied")).toBe(false);
+  });
+
+  test("a link or fence in a quote keeps its own click", async () => {
+    await navigator.clipboard.writeText("untouched");
+    const view = mount(
+      "> See [the docs](https://pi.dev/).\n>\n> ```ts\n> const a = 1;\n> ```\n"
+    );
+
+    click(view.find("blockquote a"));
+    click(view.find("blockquote pre code"));
+    await settle();
+
+    expect(await navigator.clipboard.readText()).toBe("untouched");
+  });
+
   test("a click that finishes a selection copies nothing", async () => {
     await navigator.clipboard.writeText("untouched");
     const view = mount("Run `bun run check` first.\n");

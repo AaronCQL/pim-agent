@@ -375,7 +375,7 @@ test("loses nothing when a probe dies mid-turn and resumes by seq", async () => 
   const second = await connect({ sessionId, fromSeq: resumeSeq });
   const tail = durable(second);
   expect(tail.every((e) => e.seq > resumeSeq)).toBe(true);
-  await idle(second, second.events.length);
+  await idle(second, 0);
 
   const seen = [...durable(first), ...durable(second)];
   const seqs = seen.map((e) => e.seq);
@@ -829,7 +829,12 @@ test("answers with the model catalogue and this model's thinking levels", async 
 
   const { models, thinkingLevels } = await probe.listModels();
   expect(models).toEqual([
-    { id: "test/echo", label: "echo", provider: "test" },
+    {
+      id: "test/echo",
+      label: "echo",
+      provider: "test",
+      thinkingLevels: ["off"],
+    },
   ]);
   const state = probe.events.findLast(
     (event) => event.type === "session_state"

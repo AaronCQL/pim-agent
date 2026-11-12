@@ -5,6 +5,7 @@ import {
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 
+import type { SubagentJobs } from "../extensions/subagent/SubagentJobs";
 import { Directories } from "../shared/Directories";
 import { Pool } from "../shared/Pool";
 import type { Surface } from "../shared/Surface";
@@ -41,12 +42,24 @@ export type SessionRegistryDeps = {
   /** Appended to every session's system prompt. */
   readonly systemInstruction?: () => Promise<string | undefined>;
   readonly surface?: Surface;
+  /** Background subagents for every host this registry builds. */
+  readonly jobs?: SubagentJobs;
 };
 
 export type SessionCreateOptions = {
   readonly cwd?: string;
-  /** Copies model, thinking level and (if `cwd` is unset) cwd from this host. */
+  /** Copies model, thinking level, subagent choice and (if `cwd` is unset) cwd from this host. */
   readonly like?: SessionHost;
+};
+
+/** The one frontend serving this registry's hosts. */
+export type RegistryFrontend = {
+  /** UI sink for hosts built after `bind`. */
+  readonly ui: (host: SessionHost) => SessionUi | undefined;
+  /** Sessions in use: never evicted. */
+  readonly holds: (sessionId: string) => boolean;
+  /** A session's host is being disposed; drop everything that reaches it. */
+  readonly evicted: (sessionId: string) => void;
 };
 
 /** Concurrent header reads, to avoid running out of file descriptors. */
@@ -57,20 +70,24 @@ export class SessionRegistry {
   private readonly deps: SessionRegistryDeps;
   private readonly runtime: AgentRuntime;
   private readonly hosts: SessionCache<SessionHost>;
-  private ui: ((host: SessionHost) => SessionUi | undefined) | undefined;
+  private frontend: RegistryFrontend | undefined;
 
   public constructor(deps: SessionRegistryDeps) {
     this.deps = deps;
     this.runtime = deps.runtime ?? new AgentRuntime(deps.agentDir);
-    this.hosts = new SessionCache(deps.capacity);
+    this.hosts = new SessionCache(deps.capacity, {
+      held: (sessionId) => this.frontend?.holds(sessionId) === true,
+      evicted: (sessionId) => this.frontend?.evicted(sessionId),
+    });
   }
 
-  /**
-   * UI sink for hosts built after this call. Lives here because `create` binds
-   * the agent eagerly and pi fixes the UI at bind time.
-   */
-  public setUi(ui: (host: SessionHost) => SessionUi | undefined): void {
-    this.ui = ui;
+  public bind(frontend: RegistryFrontend): void {
+    this.frontend = frontend;
+  }
+
+  /** Background subagents of every host this registry builds. */
+  public get jobs(): SubagentJobs | undefined {
+    return this.deps.jobs;
   }
 
   public get sessionsRoot(): string {
@@ -174,6 +191,9 @@ export class SessionRegistry {
       ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
     });
     const agent = await host.ensureAgent();
+    if (like !== undefined) {
+      await host.setSubagentChoice(like.subagentChoice);
+    }
     return this.hosts.adopt(agent.sessionId, host);
   }
 
@@ -210,7 +230,7 @@ export class SessionRegistry {
   }
 
   private buildHost(label: string, settings: HostSettings): SessionHost {
-    const ui = this.ui;
+    const ui = this.frontend?.ui;
     const host: SessionHost = new SessionHost({
       label: `session ${label}`,
       settings,
@@ -229,6 +249,7 @@ export class SessionRegistry {
         ? {}
         : { surface: this.deps.surface }),
       ...(ui === undefined ? {} : { ui: () => ui(host) }),
+      ...(this.deps.jobs === undefined ? {} : { jobs: this.deps.jobs }),
     });
     return host;
   }

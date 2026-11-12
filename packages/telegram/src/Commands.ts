@@ -6,8 +6,11 @@ import {
   type Api,
 } from "grammy";
 
+import type { CancelResult } from "#core/session/SessionHost";
 import { DaemonUnit } from "#core/shared/DaemonUnit";
+import { Format } from "#core/shared/Format";
 import { Paths } from "#core/shared/Paths";
+import { Shutdown } from "#core/shared/Shutdown";
 import { Supervisor } from "#core/shared/Supervisor";
 import { Updater } from "#core/shared/Updater";
 import {
@@ -191,7 +194,7 @@ export class Commands {
     },
     {
       name: "cancel",
-      description: "Cancel the current turn",
+      description: "Cancel the current turn and background jobs",
       run: (self, session) => self.cmdCancel(session),
     },
     {
@@ -437,11 +440,7 @@ export class Commands {
   }
 
   private async cmdCancel(session: Session): Promise<void> {
-    const cancelled = await session.cancel();
-    await this.sendPlain(
-      session.id,
-      cancelled ? "❌ Cancelled." : "Nothing to cancel."
-    );
+    await this.sendPlain(session.id, cancelReply(await session.cancel()));
   }
 
   private async cmdClear(session: Session): Promise<void> {
@@ -626,7 +625,6 @@ export class Commands {
     const notes = outcome.skipped.map(
       (s) => `\nSkipped ${s.label}: ${s.reason}.`
     );
-    // This process restarts by exiting, so restart siblings first.
     await Supervisor.restartSiblings(DaemonUnit);
     if (!Supervisor.isSupervised()) {
       await progress(
@@ -640,7 +638,7 @@ export class Commands {
       threadId: session.id.threadId,
       messageId: sent.message_id,
     });
-    Supervisor.restart();
+    Shutdown.requestStop();
   }
 
   private async cmdCommands(session: Session): Promise<void> {
@@ -763,6 +761,19 @@ export class Commands {
       console.error(`[send] plain failed:`, err);
     }
   }
+}
+
+function cancelReply(outcome: CancelResult): string {
+  if (!outcome.cancelled) {
+    return "Nothing to cancel.";
+  }
+  const parts = [
+    ...(outcome.aborted ? ["Cancelled."] : []),
+    ...(outcome.stopped > 0
+      ? [`Stopped ${Format.count(outcome.stopped, "job")}.`]
+      : []),
+  ];
+  return `❌ ${parts.join(" ")}`;
 }
 
 async function reactSafe(

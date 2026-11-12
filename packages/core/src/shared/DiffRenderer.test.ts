@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import { DiffLines, type ToolDiffHunk } from "./DiffLines";
 import { DiffRenderer, type DiffHighlighter } from "./DiffRenderer";
 
@@ -91,6 +92,7 @@ describe("DiffRenderer.render", () => {
   });
 
   test("emits emphasis bg for paired changed lines", () => {
+    initTheme("dark", false);
     const diff = DiffLines.buildToolDiff(
       "foo.ts",
       { lines: ["const x = 1;"], hasTrailingNewline: true },

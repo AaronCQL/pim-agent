@@ -5,6 +5,7 @@ import { SessionCache } from "./SessionCache";
 class Entry {
   public lastUsed: number;
   public disposed = false;
+  public pinned = false;
 
   public constructor(lastUsed: number) {
     this.lastUsed = lastUsed;
@@ -75,4 +76,63 @@ test("a failed eviction dispose is warned about, not thrown", async () => {
 
   expect(warn).toHaveBeenCalledTimes(1);
   warn.mockRestore();
+});
+
+test("never evicts a pinned entry, and outgrows capacity when all are", () => {
+  const cache = new SessionCache<Entry>(2);
+  const pinned = cache.adopt("a", new Entry(1));
+  pinned.pinned = true;
+  const loose = cache.adopt("b", new Entry(2));
+
+  cache.adopt("c", new Entry(3));
+  expect(pinned.disposed).toBe(false);
+  expect(loose.disposed).toBe(true);
+
+  cache.peek("c")!.pinned = true;
+  cache.adopt("d", new Entry(4));
+  expect(cache.size).toBe(3);
+});
+
+test("evicts back down to capacity once pins are released", () => {
+  const cache = new SessionCache<Entry>(2);
+  const entries = ["a", "b", "c"].map((key, i) => {
+    const entry = new Entry(i);
+    entry.pinned = true;
+    return cache.adopt(key, entry);
+  });
+  for (const entry of entries) {
+    entry.pinned = false;
+  }
+
+  cache.adopt("d", new Entry(9));
+
+  expect(entries.map((entry) => entry.disposed)).toEqual([true, true, false]);
+  expect(cache.size).toBe(2);
+});
+
+test("never evicts a held key", () => {
+  const cache = new SessionCache<Entry>(1, { held: (key) => key === "a" });
+  const held = cache.adopt("a", new Entry(1));
+  const loose = cache.adopt("b", new Entry(2));
+
+  cache.adopt("c", new Entry(3));
+
+  expect(held.disposed).toBe(false);
+  expect(loose.disposed).toBe(true);
+});
+
+test("names an evicted key before disposing its entry", () => {
+  const seen: string[] = [];
+  const cache = new SessionCache<Entry>(1, {
+    evicted: (key) => {
+      seen.push(`${key} ${cache.peek(key) === undefined ? "gone" : "cached"}`);
+      seen.push(`disposed ${entry.disposed}`);
+    },
+  });
+  const entry = cache.adopt("a", new Entry(1));
+
+  cache.adopt("b", new Entry(2));
+
+  expect(seen).toEqual(["a gone", "disposed false"]);
+  expect(entry.disposed).toBe(true);
 });

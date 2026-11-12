@@ -18,11 +18,17 @@ export function SubagentModal(props: { readonly store: SessionStore }) {
     if (callId === undefined) {
       return undefined;
     }
-    const found = extendRows(durable(), [], props.store.state.live).find(
-      (candidate) => candidate.id === callId
+    return extendRows(durable(), [], props.store.state.live).findLast(
+      (candidate): candidate is ToolRow =>
+        candidate.kind === "tool" && candidate.child === callId
     );
-    return found?.kind === "tool" ? found : undefined;
   });
+  const job = createMemo(() =>
+    props.store.state.jobs.find((one) => one.id === watched()?.callId)
+  );
+  const running = createMemo(
+    () => row()?.isPartial === true || job() !== undefined
+  );
 
   return (
     <Modal
@@ -35,15 +41,15 @@ export function SubagentModal(props: { readonly store: SessionStore }) {
         <div class="min-w-0 leading-[--line]">
           <div class="flex items-center gap-2">
             <span class="font-bold">Subagent</span>
-            <Show when={row()?.isPartial}>
+            <Show when={running()}>
               <Spinner />
               <span class="text-sm text-amber-400">Running</span>
             </Show>
           </div>
-          <Show when={row()?.view.summary}>
-            {(summary) => (
+          <Show when={row()?.view.title}>
+            {(title) => (
               <div class="text-sm text-neutral-400">
-                <Body blocks={summary()} />
+                <Body blocks={title()} />
               </div>
             )}
           </Show>

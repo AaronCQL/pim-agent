@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Type } from "typebox";
 
+import { JobLine } from "#core/extensions/subagent/JobLine";
 import { SessionRegistry } from "#core/session/SessionRegistry";
 import type { ToolDiff } from "#core/shared/DiffLines";
 import { SubagentLogs } from "#core/shared/SubagentLogs";
@@ -145,19 +146,22 @@ function subagentTool(
       onUpdate?.(result);
       return result;
     },
-    toViewModel: ({ args, result, isPartial }) => ({
+    toViewModel: ({ result, isPartial }) => ({
       label: "Subagent",
       labelTone: isPartial ? "warning" : "accent",
-      title: [{ kind: "markdown", text: args?.prompt ?? "" }],
-      summary: [
+      title: [
         {
           kind: "spans",
-          spans: [
+          spans: JobLine.usage({
+            turns: result?.details.turns ?? 1,
+            cost: 0.02,
+          }).flatMap((span, index) => [
+            ...(index === 0 ? [] : [{ text: " ⬝ ", tone: "muted" as const }]),
             {
-              text: `${result?.details.turns ?? 1} turns ⬝ $0.02`,
-              tone: isPartial ? "warning" : "muted",
+              text: span.text,
+              tone: isPartial ? ("warning" as const) : ("muted" as const),
             },
-          ],
+          ]),
         },
       ],
     }),

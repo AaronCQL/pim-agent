@@ -1,6 +1,7 @@
 import type { Element } from "solid-js";
 
 import { createDialog } from "./dialog";
+import { createSwipe } from "./swipe";
 
 export function Drawer(props: {
   readonly open: boolean;
@@ -14,10 +15,14 @@ export function Drawer(props: {
       props.onClose();
     },
   });
+  const swipe = createSwipe("left", dialog.close);
 
   return (
     <dialog
-      ref={dialog.ref}
+      ref={(element) => {
+        dialog.ref(element);
+        swipe(element);
+      }}
       aria-label={props.label}
       onClose={dialog.onNativeClose}
       onClick={(event: MouseEvent) => {

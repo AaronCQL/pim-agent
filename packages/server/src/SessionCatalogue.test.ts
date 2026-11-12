@@ -16,15 +16,15 @@ test("an unfiltered listing forgets the activity of a session that is gone", asy
       pinning: async () => ({ projects: new Map(), order: [] }),
       prune: async () => {},
     },
-    liveStatus: () => undefined,
+    liveActivity: () => undefined,
     liveSessionIds: () => [],
     isBeingRead: () => false,
     announce: (event: ServerEvent) => announced.push(event),
   } as unknown as SessionCatalogueDeps);
 
-  catalogue.onStatus("gone", "streaming");
+  catalogue.onActivity("gone", { status: "streaming", jobs: 0 });
   await catalogue.list({ type: "list_sessions" } as never);
-  catalogue.onStatus("gone", "streaming");
+  catalogue.onActivity("gone", { status: "streaming", jobs: 0 });
 
   expect(announced).toHaveLength(2);
 });

@@ -34,6 +34,7 @@ import { Drawer } from "./ui/Drawer";
 import { Fade } from "./ui/Fade";
 import { createBackGuard } from "./ui/history";
 import { createMediaQuery, DESKTOP } from "./ui/media";
+import { createSwipe } from "./ui/swipe";
 import { createViewportHeight } from "./ui/viewport";
 
 export function App() {
@@ -91,6 +92,11 @@ export function Shell(props: {
     return () => {
       globalThis.removeEventListener("keydown", onKeyDown);
     };
+  });
+  const swipeOpen = createSwipe("right", () => {
+    if (!untrack(desktop)) {
+      setSidebar(true);
+    }
   });
   const pin = createBottomPin();
   const [overlay, setOverlay] = createSignal(0);
@@ -242,7 +248,7 @@ export function Shell(props: {
             </Show>
           </Drawer>
 
-          <div class="flex w-full min-w-0 flex-col">
+          <div ref={swipeOpen} class="flex w-full min-w-0 flex-col">
             <Topbar
               store={props.store}
               compact={!desktop()}

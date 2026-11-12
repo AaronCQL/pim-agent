@@ -20,8 +20,22 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { unlink } from "node:fs/promises";
 
-import { CoreExtensions } from "../extensions/CoreExtensions";
+import {
+  CoreExtensions,
+  type CoreExtensionOptions,
+} from "../extensions/CoreExtensions";
+import { JobMessage, type Placement } from "../extensions/subagent/JobMessage";
+import {
+  SubagentChoice,
+  type SubagentChoicePatch,
+} from "../extensions/subagent/SubagentChoice";
+import type {
+  JobDelivery,
+  JobView,
+  SubagentJobs,
+} from "../extensions/subagent/SubagentJobs";
 import { Directories } from "../shared/Directories";
+import { ModelId } from "../shared/ModelId";
 import { FuzzyMatcher, type FuzzyCandidate } from "../shared/FuzzyMatcher";
 import type { Surface } from "../shared/Surface";
 import { EventLog } from "./EventLog";
@@ -61,9 +75,11 @@ export type SessionCompactResult = {
   readonly activeMessages: number;
 };
 
-/** `restored` are the queued messages taken back from pi. */
+/** `restored` are the queued messages taken back from pi; `stopped` counts the jobs that were running. */
 export type CancelResult = {
   readonly cancelled: boolean;
+  readonly aborted: boolean;
+  readonly stopped: number;
   readonly restored: readonly string[];
 };
 
@@ -99,6 +115,12 @@ export type SessionHostDeps = {
   readonly onRetire?: (sessionPath: string) => Promise<void>;
   /** Extension UI sink, read per call. Omit for pi's no-op UI; pi fixes the mode at bind time. */
   readonly ui?: () => SessionUi | undefined;
+  /** Background subagents for the main agent; omit for synchronous ones. */
+  readonly jobs?: SubagentJobs;
+  /** Runs a turn the host starts itself, when a finished job wakes the agent. Defaults to `run`. A user stop while it waits makes the work append without a turn. */
+  readonly runWake?: (
+    work: (agent: AgentSession) => Promise<void>
+  ) => Promise<void>;
 };
 
 export type CustomToolContext = {
@@ -146,6 +168,7 @@ export class SessionHost {
   private cachedUnsubscribe: (() => void) | undefined;
   private cachedSystemInstruction: string | undefined;
   private cachedLog: EventLog | undefined;
+  private subagent: SubagentChoice = {};
   private queue: Promise<unknown> = Promise.resolve();
   private seqLog: EventLog | undefined;
   /** File head after this host's last write. */
@@ -163,6 +186,12 @@ export class SessionHost {
   private producing = false;
   private outputStartedAt: number | undefined;
   private lastTps: number | undefined;
+  /** Outlives `invalidate`. */
+  private jobsSessionId: string | undefined;
+  private releaseJobs: (() => void) | undefined;
+  private readonly jobListeners = new Set<() => void>();
+  /** Bumped by `dispose`: work queued before it never runs. Once disposed, the host never takes job delivery again. */
+  private lifetime = 0;
 
   public constructor(deps: SessionHostDeps) {
     this.deps = deps;
@@ -226,6 +255,37 @@ export class SessionHost {
     };
   }
 
+  /** This session's running background subagents. */
+  public get jobs(): readonly JobView[] {
+    const id = this.jobsSessionId;
+    return id === undefined ? [] : (this.deps.jobs?.list(id) ?? []);
+  }
+
+  /** `jobs.length`, without building the views. */
+  public get jobCount(): number {
+    const id = this.jobsSessionId;
+    return id === undefined ? 0 : (this.deps.jobs?.count(id) ?? 0);
+  }
+
+  /** Never evicted from a `SessionCache` while its jobs run or a result due on its branch has yet to land. */
+  public get pinned(): boolean {
+    const id = this.jobsSessionId;
+    const jobs = this.deps.jobs;
+    return (
+      id !== undefined &&
+      jobs !== undefined &&
+      (jobs.hasRunning(id) || jobs.hasDue(id))
+    );
+  }
+
+  /** Fires whenever `jobs` changes, across agent rebuilds and session switches. */
+  public onJobsChange(listener: () => void): () => void {
+    this.jobListeners.add(listener);
+    return () => {
+      this.jobListeners.delete(listener);
+    };
+  }
+
   /** Survives agent rebuilds. */
   public subscribe(listener: (event: AgentSessionEvent) => void): () => void {
     this.agentListeners.add(listener);
@@ -267,7 +327,7 @@ export class SessionHost {
 
   public get currentModelId(): string | undefined {
     const model = this.currentModel();
-    return model ? qualifiedModelId(model) : undefined;
+    return model ? ModelId.of(model) : undefined;
   }
 
   /** Display name, e.g. "Claude Opus 5.0". */
@@ -330,15 +390,23 @@ export class SessionHost {
     return this.enqueue(work);
   }
 
-  /** Aborts the running turn and takes back its queued messages. */
+  /** Aborts the running turn, takes back its queued messages and stops this session's jobs; no held result wakes the agent after it. */
   public async cancel(): Promise<CancelResult> {
-    if (!this.cached || !this.cached.isStreaming) {
-      return { cancelled: false, restored: [] };
-    }
+    const agent = this.cached;
+    const aborting = agent?.isStreaming === true;
+    const stopping = this.stopJobs();
     // Before aborting, or pi delivers the queue to the next turn.
-    const restored = this.takeBack();
-    await this.cached.abort();
-    return { cancelled: true, restored };
+    const restored = aborting ? this.takeBack() : [];
+    if (aborting) {
+      await agent.abort();
+    }
+    const stopped = await stopping;
+    return {
+      cancelled: aborting || stopped > 0,
+      aborted: aborting,
+      stopped,
+      restored,
+    };
   }
 
   /** Messages queued behind the running turn, oldest first. */
@@ -386,7 +454,7 @@ export class SessionHost {
       if (result.kind === "none" || result.kind === "ambiguous") {
         return { ok: false, kind: result.kind, candidates: result.candidates };
       }
-      const id = qualifiedModelId(result.model);
+      const id = ModelId.of(result.model);
       if (this.currentSettings.model === id) {
         return { ok: true, id };
       }
@@ -405,6 +473,26 @@ export class SessionHost {
       }
       await this.patchSettings({ thinkingLevel: level });
       this.cached?.setThinkingLevel(level);
+    });
+  }
+
+  public get subagentChoice(): SubagentChoice {
+    return this.subagent;
+  }
+
+  /** Applies to subagents spawned from now on. */
+  public setSubagentChoice(patch: SubagentChoicePatch): Promise<void> {
+    return this.withLease(async () => {
+      const agent = await this.ensureCached();
+      const next = SubagentChoice.patched(this.subagent, patch);
+      if (
+        next.model === this.subagent.model &&
+        next.thinking === this.subagent.thinking
+      ) {
+        return;
+      }
+      SubagentChoice.append(agent.sessionManager, next);
+      this.subagent = next;
     });
   }
 
@@ -436,18 +524,33 @@ export class SessionHost {
     await disposeAgent(agent);
   }
 
+  /** Rejects work still queued, so nothing rebuilds the agent afterwards; a later call starts afresh. */
   public async dispose(): Promise<void> {
+    this.lifetime += 1;
+    this.detachJobs();
     await this.invalidate();
   }
 
   private enqueue<T>(work: () => Promise<T>): Promise<T> {
-    const next = this.queue.then(work);
+    const lifetime = this.lifetime;
+    const next = this.queue.then(() => {
+      this.assertLive(lifetime);
+      return work();
+    });
     // Keep the chain alive; callers still get their own rejection.
     this.queue = next.catch((err: unknown) => {
-      console.error(`[${this.label}] work failed:`, err);
+      if (this.lifetime === lifetime) {
+        console.error(`[${this.label}] work failed:`, err);
+      }
     });
     this.lastUsed = Date.now();
     return next;
+  }
+
+  private assertLive(lifetime: number): void {
+    if (this.lifetime !== lifetime) {
+      throw new Error(`[${this.label}] disposed before queued work ran`);
+    }
   }
 
   private get leasePath(): string | undefined {
@@ -460,6 +563,7 @@ export class SessionHost {
 
   /** Queues `work` under the turn lease, rehydrating before and after waiting for it. */
   private withLease<T>(work: () => Promise<T>): Promise<T> {
+    const lifetime = this.lifetime;
     return this.enqueue(async () => {
       const frontend = this.deps.lease;
       if (frontend === undefined) {
@@ -476,14 +580,17 @@ export class SessionHost {
           path,
           frontend,
           async () => {
+            this.assertLive(lifetime);
             this.setBlocked(undefined);
             await this.rehydrateIfStale();
             const settle = await this.watchForeignWrites(path);
             try {
               return await work();
             } finally {
-              // After a foreign write, leave `lastSeen` stale so the next turn rebuilds.
-              if (!(await settle())) {
+              // The agent never outlives another process's write, a rename included.
+              if (await settle()) {
+                await this.invalidate();
+              } else {
                 await this.markSeen(path);
               }
             }
@@ -501,7 +608,8 @@ export class SessionHost {
 
   /**
    * Polls for lines another process appended during a held turn. Warns at most
-   * once and never aborts. The returned stop function resolves to whether any landed.
+   * once, never for a rename, and never aborts. The returned stop function
+   * resolves to whether any landed, a rename included.
    */
   private async watchForeignWrites(
     path: string
@@ -510,6 +618,7 @@ export class SessionHost {
       | { readonly agent: AgentSession; readonly mark: WriteMark }
       | undefined;
     let foreign = false;
+    let renamed = false;
 
     const check = async (): Promise<void> => {
       if (foreign) {
@@ -521,13 +630,20 @@ export class SessionHost {
         base = undefined;
         return;
       }
-      const mark = await WriteMark.of(this.logFor(path), agent.sessionManager);
+      const log = this.logFor(path);
       const previous = base;
-      base = { agent, mark };
-      if (
-        previous?.agent !== agent ||
-        !WriteMark.foreignSince(previous.mark, mark)
-      ) {
+      if (previous?.agent !== agent) {
+        base = { agent, mark: await WriteMark.at(log) };
+        return;
+      }
+      const scan = await WriteMark.scan(
+        log,
+        previous.mark,
+        agent.sessionManager
+      );
+      base = { agent, mark: scan.next };
+      renamed ||= scan.renamed;
+      if (!scan.foreign) {
         return;
       }
       foreign = true;
@@ -549,7 +665,7 @@ export class SessionHost {
       clearInterval(timer);
       this.sampleWrites = undefined;
       await sample();
-      return foreign;
+      return foreign || renamed;
     };
   }
 
@@ -597,7 +713,8 @@ export class SessionHost {
     }
     const { agent, cwd } = await this.buildAgent(
       this.currentSettings.sessionPath ?? this.deps.mainSessionPath?.(),
-      systemInstruction
+      systemInstruction,
+      this.deps.jobs === undefined ? {} : { jobs: this.deps.jobs }
     );
     this.cached = agent;
     this.cachedSystemInstruction = systemInstruction;
@@ -605,6 +722,8 @@ export class SessionHost {
       ? new EventLog(agent.sessionFile)
       : undefined;
     this.cachedUnsubscribe = this.observe(agent);
+    this.subagent = SubagentChoice.read(agent.sessionManager.getEntries());
+    this.attachJobs(agent.sessionId);
     if (this.deps.lease !== undefined && agent.sessionFile) {
       await this.markSeen(agent.sessionFile);
     }
@@ -701,7 +820,8 @@ export class SessionHost {
     }
     const { agent } = await this.buildAgent(
       sessionPath,
-      await this.deps.systemInstruction?.()
+      await this.deps.systemInstruction?.(),
+      {}
     );
     this.observeCost(agent);
     return { agent, sessionPath };
@@ -709,7 +829,8 @@ export class SessionHost {
 
   private async buildAgent(
     sessionPath: string | undefined,
-    wrapped: string | undefined
+    wrapped: string | undefined,
+    extensions: CoreExtensionOptions
   ): Promise<{ readonly agent: AgentSession; readonly cwd: string }> {
     const cwd = this.cwd;
     const sessionManager = sessionPath
@@ -722,7 +843,7 @@ export class SessionHost {
       agentDir: this.deps.agentDir,
       settingsManager,
       // In-process: a disk-loaded copy would register views into a second `Tools`.
-      extensionFactories: CoreExtensions.gated(this.deps.surface),
+      extensionFactories: CoreExtensions.gated(this.deps.surface, extensions),
       appendSystemPromptOverride: (base) => {
         return promptRef.wrapped ? [...base, promptRef.wrapped] : base;
       },
@@ -789,6 +910,82 @@ export class SessionHost {
     return { agent, cwd };
   }
 
+  private attachJobs(sessionId: string): void {
+    const jobs = this.deps.jobs;
+    if (
+      jobs === undefined ||
+      this.lifetime > 0 ||
+      this.jobsSessionId === sessionId
+    ) {
+      return;
+    }
+    this.detachJobs();
+    const detach = jobs.attach(sessionId, (delivery) =>
+      this.deliverJob(sessionId, delivery)
+    );
+    const unsubscribe = jobs.subscribe(sessionId, () => this.notifyJobs());
+    this.jobsSessionId = sessionId;
+    this.releaseJobs = () => {
+      detach();
+      unsubscribe();
+    };
+    this.notifyJobs();
+  }
+
+  private detachJobs(): void {
+    if (this.jobsSessionId === undefined) {
+      return;
+    }
+    this.releaseJobs?.();
+    this.releaseJobs = undefined;
+    this.jobsSessionId = undefined;
+    this.notifyJobs();
+  }
+
+  private notifyJobs(): void {
+    for (const listener of this.jobListeners) {
+      listener();
+    }
+  }
+
+  private async stopJobs(): Promise<number> {
+    const id = this.jobsSessionId;
+    return id === undefined
+      ? 0
+      : ((await this.deps.jobs?.stopAll(id, { by: "user" })) ?? 0);
+  }
+
+  /** Appends while idle, in the turn queue and under the lease, unless its spawn is on another branch; a streaming turn's boundary takes the message instead. */
+  private async deliverJob(
+    sessionId: string,
+    delivery: JobDelivery
+  ): Promise<Placement> {
+    if (this.cached?.isStreaming === true) {
+      return "due";
+    }
+    let where: Placement = "due";
+    const append = async (agent: AgentSession): Promise<void> => {
+      if (agent.sessionId !== sessionId || agent.isStreaming) {
+        return;
+      }
+      try {
+        if (delivery.due(agent.sessionManager)) {
+          await agent.sendCustomMessage<JobMessage["details"]>(
+            delivery.message,
+            {
+              triggerTurn: delivery.wake,
+            }
+          );
+        }
+      } finally {
+        where = JobMessage.placement(agent.sessionManager, delivery.message);
+      }
+    };
+    const run = delivery.wake ? this.deps.runWake : undefined;
+    await (run ?? ((work) => this.run(work)))(append);
+    return where;
+  }
+
   private detachCached(): void {
     this.cachedUnsubscribe?.();
     this.cached = undefined;
@@ -799,8 +996,15 @@ export class SessionHost {
     this.producing = false;
   }
 
+  /** The session is left behind, so its jobs stop; their results wait in `jobs` for whoever reopens it. */
   private async tearDownCached(): Promise<void> {
+    const sessionId = this.jobsSessionId;
     await this.invalidate();
+    this.subagent = {};
+    this.detachJobs();
+    if (sessionId !== undefined) {
+      await this.deps.jobs?.stopAll(sessionId, { by: "user" });
+    }
     const path =
       this.currentSettings.sessionPath ?? this.deps.mainSessionPath?.();
     if (path) {
@@ -847,8 +1051,7 @@ export class SessionHost {
     const available = this.deps.modelRegistry.getAvailable();
     const wanted = pattern.trim();
     const exact = available.find(
-      (m) =>
-        qualifiedModelId(m) === wanted || m.id === wanted || m.name === wanted
+      (m) => ModelId.of(m) === wanted || m.id === wanted || m.name === wanted
     );
     if (exact) {
       return { kind: "ok", model: exact };
@@ -857,14 +1060,14 @@ export class SessionHost {
     const candidates: FuzzyCandidate<Model<ModelApi>>[] = available.map(
       (m) => ({
         item: m,
-        haystacks: [qualifiedModelId(m), m.id, m.name],
+        haystacks: [ModelId.of(m), m.id, m.name],
       })
     );
     const hits = FuzzyMatcher.rank(pattern, candidates, { limit: 5 });
     if (hits.length === 0) {
       return {
         kind: "none",
-        candidates: available.slice(0, 8).map(qualifiedModelId),
+        candidates: available.slice(0, 8).map(ModelId.of),
       };
     }
     if (hits.length === 1) {
@@ -877,13 +1080,9 @@ export class SessionHost {
     }
     return {
       kind: "ambiguous",
-      candidates: hits.map((h) => qualifiedModelId(h.item)),
+      candidates: hits.map((h) => ModelId.of(h.item)),
     };
   }
-}
-
-function qualifiedModelId(model: Model<ModelApi>): string {
-  return `${model.provider}/${model.id}`;
 }
 
 async function disposeAgent(agent: AgentSession): Promise<void> {

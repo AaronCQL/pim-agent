@@ -1,21 +1,14 @@
-import {
-  createEffect,
-  createSignal,
-  Show,
-  untrack,
-  type Element,
-} from "solid-js";
+import { createEffect, createSignal, Show, untrack } from "solid-js";
 
 import { Format } from "#core/shared/Format";
 import type { SessionStore } from "../session/SessionStore";
 import { Check } from "../ui/Check";
 import { ACTION, FIELD, QUIET } from "../ui/classes";
 import { Modal } from "../ui/Modal";
+import { Section } from "../ui/Section";
 import { Spinner } from "../ui/Spinner";
 import { Extensions } from "./Extensions";
 import type { Settings } from "./Settings";
-
-const TITLE = "text-xs font-bold uppercase tracking-widest text-neutral-500";
 
 export function SettingsModal(props: {
   readonly open: boolean;
@@ -190,17 +183,5 @@ function Status(props: {
       />
       <span class="min-w-0 truncate">{state().text}</span>
     </p>
-  );
-}
-
-function Section(props: {
-  readonly title: string;
-  readonly children: Element;
-}) {
-  return (
-    <section class="space-y-2">
-      <h2 class={TITLE}>{props.title}</h2>
-      {props.children}
-    </section>
   );
 }

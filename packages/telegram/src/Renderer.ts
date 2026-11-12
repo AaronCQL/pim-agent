@@ -1,13 +1,18 @@
 import type {
   AgentSessionEvent,
   AgentToolResult,
+  CustomMessageEntry,
 } from "@earendil-works/pi-coding-agent";
-import { GrammyError, type Api } from "grammy";
+import type { Api } from "grammy";
 
+import { subagentResultView } from "#core/extensions/subagent/render";
+import { SubagentResult } from "#core/extensions/subagent/SubagentResult";
+import { MessageText } from "#core/session/MessageText";
 import { Tools } from "#core/shared/Tools";
 import { MarkdownPainter } from "#core/view/MarkdownPainter";
 import type { LogsMode } from "./Config";
 import { Markdown } from "./Markdown";
+import { RichMessage, type SentMessage } from "./RichMessage";
 import type { Session, SessionId } from "./Session";
 import { BR, TelegramHtml } from "./TelegramHtml";
 import { TypingIndicator } from "./TypingIndicator";
@@ -22,6 +27,13 @@ type ToolEntry = {
   state: "running" | "ok" | "error";
 };
 
+/** A background job's result, arriving as a custom message. */
+type ResultEntry = {
+  readonly kind: "result";
+  readonly icon: string;
+  readonly label: string;
+};
+
 type ProseKind = "thinking" | "narration";
 
 type ProseEntry = {
@@ -30,12 +42,17 @@ type ProseEntry = {
   html?: string;
 };
 
-type TrackerEntry = ToolEntry | ProseEntry;
+type TrackerEntry = ToolEntry | ResultEntry | ProseEntry;
 
 const PROSE_OPTS = {
   thinking: { italics: true },
   narration: {},
 } as const;
+
+type CustomMessageLike = Pick<
+  CustomMessageEntry,
+  "customType" | "content" | "details"
+>;
 
 type ToolCall = {
   readonly index: number;
@@ -49,6 +66,8 @@ export class Renderer {
   private readonly logsMode: LogsMode;
   private readonly entries: TrackerEntry[] = [];
   private readonly calls = new Map<string, ToolCall>();
+  /** Jobs whose result is already a row. */
+  private readonly results = new Set<string>();
   private readonly cwd: string;
   private readonly typing: TypingIndicator;
   private statusMessageId: number | undefined;
@@ -147,6 +166,16 @@ export class Renderer {
     if (event.type === "message_end") {
       this.flushThinking();
       this.settleMessageNarrations(event.message);
+      if (event.message.role === "custom") {
+        this.addResult(event.message);
+      }
+      return;
+    }
+    if (
+      event.type === "entry_appended" &&
+      event.entry.type === "custom_message"
+    ) {
+      this.addResult(event.entry);
       return;
     }
     if (event.type === "agent_end") {
@@ -211,6 +240,30 @@ export class Renderer {
     }
     entry.icon = icon;
     entry.label = label;
+    this.scheduleEdit();
+  }
+
+  /** Once per job, whether its result arrives as a message or as a turn-boundary entry. */
+  private addResult(message: CustomMessageLike): void {
+    if (this.logsMode === "off") {
+      return;
+    }
+    const details = SubagentResult.detailsOf(message);
+    if (details === undefined || this.results.has(details.jobId)) {
+      return;
+    }
+    this.results.add(details.jobId);
+    const painted = MarkdownPainter.paintTool(
+      subagentResultView({
+        content: MessageText.textOf(message.content),
+        details,
+      })
+    );
+    this.entries.push({
+      kind: "result",
+      icon: painted.icon,
+      label: painted.lines[0] ?? "",
+    });
     this.scheduleEdit();
   }
 
@@ -345,6 +398,8 @@ export class Renderer {
           suffix = " 🟡";
         }
         pieces.push(`${entry.icon} ${entry.label}${suffix}`);
+      } else if (entry.kind === "result") {
+        pieces.push(`${entry.icon} ${entry.label}`);
       } else {
         entry.html ??= Markdown.toHtml(entry.label, PROSE_OPTS[entry.kind]);
         pieces.push(entry.html);
@@ -374,68 +429,23 @@ export class Renderer {
   private async sendMessage(
     html: string,
     opts: { readonly status: boolean }
-  ): Promise<{ readonly message_id: number } | undefined> {
-    if (!html) {
-      return undefined;
-    }
-    const clean = TelegramHtml.sanitize(html);
-    try {
-      const msg = await this.api.sendRichMessage(
-        this.sessionId.chatId,
-        { html: clean },
-        { message_thread_id: this.sessionId.threadId }
-      );
-      console.log(
-        `[send] chatId=${this.sessionId.chatId} threadId=${this.sessionId.threadId ?? "main"} ${opts.status ? "status" : "answer"} ok (${clean.length}b)`
-      );
-      return msg;
-    } catch (err) {
-      if (err instanceof GrammyError && err.error_code === 400) {
-        console.warn(`[send] rich 400 (${err.description}) — retry plain`);
-        return this.api.sendMessage(
-          this.sessionId.chatId,
-          TelegramHtml.strip(clean),
-          {
-            message_thread_id: this.sessionId.threadId,
-            link_preview_options: { is_disabled: true },
-          }
-        );
-      }
-      throw err;
-    }
+  ): Promise<SentMessage | undefined> {
+    return RichMessage.send(
+      this.api,
+      this.sessionId,
+      html,
+      opts.status ? "status" : "answer"
+    );
   }
 
   private async editMessage(html: string): Promise<void> {
-    const clean = TelegramHtml.sanitize(html);
-    try {
-      await this.api.editMessageText(
-        this.sessionId.chatId,
-        this.statusMessageId!,
-        {
-          html: clean,
-        }
-      );
-    } catch (err) {
-      if (err instanceof GrammyError) {
-        if (/message is not modified/i.test(err.description)) {
-          return;
-        }
-        if (err.error_code === 400) {
-          await this.api
-            .editMessageText(
-              this.sessionId.chatId,
-              this.statusMessageId!,
-              TelegramHtml.strip(clean),
-              {
-                link_preview_options: { is_disabled: true },
-              }
-            )
-            .catch(() => {});
-          return;
-        }
-      }
-      console.warn(`[send] status edit failed:`, err);
-    }
+    await RichMessage.edit(
+      this.api,
+      this.sessionId,
+      this.statusMessageId!,
+      html,
+      "status"
+    );
   }
 
   private clearTimers(): void {
@@ -448,7 +458,7 @@ export class Renderer {
 }
 
 function isInlineEntry(entry: TrackerEntry): boolean {
-  return entry.kind === "tool";
+  return entry.kind === "tool" || entry.kind === "result";
 }
 
 function cleanProse(text: string): string {

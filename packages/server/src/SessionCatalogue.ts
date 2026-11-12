@@ -29,7 +29,7 @@ export type SessionCatalogueDeps = {
   readonly registry: SessionRegistry;
   readonly cursors: ReadCursors;
   readonly meta: SessionMeta;
-  readonly liveStatus: (sessionId: string) => SessionStatus | undefined;
+  readonly liveActivity: (sessionId: string) => SessionActivity | undefined;
   readonly liveSessionIds: () => Iterable<string>;
   readonly isBeingRead: (sessionId: string) => boolean;
   readonly announce: (event: ServerEvent) => void;
@@ -42,6 +42,13 @@ const DIGEST_READS = 16;
 
 /** Debounce for `sessions_changed`. */
 const ANNOUNCE_MS = 500;
+
+/** What a session held open by this server is doing. */
+export type SessionActivity = {
+  readonly status: SessionStatus;
+  /** Running background subagents. */
+  readonly jobs: number;
+};
 
 type CachedDigest = SessionDigest & { readonly modifiedAt: number };
 
@@ -57,7 +64,7 @@ type PageScope = {
 export class SessionCatalogue {
   private readonly deps: SessionCatalogueDeps;
   private readonly digests = new Map<string, CachedDigest>();
-  private readonly activity = new Map<string, SessionStatus>();
+  private readonly activity = new Map<string, SessionActivity>();
   private readonly settled = new Map<string, number>();
   private readonly watches = new Map<string, () => void>();
   private index: SearchIndex;
@@ -149,20 +156,52 @@ export class SessionCatalogue {
     };
   }
 
-  /** Announces a status change; must precede the read mark. */
-  public onStatus(sessionId: string, status: SessionStatus): void {
-    if (this.activity.get(sessionId) === status) {
+  /** Announces a change of status or job count; must precede the read mark. */
+  public onActivity(sessionId: string, activity: SessionActivity): void {
+    const before = this.activity.get(sessionId);
+    const { status, jobs } = activity;
+    if (before?.status === status && before.jobs === jobs) {
       return;
     }
-    this.activity.set(sessionId, status);
-    this.deps.announce({ type: "session_activity", sessionId, status });
-    if (status === "idle" && this.deps.isBeingRead(sessionId)) {
+    this.activity.set(sessionId, activity);
+    this.deps.announce({
+      type: "session_activity",
+      sessionId,
+      status,
+      ...(jobs > 0 ? { jobs } : {}),
+    });
+    if (
+      status === "idle" &&
+      before?.status !== "idle" &&
+      this.deps.isBeingRead(sessionId)
+    ) {
       void this.markRead(sessionId);
     }
   }
 
-  public track(sessionId: string, status: SessionStatus): void {
-    this.activity.set(sessionId, status);
+  /** The title the sidebar shows; undefined until the session has one. */
+  public async titleOf(
+    sessionId: string,
+    path: string
+  ): Promise<string | undefined> {
+    const stat = await Bun.file(path)
+      .stat()
+      .catch(() => undefined);
+    if (stat === undefined) {
+      return this.liveName(sessionId) ?? undefined;
+    }
+    const status = this.deps.liveActivity(sessionId)?.status;
+    const digest = await this.digestOf(
+      sessionId,
+      path,
+      Math.floor(stat.mtimeMs),
+      status
+    );
+    return digest.title;
+  }
+
+  public track(sessionId: string, activity: SessionActivity): void {
+    this.activity.set(sessionId, activity);
   }
 
   /** Marks read now, clears the sticky unread flag, and announces it. */
@@ -244,7 +283,9 @@ export class SessionCatalogue {
     { sessionId, cwd, path, createdAt, modifiedAt }: SessionSummary,
     { overrides, archived }: PageScope
   ): Promise<SessionSummaryView | undefined> {
-    const status = this.deps.liveStatus(sessionId);
+    const activity = this.deps.liveActivity(sessionId);
+    const status = activity?.status;
+    const jobs = activity?.jobs ?? 0;
     const { title, named, settledAt } = await this.digestOf(
       sessionId,
       path,
@@ -267,6 +308,7 @@ export class SessionCatalogue {
       ...(named === true ? { named } : {}),
       ...(archived ? { archived: true as const } : {}),
       ...(status === undefined || status === "idle" ? {} : { status }),
+      ...(jobs > 0 ? { jobs } : {}),
       ...(unread ? { unread: true } : {}),
     };
   }

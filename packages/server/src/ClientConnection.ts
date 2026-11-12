@@ -206,6 +206,10 @@ export class ClientConnection {
       case "tool_end":
       case "tool_result":
         return event.callId === callId;
+      case "jobs":
+        return true;
+      case "subagent_result":
+        return event.jobId === callId;
       case "replay":
         return event.events.some((inner) => this.touchesWatch(inner));
       default:

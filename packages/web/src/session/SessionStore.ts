@@ -1,5 +1,6 @@
 import { createStore, untrack, type Store, type StoreSetter } from "solid-js";
 
+import type { JobView } from "#core/extensions/subagent/SubagentJobs";
 import type { PickerItem } from "#core/picker/PickerItem";
 import { rankCommands } from "#core/picker/commandRanker";
 import { RemoteFilePickerSuggestionEngine } from "#core/picker/RemoteFilePickerSuggestionEngine";
@@ -111,6 +112,9 @@ export type SessionState = {
   model: string;
   modelLabel: string;
   thinking: string;
+  /** Empty while subagents follow the main agent. */
+  subagentModel: string;
+  subagentThinking: string;
   cost: number;
   agent: SessionStatus;
   /** False while another process holds the turn lease. */
@@ -131,7 +135,11 @@ export type SessionState = {
   durable: DurableEvent[];
   live: LiveMessage[];
   optimistic: OptimisticMessage[];
+  /** This session's running background subagents, oldest first. */
+  jobs: readonly JobView[];
   activity: Record<string, SessionStatus>;
+  /** Running background subagents by session; absent is none. */
+  jobCounts: Record<string, number>;
   /** Bumped when sessions on disk change. */
   catalogue: number;
   /** Bumped when any window toggles an extension. */
@@ -250,6 +258,8 @@ export class SessionStore {
       model: "",
       modelLabel: "",
       thinking: "",
+      subagentModel: "",
+      subagentThinking: "",
       cost: 0,
       agent: "idle",
       writable: true,
@@ -267,7 +277,9 @@ export class SessionStore {
       durable: [],
       live: [],
       optimistic: [],
+      jobs: [],
       activity: {},
+      jobCounts: {},
       catalogue: 0,
       extensions: 0,
       loading: false,
@@ -306,6 +318,13 @@ export class SessionStore {
           draft.connection = connection;
         });
       },
+      onRefused: (response) => {
+        void this.recover(response).catch((error: unknown) => {
+          this.setState((draft) => {
+            draft.error = (error as Error).message;
+          });
+        });
+      },
     });
     this.files = new RemoteFilePickerSuggestionEngine(
       (query, limit) => this.pickFiles(query, limit ?? FILE_PICKER_LIMIT),
@@ -320,7 +339,11 @@ export class SessionStore {
   }
 
   public async connect(): Promise<void> {
-    const response = await this.client.connect();
+    await this.recover(await this.client.connect());
+  }
+
+  /** A refused attach, on load or on reconnect: a new chat the server never wrote is started again. */
+  private async recover(response: ResponseEvent): Promise<void> {
     if (response.success) {
       return;
     }
@@ -380,6 +403,11 @@ export class SessionStore {
     return this.state.agent !== "idle";
   }
 
+  /** A turn or a background subagent is running, so `cancel` has something to stop. */
+  public isStoppable(): boolean {
+    return this.isBusy() || this.state.jobs.length > 0;
+  }
+
   private isHeld(): boolean {
     return !this.state.writable;
   }
@@ -396,8 +424,12 @@ export class SessionStore {
     return `Running ${where} — you can continue when this turn ends.`;
   }
 
+  /** Mid-turn, or running background subagents. */
   public isRunning(sessionId: string): boolean {
-    return (this.state.activity[sessionId] ?? "idle") !== "idle";
+    return (
+      (this.state.activity[sessionId] ?? "idle") !== "idle" ||
+      (this.state.jobCounts[sessionId] ?? 0) > 0
+    );
   }
 
   /** Sorted, so it is stable as a dependency. */
@@ -499,7 +531,7 @@ export class SessionStore {
     return true;
   }
 
-  /** Stops the turn; resolves to the queued text that was never sent. */
+  /** Stops the turn and every background subagent; resolves to the queued text that was never sent. */
   public cancel(): Promise<string> {
     return this.reclaim({ type: "cancel", sessionId: this.state.sessionId });
   }
@@ -820,6 +852,7 @@ export class SessionStore {
     this.setState((draft) => {
       for (const session of sessions) {
         draft.activity[session.sessionId] = session.status ?? "idle";
+        draft.jobCounts[session.sessionId] = session.jobs ?? 0;
         this.seed(draft, "unread", session.sessionId, session.unread ?? false);
         this.seed(
           draft,
@@ -980,11 +1013,19 @@ export class SessionStore {
   }
 
   public async setModel(id: string): Promise<void> {
-    await this.set("set_model", id);
+    await this.set({ type: "set_model", value: id });
   }
 
   public async setThinking(level: string): Promise<void> {
-    await this.set("set_thinking", level);
+    await this.set({ type: "set_thinking", value: level });
+  }
+
+  /** `null` follows the main agent. */
+  public async setSubagent(choice: {
+    readonly model?: string | null;
+    readonly thinking?: string | null;
+  }): Promise<void> {
+    await this.set({ type: "set_subagent", ...choice });
   }
 
   public async cycleThinking(): Promise<void> {
@@ -1218,14 +1259,19 @@ export class SessionStore {
   }
 
   private async set(
-    type: "set_model" | "set_thinking",
-    value: string
+    choice:
+      | { readonly type: "set_model" | "set_thinking"; readonly value: string }
+      | {
+          readonly type: "set_subagent";
+          readonly model?: string | null;
+          readonly thinking?: string | null;
+        }
   ): Promise<void> {
     if (this.isHeld()) {
       return;
     }
     await this.client
-      .send({ type, sessionId: this.state.sessionId, value })
+      .send({ ...choice, sessionId: this.state.sessionId })
       .catch(() => undefined);
   }
 
@@ -1327,6 +1373,12 @@ export class SessionStore {
     if (isDurableEvent(event)) {
       this.setState((draft) => {
         ingestDurable(draft, event);
+        if (event.type === "subagent_result") {
+          setJobs(
+            draft,
+            draft.jobs.filter((job) => job.id !== event.jobId)
+          );
+        }
       });
       return;
     }
@@ -1338,6 +1390,7 @@ export class SessionStore {
           if (draft.sessionId !== event.sessionId) {
             draft.durable = [];
             draft.optimistic = [];
+            draft.jobs = [];
             draft.agent = draft.activity[event.sessionId] ?? "idle";
             draft.writable = true;
             draft.heldBy = undefined;
@@ -1370,6 +1423,11 @@ export class SessionStore {
       case "tool_end":
         this.setState((draft) => {
           applyLive(draft, event);
+        });
+        return;
+      case "jobs":
+        this.setState((draft) => {
+          setJobs(draft, event.jobs);
         });
         return;
       case "subagent_events":
@@ -1416,6 +1474,7 @@ export class SessionStore {
       case "session_activity":
         this.setState((draft) => {
           draft.activity[event.sessionId] = event.status;
+          draft.jobCounts[event.sessionId] = event.jobs ?? 0;
         });
         return;
       case "session_read":
@@ -1475,6 +1534,8 @@ export class SessionStore {
           draft.model = event.model;
           draft.modelLabel = event.modelLabel ?? event.model;
           draft.thinking = event.thinking;
+          draft.subagentModel = event.subagent?.model ?? "";
+          draft.subagentThinking = event.subagent?.thinking ?? "";
           draft.cost = event.cost;
           const settled = draft.agent !== "idle" && event.status === "idle";
           draft.agent = event.status;
@@ -1563,4 +1624,9 @@ export class SessionStore {
       draft.optimistic = draft.optimistic.filter((pending) => !pending.queued);
     });
   }
+}
+
+function setJobs(draft: SessionState, jobs: readonly JobView[]): void {
+  draft.jobs = jobs;
+  draft.jobCounts[draft.sessionId] = jobs.length;
 }

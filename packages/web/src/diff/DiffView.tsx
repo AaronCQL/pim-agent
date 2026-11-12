@@ -32,10 +32,6 @@ const LAYOUTS = [
   { value: "unified", label: "Unified" },
 ] as const satisfies readonly MenuOption[];
 
-function labelOf(options: readonly MenuOption[], value: string): string {
-  return options.find((option) => option.value === value)?.label ?? value;
-}
-
 /** Rows painted per page. */
 const PAGE = 500;
 
@@ -152,7 +148,6 @@ export function DiffView(props: {
           </button>
           <ModeSwitch mode={props.mode} onMode={props.onMode} />
           <Menu
-            label={labelOf(BASES, props.diff.state.base)}
             icon="i-griddy-icons:code-compare"
             options={BASES}
             value={props.diff.state.base}
@@ -165,7 +160,6 @@ export function DiffView(props: {
           />
           <div class="hidden sm:block">
             <Menu
-              label={labelOf(LAYOUTS, props.settings.state.diffSplit)}
               icon="i-griddy-icons:columns-two"
               options={LAYOUTS}
               value={props.settings.state.diffSplit}

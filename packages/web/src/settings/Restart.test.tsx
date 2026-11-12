@@ -9,6 +9,7 @@ import { Shell } from "../App";
 import { SessionStore } from "../session/SessionStore";
 import { mountPoint } from "../test/dom";
 import { GatewayHarness } from "../test/gateway";
+import { job, jobs } from "../test/jobs";
 import { Settings } from "./Settings";
 import { SettingsModal } from "./SettingsModal";
 
@@ -136,6 +137,50 @@ test("killing a turn in another session requires confirmation before force is se
   expect(commands.some(({ type }) => type === "reload")).toBe(false);
   confirm.mockReturnValue(true);
   button(host).click();
+  expect(commands.filter(({ type }) => type === "reload")).toEqual([
+    { type: "reload", force: true },
+  ]);
+});
+
+test("killing this session's background jobs asks first too, counting the session once", () => {
+  const host = paint();
+  const asked =
+    "Restarting will stop 1 running session. Update and restart anyway?";
+  store.ingest(jobs(job("call_a")));
+  flush();
+  const confirm = spyOn(window, "confirm").mockReturnValue(false);
+  button(host).click();
+  expect(confirm).toHaveBeenLastCalledWith(asked);
+  expect(commands.some(({ type }) => type === "reload")).toBe(false);
+
+  store.ingest({
+    type: "session_activity",
+    sessionId: store.state.sessionId,
+    status: "thinking",
+  });
+  flush();
+  confirm.mockReturnValue(true);
+  button(host).click();
+  expect(confirm).toHaveBeenLastCalledWith(asked);
+  expect(commands.filter(({ type }) => type === "reload")).toEqual([
+    { type: "reload", force: true },
+  ]);
+});
+
+test("another session's background jobs ask first too, and then force the reload", () => {
+  const host = paint();
+  store.ingest({
+    type: "session_activity",
+    sessionId: "other",
+    status: "idle",
+    jobs: 2,
+  });
+  flush();
+  const confirm = spyOn(window, "confirm").mockReturnValue(true);
+  button(host).click();
+  expect(confirm).toHaveBeenLastCalledWith(
+    "Restarting will stop 1 running session. Update and restart anyway?"
+  );
   expect(commands.filter(({ type }) => type === "reload")).toEqual([
     { type: "reload", force: true },
   ]);

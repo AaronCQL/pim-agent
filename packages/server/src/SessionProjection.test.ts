@@ -7,7 +7,15 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 import readExtension from "#core/extensions/read/index";
+import {
+  subagentNoticeView,
+  subagentResultView,
+} from "#core/extensions/subagent/render";
+import { SubagentNotice } from "#core/extensions/subagent/SubagentNotice";
+import { SubagentResult } from "#core/extensions/subagent/SubagentResult";
+import { SubagentLogs } from "#core/shared/SubagentLogs";
 import { Tools } from "#core/shared/Tools";
+import type { DurableEvent } from "#protocol/ServerEvent";
 import { SessionProjection } from "./SessionProjection";
 
 const FIXTURE = join(
@@ -96,26 +104,34 @@ afterEach(async () => {
   }
 });
 
-async function logOf(
-  ...messages: ReadonlyArray<Record<string, unknown>>
+/** Each entry gets an id and timestamp. */
+async function entriesOf(
+  ...entries: ReadonlyArray<Record<string, unknown>>
 ): Promise<SessionProjection> {
   tmp = await mkdtemp(join(tmpdir(), "pim-projection-test-"));
   const path = join(tmp, "session.jsonl");
   await Bun.write(
     path,
-    messages
-      .map((message, index) =>
+    entries
+      .map((entry, index) =>
         JSON.stringify({
-          type: "message",
           id: `entry-${index}`,
           timestamp: "2026-08-01T10:17:47.104Z",
-          message,
+          ...entry,
         })
       )
       .map((line) => `${line}\n`)
       .join("")
   );
   return new SessionProjection(path, () => "/");
+}
+
+function logOf(
+  ...messages: ReadonlyArray<Record<string, unknown>>
+): Promise<SessionProjection> {
+  return entriesOf(
+    ...messages.map((message) => ({ type: "message", message }))
+  );
 }
 
 async function deadTurn(
@@ -149,7 +165,7 @@ test("projects a persisted session into durable events, one per line", async () 
 
   const result = events[2];
   expect(result?.type === "tool_result" && result.isError).toBe(false);
-  expect(JSON.stringify(events)).not.toContain('"content"');
+  expect(JSON.stringify(events)).not.toContain('"type":"text"');
 
   const first = events[0];
   expect(first?.type === "message" && first.timestamp).toBe(
@@ -302,4 +318,197 @@ test("a read of a picture crosses as the digest that addresses the cache", async
     alt: "work/shot.png",
   });
   expect(JSON.stringify(events)).not.toContain(BASE64);
+});
+
+test("a job's result crosses as its own row, painted like a subagent run and keyed to its child log", async () => {
+  const result = await SubagentResult.fromLog(
+    {
+      jobId: "call_job",
+      handle: "j1",
+      prompt: "audit the parser",
+    },
+    "/missing/child.jsonl"
+  );
+  const p = await entriesOf({ type: "custom_message", ...result });
+
+  expect(await p.drain()).toEqual([
+    {
+      seq: 1,
+      type: "subagent_result",
+      messageId: "entry-0",
+      jobId: "call_job",
+      handle: "j1",
+      state: "interrupted",
+      view: subagentResultView(result),
+      timestamp: Date.parse("2026-08-01T10:17:47.104Z"),
+    },
+  ]);
+});
+
+test("a job's context notice crosses as a subagent row linked to its job, never as a result", async () => {
+  const notice = SubagentNotice.of(
+    {
+      jobId: "call_job",
+      handle: "j22",
+      contextTokens: 402_000,
+      contextWindow: 1_000_000,
+      turns: 69,
+      cost: 9.8,
+      elapsedMs: 30 * 60_000,
+    },
+    [{ title: "bash zig build test", state: "done" }]
+  );
+  const p = await entriesOf({ type: "custom_message", ...notice });
+
+  expect(await p.drain()).toEqual([
+    {
+      seq: 1,
+      type: "subagent_notice",
+      messageId: "entry-0",
+      jobId: "call_job",
+      handle: "j22",
+      view: subagentNoticeView(notice.details),
+    },
+  ]);
+});
+
+test("a call links the child log it owns: a spawn its job, a run the log it wrote, a failed spawn and the other actions nothing", async () => {
+  const previousHome = process.env.PIM_HOME_DIR;
+  const calls = {
+    call_spawn: { action: "spawn", prompt: "audit" },
+    call_failed: { action: "spawn", prompt: "audit" },
+    call_run: { prompt: "audit" },
+    call_broke: { prompt: "audit" },
+    call_status: { action: "status", id: "j2" },
+    call_open: { action: "spawn", prompt: "audit" },
+  };
+  const settled = (
+    callId: keyof typeof calls,
+    details: unknown,
+    isError = false
+  ): Record<string, unknown> => ({
+    type: "message",
+    message: {
+      role: "toolResult",
+      toolCallId: callId,
+      toolName: "subagent",
+      isError,
+      content: [{ type: "text", text: isError ? "boom" : "ok" }],
+      details,
+    },
+  });
+  const p = await entriesOf(
+    {
+      type: "message",
+      message: {
+        role: "assistant",
+        content: Object.entries(calls).map(([id, args]) => ({
+          type: "toolCall",
+          id,
+          name: "subagent",
+          arguments: args,
+        })),
+        usage: {},
+      },
+    },
+    settled("call_spawn", {
+      action: "spawn",
+      jobId: "call_spawn",
+      handle: "j2",
+      prompt: "audit",
+      owner: { pid: 1, hostname: "box" },
+    }),
+    settled("call_failed", {}, true),
+    settled("call_run", {
+      usage: {
+        input: 1,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        cost: 0,
+        turns: 1,
+        contextTokens: 10,
+      },
+    }),
+    settled("call_broke", {}, true),
+    settled("call_status", { action: "status", jobs: [] })
+  );
+  try {
+    process.env.PIM_HOME_DIR = tmp;
+    await SubagentLogs.create("parent", "call_run");
+    await SubagentLogs.create("parent", "call_broke");
+    const linked = new SessionProjection(
+      join(tmp!, "session.jsonl"),
+      () => "/",
+      "parent"
+    );
+    const events = await linked.drain();
+    const children = (event: DurableEvent | undefined) =>
+      event?.type === "message"
+        ? (event.toolCalls ?? []).map((call) => [call.callId, call.child])
+        : event?.type === "tool_result"
+          ? [[event.callId, event.child]]
+          : [];
+
+    expect(children(events[0])).toEqual([
+      ["call_spawn", { jobId: "call_spawn" }],
+      ["call_failed", { jobId: "call_failed" }],
+      ["call_run", { jobId: "call_run" }],
+      ["call_broke", { jobId: "call_broke" }],
+      ["call_status", undefined],
+      ["call_open", { jobId: "call_open" }],
+    ]);
+    expect(events.slice(1).flatMap(children)).toEqual([
+      ["call_spawn", { jobId: "call_spawn", handle: "j2" }],
+      ["call_failed", undefined],
+      ["call_run", { jobId: "call_run" }],
+      ["call_broke", { jobId: "call_broke" }],
+      ["call_status", undefined],
+    ]);
+    expect(
+      (await p.drain())
+        .slice(1)
+        .flatMap(children)
+        .map(([, child]) => child)
+    ).toEqual([
+      { jobId: "call_spawn", handle: "j2" },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ]);
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.PIM_HOME_DIR;
+    } else {
+      process.env.PIM_HOME_DIR = previousHome;
+    }
+  }
+});
+
+test("other custom messages, and a result or notice with no job, project nothing", async () => {
+  const p = await entriesOf(
+    {
+      type: "custom_message",
+      customType: "datetime",
+      content: "Sunday",
+      display: false,
+    },
+    {
+      type: "custom_message",
+      customType: SubagentResult.CUSTOM_TYPE,
+      content: "[subagent job ? done]",
+      display: true,
+    },
+    {
+      type: "custom_message",
+      customType: SubagentNotice.CUSTOM_TYPE,
+      content: "[subagent job ? at 40% context, still running]",
+      display: true,
+      details: { jobId: "call_job" },
+    }
+  );
+
+  expect(await p.drain()).toEqual([]);
+  expect(p.head).toBe(3);
 });

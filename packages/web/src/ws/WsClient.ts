@@ -25,8 +25,12 @@ export type WsClientOptions = {
   readonly cwd?: string;
   readonly onEvent: (event: ServerEvent) => void;
   readonly onStatus?: (status: ConnectionStatus) => void;
+  /** A reconnect's attach was refused: the socket is open but attached to nothing. */
+  readonly onRefused?: (response: ResponseEvent) => void;
+  /** The least time between two dials. */
   readonly retryMs?: number;
-  readonly connectTimeoutMs?: number;
+  /** How long a probe on wake, or a first dial, may go unanswered; each dial that never opens doubles the next one's, to 4×, which is also what a reconnect's attach gets. */
+  readonly timeoutMs?: number;
 };
 
 type Pending = {
@@ -35,9 +39,16 @@ type Pending = {
 };
 
 const RETRY_MS = 1000;
-const CONNECT_TIMEOUT_MS = 5000;
+// A handshake that lost a packet to a waking network is redialled sooner than TCP retransmits it.
+const TIMEOUT_MS = 2000;
 
-/** One socket and one attached session, with a seq cursor that survives reconnects. */
+/**
+ * One socket and one attached session, with a seq cursor that survives reconnects.
+ *
+ * Never trusts the browser to report a dead socket: a suspended mobile page can lose
+ * `close`, or keep an `OPEN` socket nothing reaches. Every way a socket ends goes
+ * through `drop`, and `wake` checks the socket itself rather than the last event.
+ */
 export class WsClient {
   private readonly options: WsClientOptions;
   private readonly pending = new Map<string, Pending>();
@@ -47,6 +58,11 @@ export class WsClient {
   private nextId = 0;
   private retrying = false;
   private retry: ReturnType<typeof setTimeout> | undefined;
+  private dialedAt = 0;
+  /** Dials in a row that never opened; a network this slow gets longer to answer. */
+  private misses = 0;
+  /** Frames received, from any socket; a socket that moved it is alive. */
+  private heard = 0;
   private disposed = false;
   /** Sent on every attach; an inattentive client never marks a turn read. */
   private attention = true;
@@ -98,6 +114,10 @@ export class WsClient {
     this.cursor = 0;
     const live = this.socket?.readyState === WebSocket.OPEN;
     if (!live) {
+      // Still dialling, or dead without an event: this attach dials afresh.
+      if (this.socket !== undefined) {
+        this.drop(this.socket);
+      }
       this.cancelRetry();
     }
     const response = live ? await this.sendAttach() : await this.connect();
@@ -111,7 +131,11 @@ export class WsClient {
 
   public send(command: CommandDraft): Promise<ResponseEvent> {
     const socket = this.socket;
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
+    if (socket?.readyState !== WebSocket.OPEN) {
+      // A socket that died without an event is found out here.
+      if (socket !== undefined && socket.readyState !== WebSocket.CONNECTING) {
+        this.drop(socket);
+      }
       return Promise.reject(new Error("not connected"));
     }
     const id = `web-${++this.nextId}`;
@@ -133,13 +157,36 @@ export class WsClient {
     void this.send({ type: "attention", value }).catch(() => undefined);
   }
 
-  /** Retries now instead of waiting for the backoff timer, which may have been frozen. */
+  /** The page is back: replace a socket that died unannounced, and test one that looks open. */
   public wake(): void {
-    if (this.state !== "reconnecting" || this.socket !== undefined) {
+    if (this.disposed) {
       return;
     }
-    this.cancelRetry();
-    void this.reconnect();
+    // Whatever the network was before the page slept, it is another one now.
+    this.misses = 0;
+    const socket = this.socket;
+    if (socket?.readyState === WebSocket.OPEN) {
+      this.expect(
+        socket,
+        this.send({ type: "attention", value: this.attention })
+      );
+      return;
+    }
+    // A young dial is left alone, so a burst of wake events dials once; an older one began before the sleep.
+    if (
+      socket?.readyState === WebSocket.CONNECTING &&
+      Date.now() - this.dialedAt < this.timeoutMs
+    ) {
+      return;
+    }
+    if (socket !== undefined) {
+      this.drop(socket);
+    }
+    // The retry timer may have been frozen with the page.
+    if (this.state === "reconnecting") {
+      this.cancelRetry();
+      void this.reconnect();
+    }
   }
 
   public close(): void {
@@ -157,32 +204,65 @@ export class WsClient {
     const socket = new WebSocket(this.options.url);
     this.socket = socket;
     this.settled = false;
+    this.dialedAt = Date.now();
     socket.addEventListener("message", (event) => {
-      this.receive(String((event as MessageEvent).data));
+      if (this.socket === socket) {
+        this.heard++;
+        this.receive(String((event as MessageEvent).data));
+      }
     });
-    socket.addEventListener("close", () => {
-      this.onClose(socket);
-    });
+    let opened = false;
     return new Promise<void>((resolve, reject) => {
-      const fail = (): void => {
+      // Any one of these ends the socket; a browser may send `error` without `close`.
+      const end = (): void => {
         clearTimeout(timeout);
+        if (!opened && this.socket === socket) {
+          this.misses++;
+        }
         reject(new Error(`could not connect to ${this.options.url}`));
+        this.drop(socket);
       };
       // A socket stuck connecting fires no events.
-      const timeout = setTimeout(() => {
-        fail();
-        this.onClose(socket);
-        socket.close();
-      }, this.options.connectTimeoutMs ?? CONNECT_TIMEOUT_MS);
-      (timeout as { unref?: () => void }).unref?.();
+      const timeout = this.timer(end, 2 ** Math.min(this.misses, 2));
+      socket.addEventListener("error", end);
+      socket.addEventListener("close", end);
       socket.addEventListener("open", () => {
+        if (this.socket !== socket) {
+          end();
+          return;
+        }
+        opened = true;
         clearTimeout(timeout);
+        this.misses = 0;
         this.retrying = false;
         this.setStatus("open");
         resolve();
       });
-      socket.addEventListener("error", fail);
     });
+  }
+
+  /** Drops a socket that stays silent while `answer` is due; any frame at all proves it alive. */
+  private expect(socket: WebSocket, answer: Promise<unknown>, scale = 1): void {
+    const heard = this.heard;
+    const timeout = this.timer(() => {
+      if (this.heard === heard) {
+        this.drop(socket);
+      }
+    }, scale);
+    const settle = (): void => {
+      clearTimeout(timeout);
+    };
+    void answer.then(settle, settle);
+  }
+
+  private get timeoutMs(): number {
+    return this.options.timeoutMs ?? TIMEOUT_MS;
+  }
+
+  private timer(fire: () => void, scale = 1): ReturnType<typeof setTimeout> {
+    const timeout = setTimeout(fire, this.timeoutMs * scale);
+    (timeout as { unref?: () => void }).unref?.();
+    return timeout;
   }
 
   private sendAttach(): Promise<ResponseEvent> {
@@ -199,16 +279,14 @@ export class WsClient {
     });
   }
 
-  private onClose(socket: WebSocket): void {
+  /** The one way a socket ends, and the only place a retry is scheduled. A socket already replaced is just closed. */
+  private drop(socket: WebSocket): void {
+    socket.close();
     if (this.socket !== socket) {
       return;
     }
     this.socket = undefined;
     this.rejectPending(new Error("socket closed"));
-    if (this.disposed) {
-      this.setStatus("closed");
-      return;
-    }
     this.setStatus("reconnecting");
     this.scheduleRetry();
   }
@@ -225,10 +303,15 @@ export class WsClient {
       return;
     }
     this.retrying = true;
-    this.retry = setTimeout(() => {
-      this.retry = undefined;
-      void this.reconnect();
-    }, this.options.retryMs ?? RETRY_MS);
+    // Paces dials, not failures: a dial that already timed out is followed at once.
+    const since = Date.now() - this.dialedAt;
+    this.retry = setTimeout(
+      () => {
+        this.retry = undefined;
+        void this.reconnect();
+      },
+      Math.max(0, (this.options.retryMs ?? RETRY_MS) - since)
+    );
     (this.retry as { unref?: () => void }).unref?.();
   }
 
@@ -236,13 +319,21 @@ export class WsClient {
     if (this.disposed) {
       return;
     }
+    let response: ResponseEvent;
     try {
       await this.openSocket();
-      await this.sendAttach();
-    } catch {
-      if (!this.disposed) {
-        this.scheduleRetry();
+      const attach = this.sendAttach();
+      // The server may be opening the session cold, so this waits as long as the slowest dial.
+      if (this.socket !== undefined) {
+        this.expect(this.socket, attach, 4);
       }
+      response = await attach;
+    } catch {
+      // Whatever failed went through `drop`, which scheduled the retry.
+      return;
+    }
+    if (!response.success) {
+      this.options.onRefused?.(response);
     }
   }
 

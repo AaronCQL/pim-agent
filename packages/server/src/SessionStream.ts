@@ -16,9 +16,11 @@ import type {
   QueuedView,
   ServerEvent,
   StreamEvent,
+  SubagentChildView,
 } from "#protocol/ServerEvent";
 import { attachmentView } from "./AttachmentEndpoint";
 import { SessionProjection } from "./SessionProjection";
+import { SubagentChild } from "./SubagentChild";
 
 export type StreamListener = (event: ServerEvent) => void;
 
@@ -41,6 +43,7 @@ type LiveTool = {
   readonly name: string;
   readonly args: unknown;
   view: ToolView;
+  linked: { readonly child?: SubagentChildView };
   isError: boolean;
   done: boolean;
   durationMs: number | undefined;
@@ -60,7 +63,7 @@ export type SessionStreamDeps = {
   readonly pollMs?: number;
   /** Shared across sessions in the same directory. */
   readonly git?: GitMonitor;
-  /** Whether any session in this cwd is mid-turn, this one included. */
+  /** Whether any session in this cwd is mid-turn or running subagents, this one included. */
   readonly repoBusy?: () => boolean;
   readonly requestCeilingMs?: number;
   readonly detachGraceMs?: number;
@@ -95,7 +98,7 @@ export class SessionStream implements SessionUi {
   public readonly sessionId: string;
   public readonly host: SessionHost;
   public readonly picker: PickerService;
-  private readonly sessionPath: string;
+  public readonly sessionPath: string;
   private readonly projection: SessionProjection;
   private readonly listeners = new Set<StreamListener>();
   private readonly observers = new Set<StreamListener>();
@@ -109,6 +112,7 @@ export class SessionStream implements SessionUi {
   private unsubscribe: (() => void) | undefined;
   private unsubscribeLease: (() => void) | undefined;
   private unsubscribeForeign: (() => void) | undefined;
+  private unsubscribeJobs: (() => void) | undefined;
   private unwatch: (() => void) | undefined;
   private holder: LeaseRecord | undefined;
   private lease: LeaseState = { writable: true };
@@ -138,7 +142,11 @@ export class SessionStream implements SessionUi {
     this.repoBusy = deps.repoBusy;
     this.requestCeilingMs = deps.requestCeilingMs ?? REQUEST_CEILING_MS;
     this.detachGraceMs = deps.detachGraceMs ?? DETACH_GRACE_MS;
-    this.projection = new SessionProjection(sessionPath, () => host.cwd);
+    this.projection = new SessionProjection(
+      sessionPath,
+      () => host.cwd,
+      sessionId
+    );
     this.picker = new PickerService({
       cwd: () => host.cwd,
       agentDir: host.agentDir,
@@ -160,6 +168,9 @@ export class SessionStream implements SessionUi {
         message:
           "Another process is writing this session; its history may be inconsistent.",
       });
+    });
+    this.unsubscribeJobs ??= this.host.onJobsChange(() => {
+      this.emit(this.jobsState());
     });
   }
 
@@ -398,8 +409,12 @@ export class SessionStream implements SessionUi {
     return `${this.sessionId}:${kind}:${this.uiSeq}`;
   }
 
+  /** A live tool call, or a background subagent it spawned. */
   public isRunning(callId: string): boolean {
-    return this.findTool(callId)?.done === false;
+    return (
+      this.findTool(callId)?.done === false ||
+      this.host.jobs.some((job) => job.id === callId)
+    );
   }
 
   /** The durable tail after `fromSeq`, then the in-flight turn coalesced, then state. */
@@ -430,6 +445,7 @@ export class SessionStream implements SessionUi {
           name: tool.name,
           messageId,
           view: tool.view,
+          ...tool.linked,
         });
         if (tool.done) {
           events.push({
@@ -438,6 +454,7 @@ export class SessionStream implements SessionUi {
             view: tool.view,
             isError: tool.isError,
             durationMs: tool.durationMs,
+            ...tool.linked,
           });
         }
       }
@@ -445,7 +462,7 @@ export class SessionStream implements SessionUi {
     for (const request of this.pending.values()) {
       events.push(request.asked);
     }
-    events.push(this.sessionState());
+    events.push(this.jobsState(), this.sessionState());
     return events;
   }
 
@@ -476,6 +493,7 @@ export class SessionStream implements SessionUi {
       model: this.host.currentModelId ?? "",
       ...(modelLabel === undefined ? {} : { modelLabel }),
       thinking: this.host.currentThinkingLevel,
+      subagent: this.host.subagentChoice,
       cost: this.host.settings.cumulativeCost ?? 0,
       status: this.host.status,
       ...this.leaseState(),
@@ -494,6 +512,10 @@ export class SessionStream implements SessionUi {
         : { branch, dirtyCount, ahead, behind, repoRevision: revision }),
       ...(queued === undefined ? {} : { queued }),
     };
+  }
+
+  private jobsState(): EphemeralEvent {
+    return { type: "jobs", jobs: this.host.jobs };
   }
 
   /** The host only knows about its own blocked writes; the lease record covers an idle session under a foreign lease. */
@@ -518,7 +540,7 @@ export class SessionStream implements SessionUi {
 
   /** Re-reads the holder; true when the visible lease state changed. */
   private async readLease(): Promise<boolean> {
-    this.holder = await SessionLease.read(this.sessionPath);
+    this.holder = (await SessionLease.holder(this.sessionPath))?.record;
     const next = this.leaseState();
     if (sameLease(this.lease, next)) {
       return false;
@@ -540,6 +562,8 @@ export class SessionStream implements SessionUi {
     this.unsubscribeLease = undefined;
     this.unsubscribeForeign?.();
     this.unsubscribeForeign = undefined;
+    this.unsubscribeJobs?.();
+    this.unsubscribeJobs = undefined;
     this.watchFiles(false);
     // Safe: Map iteration tolerates deleting the current entry.
     for (const request of this.pending.values()) {
@@ -581,12 +605,14 @@ export class SessionStream implements SessionUi {
           isPartial: true,
           cwd: this.host.cwd,
         });
+        const linked = this.linkOf(event, event.args, undefined, false);
         const message = this.currentMessage();
         message.tools.push({
           callId: event.toolCallId,
           name: event.toolName,
           args: event.args,
           view,
+          linked,
           isError: false,
           done: false,
           durationMs: undefined,
@@ -597,6 +623,7 @@ export class SessionStream implements SessionUi {
           name: event.toolName,
           messageId: message.messageId,
           view,
+          ...linked,
         });
         this.emit(this.sessionState());
         return;
@@ -609,11 +636,23 @@ export class SessionStream implements SessionUi {
           isPartial: true,
           cwd: this.host.cwd,
         });
+        const linked = this.linkOf(
+          event,
+          event.args,
+          event.partialResult?.details,
+          false
+        );
         const tool = this.findTool(event.toolCallId);
         if (tool) {
           tool.view = view;
+          tool.linked = linked;
         }
-        this.emit({ type: "tool_update", callId: event.toolCallId, view });
+        this.emit({
+          type: "tool_update",
+          callId: event.toolCallId,
+          view,
+          ...linked,
+        });
         return;
       }
       case "tool_execution_end": {
@@ -626,8 +665,15 @@ export class SessionStream implements SessionUi {
           isPartial: false,
           cwd: this.host.cwd,
         });
+        const linked = this.linkOf(
+          event,
+          tool?.args,
+          event.result?.details,
+          true
+        );
         if (tool) {
           tool.view = view;
+          tool.linked = linked;
           tool.isError = event.isError;
           tool.done = true;
           tool.durationMs = event.durationMs;
@@ -638,6 +684,7 @@ export class SessionStream implements SessionUi {
           view,
           isError: event.isError,
           durationMs: event.durationMs,
+          ...linked,
         });
         if (Tools.effectOf(event.toolName)?.kind !== "readOnly") {
           this.invalidatePickers("files");
@@ -741,6 +788,22 @@ export class SessionStream implements SessionUi {
       }
     }
     return undefined;
+  }
+
+  private linkOf(
+    event: { readonly toolName: string; readonly toolCallId: string },
+    args: unknown,
+    details: unknown,
+    settled: boolean
+  ): LiveTool["linked"] {
+    return SubagentChild.of({
+      name: event.toolName,
+      callId: event.toolCallId,
+      args,
+      details,
+      settled,
+      sessionId: this.sessionId,
+    });
   }
 
   private findTool(callId: string): LiveTool | undefined {

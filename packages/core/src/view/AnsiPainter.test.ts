@@ -124,7 +124,7 @@ describe("AnsiPainter.paintBody", () => {
 
     expect(groups).toEqual([
       { frame: "flow", lines: ["one"] },
-      { frame: "embed", markdown: "**bold**" },
+      { frame: "embed", markdown: "**bold**", echo: false },
       { frame: "flow", lines: ["two"] },
     ]);
   });
