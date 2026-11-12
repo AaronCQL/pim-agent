@@ -1,10 +1,13 @@
-import { createMemo, Show } from "solid-js";
+import { createMemo, createSignal, onCleanup, Show } from "solid-js";
+
+import { JobLine } from "#core/extensions/subagent/JobLine";
+import { Format } from "#core/shared/Format";
 
 import type { SessionStore } from "../session/SessionStore";
 import { Modal } from "../ui/Modal";
 import { createBottomPin } from "../ui/scroll";
 import { Spinner } from "../ui/Spinner";
-import { Body } from "../view/Blocks";
+import { Body, SpanText } from "../view/Blocks";
 import { buildRows, extendRows, type ToolRow } from "./rows";
 import { Transcript } from "./Transcript";
 
@@ -12,6 +15,13 @@ export function SubagentModal(props: { readonly store: SessionStore }) {
   const watched = () => props.store.state.subagent;
   const durable = createMemo(() => buildRows(props.store.state.durable));
   const pin = createBottomPin();
+  const [now, setNow] = createSignal(Date.now());
+  const clock = setInterval(() => {
+    setNow(Date.now());
+  }, 1000);
+  onCleanup(() => {
+    clearInterval(clock);
+  });
 
   const row = createMemo((): ToolRow | undefined => {
     const callId = watched()?.callId;
@@ -38,19 +48,50 @@ export function SubagentModal(props: { readonly store: SessionStore }) {
         props.store.unwatch();
       }}
       header={
-        <div class="min-w-0 leading-[--line]">
-          <div class="flex items-center gap-2">
-            <span class="font-bold">Subagent</span>
-            <Show when={running()}>
+        <div class="flex min-w-0 items-center gap-2 text-sm leading-[--line]">
+          <Show
+            when={running()}
+            fallback={
+              <span
+                role="img"
+                aria-label={
+                  row()?.state ?? (row()?.isError ? "failed" : "done")
+                }
+                class={{
+                  "size-3 shrink-0": true,
+                  "i-lucide-check text-emerald-400": !row()?.isError,
+                  "i-lucide-circle-alert text-rose-400":
+                    row()?.isError === true,
+                }}
+              />
+            }
+          >
+            <span class="inline-flex" role="img" aria-label="Running">
               <Spinner />
-              <span class="text-sm text-amber-400">Running</span>
-            </Show>
-          </div>
-          <Show when={row()?.view.title}>
-            {(title) => (
-              <div class="text-sm text-neutral-400">
-                <Body blocks={title()} />
+            </span>
+          </Show>
+          <Show
+            when={job()}
+            fallback={
+              <div class="min-w-0 flex-1 truncate text-neutral-400">
+                <Show when={row()?.view.title} fallback="Subagent">
+                  {(title) => <Body blocks={title()} />}
+                </Show>
               </div>
+            }
+          >
+            {(active) => (
+              <>
+                <span class="shrink-0 font-bold">{active().handle}</span>
+                <span class="min-w-0 flex-1 truncate text-neutral-400">
+                  <Show when={JobLine.context(active())[0]}>
+                    {(context) => <SpanText span={context()} />}
+                  </Show>
+                </span>
+                <span class="shrink-0 tabular-nums text-neutral-400">
+                  {Format.formatElapsed(now() - active().startedAt)}
+                </span>
+              </>
             )}
           </Show>
         </div>

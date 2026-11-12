@@ -1,4 +1,4 @@
-import { createEffect, createMemo, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, onCleanup, onSettled, Show } from "solid-js";
 
 import type { ChangeSummary } from "#protocol/Diff";
 import { CommitActions } from "../diff/CommitActions";
@@ -23,8 +23,10 @@ export function FilesView(props: {
 }) {
   const wide = createMediaQuery(DESKTOP);
 
-  props.files.watch(true);
-  props.diff.watch(true);
+  onSettled(() => {
+    props.files.watch(true);
+    props.diff.watch(true);
+  });
   onCleanup(() => {
     props.files.watch(false);
     props.diff.watch(false);

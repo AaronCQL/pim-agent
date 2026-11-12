@@ -30,6 +30,30 @@ describe("Highlight.tokenize", () => {
     ]);
   });
 
+  test.each(["typescript", "javascript"])(
+    "%s loads its JSX markup grammar without a separate XML request",
+    async (lang) => {
+      const source =
+        'const view = (\n  <div class="panel">\n    <span>Hello</span>\n  </div>\n);';
+      const lines = await tokenized(source, lang);
+      const tokens = lines.flat();
+
+      expect(text(lines)).toEqual(source.split("\n"));
+      expect(tokens.find((token) => token.text === "div")?.role).toBe(
+        "keyword"
+      );
+      expect(tokens.find((token) => token.text === "class")?.role).toBe(
+        "variable"
+      );
+      expect(tokens.find((token) => token.text === '"panel"')?.role).toBe(
+        "string"
+      );
+      expect(tokens.find((token) => token.text === "span")?.role).toBe(
+        "keyword"
+      );
+    }
+  );
+
   test("tokens are cut at newlines, and no character is lost", async () => {
     const source = 'const greeting = "hi";\n\nfunction f() {}';
     const lines = await tokenized(source, "typescript");

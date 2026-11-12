@@ -1,5 +1,11 @@
 import { render } from "@solidjs/web";
-import { createEffect, onCleanup, untrack } from "solid-js";
+import {
+  createEffect,
+  getOwner,
+  onCleanup,
+  runWithOwner,
+  untrack,
+} from "solid-js";
 import * as smd from "streaming-markdown";
 
 import { Languages } from "#core/shared/Languages";
@@ -178,6 +184,7 @@ export function Markdown(props: {
   /** Replaces the default `break-words`; two wrap utilities on one element would conflict. */
   readonly wrap?: string;
 }) {
+  const owner = getOwner();
   let host!: HTMLDivElement;
   let written = "";
   let parser: smd.Parser | undefined;
@@ -225,7 +232,7 @@ export function Markdown(props: {
       }
       const open = complete ? undefined : openBlock(host);
       highlightFences(host, open);
-      mountCopyButtons(host, open, disposers);
+      runWithOwner(owner, () => mountCopyButtons(host, open, disposers));
       Diagrams.draw(host, open, disposers, live);
     }
   );

@@ -39,11 +39,11 @@ plugin({
 
 // A Solid diagnostic fails the test that provoked it.
 const diagnostics: string[] = [];
-const { DEV } = await import("solid-js");
-if (DEV === undefined) {
+const { OBSERVE } = await import("solid-js");
+if (OBSERVE === undefined) {
   throw new Error("solid-js resolved to a build with no diagnostics");
 }
-DEV.diagnostics.subscribe((event) => {
+OBSERVE.diagnostics.subscribe((event) => {
   // `info` codes measure cost, not defects.
   if (event.severity === "info") {
     return;

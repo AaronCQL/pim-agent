@@ -151,7 +151,9 @@ test("a running child can be opened, and its rows land under the reader", async 
     await open(host);
 
     const dialog = modal(host);
-    expect(dialog.querySelector("header")!.textContent).toContain("Running");
+    expect(
+      dialog.querySelector("header [aria-label='Running']")
+    ).not.toBeNull();
     expect(dialog.textContent).toContain(SUBAGENT_PROMPT);
     expect(dialog.textContent).not.toContain(SUBAGENT_ANSWER);
 
@@ -164,9 +166,7 @@ test("a running child can be opened, and its rows land under the reader", async 
     expect(dialog.textContent).toContain(CHILD_PATCH_LINE);
     await until(settled, "the delegated call to settle");
     flush();
-    expect(dialog.querySelector("header")!.textContent).not.toContain(
-      "Running"
-    );
+    expect(dialog.querySelector("header [aria-label='Running']")).toBeNull();
   } finally {
     release();
   }
@@ -321,6 +321,7 @@ test("a background job runs in the header until its result, which then speaks fo
     success: true,
   })) as typeof offline.client.send;
   const view = spawnView("call_a", "audit the parser");
+  const startedAt = Date.now() - 83_000;
   const events: readonly ServerEvent[] = [
     {
       type: "attached",
@@ -339,7 +340,13 @@ test("a background job runs in the header until its result, which then speaks fo
       isError: false,
       child: { jobId: "call_a", handle: "j1" },
     },
-    jobs(job("call_a")),
+    jobs(
+      job("call_a", {
+        startedAt,
+        contextTokens: 84_000,
+        contextWindow: 200_000,
+      })
+    ),
   ];
   for (const event of events) {
     offline.ingest(event);
@@ -352,11 +359,29 @@ test("a background job runs in the header until its result, which then speaks fo
     modal(host).querySelector("header")!.textContent ?? "";
 
   expect(modal(host).open).toBe(true);
-  expect(header()).toBe("SubagentRunningj1 ⬝ started");
+  expect(header()).toBe("j142.0%/200K1m 23s");
+  const running = modal(host).querySelector("header [aria-label='Running']")!;
+  expect(running.nextElementSibling?.textContent).toBe("j1");
+
+  offline.ingest(
+    jobs(
+      job("call_a", {
+        startedAt,
+        contextTokens: 144_000,
+        contextWindow: 200_000,
+      })
+    )
+  );
+  flush();
+  expect(header()).toBe("j172.0%/200K1m 23s");
+  expect(modal(host).querySelector("header .text-rose-400")).not.toBeNull();
 
   offline.ingest(jobs());
   offline.ingest(result(2, "call_a", "done"));
   flush();
-  expect(header()).toBe("Subagentj1 ⬝ 2 turns ⬝ $0.04 ⬝ 2.0%/200K");
+  expect(header()).toBe("j1 ⬝ 2 turns ⬝ $0.04 ⬝ 2.0%/200K");
+  expect(
+    modal(host).querySelector("header [aria-label='done']")
+  ).not.toBeNull();
   offline.dispose();
 });

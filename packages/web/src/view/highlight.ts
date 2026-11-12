@@ -104,7 +104,7 @@ const GRAMMARS: Readonly<Record<string, () => Promise<unknown>>> = {
 const [loaded, setLoaded] = createSignal(0);
 
 const registered = new Set<string>();
-const pending = new Set<string>();
+const pending = new Map<string, Promise<void>>();
 
 type Grammar = { readonly default: unknown };
 
@@ -125,6 +125,7 @@ async function load(lang: string): Promise<void> {
   const [core, module] = await Promise.all([
     hljs ?? import("highlight.js/lib/core").then((core) => core.default),
     grammar(),
+    lang === "javascript" || lang === "typescript" ? request("xml") : undefined,
   ]);
 
   hljs = core;
@@ -134,13 +135,15 @@ async function load(lang: string): Promise<void> {
   setLoaded((version) => version + 1);
 }
 
-function request(lang: string): void {
-  if (pending.has(lang)) {
-    return;
+function request(lang: string): Promise<void> {
+  const existing = pending.get(lang);
+  if (existing !== undefined) {
+    return existing;
   }
 
-  pending.add(lang);
-  void load(lang).catch(() => {});
+  const loading = load(lang).catch(() => {});
+  pending.set(lang, loading);
+  return loading;
 }
 
 /** One token list per line. Pass whole blocks: multi-line comments and strings need both ends. */
@@ -155,7 +158,7 @@ function tokenize(
   }
 
   if (hljs === undefined || !registered.has(lang)) {
-    request(lang);
+    void request(lang);
     return plain(code);
   }
 
