@@ -4,6 +4,7 @@ import type { ProcOwner } from "../../shared/Proc";
 import { StringEnum } from "../../shared/StringEnum";
 import type { SubagentDetails } from "./subagent";
 import type { JobView } from "./SubagentJobs";
+import type { SubagentResultDetails } from "./SubagentResult";
 
 export const SUBAGENT_ACTIONS = ["spawn", "status", "stop", "steer"] as const;
 
@@ -12,7 +13,7 @@ export type SubagentAction = (typeof SUBAGENT_ACTIONS)[number];
 export const subagentSchema = Type.Object({
   action: StringEnum(SUBAGENT_ACTIONS, {
     description:
-      "spawn: start a task. status: list running jobs, or detail job `id`. stop: stop job `id`. steer: send job `id` a message.",
+      "spawn: start a task. status: list running jobs, or detail job `id`. stop: stop job `id` and return its result directly. steer: send job `id` a message.",
   }),
   prompt: Type.Optional(
     Type.String({
@@ -73,6 +74,7 @@ export type StopDetails = {
   readonly action: "stop";
   readonly jobIds: readonly string[];
   readonly reason: string;
+  readonly result?: SubagentResultDetails;
 };
 
 export type SteerDetails = {

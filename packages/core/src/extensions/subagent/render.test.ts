@@ -279,7 +279,10 @@ describe("subagentView, background jobs", () => {
     ]);
     expect(stop.label).toBe("Subagent");
     expect(AnsiPainter.paint(stop.title, stubTheme)).toEqual([
-      "j1<muted> ⬝ </muted>stop<muted> ⬝ </muted><muted>wrong approach</muted>",
+      "j1<muted> ⬝ </muted>stop",
+    ]);
+    expect(stop.body).toEqual([
+      { kind: "text", text: "Reason: wrong approach" },
     ]);
     expect(steer.label).toBe("Subagent");
     expect(AnsiPainter.paint(steer.title, stubTheme)).toEqual([
@@ -289,6 +292,37 @@ describe("subagentView, background jobs", () => {
       { kind: "markdown", text: "skip docs", echo: true },
     ]);
   });
+
+  test.each(["halfway through the task", "(no text output yet)"])(
+    "a synchronous stop shows its result below the reason: %s",
+    (output) => {
+      const body = `Partial output:\n${output}\nRecent tool calls:\n- Read docs/style.md (done)\n\nNo other jobs running.`;
+      const view = call(
+        { action: "stop", id: "j1", reason: "enough" },
+        {
+          action: "stop",
+          jobIds: ["call-1"],
+          reason: "enough",
+          result: {
+            ...baseDetails,
+            jobId: "call-1",
+            handle: "j1",
+            prompt: "task",
+            state: "stopped",
+          },
+        },
+        `[subagent job j1 stopped by agent: enough]\n${body}`
+      );
+
+      expect(AnsiPainter.paint(view.title, stubTheme)).toEqual([
+        "j1<muted> ⬝ </muted>stop",
+      ]);
+      expect(view.body).toEqual([
+        { kind: "text", text: "Reason: enough" },
+        { kind: "text", text: body },
+      ]);
+    }
+  );
 
   test("an action still running, or one that failed, keeps its own label and title", () => {
     const view = call({ action: "status", id: "j1" });

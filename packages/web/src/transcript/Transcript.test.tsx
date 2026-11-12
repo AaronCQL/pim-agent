@@ -508,7 +508,8 @@ describe("background subagents", () => {
     ]);
 
     expect(host.textContent).toContain("Subagent:j1 ⬝ status");
-    expect(host.textContent).toContain("Subagent:j1 ⬝ stop ⬝ wrong file");
+    expect(host.textContent).toContain("Subagent:j1 ⬝ stop");
+    expect(host.textContent).toContain("Reason: wrong file");
     expect(host.textContent).toContain("Subagent:j1 ⬝ steer");
     expect(openers(host)).toHaveLength(1);
     openers(host)[0]!.click();

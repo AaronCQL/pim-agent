@@ -136,13 +136,12 @@ async function stop(
     reason: input.reason,
   });
   return {
-    content: text(
-      `Stopped ${result.details.handle} (${input.reason}); its result follows.`
-    ),
+    content: text(result.content),
     details: {
       action: "stop",
       jobIds: [result.details.jobId],
       reason: input.reason,
+      result: result.details,
     },
   };
 }

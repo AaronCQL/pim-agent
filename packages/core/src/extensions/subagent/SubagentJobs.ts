@@ -208,7 +208,7 @@ export class SubagentJobs {
     return this.detail(this.find(parentSessionId, ref));
   }
 
-  /** Stops the job `ref` names. Resolves to its result, at the latest once the grace runs out. */
+  /** Stops the job `ref` names. Agent stops return their result only here; user stops also queue it. Bounded by the grace period. */
   public async stop(
     parentSessionId: string,
     ref: string,
@@ -409,7 +409,13 @@ export class SubagentJobs {
     );
     job.result = result;
     job.settled.resolve(result);
-    this.hold(parentSessionId, result, job.stop === undefined);
+    if (job.stop?.by === "agent") {
+      parent.pending.delete(job.id);
+      this.prune(parentSessionId);
+      this.drainChanged();
+    } else {
+      this.hold(parentSessionId, result, job.stop === undefined);
+    }
     this.emit(parentSessionId);
     return result;
   }

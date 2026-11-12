@@ -40,12 +40,12 @@ function key(message: JobMessage): string {
 
 /** A result covers its job's notices too, and a notice those of lower levels. */
 function covers(entry: SessionEntry, message: JobMessage): boolean {
-  if (entry.type !== "custom_message") {
-    return false;
-  }
   const jobId = message.details.jobId;
   if (SubagentResult.jobIdOf(entry) === jobId) {
     return true;
+  }
+  if (entry.type !== "custom_message") {
+    return false;
   }
   const wanted = SubagentNotice.detailsOf(message);
   const landed = SubagentNotice.detailsOf(entry);

@@ -160,13 +160,10 @@ function spawnedView(details: SpawnDetails): ToolView {
 function actionView(
   action: Exclude<SubagentAction, "spawn">,
   call: SubagentArgs,
-  result: AgentToolResult<unknown> | undefined,
+  result: AgentToolResult<SubagentToolDetails | undefined> | undefined,
   isPartial: boolean
 ): ToolView {
-  const text =
-    result === undefined || action === "steer"
-      ? ""
-      : Renderer.firstText(result);
+  const text = actionText(action, result);
   const reason = action === "stop" ? call.reason : undefined;
   return {
     label: "Subagent",
@@ -175,15 +172,37 @@ function actionView(
     title: line([
       ...(call.id === undefined ? [] : [{ text: call.id }]),
       { text: action },
-      ...(reason === undefined
-        ? []
-        : [{ text: reason, tone: "muted" as const }]),
     ]),
     body: [
+      ...(reason === undefined
+        ? []
+        : [{ kind: "text" as const, text: `Reason: ${reason}` }]),
       ...(action === "steer" ? echo(call.message) : []),
       ...(text === "" ? [] : [{ kind: "text" as const, text }]),
     ],
   };
+}
+
+function actionText(
+  action: Exclude<SubagentAction, "spawn">,
+  result: AgentToolResult<SubagentToolDetails | undefined> | undefined
+): string {
+  if (result === undefined || action === "steer") {
+    return "";
+  }
+  const text = Renderer.firstText(result);
+  const details = result.details;
+  if (
+    action === "stop" &&
+    details !== undefined &&
+    "action" in details &&
+    details.action === "stop"
+  ) {
+    return details.result === undefined
+      ? ""
+      : text.split("\n").slice(1).join("\n").trim();
+  }
+  return text;
 }
 
 function labelTone(

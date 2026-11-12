@@ -303,8 +303,8 @@ describe("subagent tool, in the background", () => {
     await jobs.stopAll(PARENT, { by: "user" });
   });
 
-  test("stop names what it stopped; the partial output comes with the result", async () => {
-    const { call, delivered, spawn } = withJobs();
+  test("stop returns the partial output directly without a separate delivery", async () => {
+    const { call, delivered, spawn, jobs } = withJobs();
     const session = await spawn("call-1");
     session.emit({
       type: "message_end",
@@ -317,19 +317,17 @@ describe("subagent tool, in the background", () => {
       reason: "wrong approach",
     });
 
-    expect(textOf(result)).toBe(
-      "Stopped j1 (wrong approach); its result follows."
+    expect(textOf(result)).toStartWith(
+      "[subagent job j1 stopped by agent: wrong approach]\nPartial output:\nso far"
     );
-    expect(result.details).toEqual({
+    expect(result.details).toMatchObject({
       action: "stop",
       jobIds: ["call-1"],
       reason: "wrong approach",
+      result: { jobId: "call-1", state: "stopped" },
     });
-    await until(() => delivered.length === 1, "the result");
-    expect(delivered[0]?.result.content).toStartWith(
-      "[subagent job j1 stopped by agent: wrong approach]\nPartial output:\nso far"
-    );
-    expect(delivered[0]?.wake).toBe(false);
+    expect(jobs.hasPending(PARENT)).toBe(false);
+    expect(delivered).toEqual([]);
   });
 
   test("a call with a prompt and no action is a spawn, as older sessions taught", async () => {
@@ -522,15 +520,14 @@ describe("subagent delivery at turn boundaries", () => {
     }
   );
 
-  test("a result that does not wake is appended without continuing the run", async () => {
+  test("an agent stop leaves no result for the next turn boundary", async () => {
     const { boundary, call, spawn } = withJobs({ busy: () => true });
     await spawn("call-1");
     await call("s1", { action: "stop", id: "j1", reason: "enough" });
 
     const proposal = await boundary("turn_end");
 
-    expect(proposal?.entries).toHaveLength(1);
-    expect(proposal?.continue).toBeUndefined();
+    expect(proposal).toBeUndefined();
   });
 
   test.each(["aborted", "error"])(

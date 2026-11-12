@@ -346,19 +346,13 @@ describe("SubagentJobs", () => {
 
     await held("late");
     await jobs.stop(PARENT, "late", { by: "agent" });
-    expect(jobs.due(PARENT, () => "due").map((d) => d.wake)).toEqual([
-      true,
-      false,
-    ]);
+    expect(jobs.due(PARENT, () => "due").map((d) => d.wake)).toEqual([true]);
 
     await jobs.stopAll(PARENT, { by: "user" });
-    expect(jobs.due(PARENT, () => "due").map((d) => d.wake)).toEqual([
-      false,
-      false,
-    ]);
+    expect(jobs.due(PARENT, () => "due").map((d) => d.wake)).toEqual([false]);
   });
 
-  test("stop by handle resolves to the partial result with its tool work, delivered without waking", async () => {
+  test("stop by handle returns partial output and tool work without separate delivery", async () => {
     const { jobs, deliveries, held, attach } = setup();
     attach();
     const session = await held("call-1");
@@ -395,8 +389,8 @@ describe("SubagentJobs", () => {
         "No other jobs running.",
       ].join("\n")
     );
-    await until(() => deliveries.length === 1, "the delivery");
-    expect(deliveries[0]).toEqual({ result, wake: false });
+    expect(deliveries).toEqual([]);
+    expect(jobs.hasPending(PARENT)).toBe(false);
     expect(jobs.hasRunning(PARENT)).toBe(false);
   });
 
@@ -782,6 +776,22 @@ describe("SubagentJobs context notice", () => {
     ).toEqual(["subagent_result"]);
   });
 
+  test("an agent stop discards a pending notice instead of delivering it or a separate result", async () => {
+    const { jobs, delivered, defer, start } = noticing();
+    defer(true);
+    const session = await start();
+    session.fill(500_000);
+    await until(() => delivered.length === 1, "the notice's delivery");
+    const empty = { getBranch: () => [], getEntries: () => [] };
+    expect(delivered[0]?.due(empty)).toBe(true);
+
+    await jobs.stop(PARENT, "call-1", { by: "agent", reason: "enough" });
+
+    expect(delivered[0]?.due(empty)).toBe(false);
+    expect(jobs.hasPending(PARENT)).toBe(false);
+    await jobs.stopAll(PARENT, { by: "user" });
+  });
+
   test("a job being stopped says nothing", async () => {
     const grace = Promise.withResolvers<void>();
     const { jobs, notices, spawn } = noticing({ grace: () => grace.promise });
@@ -793,8 +803,10 @@ describe("SubagentJobs context notice", () => {
     await until(() => stubborn.abortCalls === 1, "the stop");
     stubborn.fill(500_000);
     grace.resolve();
-    await stopping;
+    const result = await stopping;
 
+    expect(result.details.state).toBe("stopped");
+    expect(jobs.hasPending(PARENT)).toBe(false);
     expect(notices()).toEqual([]);
   });
 });

@@ -391,16 +391,13 @@ function row(stats: string, elapsed: string, width = WIDTH): string {
 }
 
 describe("delivery", () => {
-  test("a job stopped by the agent is appended without a turn", async () => {
+  test("a job stopped by the agent needs no separate delivery or turn", async () => {
     const harness = await started();
     await harness.spawn("call-1");
 
     await harness.jobs.stop("s1", "call-1", { by: "agent", reason: "done" });
-    await harness.delivered();
-
-    expect(harness.sent).toEqual([
-      { session: "s1", jobId: "call-1", wake: false },
-    ]);
+    expect(harness.jobs.hasPending("s1")).toBe(false);
+    expect(harness.sent).toEqual([]);
     expect(harness.turns()).toBe(0);
   });
 

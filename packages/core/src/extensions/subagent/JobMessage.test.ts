@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { JobMessage } from "./JobMessage";
 import { SubagentNotice } from "./SubagentNotice";
-import type { SubagentResultMessage } from "./SubagentResult";
+import { SubagentResult, type SubagentResultMessage } from "./SubagentResult";
 
 const notice = SubagentNotice.of(
   {
@@ -49,6 +49,29 @@ function entry(message: object) {
 }
 
 describe("JobMessage.placement", () => {
+  test("a synchronous stop covers the result and notices and marks the job answered", () => {
+    const stop = {
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolName: "subagent",
+        details: { action: "stop", result: result.details },
+      },
+    } as const;
+    expect(SubagentResult.jobIdOf(stop as never)).toBe("call-1");
+    for (const message of [result, notice, full]) {
+      expect(JobMessage.placement(session([spawn, stop]), message)).toBe(
+        "landed"
+      );
+    }
+    expect(
+      SubagentResult.jobIdOf({
+        ...stop,
+        message: { ...stop.message, isError: true },
+      } as never)
+    ).toBeUndefined();
+  });
+
   test("a notice is due until it, or its job's result, is on the branch", () => {
     expect(JobMessage.placement(session([spawn]), notice)).toBe("due");
     expect(JobMessage.placement(session([spawn, entry(notice)]), notice)).toBe(

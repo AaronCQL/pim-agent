@@ -227,9 +227,25 @@ function detailsOf(
     : undefined;
 }
 
-/** The job a `subagent_result` entry reports, if it is one. */
+/** The job a result entry reports, whether delivered separately or by stop. */
 function jobIdOf(entry: SessionEntry): string | undefined {
-  return entry.type === "custom_message" ? detailsOf(entry)?.jobId : undefined;
+  if (entry.type === "custom_message") {
+    return detailsOf(entry)?.jobId;
+  }
+  if (
+    entry.type !== "message" ||
+    entry.message.role !== "toolResult" ||
+    entry.message.toolName !== "subagent" ||
+    entry.message.isError
+  ) {
+    return undefined;
+  }
+  const details = Json.asRecord(entry.message.details);
+  const result =
+    details?.["action"] === "stop"
+      ? Json.asRecord(details["result"])
+      : undefined;
+  return typeof result?.["jobId"] === "string" ? result["jobId"] : undefined;
 }
 
 export const SubagentResult = {
