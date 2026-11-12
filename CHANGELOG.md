@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.18.0
+
+### Features
+
+- Run background subagents on every interactive surface, with live job lists and `status`, `steer` and `stop` actions. Results wake the parent; print mode stays synchronous (125266c)
+- Notify the parent at 40% and 70% subagent context usage, with colour-coded indicators and clickable job logs in the browser (c6e4ad7, e1ee26f)
+- Save subagent model and reasoning effort per session; configure both main agent and subagents from the web model pill (c8de9d1)
+- Web: browse and view working-tree files alongside the diff viewer (552c1df)
+- Web: swipe to open and close the sessions drawer on mobile (b4ca30b)
+- Web: click quotes to copy them; render subagent prompts and steering messages as dimmed Markdown (7194774, b1abc4a)
+
+### Bug Fixes
+
+- Web: reconnect after a phone wakes from sleep, even with a stale connection (d337aa2)
+- Web: prevent Gboard's Enter handling from reopening autocomplete and selecting an unwanted suggestion (6903dfd)
+- Allow a parent woken by a subagent's context notice to spawn subagents again (947fcbe)
+- Return stopped subagents' results directly from `stop` and simplify their tool cards (3f1bd5b)
+- Correct context-notice hand-off instructions and reject malformed statistics (9c2d0b7)
+- Web: clarify restart progress and warnings; improve toasts and pause dismissal on hover or focus (00b7d4f)
+
+### Improvements
+
+- Upgrade pi to 1.5.2 and refresh dependencies; simplify argument validation and treat optional `null` fields as omitted (dcba0ed, 49ef199)
+- Consolidate subagent accounting, delivery and tests; document delivery races (b8952fc, 87e44e3, f4879f2, 567bb6f, 4b971fb)
+
 ## v0.17.1
 
 ### Bug Fixes
