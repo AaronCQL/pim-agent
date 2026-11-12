@@ -77,8 +77,10 @@ test("settings restarts once, shows progress, and recovers from failure", () => 
   const host = paint();
   const restart = button(host);
   expect(restart.disabled).toBe(false);
+  expect(restart.textContent).toBe("Update & Restart");
   restart.click();
   flush();
+  expect(restart.textContent).toBe("Updating…");
   expect(commands.filter(({ type }) => type === "reload")).toEqual([
     { type: "reload" },
   ]);
@@ -92,7 +94,17 @@ test("settings restarts once, shows progress, and recovers from failure", () => 
     label: "build the web client",
   });
   flush();
-  expect(restart.textContent).toContain("build the web client");
+  expect(restart.textContent).toBe("Updating…");
+  store.ingest({
+    type: "update_state",
+    phase: "restarting",
+    from: "1.0.0",
+    to: "1.0.1",
+    skipped: [],
+  });
+  flush();
+  expect(restart.textContent).toBe("Restarting…");
+  expect(restart.disabled).toBe(true);
   store.ingest({
     type: "update_state",
     phase: "failed",
@@ -100,6 +112,7 @@ test("settings restarts once, shows progress, and recovers from failure", () => 
   });
   flush();
   expect(restart.disabled).toBe(false);
+  expect(restart.textContent).toBe("Update & Restart");
   expect(restart.querySelector(".animate-spin")).toBeNull();
 });
 
@@ -202,6 +215,9 @@ test("the shell paints progress and a dismissible result outside the modal", () 
   expect(host.querySelector('[role="status"]')?.textContent).toContain(
     "bun install"
   );
+  expect(
+    host.querySelector('[role="status"]')?.firstElementChild?.textContent
+  ).toContain("Updating…");
   store.ingest({
     type: "update_state",
     phase: "failed",
@@ -209,7 +225,10 @@ test("the shell paints progress and a dismissible result outside the modal", () 
   });
   flush();
   expect(host.querySelector('[role="status"]')?.textContent).toContain(
-    "Update failed: install failed"
+    "Update failed"
+  );
+  expect(host.querySelector('[role="status"]')?.textContent).toContain(
+    "install failed"
   );
   host
     .querySelector<HTMLButtonElement>('[aria-label="Dismiss notification"]')!
@@ -255,12 +274,12 @@ test("the reloaded shell toasts success only after attaching and consumes the in
   store = new SessionStore({ url: harness.url });
   const host = shell();
   expect(host.querySelector('[role="status"]')?.textContent).toContain(
-    "Waiting for server"
+    "Restarting…"
   );
   await store.connect();
   flush();
   expect(host.querySelector('[role="status"]')?.textContent).toContain(
-    "Restarted with pim"
+    "Updated & restarted"
   );
   expect(sessionStorage.getItem(key)).toBeNull();
 });

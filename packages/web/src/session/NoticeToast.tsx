@@ -1,4 +1,4 @@
-import { For, onCleanup, untrack } from "solid-js";
+import { For } from "solid-js";
 
 import { ToastCard, toastAnchor } from "../ui/ToastCard";
 import { NOTICE_CLASSES } from "../view/tokens";
@@ -14,19 +14,12 @@ function Notice(props: {
   const dismiss = (): void => {
     props.onDismiss(props.notice.id);
   };
-  const timer = setTimeout(
-    dismiss,
-    untrack(() => props.dismissMs)
-  );
-  onCleanup(() => {
-    clearTimeout(timer);
-  });
-
   return (
     <ToastCard
-      class={`pointer-events-auto w-full ${NOTICE_CLASSES[props.notice.severity]}`}
+      class={NOTICE_CLASSES[props.notice.severity]}
       dismissLabel="Dismiss notice"
       onDismiss={dismiss}
+      dismissMs={props.dismissMs}
     >
       <span class="line-clamp-3 break-words whitespace-pre-wrap">
         {props.notice.text}

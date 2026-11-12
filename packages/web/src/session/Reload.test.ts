@@ -51,7 +51,7 @@ afterEach(() => {
   mock.restore();
 });
 
-test("intent survives one page reload, preserves the session, and toasts the running versions once until it self-dismisses", () => {
+test("intent survives one page reload, preserves the session, and toasts the result once until it self-dismisses", () => {
   const navigate = mock(() => {});
   const update = new Reload(URL, navigate);
   expect(update.begin(TARGET)).toBe(true);
@@ -59,9 +59,13 @@ test("intent survives one page reload, preserves the session, and toasts the run
   expect(sessionStorage.getItem(KEY)).not.toBeNull();
   update.ingest({ type: "update_state", phase: "step", label: "bun install" });
   flush();
-  expect(update.state.label).toBe("bun install");
+  expect(update.state.label).toBe("Updating…");
+  expect(update.state.detail).toBe("bun install");
 
   update.ingest(RESTARTING);
+  flush();
+  expect(update.state.label).toBe("Restarting…");
+  expect(update.state.detail).toBe("");
   expect(navigate).not.toHaveBeenCalled();
   update.connection("reconnecting");
   update.connection("open");
@@ -80,7 +84,8 @@ test("intent survives one page reload, preserves the session, and toasts the run
   expect(fresh.update.state.pending).toBe(false);
   expect(fresh.update.state.notice).toEqual({
     tone: "success",
-    text: `Restarted with pim ${version}.`,
+    title: "Updated & restarted",
+    text: `Running pim ${version}.`,
   });
   expect(sessionStorage.getItem(KEY)).toBeNull();
   jest.advanceTimersByTime(DISMISS_MS);
@@ -205,7 +210,7 @@ test("refusal and update failure clear intent and cancel the deadline", () => {
   jest.advanceTimersByTime(180_000);
   flush();
   expect(update.state.pending).toBe(false);
-  expect(update.state.notice?.text).toBe("Update failed: shutdown failed");
+  expect(update.state.notice?.text).toBe("shutdown failed");
   expect(sessionStorage.getItem(KEY)).toBeNull();
 });
 
@@ -230,7 +235,7 @@ test("an unsupervised server asks for a manual restart and reports skips", () =>
   expect(navigate).not.toHaveBeenCalled();
 });
 
-test("a note survives navigation and stays a success reporting the handshake, not the promised version", () => {
+test("a skipped update survives navigation as a warning reporting the running version", () => {
   const update = new Reload(URL, () => {});
   update.begin(TARGET);
   update.ingest({
@@ -244,13 +249,14 @@ test("a note survives navigation and stays a success reporting the handshake, no
   const fresh = new Reload(URL);
   fresh.ingest(ATTACHED);
   flush();
-  expect(fresh.state.notice?.tone).toBe("success");
+  expect(fresh.state.notice?.tone).toBe("warning");
+  expect(fresh.state.notice?.title).toBe("Restarted with warnings");
   expect(fresh.state.notice?.text).toContain(`pim ${version}`);
   expect(fresh.state.notice?.text).not.toContain("9.9.9");
   expect(fresh.state.notice?.text).toContain("Skipped git pull: dirty tree");
   jest.advanceTimersByTime(DISMISS_MS);
   flush();
-  expect(fresh.state.notice).toBeUndefined();
+  expect(fresh.state.notice?.title).toBe("Restarted with warnings");
 });
 
 test("a blocking skip warns and stays, because the update did less than it was asked", () => {
@@ -291,7 +297,7 @@ test("timeout clears intent, stops navigation, and is not extended by steps or p
   jest.advanceTimersByTime(10_000);
   flush();
   expect(fresh.state.pending).toBe(false);
-  expect(fresh.state.notice?.text).toContain("timed out");
+  expect(fresh.state.notice?.title).toBe("Restart timed out");
   expect(sessionStorage.getItem(KEY)).toBeNull();
   fresh.ingest(RESTARTING);
   fresh.connection("reconnecting");
@@ -312,7 +318,7 @@ test("expired and malformed intents cannot turn an ordinary attach into success"
   const expired = new Reload(URL);
   expired.ingest(ATTACHED);
   flush();
-  expect(expired.state.notice?.text).toContain("timed out");
+  expect(expired.state.notice?.title).toBe("Restart timed out");
   expect(sessionStorage.getItem(KEY)).toBeNull();
   sessionStorage.setItem(KEY, "not json");
   const malformed = new Reload(URL);

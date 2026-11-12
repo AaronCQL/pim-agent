@@ -15,6 +15,8 @@ export function Toast(props: {
   readonly desktop: boolean;
 }) {
   const state = () => props.update.state;
+  const detail = (): string | undefined =>
+    state().pending ? state().detail : state().notice?.text;
   const tone = (): string => {
     const notice = state().notice;
     return notice === undefined ? "" : TONE_CLASSES[notice.tone];
@@ -25,15 +27,22 @@ export function Toast(props: {
         !state().dismissed && (state().pending || state().notice !== undefined)
       }
     >
-      <ToastCard
-        class={`absolute top-3 z-50 ${toastAnchor(props.desktop)} ${tone()}`}
-        dismissLabel="Dismiss notification"
-        onDismiss={() => props.update.dismiss()}
+      <div
+        class={`pointer-events-none absolute top-3 z-50 flex flex-col ${toastAnchor(props.desktop)}`}
       >
-        <span class="whitespace-pre-wrap">
-          {state().pending ? state().label : state().notice?.text}
-        </span>
-      </ToastCard>
+        <ToastCard
+          class={tone()}
+          dismissLabel="Dismiss notification"
+          onDismiss={() => props.update.dismiss()}
+        >
+          <div>{state().pending ? state().label : state().notice?.title}</div>
+          <Show when={detail()}>
+            <div class="mt-1 whitespace-pre-wrap text-xs text-neutral-350">
+              {detail()}
+            </div>
+          </Show>
+        </ToastCard>
+      </div>
     </Show>
   );
 }
