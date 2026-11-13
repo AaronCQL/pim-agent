@@ -170,19 +170,6 @@ export type Command =
       readonly path: string;
       readonly spans: readonly LineSpan[];
     }
-  /** Repositories below the cwd. */
-  | {
-      readonly id: string;
-      readonly type: "list_repos";
-      readonly sessionId: string;
-    }
-  /** Points this session's git commands at `repo`, a repository root below the cwd; `""` is the cwd. */
-  | {
-      readonly id: string;
-      readonly type: "set_repo";
-      readonly sessionId: string;
-      readonly repo: string;
-    }
   /** Working-tree files, gitignored ones left out. */
   | {
       readonly id: string;
@@ -202,16 +189,12 @@ export type Command =
       readonly type: "checkout";
       readonly sessionId: string;
       readonly branch: string;
-      /** Refused unless it is the session's current `repo`. */
-      readonly repo?: string;
     }
   /** `pull` is fast-forward only; `push` sets the upstream on first publish. */
   | {
       readonly id: string;
       readonly type: "pull" | "push";
       readonly sessionId: string;
-      /** Refused unless it is the session's current `repo`. */
-      readonly repo?: string;
     }
   /** Commits exactly `paths`. Refused mid-turn, like `checkout`. */
   | {
@@ -221,8 +204,6 @@ export type Command =
       readonly message: string;
       /** Include both names of a renamed file. */
       readonly paths: readonly string[];
-      /** Refused unless it is the session's current `repo`. */
-      readonly repo?: string;
     }
   /** `callId` is the parent's tool call, which is also a job's `id`; `sessionId` must be this connection's session. */
   | {

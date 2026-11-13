@@ -1,7 +1,6 @@
 import { lstat, readdir, stat } from "node:fs/promises";
 import { isAbsolute, join, parse, resolve, sep } from "node:path";
 import { FileEnumerator } from "../shared/FileEnumerator";
-import { NestedRepos } from "../shared/NestedRepos";
 import { Paths } from "../shared/Paths";
 import { Pool } from "../shared/Pool";
 
@@ -125,7 +124,7 @@ async function runLoadRelative(
 ): Promise<readonly FileCandidate[]> {
   const spawner = options.gitSpawner ?? defaultGitSpawner;
   const paths =
-    (await listTree(root, 0, { remaining: NestedRepos.LIMIT }, spawner)) ??
+    (await listTree(root, 0, { remaining: NESTED_REPO_LIMIT }, spawner)) ??
     (await FileEnumerator.enumerate(root, {
       includeDotfiles: false,
       includeIgnored: false,
@@ -139,6 +138,7 @@ type RepoListing = {
 };
 
 const NESTED_REPO_DEPTH = 4;
+const NESTED_REPO_LIMIT = 50;
 const NESTED_REPO_CONCURRENCY = 8;
 const GITLINK_MODE = "160000";
 const STAGED_RECORD = /^(\d{6}) [0-9a-f]+ \d\t(.*)$/s;

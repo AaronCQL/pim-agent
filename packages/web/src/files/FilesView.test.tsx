@@ -342,19 +342,20 @@ test("a file that changes on disk is read again in place", async () => {
   expect(build).not.toHaveBeenCalled();
 });
 
-test("a file written outside the selected repository joins the tree once files change", async () => {
+test("a file written in an ignored nested repository joins the tree once files change", async () => {
   const inner = join(repo, "inner");
   await mkdir(inner);
   await makeRepo(inner, ["feat/inner"]);
   await Bun.write(join(repo, ".git/info/exclude"), "inner/\n");
-  await store.setRepo("inner");
+  await Bun.write(join(inner, "notes.md"), "# notes\n");
   const host = await files();
+  press(host, "[data-path='inner']");
 
-  await Bun.write(join(repo, "later.md"), "# later\n");
+  await Bun.write(join(inner, "later.md"), "# later\n");
   store.ingest({ type: "picker_invalidate", scope: "files", cwd: repo });
 
   await settle(
-    () => treeRows(host).includes("later.md"),
+    () => treeRows(host).includes("inner/later.md"),
     "the new file in the tree"
   );
 });

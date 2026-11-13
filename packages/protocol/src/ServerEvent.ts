@@ -307,9 +307,7 @@ export type EphemeralEvent =
       /** Context filled, 0–100. Absent until a turn has reported usage. */
       readonly contextPercent?: number;
       readonly contextWindow?: number;
-      /** The repository git commands run in, relative to `cwd`; absent when it is `cwd`. */
-      readonly repo?: string;
-      /** Absent outside a git repository; this and the fields below describe `repo`. */
+      /** Absent outside a git repository. */
       readonly branch?: string;
       readonly dirtyCount?: number;
       readonly ahead?: number;
@@ -425,8 +423,6 @@ export type ResponseEvent = {
   readonly fileDiff?: FileDiff;
   /** For `read_lines`. */
   readonly fileLines?: FileLines;
-  /** For `list_repos`: paths relative to the cwd, sorted. */
-  readonly repos?: readonly string[];
   /** For `list_files`. */
   readonly files?: FileList;
   /** For `read_file`. */

@@ -38,18 +38,13 @@ async function locate(cwd: string, path: string): Promise<string> {
   return target;
 }
 
-/** The file browser's walk of `cwd`: dotfiles included, skipping what git ignores but entering a nested repository even when ignored. */
-function walk(cwd: string, limit: number) {
-  return FileEnumerator.walk(cwd, {
+/** Every file in `cwd`: dotfiles included, skipping what git ignores but entering a nested repository even when ignored. */
+async function list(cwd: string): Promise<FileList> {
+  const { files } = await FileEnumerator.walk(cwd, {
     includeDotfiles: true,
     includeNestedRepos: true,
-    limit,
+    limit: LIST_LIMIT + 1,
   });
-}
-
-/** Every file the file browser's walk of `cwd` finds. */
-async function list(cwd: string): Promise<FileList> {
-  const { files } = await walk(cwd, LIST_LIMIT + 1);
   const sorted = files.toSorted();
   return sorted.length > LIST_LIMIT
     ? { paths: sorted.slice(0, LIST_LIMIT), truncated: true }
@@ -79,7 +74,6 @@ async function read(cwd: string, path: string): Promise<FileContent> {
 
 export const RepoFiles = {
   list,
-  walk,
   read,
   locate,
   LIST_LIMIT,

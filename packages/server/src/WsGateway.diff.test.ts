@@ -33,8 +33,8 @@ async function statusOf(): Promise<string> {
   return stdout.trim();
 }
 
-async function connect(): Promise<ProbeClient> {
-  const probe = new ProbeClient({ url: gateway.url, cwd });
+async function connect(at = cwd): Promise<ProbeClient> {
+  const probe = new ProbeClient({ url: gateway.url, cwd: at });
   probes.push(probe);
   expect((await probe.connect()).success).toBe(true);
   return probe;
@@ -291,6 +291,62 @@ test("a commit is refused while the session's agent is mid-turn", async () => {
       })
     ).success
   ).toBe(true);
+});
+
+test("an agent working below the cwd holds its repository too", async () => {
+  await mkdir(join(cwd, "sub"));
+  const probe = await connect();
+  const worker = await connect(join(cwd, "sub"));
+  const mark = probe.events.length;
+  const release = model.holdTurn();
+  try {
+    await worker.prompt("edit below");
+    await probe.waitFor(
+      (event) => event.type === "session_state" && event.repoBusy === true,
+      { from: mark }
+    );
+
+    const refused = await probe.send({
+      type: "commit",
+      sessionId: sessionOf(probe),
+      message: "under its feet",
+      paths: ["sp ace.txt"],
+    });
+
+    expect(refused.success).toBe(false);
+    expect(refused.error).toContain('"edit below" (mid-turn) is working');
+  } finally {
+    release();
+  }
+  await until(
+    () => registry.peek(sessionOf(worker))?.status === "idle",
+    "the turn to end"
+  );
+});
+
+test("read_lines and file_diff never read a path that climbs out of the cwd", async () => {
+  await Bun.write(join(tmp, "secret.txt"), "TOP SECRET\n");
+  const probe = await connect();
+
+  for (const path of ["../secret.txt", "sub/../../secret.txt"]) {
+    const lines = await probe.send({
+      type: "read_lines",
+      sessionId: sessionOf(probe),
+      base: { kind: "worktree" },
+      path,
+      spans: [{ start: 1, end: 5 }],
+    });
+    const diff = await probe.send({
+      type: "file_diff",
+      sessionId: sessionOf(probe),
+      base: { kind: "worktree" },
+      path,
+    });
+
+    expect(lines.success).toBe(false);
+    expect(diff.success).toBe(false);
+    expect(JSON.stringify([lines, diff])).not.toContain("SECRET");
+  }
 });
 
 test("list_files answers the working tree's files", async () => {

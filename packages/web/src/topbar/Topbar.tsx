@@ -1,11 +1,4 @@
-import {
-  createEffect,
-  createSignal,
-  onCleanup,
-  Show,
-  untrack,
-  type Accessor,
-} from "solid-js";
+import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 
 import { Format } from "#core/shared/Format";
 import { abbreviateHome, baseName } from "../format";
@@ -15,11 +8,8 @@ import { CHIP_BUTTON, CHIP_GROUP, CHIP_SEGMENT } from "../ui/classes";
 import { Fitted } from "../ui/Fitted";
 import { BranchMenu } from "./BranchMenu";
 import { DirectoryModal } from "./DirectoryModal";
-import { RepoMenu } from "./RepoMenu";
 
 const GRACE_MS = 1500;
-
-const JOINED = "border-l border-neutral-750";
 
 function changesLabel(count: number, reviewing: boolean, git: boolean): string {
   if (reviewing) {
@@ -50,14 +40,10 @@ export function Topbar(props: {
   );
   const paths = (cwd: string): readonly string[] =>
     props.compact ? [baseName(cwd)] : [abbreviateHome(cwd), baseName(cwd)];
-  const repos = createRepos(props.store);
-  const choosesRepo = (): boolean =>
-    (repos.found()?.length ?? 0) > 0 || props.store.state.repo !== "";
 
   const wake = (): void => {
     if (document.visibilityState === "visible") {
       void props.store.refreshGit();
-      repos.refresh();
     }
   };
   document.addEventListener("visibilitychange", wake);
@@ -117,28 +103,19 @@ export function Topbar(props: {
       </Show>
 
       <div class={CHIP_GROUP}>
-        <Show when={choosesRepo()}>
-          <RepoMenu
-            store={props.store}
-            repos={repos.found()}
-            onOpen={repos.refresh}
-            class="rounded-l-lg"
-          />
-        </Show>
         <Show when={props.store.state.branch}>
           {(branch) => (
             <BranchMenu
               store={props.store}
               branch={branch()}
               compact={props.compact}
-              class={choosesRepo() ? JOINED : "rounded-l-lg"}
             />
           )}
         </Show>
         <button
           type="button"
           aria-pressed={props.reviewing ? "true" : "false"}
-          class={`${CHIP_SEGMENT} shrink-0 ${props.store.state.branch || choosesRepo() ? `rounded-r-lg ${JOINED}` : "rounded-lg"}`}
+          class={`${CHIP_SEGMENT} shrink-0 ${props.store.state.branch ? "rounded-r-lg border-l border-neutral-750" : "rounded-lg"}`}
           aria-label={changes()}
           title="Files and Diffs"
           onClick={props.onToggleDiff}
@@ -192,66 +169,4 @@ function createOffline(
     clearTimeout(timer);
   });
   return offline;
-}
-
-/** Repositories below the attached session's cwd, read again when the cwd moves or a turn that changed files settles; refreshes during a read fold into one more. */
-function createRepos(store: SessionStore): {
-  readonly found: Accessor<readonly string[] | undefined>;
-  readonly refresh: () => void;
-} {
-  const [found, setFound] = createSignal<readonly string[]>();
-  let ticket = 0;
-  let pending: number | undefined;
-  let again = false;
-  const refresh = (): void => {
-    const cwd = untrack(() => store.state.cwd);
-    if (untrack(() => store.state.sessionId) === "" || cwd === "") {
-      return;
-    }
-    if (pending === ticket) {
-      again = true;
-      return;
-    }
-    const mine = ticket;
-    pending = mine;
-    again = false;
-    void store
-      .listRepos()
-      .then(
-        (repos) => {
-          if (mine === ticket && untrack(() => store.state.cwd) === cwd) {
-            setFound(repos);
-          }
-        },
-        () => undefined
-      )
-      .then(() => {
-        if (mine === ticket) {
-          pending = undefined;
-          if (again) {
-            refresh();
-          }
-        }
-      });
-  };
-  createEffect(
-    () => (store.state.sessionId === "" ? "" : store.state.cwd),
-    () => {
-      ticket += 1;
-      setFound(undefined);
-      refresh();
-    }
-  );
-  let read = untrack(() => store.state.filesRevision);
-  createEffect(
-    () =>
-      store.state.agent === "idle" ? store.state.filesRevision : undefined,
-    (revision) => {
-      if (revision !== undefined && revision !== read) {
-        read = revision;
-        refresh();
-      }
-    }
-  );
-  return { found, refresh };
 }

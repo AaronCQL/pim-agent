@@ -7,7 +7,6 @@ import { Attachments } from "#core/attachments/Attachments";
 import { Directories } from "#core/shared/Directories";
 import { Git } from "#core/shared/Git";
 import { GitMonitor, type GitRun } from "#core/shared/GitMonitor";
-import { NestedRepos } from "#core/shared/NestedRepos";
 import { Paths } from "#core/shared/Paths";
 import { PiExtensions, type ExtensionScope } from "#core/shared/PiExtensions";
 import { RepoDiff } from "#core/shared/RepoDiff";
@@ -24,10 +23,9 @@ import type { Command } from "#protocol/Command";
 import type { ResponseEvent, ServerEvent } from "#protocol/ServerEvent";
 import { ClientConnection } from "./ClientConnection";
 import { Reloader } from "./Reloader";
-import { RepoPaths } from "./RepoPaths";
 import { SessionCatalogue } from "./SessionCatalogue";
 import { SessionProjection } from "./SessionProjection";
-import { SessionStream, type Repository } from "./SessionStream";
+import { SessionStream } from "./SessionStream";
 import { StaticClient } from "./StaticClient";
 import { AttachmentEndpoint } from "./AttachmentEndpoint";
 import { ImageEndpoint } from "./ImageEndpoint";
@@ -396,53 +394,41 @@ export class WsGateway {
         await stream.refreshGit(command.fetch === true);
         return {};
       }
-      case "list_repos":
-        return {
-          repos: await NestedRepos.find(
-            this.requireStream(connection).host.cwd
-          ),
-        };
-      case "set_repo":
-        await this.requireStream(connection).setRepo(command.repo);
-        return {};
       case "list_branches":
         return {
           branches: await Git.listBranches(
-            (await this.requireStream(connection).repository()).dir
+            this.requireStream(connection).host.cwd
           ),
         };
       // Read-only, so allowed while `repoBusy`.
-      case "list_changes": {
-        const { repo, dir } = await this.requireStream(connection).repository();
+      case "list_changes":
         return {
-          changes: RepoPaths.changes(
-            repo,
-            await RepoDiff.listChanges(dir, command.base, this.git)
+          changes: await RepoDiff.listChanges(
+            this.requireStream(connection).host.cwd,
+            command.base,
+            this.git
           ),
         };
-      }
-      case "file_diff": {
-        const { repo, dir } = await this.requireStream(connection).repository();
+      case "file_diff":
         return {
-          fileDiff: await RepoPaths.located(repo, command.path, (path) =>
-            RepoDiff.fileDiff(
-              dir,
-              command.base,
-              path,
-              this.git,
-              command.context
-            )
+          fileDiff: await RepoDiff.fileDiff(
+            this.requireStream(connection).host.cwd,
+            command.base,
+            command.path,
+            this.git,
+            command.context
           ),
         };
-      }
-      case "read_lines": {
-        const { repo, dir } = await this.requireStream(connection).repository();
+      case "read_lines":
         return {
-          fileLines: await RepoPaths.located(repo, command.path, (path) =>
-            RepoDiff.readLines(dir, command.base, path, command.spans, this.git)
+          fileLines: await RepoDiff.readLines(
+            this.requireStream(connection).host.cwd,
+            command.base,
+            command.path,
+            command.spans,
+            this.git
           ),
         };
-      }
       case "list_files":
         return {
           files: await RepoFiles.list(this.requireStream(connection).host.cwd),
@@ -455,11 +441,8 @@ export class WsGateway {
           ),
         };
       case "checkout":
-        return await this.runGit(
-          this.requireStream(connection),
-          command.repo,
-          true,
-          ({ dir }) => Git.checkout(dir, command.branch)
+        return await this.runGit(this.requireStream(connection), true, (cwd) =>
+          Git.checkout(cwd, command.branch)
         );
       case "commit":
         return await this.commit(this.requireStream(connection), command);
@@ -467,9 +450,8 @@ export class WsGateway {
       case "push":
         return await this.runGit(
           this.requireStream(connection),
-          command.repo,
           command.type === "pull",
-          ({ dir }) => (command.type === "pull" ? Git.pull : Git.push)(dir)
+          command.type === "pull" ? Git.pull : Git.push
         );
       case "unwatch_subagent":
         connection.unwatchSubagent(command.callId);
@@ -669,26 +651,20 @@ export class WsGateway {
     this.catalogue.watch(this.connections.size > 0);
   }
 
-  /** Runs in the session's repository, refused when it is not `expected`; `movesTree` operations are refused while an agent working in or around it is mid-turn or running subagents. */
+  /** `movesTree` operations are refused while an agent working in or around the cwd is mid-turn or running subagents. */
   private async runGit<T = never>(
     stream: SessionStream,
-    expected: string | undefined,
     movesTree: boolean,
-    operation: (where: Repository) => Promise<GitRun<T>>
+    operation: (cwd: string) => Promise<GitRun<T>>
   ): Promise<Outcome & { readonly value?: T }> {
-    const where = await stream.repository();
-    if (expected !== undefined && expected !== where.repo) {
-      return {
-        error: `the session's repository changed to ${RepoPaths.label(where.repo)}`,
-      };
-    }
-    const busy = movesTree ? this.busyIn(where.dir) : [];
+    const cwd = stream.host.cwd;
+    const busy = movesTree ? this.busyIn(cwd) : [];
     if (busy.length > 0) {
       return {
-        error: `${await this.busyText(busy)} working in ${where.dir}; wait for ${busy.length > 1 ? "them" : "it"} to finish`,
+        error: `${await this.busyText(busy)} working in ${cwd}; wait for ${busy.length > 1 ? "them" : "it"} to finish`,
       };
     }
-    const result = await this.git.run<T>(where.dir, () => operation(where));
+    const result = await this.git.run<T>(cwd, () => operation(cwd));
     if (!result.ok) {
       return { error: result.error };
     }
@@ -701,12 +677,11 @@ export class WsGateway {
   ): Promise<Outcome> {
     const { value, ...outcome } = await this.runGit<string>(
       stream,
-      command.repo,
       true,
-      async ({ repo, dir }) => {
-        const result = await Git.commit(dir, {
+      async (cwd) => {
+        const result = await Git.commit(cwd, {
           message: command.message,
-          paths: command.paths.map((path) => RepoPaths.inward(repo, path)),
+          paths: command.paths,
         });
         return result.ok
           ? { ok: true, value: result.sha }
@@ -774,7 +749,7 @@ export class WsGateway {
   /** Pushes fresh state to each session, bar `source`, whose busy flag flipped. */
   private syncRepoBusy(source?: string): void {
     for (const [sessionId, stream] of this.streams) {
-      const busy = this.repoBusy(stream.gitDir);
+      const busy = this.repoBusy(stream.host.cwd);
       if (this.busyStreams.has(sessionId) === busy) {
         continue;
       }
@@ -907,7 +882,7 @@ export class WsGateway {
     }
     const stream = new SessionStream(id, host, path, {
       git: this.git,
-      repoBusy: (dir) => this.repoBusy(dir),
+      repoBusy: () => this.repoBusy(host.cwd),
       pollMs: this.pollMs,
       requestCeilingMs: this.requestCeilingMs,
       detachGraceMs: this.detachGraceMs,

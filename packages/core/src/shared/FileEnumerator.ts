@@ -32,14 +32,12 @@ type WalkContext = {
   limit: number;
   stack: StackEntry[];
   result: string[];
-  repos: string[];
   skippedRepos: string[];
 };
 
-/** Root-relative POSIX paths; `repos` and `skippedRepos` are sorted and lie strictly below the root. */
+/** Root-relative POSIX paths; `skippedRepos` is sorted and lies strictly below the root. */
 type FileWalk = {
   readonly files: readonly string[];
-  readonly repos: readonly string[];
   /** Ignored repository roots the walk did not enter. */
   readonly skippedRepos: readonly string[];
 };
@@ -243,9 +241,6 @@ async function processDir(
   let matcher = currentDir.matcher;
 
   const hasDotGit = entries.some((e) => e.name === ".git");
-  if (hasDotGit && currentDir.rel !== "") {
-    ctx.repos.push(currentDir.rel);
-  }
 
   if (ctx.useIgnore) {
     if (hasDotGit) {
@@ -427,7 +422,6 @@ async function walk(root: string, opts?: EnumerateOptions): Promise<FileWalk> {
       },
     ],
     result: [],
-    repos: [],
     skippedRepos: [],
   };
 
@@ -435,7 +429,6 @@ async function walk(root: string, opts?: EnumerateOptions): Promise<FileWalk> {
 
   return {
     files: ctx.result,
-    repos: ctx.repos.toSorted(),
     skippedRepos: ctx.skippedRepos.toSorted(),
   };
 }

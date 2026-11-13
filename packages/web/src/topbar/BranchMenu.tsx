@@ -79,7 +79,6 @@ export function BranchMenu(props: {
   readonly store: SessionStore;
   readonly branch: string;
   readonly compact: boolean;
-  readonly class: string;
 }) {
   const [branches, setBranches] = createSignal<readonly GitBranch[]>([]);
   const [running, setRunning] = createSignal<Operation>();
@@ -199,7 +198,7 @@ export function BranchMenu(props: {
         aria-expanded={panel.open() ? "true" : "false"}
         aria-label={`Branch ${props.branch}, switch or sync`}
         title={props.branch}
-        class={`${CHIP_SEGMENT} flex-1 ${props.class}`}
+        class={`${CHIP_SEGMENT} flex-1 rounded-l-lg`}
         onClick={panel.toggle}
         onKeyDown={navigation.onKeyDown}
       >

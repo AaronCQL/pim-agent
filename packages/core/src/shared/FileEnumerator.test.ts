@@ -239,7 +239,6 @@ describe("FileEnumerator.enumerate repo-awareness", () => {
     it("reports the ignored repository roots it does not enter", async () => {
       const walk = await FileEnumerator.walk(outer);
       expect(walk.skippedRepos).toEqual(["inner"]);
-      expect(walk.repos).toEqual(["tracked"]);
       expect(walk.files).toEqual(["tracked/d.ts"]);
     });
 
@@ -253,7 +252,7 @@ describe("FileEnumerator.enumerate repo-awareness", () => {
         includeNestedRepos: true,
       });
       expect(walk.skippedRepos).toEqual([]);
-      expect(walk.repos).toEqual(["inner", "tracked"]);
+      expect(walk.files.toSorted()).toEqual(["inner/a.ts", "tracked/d.ts"]);
     });
 
     it("reports none when ignore rules are off", async () => {
@@ -288,7 +287,6 @@ describe("FileEnumerator.enumerate repo-awareness", () => {
         includeNestedRepos: true,
       });
       expect(nested.skippedRepos).toEqual([]);
-      expect(nested.repos).toEqual(["sub"]);
       expect(nested.files).toEqual(["sub/b.ts"]);
     });
   });

@@ -49,7 +49,7 @@ function Tick(props: { readonly on: boolean }) {
 export function CommitModal(props: {
   readonly open: boolean;
   readonly onClose: () => void;
-  /** Repository and branch, `·`-joined; empty when unknown. */
+  /** The branch; empty when unknown. */
   readonly target: string;
   readonly files: readonly ChangeSummary[];
   readonly message: string;
