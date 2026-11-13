@@ -59,7 +59,7 @@ export class FileStore {
   private readonly settleMs: number;
   private generation = 0;
   private reading = 0;
-  /** `repoRevision` when the list was last read. */
+  /** `revision()` when the list was last read. */
   private synced = "";
   private watching = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -101,7 +101,7 @@ export class FileStore {
     );
 
     createEffect(
-      () => this.session.state.repoRevision,
+      () => this.revision(),
       (revision, previous) => {
         if (previous !== undefined && revision !== previous) {
           this.schedule();
@@ -120,7 +120,7 @@ export class FileStore {
     }
     if (untrack(() => this.state.status) === "idle") {
       void this.refresh();
-    } else if (untrack(() => this.session.state.repoRevision) !== this.synced) {
+    } else if (untrack(() => this.revision()) !== this.synced) {
       void this.sync();
     }
   }
@@ -192,6 +192,11 @@ export class FileStore {
     });
   }
 
+  private revision(): string {
+    const { repoRevision, filesRevision } = this.session.state;
+    return `${repoRevision}\0${filesRevision}`;
+  }
+
   private schedule(): void {
     if (!this.watching) {
       return;
@@ -217,7 +222,7 @@ export class FileStore {
 
   private async load(): Promise<void> {
     const mine = this.generation;
-    this.synced = untrack(() => this.session.state.repoRevision) ?? "";
+    this.synced = untrack(() => this.revision());
     try {
       const list = await this.session.listFiles();
       if (mine !== this.generation) {

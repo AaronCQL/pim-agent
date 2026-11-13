@@ -52,6 +52,25 @@ function displayRelative(path: string, cwd: string): string {
   return rel;
 }
 
+/** Whether `child` is `parent` or below it, by whole path segments. */
+function within(parent: string, child: string): boolean {
+  const path = relative(parent, child);
+  return (
+    path === "" ||
+    (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path))
+  );
+}
+
+/** A relative path with no empty, `.` or `..` segment, so it names one place below whatever it is joined to. */
+function isNormalRelative(path: string): boolean {
+  return (
+    !isAbsolute(path) &&
+    path
+      .split(/[/\\]/)
+      .every((segment) => segment !== "" && segment !== "." && segment !== "..")
+  );
+}
+
 function compare(left: string, right: string): number {
   if (left < right) {
     return -1;
@@ -79,5 +98,7 @@ export const Paths = {
   abbreviateHome,
   displayRelative,
   titleOr,
+  within,
+  isNormalRelative,
   compare,
 };

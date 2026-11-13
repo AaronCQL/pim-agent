@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { FileEnumerator } from "./FileEnumerator";
+import { git, makeRepo } from "./fixtures/repo";
 
 const { enumerate } = FileEnumerator;
 
@@ -197,6 +198,98 @@ describe("FileEnumerator.enumerate repo-awareness", () => {
       expect(paths).toContain("inner/inner.cross");
       expect(paths).not.toContain("inner/inner-only.txt");
       expect(paths).toContain("inner/kept.txt");
+    });
+
+    it("enters an ignored nested repository only when asked", async () => {
+      const write = writer(outer);
+      mkdirSync(join(outer, "excluded", ".git"), { recursive: true });
+      write("excluded/.gitignore", "*.log\n");
+      write("excluded/src/a.ts", "f");
+      write("excluded/debug.log", "g");
+      write("excluded-plain/b.ts", "h");
+      write(".git/info/exclude", "excluded/\nexcluded-plain/\n");
+
+      expect(await enumerate(outer)).not.toContain("excluded/src/a.ts");
+      const nested = await enumerate(outer, { includeNestedRepos: true });
+      expect(nested).toContain("excluded/src/a.ts");
+      expect(nested).not.toContain("excluded/debug.log");
+      expect(nested).not.toContain("excluded-plain/b.ts");
+    });
+  });
+
+  describe("ignored nested repositories", () => {
+    let outer: string;
+
+    beforeAll(() => {
+      outer = mkdtempSync(join(tmpdir(), "pim-skipped-repos-"));
+      const write = writer(outer);
+      write(".git/info/exclude", "inner/\nvendor/\nplain/\n.worktrees/*/\n");
+      write("inner/.git", "gitdir: elsewhere");
+      write("inner/a.ts", "a");
+      write("vendor/lib/.git/HEAD", "ref");
+      write("vendor/lib/b.ts", "b");
+      write("plain/c.ts", "c");
+      write(".worktrees/x/.git", "gitdir: elsewhere");
+      mkdirSync(join(outer, "tracked", ".git"), { recursive: true });
+      write("tracked/d.ts", "d");
+    });
+
+    afterAll(() => rmSync(outer, { recursive: true, force: true }));
+
+    it("reports the ignored repository roots it does not enter", async () => {
+      const walk = await FileEnumerator.walk(outer);
+      expect(walk.skippedRepos).toEqual(["inner"]);
+      expect(walk.repos).toEqual(["tracked"]);
+      expect(walk.files).toEqual(["tracked/d.ts"]);
+    });
+
+    it("reports those behind a dot directory only with dotfiles", async () => {
+      const walk = await FileEnumerator.walk(outer, { includeDotfiles: true });
+      expect(walk.skippedRepos).toEqual([".worktrees/x", "inner"]);
+    });
+
+    it("enters them instead when asked", async () => {
+      const walk = await FileEnumerator.walk(outer, {
+        includeNestedRepos: true,
+      });
+      expect(walk.skippedRepos).toEqual([]);
+      expect(walk.repos).toEqual(["inner", "tracked"]);
+    });
+
+    it("reports none when ignore rules are off", async () => {
+      const walk = await FileEnumerator.walk(outer, { includeIgnored: true });
+      expect(walk.skippedRepos).toEqual([]);
+      expect(walk.files).toContain("vendor/lib/b.ts");
+    });
+  });
+
+  describe("ignored worktrees of the same project", () => {
+    let outer: string;
+
+    beforeAll(async () => {
+      outer = mkdtempSync(join(tmpdir(), "pim-worktrees-"));
+      await makeRepo(outer);
+      const write = writer(outer);
+      write(".gitignore", "wt/\nsub/\n");
+      await git(outer, ["worktree", "add", "wt"]);
+      write("wt/a.ts", "a");
+      mkdirSync(join(outer, ".git", "modules", "sub"), { recursive: true });
+      write("sub/.git", "gitdir: ../.git/modules/sub\n");
+      write("sub/b.ts", "b");
+    });
+
+    afterAll(() => rmSync(outer, { recursive: true, force: true }));
+
+    it("are neither reported as skipped nor entered, unlike a submodule", async () => {
+      const walk = await FileEnumerator.walk(outer);
+      expect(walk.skippedRepos).toEqual(["sub"]);
+
+      const nested = await FileEnumerator.walk(outer, {
+        includeNestedRepos: true,
+      });
+      expect(nested.skippedRepos).toEqual([]);
+      expect(nested.repos).toEqual(["sub"]);
+      expect(nested.files).toEqual(["sub/b.ts"]);
     });
   });
 

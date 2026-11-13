@@ -487,6 +487,26 @@ describe("the in-flight bucket", () => {
   });
 });
 
+test("attaching to another session forgets the repository chosen in the last one", () => {
+  const target = store();
+  feed(target, attached("s1"), {
+    type: "session_state",
+    writable: true,
+    cwd: "/repo",
+    model: "sonnet",
+    thinking: "medium",
+    cost: 0,
+    status: "idle",
+    repo: "inner",
+    branch: "feat",
+  });
+  expect(target.state.repo).toBe("inner");
+
+  feed(target, attached("s2"));
+
+  expect(target.state.repo).toBe("");
+});
+
 describe("the optimistic echo", () => {
   test("is dropped by the durable user message that carries its text", () => {
     const target = store();

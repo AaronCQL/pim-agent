@@ -3,6 +3,8 @@ import { Paths } from "./Paths";
 
 export const NO_MATCHES = "No matches.";
 
+const SKIPPED_REPOS_SHOWN = 10;
+
 type SearchPathFormat = "relative" | "absolute";
 
 type SearchPathOptions = {
@@ -74,8 +76,36 @@ function capList(lines: readonly string[], headLimit: number): SearchList {
   };
 }
 
+/** The skipped repositories as shown, and the content block naming them; empty when there are none. */
+function skippedRepos(
+  tool: string,
+  repos: readonly string[],
+  display: SearchPathOptions
+): {
+  readonly shown: readonly string[];
+  readonly footer: readonly { type: "text"; text: string }[];
+} {
+  const shown = repos.map((repo) => formatPath(repo, display));
+  if (shown.length === 0) {
+    return { shown, footer: [] };
+  }
+  const head = shown.slice(0, SKIPPED_REPOS_SHOWN).join(", ");
+  const hidden = shown.length - SKIPPED_REPOS_SHOWN;
+  const list = hidden > 0 ? `${head}, and ${hidden} more` : head;
+  return {
+    shown,
+    footer: [
+      {
+        type: "text",
+        text: `[${tool} tool: skipped nested repositories the enclosing repo ignores: ${list}; pass one as path to search it.]`,
+      },
+    ],
+  };
+}
+
 export const SearchRender = {
   formatPath,
   subjectTitle,
   capList,
+  skippedRepos,
 };

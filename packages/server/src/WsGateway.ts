@@ -7,6 +7,8 @@ import { Attachments } from "#core/attachments/Attachments";
 import { Directories } from "#core/shared/Directories";
 import { Git } from "#core/shared/Git";
 import { GitMonitor, type GitRun } from "#core/shared/GitMonitor";
+import { NestedRepos } from "#core/shared/NestedRepos";
+import { Paths } from "#core/shared/Paths";
 import { PiExtensions, type ExtensionScope } from "#core/shared/PiExtensions";
 import { RepoDiff } from "#core/shared/RepoDiff";
 import { RepoFiles } from "#core/shared/RepoFiles";
@@ -22,9 +24,10 @@ import type { Command } from "#protocol/Command";
 import type { ResponseEvent, ServerEvent } from "#protocol/ServerEvent";
 import { ClientConnection } from "./ClientConnection";
 import { Reloader } from "./Reloader";
+import { RepoPaths } from "./RepoPaths";
 import { SessionCatalogue } from "./SessionCatalogue";
 import { SessionProjection } from "./SessionProjection";
-import { SessionStream } from "./SessionStream";
+import { SessionStream, type Repository } from "./SessionStream";
 import { StaticClient } from "./StaticClient";
 import { AttachmentEndpoint } from "./AttachmentEndpoint";
 import { ImageEndpoint } from "./ImageEndpoint";
@@ -102,7 +105,7 @@ export class WsGateway {
   private readonly pollMs: number | undefined;
   private readonly requestCeilingMs: number | undefined;
   private readonly detachGraceMs: number | undefined;
-  private readonly busyRepos = new Set<string>();
+  private readonly busyStreams = new Set<string>();
   private versionsRead: Promise<readonly [string, string]> | undefined;
   private server: Server<undefined> | undefined;
 
@@ -120,6 +123,7 @@ export class WsGateway {
       evicted: (sessionId) => {
         this.streams.get(sessionId)?.dispose();
         this.streams.delete(sessionId);
+        this.busyStreams.delete(sessionId);
       },
     });
     this.hostname = deps.hostname ?? DEFAULT_HOSTNAME;
@@ -226,7 +230,7 @@ export class WsGateway {
     this.opening.clear();
     this.attaching.clear();
     this.git.dispose();
-    this.busyRepos.clear();
+    this.busyStreams.clear();
     this.catalogue.watch(false);
     this.catalogue.clear();
     await this.catalogue.flush();
@@ -392,41 +396,53 @@ export class WsGateway {
         await stream.refreshGit(command.fetch === true);
         return {};
       }
-      case "list_branches":
+      case "list_repos":
         return {
-          branches: await Git.listBranches(
+          repos: await NestedRepos.find(
             this.requireStream(connection).host.cwd
           ),
         };
+      case "set_repo":
+        await this.requireStream(connection).setRepo(command.repo);
+        return {};
+      case "list_branches":
+        return {
+          branches: await Git.listBranches(
+            (await this.requireStream(connection).repository()).dir
+          ),
+        };
       // Read-only, so allowed while `repoBusy`.
-      case "list_changes":
+      case "list_changes": {
+        const { repo, dir } = await this.requireStream(connection).repository();
         return {
-          changes: await RepoDiff.listChanges(
-            this.requireStream(connection).host.cwd,
-            command.base,
-            this.git
+          changes: RepoPaths.changes(
+            repo,
+            await RepoDiff.listChanges(dir, command.base, this.git)
           ),
         };
-      case "file_diff":
+      }
+      case "file_diff": {
+        const { repo, dir } = await this.requireStream(connection).repository();
         return {
-          fileDiff: await RepoDiff.fileDiff(
-            this.requireStream(connection).host.cwd,
-            command.base,
-            command.path,
-            this.git,
-            command.context
+          fileDiff: await RepoPaths.located(repo, command.path, (path) =>
+            RepoDiff.fileDiff(
+              dir,
+              command.base,
+              path,
+              this.git,
+              command.context
+            )
           ),
         };
-      case "read_lines":
+      }
+      case "read_lines": {
+        const { repo, dir } = await this.requireStream(connection).repository();
         return {
-          fileLines: await RepoDiff.readLines(
-            this.requireStream(connection).host.cwd,
-            command.base,
-            command.path,
-            command.spans,
-            this.git
+          fileLines: await RepoPaths.located(repo, command.path, (path) =>
+            RepoDiff.readLines(dir, command.base, path, command.spans, this.git)
           ),
         };
+      }
       case "list_files":
         return {
           files: await RepoFiles.list(this.requireStream(connection).host.cwd),
@@ -438,20 +454,22 @@ export class WsGateway {
             command.path
           ),
         };
-      case "checkout": {
-        const stream = this.requireStream(connection);
-        return await this.runGit(stream, true, (cwd) =>
-          Git.checkout(cwd, command.branch)
+      case "checkout":
+        return await this.runGit(
+          this.requireStream(connection),
+          command.repo,
+          true,
+          ({ dir }) => Git.checkout(dir, command.branch)
         );
-      }
       case "commit":
         return await this.commit(this.requireStream(connection), command);
       case "pull":
       case "push":
         return await this.runGit(
           this.requireStream(connection),
+          command.repo,
           command.type === "pull",
-          command.type === "pull" ? Git.pull : Git.push
+          ({ dir }) => (command.type === "pull" ? Git.pull : Git.push)(dir)
         );
       case "unwatch_subagent":
         connection.unwatchSubagent(command.callId);
@@ -479,8 +497,7 @@ export class WsGateway {
       case "set_cwd": {
         const stream = this.requireStream(connection);
         const result = await stream.host.setCwd(command.value);
-        stream.syncGit();
-        stream.push(stream.sessionState());
+        await stream.syncGit();
         if (!result.ok) {
           return { error: result.error };
         }
@@ -652,20 +669,26 @@ export class WsGateway {
     this.catalogue.watch(this.connections.size > 0);
   }
 
-  /** `movesTree` operations are refused while an agent in the cwd is mid-turn or running subagents. */
+  /** Runs in the session's repository, refused when it is not `expected`; `movesTree` operations are refused while an agent working in or around it is mid-turn or running subagents. */
   private async runGit<T = never>(
     stream: SessionStream,
+    expected: string | undefined,
     movesTree: boolean,
-    operation: (cwd: string) => Promise<GitRun<T>>
+    operation: (where: Repository) => Promise<GitRun<T>>
   ): Promise<Outcome & { readonly value?: T }> {
-    const cwd = stream.host.cwd;
-    const busy = movesTree ? this.busyIn(cwd) : [];
-    if (busy.length > 0) {
+    const where = await stream.repository();
+    if (expected !== undefined && expected !== where.repo) {
       return {
-        error: `${await this.busyText(busy)} working in ${cwd}; wait for ${busy.length > 1 ? "them" : "it"} to finish`,
+        error: `the session's repository changed to ${RepoPaths.label(where.repo)}`,
       };
     }
-    const result = await this.git.run<T>(cwd, () => operation(cwd));
+    const busy = movesTree ? this.busyIn(where.dir) : [];
+    if (busy.length > 0) {
+      return {
+        error: `${await this.busyText(busy)} working in ${where.dir}; wait for ${busy.length > 1 ? "them" : "it"} to finish`,
+      };
+    }
+    const result = await this.git.run<T>(where.dir, () => operation(where));
     if (!result.ok) {
       return { error: result.error };
     }
@@ -678,11 +701,12 @@ export class WsGateway {
   ): Promise<Outcome> {
     const { value, ...outcome } = await this.runGit<string>(
       stream,
+      command.repo,
       true,
-      async (cwd) => {
-        const result = await Git.commit(cwd, {
+      async ({ repo, dir }) => {
+        const result = await Git.commit(dir, {
           message: command.message,
-          paths: command.paths,
+          paths: command.paths.map((path) => RepoPaths.inward(repo, path)),
         });
         return result.ok
           ? { ok: true, value: result.sha }
@@ -701,17 +725,21 @@ export class WsGateway {
     );
   }
 
-  /** Every working session; with `cwd`, those known to work there. */
-  private busyIn(cwd?: string): readonly string[] {
+  /** Every working session; with `dir`, those known to work in it, below it or above it. */
+  private busyIn(dir?: string): readonly string[] {
     const sessionIds = new Set([
       ...this.streams.keys(),
       ...(this.registry.jobs?.runningSessions() ?? []),
     ]);
-    return [...sessionIds].filter(
-      (sessionId) =>
-        (cwd === undefined || this.streams.get(sessionId)?.host.cwd === cwd) &&
-        this.isWorking(sessionId)
-    );
+    return [...sessionIds].filter((sessionId) => {
+      const cwd = this.streams.get(sessionId)?.host.cwd;
+      return (
+        this.isWorking(sessionId) &&
+        (dir === undefined ||
+          (cwd !== undefined &&
+            (Paths.within(cwd, dir) || Paths.within(dir, cwd))))
+      );
+    });
   }
 
   /** `"fix the parser" (mid-turn) is` / `"a" (2 subagents), b8f1… (mid-turn) are`. */
@@ -739,23 +767,23 @@ export class WsGateway {
     return `${named.join(", ")} ${busy.length > 1 ? "are" : "is"}`;
   }
 
-  private repoBusy(cwd: string): boolean {
-    return this.busyIn(cwd).length > 0;
+  private repoBusy(dir: string): boolean {
+    return this.busyIn(dir).length > 0;
   }
 
-  /** Pushes fresh state to the sessions in `cwd`, bar `source`, when its busy flag flips. */
-  private syncRepoBusy(cwd: string, source?: string): void {
-    const busy = this.repoBusy(cwd);
-    if (this.busyRepos.has(cwd) === busy) {
-      return;
-    }
-    if (busy) {
-      this.busyRepos.add(cwd);
-    } else {
-      this.busyRepos.delete(cwd);
-    }
+  /** Pushes fresh state to each session, bar `source`, whose busy flag flipped. */
+  private syncRepoBusy(source?: string): void {
     for (const [sessionId, stream] of this.streams) {
-      if (sessionId !== source && stream.host.cwd === cwd) {
+      const busy = this.repoBusy(stream.gitDir);
+      if (this.busyStreams.has(sessionId) === busy) {
+        continue;
+      }
+      if (busy) {
+        this.busyStreams.add(sessionId);
+      } else {
+        this.busyStreams.delete(sessionId);
+      }
+      if (sessionId !== source) {
         stream.push(stream.sessionState());
       }
     }
@@ -879,7 +907,7 @@ export class WsGateway {
     }
     const stream = new SessionStream(id, host, path, {
       git: this.git,
-      repoBusy: () => this.repoBusy(host.cwd),
+      repoBusy: (dir) => this.repoBusy(dir),
       pollMs: this.pollMs,
       requestCeilingMs: this.requestCeilingMs,
       detachGraceMs: this.detachGraceMs,
@@ -893,13 +921,13 @@ export class WsGateway {
           status: event.status,
           jobs: stream.host.jobCount,
         });
-        this.syncRepoBusy(stream.host.cwd, id);
+        this.syncRepoBusy(id);
       } else if (event.type === "jobs") {
         this.catalogue.onActivity(id, {
           status: stream.host.status,
           jobs: event.jobs.length,
         });
-        this.syncRepoBusy(stream.host.cwd);
+        this.syncRepoBusy();
       }
     });
     this.streams.set(id, stream);

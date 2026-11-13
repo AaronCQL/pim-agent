@@ -100,9 +100,9 @@ export class DiffStore {
     this.setFiles = setFiles;
 
     createEffect(
-      () => this.session.state.cwd,
-      (cwd, previous) => {
-        if (previous !== undefined && cwd !== previous) {
+      () => `${this.session.state.cwd}\0${this.session.state.repo}`,
+      (where, previous) => {
+        if (previous !== undefined && where !== previous) {
           this.reset();
         }
       }
@@ -125,6 +125,12 @@ export class DiffStore {
 
   public cwd(): string {
     return this.session.state.cwd;
+  }
+
+  /** Where a commit lands: the nested repository, if one is selected, and its branch. */
+  public target(): string {
+    const { repo, branch } = this.session.state;
+    return [repo, branch ?? ""].filter((part) => part !== "").join(" · ");
   }
 
   public async refresh(): Promise<void> {

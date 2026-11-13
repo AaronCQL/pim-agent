@@ -9,23 +9,58 @@ export type FileScanOptions = {
   readonly includeIgnored: boolean;
 };
 
+/** Absolute paths; `skippedRepos` are the ignored repository roots the scan did not enter. */
+type FileScan = {
+  readonly paths: readonly string[];
+  readonly skippedRepos: readonly string[];
+};
+
 async function scan(
   root: string,
   pattern: string,
   options: FileScanOptions
-): Promise<readonly string[]> {
+): Promise<FileScan> {
   const absoluteRoot = resolve(root);
-  const relativePaths = await FileEnumerator.enumerate(absoluteRoot, {
+  const walk = await FileEnumerator.walk(absoluteRoot, {
     includeDotfiles: options.includeDotfiles,
     includeIgnored: options.includeIgnored,
   });
-  const matcher = new Bun.Glob(await expandDirectory(absoluteRoot, pattern));
+  const expanded = await expandDirectory(absoluteRoot, pattern);
+  const matcher = new Bun.Glob(expanded);
   const excludes = GlobExclusions.compile(options.exclude);
-  return relativePaths
-    .filter(
-      (path) => matcher.match(path) && !GlobExclusions.ignores(excludes, path)
-    )
-    .map((path) => join(absoluteRoot, path));
+  const reach = literalPrefix(expanded);
+  return {
+    paths: walk.files
+      .filter(
+        (path) => matcher.match(path) && !GlobExclusions.ignores(excludes, path)
+      )
+      .map((path) => join(absoluteRoot, path)),
+    skippedRepos: walk.skippedRepos
+      .filter(
+        (repo) =>
+          (isWithin(repo, reach) || isWithin(reach, repo)) &&
+          !GlobExclusions.ignores(excludes, repo) &&
+          !GlobExclusions.ignores(excludes, `${repo}/`)
+      )
+      .map((repo) => join(absoluteRoot, repo)),
+  };
+}
+
+function literalPrefix(pattern: string): string {
+  const literal: string[] = [];
+  for (const segment of pattern.split("/")) {
+    if (/[*?[\]{}!]/.test(segment)) {
+      break;
+    }
+    if (segment !== "" && segment !== ".") {
+      literal.push(segment);
+    }
+  }
+  return literal.join("/");
+}
+
+function isWithin(path: string, dir: string): boolean {
+  return dir === "" || path === dir || path.startsWith(`${dir}/`);
 }
 
 async function expandDirectory(

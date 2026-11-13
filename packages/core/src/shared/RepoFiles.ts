@@ -1,8 +1,9 @@
 import { realpath, stat } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { resolve } from "node:path";
 
 import { FileEnumerator } from "./FileEnumerator";
 import { Lines } from "./Lines";
+import { Paths } from "./Paths";
 
 export type FileList = {
   /** Root-relative POSIX paths, sorted. */
@@ -25,35 +26,31 @@ const LIST_LIMIT = 20_000;
 
 const READ_BYTE_LIMIT = 1_000_000;
 
-function outside(root: string, target: string): boolean {
-  const path = relative(root, target);
-  return (
-    path === "" ||
-    path === ".." ||
-    path.startsWith(`..${sep}`) ||
-    isAbsolute(path)
-  );
-}
-
-/** Resolves symlinks too, so a link can't lead out of `cwd`. */
+/** The real path of `path`, strictly inside `cwd`; resolves symlinks too, so a link can't lead out of it. */
 async function locate(cwd: string, path: string): Promise<string> {
   const root = await realpath(cwd);
   const target = await realpath(resolve(root, path)).catch(() => {
     throw new Error(`${path} does not exist`);
   });
-  if (outside(root, target)) {
+  if (target === root || !Paths.within(root, target)) {
     throw new Error(`${path} is outside the working directory`);
   }
   return target;
 }
 
-/** Every file under `cwd`, dotfiles included, skipping what git ignores. */
-async function list(cwd: string): Promise<FileList> {
-  const paths = await FileEnumerator.enumerate(cwd, {
+/** The file browser's walk of `cwd`: dotfiles included, skipping what git ignores but entering a nested repository even when ignored. */
+function walk(cwd: string, limit: number) {
+  return FileEnumerator.walk(cwd, {
     includeDotfiles: true,
-    limit: LIST_LIMIT + 1,
+    includeNestedRepos: true,
+    limit,
   });
-  const sorted = paths.toSorted();
+}
+
+/** Every file the file browser's walk of `cwd` finds. */
+async function list(cwd: string): Promise<FileList> {
+  const { files } = await walk(cwd, LIST_LIMIT + 1);
+  const sorted = files.toSorted();
   return sorted.length > LIST_LIMIT
     ? { paths: sorted.slice(0, LIST_LIMIT), truncated: true }
     : { paths: sorted };
@@ -80,4 +77,11 @@ async function read(cwd: string, path: string): Promise<FileContent> {
     : { ...head, text: new TextDecoder().decode(bytes) };
 }
 
-export const RepoFiles = { list, read, LIST_LIMIT, READ_BYTE_LIMIT };
+export const RepoFiles = {
+  list,
+  walk,
+  read,
+  locate,
+  LIST_LIMIT,
+  READ_BYTE_LIMIT,
+};

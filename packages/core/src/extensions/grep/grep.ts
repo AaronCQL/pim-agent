@@ -24,6 +24,11 @@ export type GrepMatch = {
   readonly fileLines: readonly string[];
 };
 
+type GrepResult = {
+  readonly matches: readonly GrepMatch[];
+  readonly skippedRepos: readonly string[];
+};
+
 type GrepMatcher = {
   readonly regex: RegExp;
   readonly matchAcrossLines: boolean;
@@ -81,18 +86,21 @@ export async function findMatches(
   glob: string | undefined,
   matcher: GrepMatcher,
   options: GrepScanOptions
-): Promise<readonly GrepMatch[]> {
+): Promise<GrepResult> {
   const metadata = await FsErrors.statOrThrow(path);
-  const files = metadata.isFile()
-    ? [path]
-    : (await FileScanner.scan(path, glob ?? "**/*", options)).toSorted(
-        Paths.compare
-      );
-  const scanned = await Pool.mapPooled(files, MATCH_CONCURRENCY, (filePath) =>
-    matchFile(filePath, matcher, options.retainFileLines ?? true)
+  const { paths, skippedRepos } = metadata.isFile()
+    ? { paths: [path], skippedRepos: [] }
+    : await FileScanner.scan(path, glob ?? "**/*", options);
+  const scanned = await Pool.mapPooled(
+    paths.toSorted(Paths.compare),
+    MATCH_CONCURRENCY,
+    (filePath) => matchFile(filePath, matcher, options.retainFileLines ?? true)
   );
 
-  return scanned.filter((match) => match !== undefined);
+  return {
+    matches: scanned.filter((match) => match !== undefined),
+    skippedRepos,
+  };
 }
 
 // Unreadable entries are non-matches, not errors.

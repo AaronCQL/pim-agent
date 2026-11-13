@@ -42,6 +42,7 @@ function paint(
   extra: {
     readonly committing?: boolean;
     readonly failure?: string;
+    readonly target?: string;
   } = {}
 ): Opened {
   const host = mountPoint();
@@ -52,6 +53,7 @@ function paint(
     () => (
       <CommitModal
         open={true}
+        target={extra.target ?? "main"}
         files={files}
         message={message()}
         committing={extra.committing === true}
@@ -111,6 +113,16 @@ test("opening picks every file", () => {
   expect(summary(host).textContent).toContain("2 files");
   expect(summary(host).textContent).toContain("+432/−3");
   expect(field(host).hasAttribute("autofocus")).toBe(true);
+});
+
+test("the header names the repository and branch the commit lands on", () => {
+  const { host } = paint([file("inner/a.ts", 1, 0)], {
+    target: "inner · feat/inner",
+  });
+
+  expect(host.querySelector("header")?.textContent).toBe(
+    "Commit to inner · feat/inner"
+  );
 });
 
 test("unpicking a file leaves the list and takes the stat with it", () => {

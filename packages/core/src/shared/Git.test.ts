@@ -178,6 +178,14 @@ describe("checkout", () => {
 
     expect(refusal(await Git.checkout(root, "nope"))).toContain("nope");
   });
+
+  test("a branch git would take for an option is refused, and the edits stay", async () => {
+    const root = await repo();
+    await Bun.write(join(root, "file.txt"), "edited\n");
+
+    expect(refusal(await Git.checkout(root, "-f"))).toContain("-f");
+    expect(await Bun.file(join(root, "file.txt")).text()).toBe("edited\n");
+  });
 });
 
 describe("push", () => {

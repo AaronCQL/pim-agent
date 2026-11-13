@@ -38,6 +38,7 @@ function result(
       totalItems: 2,
       visibleItems: 2,
       truncated: false,
+      skippedRepos: [],
       ...details,
     },
   };

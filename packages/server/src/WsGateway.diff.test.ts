@@ -8,6 +8,8 @@ import { Proc } from "#core/shared/Proc";
 import { SessionRegistry } from "#core/session/SessionRegistry";
 import { ProbeClient } from "./ProbeClient";
 import { WsGateway } from "./WsGateway";
+import { startModelServer, type ModelServer } from "./fixtures/modelServer";
+import { sessionOf } from "./fixtures/probe";
 import { until } from "#core/shared/fixtures/wait";
 
 let tmp: string;
@@ -17,56 +19,7 @@ let previousAgentDir: string | undefined;
 let registry: SessionRegistry;
 let gateway: WsGateway;
 let probes: ProbeClient[] = [];
-let modelServer: ReturnType<typeof Bun.serve> | undefined;
-let gate: Promise<void> | undefined;
-
-function holdTurn(): () => void {
-  let release!: () => void;
-  gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  return () => {
-    gate = undefined;
-    release();
-  };
-}
-
-function chunk(delta: Record<string, unknown>, finish?: string): string {
-  return `data: ${JSON.stringify({
-    id: "1",
-    object: "chat.completion.chunk",
-    created: 0,
-    model: "echo",
-    choices: [{ index: 0, delta, finish_reason: finish ?? null }],
-  })}\n\n`;
-}
-
-/** Answers one word, then waits on `gate`. */
-function startModelServer(): void {
-  modelServer = Bun.serve({
-    port: 0,
-    idleTimeout: 0,
-    fetch(req) {
-      if (!new URL(req.url).pathname.endsWith("/chat/completions")) {
-        return new Response("not found", { status: 404 });
-      }
-      const stream = new ReadableStream<Uint8Array>({
-        async start(controller) {
-          const encode = (text: string) =>
-            controller.enqueue(Buffer.from(text));
-          encode(chunk({ role: "assistant", content: "working" }));
-          await gate;
-          encode(chunk({}, "stop"));
-          encode("data: [DONE]\n\n");
-          controller.close();
-        },
-      });
-      return new Response(stream, {
-        headers: { "content-type": "text/event-stream" },
-      });
-    },
-  });
-}
+let model: ModelServer;
 
 async function shaOf(): Promise<string> {
   const { stdout } = await Proc.run(["git", "rev-parse", "--short", "HEAD"], {
@@ -87,16 +40,8 @@ async function connect(): Promise<ProbeClient> {
   return probe;
 }
 
-function sessionOf(probe: ProbeClient): string {
-  const sessionId = probe.sessionId;
-  if (sessionId === undefined) {
-    throw new Error("the probe never attached");
-  }
-  return sessionId;
-}
-
 beforeEach(async () => {
-  startModelServer();
+  model = startModelServer();
   tmp = await mkdtemp(join(tmpdir(), "pim-diff-gateway-"));
   cwd = join(tmp, "work");
   agentDir = join(tmp, "agent");
@@ -109,7 +54,7 @@ beforeEach(async () => {
     JSON.stringify({
       providers: {
         test: {
-          baseUrl: `http://localhost:${modelServer?.port}/v1`,
+          baseUrl: `http://localhost:${model.port}/v1`,
           api: "openai-completions",
           apiKey: "test-key",
           models: [{ id: "echo", maxTokens: 1024, contextWindow: 8192 }],
@@ -146,11 +91,9 @@ afterEach(async () => {
     probe.close();
   }
   probes = [];
-  gate = undefined;
   await gateway.stop();
   await registry.disposeAll();
-  await modelServer?.stop(true);
-  modelServer = undefined;
+  await model.stop();
   if (previousAgentDir === undefined) {
     delete process.env.PI_CODING_AGENT_DIR;
   } else {
@@ -311,7 +254,7 @@ test("a commit is refused while the session's agent is mid-turn", async () => {
   const probe = await connect();
   const sessionId = sessionOf(probe);
   const mark = probe.events.length;
-  const release = holdTurn();
+  const release = model.holdTurn();
   const before = await shaOf();
   try {
     await probe.prompt("edit something");

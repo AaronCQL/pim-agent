@@ -1,7 +1,8 @@
 import { statSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { join } from "node:path";
 
 import { Lines } from "./Lines";
+import { Paths } from "./Paths";
 import { Proc, type ProcOptions, type ProcResult } from "./Proc";
 
 export type GitState = {
@@ -84,6 +85,11 @@ const NETWORK_ENV: Readonly<Record<string, string | undefined>> = {
   GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? "ssh -o BatchMode=yes",
 };
 
+/** A path is a file name, never a glob or `:(magic)`. */
+const LITERAL_PATHSPECS: Readonly<Record<string, string>> = {
+  GIT_LITERAL_PATHSPECS: "1",
+};
+
 /** Hooks and signing must never open an editor. */
 const COMMIT_OPTIONS: ProcOptions = {
   env: { GIT_EDITOR: "true" },
@@ -94,16 +100,20 @@ const NETWORK_TIMEOUT = `timed out after ${NETWORK_TIMEOUT_MS / 1000}s — the r
 
 const COMMIT_TIMEOUT = `timed out after ${COMMIT_TIMEOUT_MS / 1000}s — a hook or a signing key is still waiting on something`;
 
-function git(
+function run(
   cwd: string,
   args: readonly string[],
   options: ProcOptions = {}
 ): Promise<ProcResult> {
-  return Proc.run(["git", ...args], { cwd, ...options });
+  return Proc.run(["git", ...args], {
+    cwd,
+    ...options,
+    env: { ...LITERAL_PATHSPECS, ...options.env },
+  });
 }
 
 function network(cwd: string, args: readonly string[]): Promise<ProcResult> {
-  return git(cwd, args, { env: NETWORK_ENV, timeoutMs: NETWORK_TIMEOUT_MS });
+  return run(cwd, args, { env: NETWORK_ENV, timeoutMs: NETWORK_TIMEOUT_MS });
 }
 
 /** Index of the path field in each porcelain-v2 entry type. */
@@ -262,7 +272,7 @@ function rank(
 }
 
 async function remoteOf(cwd: string): Promise<string | undefined> {
-  const { code, stdout } = await git(cwd, ["remote"]);
+  const { code, stdout } = await run(cwd, ["remote"]);
   if (code !== 0) {
     return undefined;
   }
@@ -279,7 +289,7 @@ async function remoteHead(cwd: string): Promise<string | undefined> {
   if (remote === undefined) {
     return undefined;
   }
-  const { code, stdout } = await git(cwd, [
+  const { code, stdout } = await run(cwd, [
     "symbolic-ref",
     "--short",
     `refs/remotes/${remote}/HEAD`,
@@ -292,7 +302,7 @@ async function mergedInto(
   cwd: string,
   head: string
 ): Promise<ReadonlySet<string>> {
-  const { code, stdout } = await git(cwd, [
+  const { code, stdout } = await run(cwd, [
     "for-each-ref",
     "--merged",
     head,
@@ -306,8 +316,8 @@ async function mergedInto(
 /** Local branches: default first, then by last commit or checkout. */
 async function listBranches(cwd: string): Promise<readonly GitBranch[]> {
   const [refs, log, remote] = await Promise.all([
-    git(cwd, ["for-each-ref", "--format", BRANCH_FORMAT, "refs/heads/"]),
-    git(cwd, ["reflog", "--date=unix", `-n${REFLOG_DEPTH}`, REFLOG_FORMAT]),
+    run(cwd, ["for-each-ref", "--format", BRANCH_FORMAT, "refs/heads/"]),
+    run(cwd, ["reflog", "--date=unix", `-n${REFLOG_DEPTH}`, REFLOG_FORMAT]),
     remoteHead(cwd),
   ]);
   if (refs.code !== 0) {
@@ -347,16 +357,19 @@ function outcome(result: ProcResult, fallback: string): GitOutcome {
     : { ok: false, error: failure(result, fallback) };
 }
 
-async function checkout(cwd: string, branch: string): Promise<GitOutcome> {
-  return outcome(
-    await git(cwd, ["checkout", branch, "--"]),
-    `could not switch to ${branch}`
-  );
+/** True for a ref git would take for an option. */
+function isOptionLike(ref: string): boolean {
+  return ref.startsWith("-");
 }
 
-/** True for an empty, absolute or `..` path. */
-function escapes(path: string): boolean {
-  return path === "" || isAbsolute(path) || path.split(/[/\\]/).includes("..");
+async function checkout(cwd: string, branch: string): Promise<GitOutcome> {
+  if (isOptionLike(branch)) {
+    return { ok: false, error: `${branch} is not a branch name` };
+  }
+  return outcome(
+    await run(cwd, ["checkout", branch, "--"]),
+    `could not switch to ${branch}`
+  );
 }
 
 /** Commits exactly `paths`; other changes, staged or not, are left alone. */
@@ -371,7 +384,7 @@ async function commit(
   if (request.paths.length === 0) {
     return { ok: false, error: "nothing was picked to commit" };
   }
-  const outside = request.paths.find(escapes);
+  const outside = request.paths.find((path) => !Paths.isNormalRelative(path));
   if (outside !== undefined) {
     return {
       ok: false,
@@ -385,7 +398,7 @@ async function commit(
   );
   const addable = request.paths.filter((_, index) => onDisk[index]);
   if (addable.length > 0) {
-    const staged = await git(
+    const staged = await run(
       cwd,
       ["add", "-A", "--", ...addable],
       COMMIT_OPTIONS
@@ -401,7 +414,7 @@ async function commit(
       };
     }
   }
-  const written = await git(
+  const written = await run(
     cwd,
     ["commit", "-m", message, "--", ...request.paths],
     COMMIT_OPTIONS
@@ -412,7 +425,7 @@ async function commit(
       error: failure(written, "could not commit", COMMIT_TIMEOUT),
     };
   }
-  const head = await git(cwd, ["rev-parse", "--short", "HEAD"]);
+  const head = await run(cwd, ["rev-parse", "--short", "HEAD"]);
   const sha = head.stdout.trim();
   return head.code === 0 && sha !== ""
     ? { ok: true, sha }
@@ -435,7 +448,7 @@ async function pull(cwd: string): Promise<GitOutcome> {
 
 /** Undefined when the branch has no upstream or HEAD is detached. */
 async function upstreamOf(cwd: string): Promise<string | undefined> {
-  const { code, stdout } = await git(cwd, [
+  const { code, stdout } = await run(cwd, [
     "rev-parse",
     "--abbrev-ref",
     "--symbolic-full-name",
@@ -448,7 +461,7 @@ async function upstreamOf(cwd: string): Promise<string | undefined> {
 /** Sets the upstream on the first push. */
 async function push(cwd: string): Promise<GitOutcome> {
   const [head, upstream] = await Promise.all([
-    git(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]),
+    run(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]),
     upstreamOf(cwd),
   ]);
   if (head.code !== 0) {
@@ -475,7 +488,7 @@ async function push(cwd: string): Promise<GitOutcome> {
 
 async function fetchStatus(cwd: string): Promise<GitState> {
   try {
-    const { code, stdout } = await git(cwd, [
+    const { code, stdout } = await run(cwd, [
       // Avoids taking `index.lock`, which would fail a concurrent checkout.
       "--no-optional-locks",
       "status",
@@ -490,6 +503,7 @@ async function fetchStatus(cwd: string): Promise<GitState> {
 
 export const Git = {
   EMPTY,
+  run,
   parseStatus,
   parseRefs,
   parseVisits,
@@ -497,6 +511,7 @@ export const Git = {
   fetchStatus,
   listBranches,
   upstreamOf,
+  isOptionLike,
   checkout,
   commit,
   fetch,

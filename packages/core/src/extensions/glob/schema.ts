@@ -63,4 +63,5 @@ export type GlobDetails = {
   readonly totalItems: number;
   readonly visibleItems: number;
   readonly truncated: boolean;
+  readonly skippedRepos: readonly string[];
 };

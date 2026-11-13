@@ -50,7 +50,7 @@ describe("findFiles", () => {
       new Date("2024-01-02T00:00:00Z")
     );
 
-    const matches = await findFiles(root, "**/*.ts", defaultScanOptions);
+    const { matches } = await findFiles(root, "**/*.ts", defaultScanOptions);
 
     expect(matches.map((match) => match.path)).toEqual([tieA, tieB, older]);
   });
@@ -77,7 +77,7 @@ describe("findFiles", () => {
     await writeFile(nodeModules, "", "utf8");
     await writeFile(dot, "", "utf8");
 
-    const matches = await findFiles(root, "**/*.ts", defaultScanOptions);
+    const { matches } = await findFiles(root, "**/*.ts", defaultScanOptions);
 
     expect(matches.map((match) => match.path)).toEqual([kept]);
   });
@@ -94,7 +94,7 @@ describe("findFiles", () => {
     await writeFile(ignored, "", "utf8");
     await writeFile(dot, "", "utf8");
 
-    const matches = await findFiles(root, "**/*.ts", {
+    const { matches } = await findFiles(root, "**/*.ts", {
       includeDotfiles: true,
       includeIgnored: true,
     });
@@ -115,7 +115,7 @@ describe("findFiles", () => {
     await writeFile(test, "", "utf8");
     await writeFile(generated, "", "utf8");
 
-    const matches = await findFiles(root, "**/*.ts", {
+    const { matches } = await findFiles(root, "**/*.ts", {
       ...defaultScanOptions,
       exclude: ["**/*.test.ts", "src/generated/**"],
     });

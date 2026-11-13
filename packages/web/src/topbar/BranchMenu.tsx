@@ -1,4 +1,4 @@
-import { createMemo, createSignal, onCleanup, Show, untrack } from "solid-js";
+import { createMemo, createSignal, Show, untrack } from "solid-js";
 
 import type { GitBranch } from "#core/shared/Git";
 import { relativeTime } from "../format";
@@ -79,6 +79,7 @@ export function BranchMenu(props: {
   readonly store: SessionStore;
   readonly branch: string;
   readonly compact: boolean;
+  readonly class: string;
 }) {
   const [branches, setBranches] = createSignal<readonly GitBranch[]>([]);
   const [running, setRunning] = createSignal<Operation>();
@@ -86,18 +87,6 @@ export function BranchMenu(props: {
 
   const state = (): SessionStore["state"] => props.store.state;
   const frozen = (): boolean => state().repoBusy || running() !== undefined;
-
-  const wake = (): void => {
-    if (document.visibilityState === "visible") {
-      void props.store.refreshGit();
-    }
-  };
-  document.addEventListener("visibilitychange", wake);
-  window.addEventListener("focus", wake);
-  onCleanup(() => {
-    document.removeEventListener("visibilitychange", wake);
-    window.removeEventListener("focus", wake);
-  });
 
   const load = (): Promise<void> =>
     props.store.listBranches().then(
@@ -210,7 +199,7 @@ export function BranchMenu(props: {
         aria-expanded={panel.open() ? "true" : "false"}
         aria-label={`Branch ${props.branch}, switch or sync`}
         title={props.branch}
-        class={`${CHIP_SEGMENT} flex-1 rounded-l-lg`}
+        class={`${CHIP_SEGMENT} flex-1 ${props.class}`}
         onClick={panel.toggle}
         onKeyDown={navigation.onKeyDown}
       >

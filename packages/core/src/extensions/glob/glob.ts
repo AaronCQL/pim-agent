@@ -6,11 +6,16 @@ export type GlobMatch = {
   readonly mtime: number;
 };
 
+type GlobResult = {
+  readonly matches: readonly GlobMatch[];
+  readonly skippedRepos: readonly string[];
+};
+
 export async function findFiles(
   root: string,
   pattern: string,
   options: FileScanOptions
-): Promise<readonly GlobMatch[]> {
+): Promise<GlobResult> {
   const metadata = await FsErrors.statOrThrow(root);
 
   if (!metadata.isDirectory()) {
@@ -19,14 +24,19 @@ export async function findFiles(
     );
   }
 
-  const paths = await FileScanner.scan(root, pattern, options);
+  const { paths, skippedRepos } = await FileScanner.scan(
+    root,
+    pattern,
+    options
+  );
   const matches: GlobMatch[] = paths.map((path) => ({
     path,
     mtime: Bun.file(path).lastModified,
   }));
-
-  return matches.sort(
+  matches.sort(
     (left, right) =>
       right.mtime - left.mtime || left.path.localeCompare(right.path)
   );
+
+  return { matches, skippedRepos };
 }

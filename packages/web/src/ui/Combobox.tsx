@@ -10,6 +10,7 @@ import {
 import { ROW_ACTIVE } from "./classes";
 import { Popover, type Point } from "./Popover";
 import { followActive } from "./scroll";
+import { Spinner } from "./Spinner";
 
 export type ComboboxNavigation = {
   readonly activeIndex: Accessor<number>;
@@ -117,6 +118,8 @@ export type ComboboxItem = {
   readonly selected?: boolean;
   /** Shown but skipped by the keyboard and unclickable. */
   readonly disabled?: boolean;
+  /** A pick of this row is in flight. */
+  readonly busy?: boolean;
 };
 
 const ROW = "flex items-baseline gap-1ch rounded-lg px-2 py-1";
@@ -195,6 +198,7 @@ export function Combobox(props: {
                 role="option"
                 aria-selected={active() ? "true" : "false"}
                 {...(dead() ? { "aria-disabled": "true" } : {})}
+                aria-busy={item.busy === true ? "true" : undefined}
                 class={`${ROW} ${dead() ? "cursor-default" : "cursor-pointer"} ${active() ? ROW_ACTIVE : ""} ${tone(item, active())}`}
                 onMouseMove={() => {
                   props.onActivate(dead() ? -1 : index());
@@ -221,6 +225,11 @@ export function Combobox(props: {
                     class="i-griddy-icons:check size-4 shrink-0 self-center text-emerald-400"
                     aria-hidden="true"
                   />
+                </Show>
+                <Show when={item.busy === true}>
+                  <span class="flex size-4 shrink-0 items-center justify-center self-center">
+                    <Spinner />
+                  </span>
                 </Show>
                 <Show when={item.tag}>
                   {(tag) => (

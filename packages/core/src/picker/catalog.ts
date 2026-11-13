@@ -1,7 +1,9 @@
-import { readdir, stat } from "node:fs/promises";
+import { lstat, readdir, stat } from "node:fs/promises";
 import { isAbsolute, join, parse, resolve, sep } from "node:path";
 import { FileEnumerator } from "../shared/FileEnumerator";
+import { NestedRepos } from "../shared/NestedRepos";
 import { Paths } from "../shared/Paths";
+import { Pool } from "../shared/Pool";
 
 export type FileCandidate = {
   readonly insertPath: string;
@@ -123,7 +125,7 @@ async function runLoadRelative(
 ): Promise<readonly FileCandidate[]> {
   const spawner = options.gitSpawner ?? defaultGitSpawner;
   const paths =
-    (await tryGitListFiles(root, spawner)) ??
+    (await listTree(root, 0, { remaining: NestedRepos.LIMIT }, spawner)) ??
     (await FileEnumerator.enumerate(root, {
       includeDotfiles: false,
       includeIgnored: false,
@@ -131,20 +133,118 @@ async function runLoadRelative(
   return finalizeRelative(paths);
 }
 
-async function tryGitListFiles(
-  root: string,
+type RepoListing = {
+  readonly files: readonly string[];
+  readonly nestedRepos: readonly string[];
+};
+
+const NESTED_REPO_DEPTH = 4;
+const NESTED_REPO_CONCURRENCY = 8;
+const GITLINK_MODE = "160000";
+const STAGED_RECORD = /^(\d{6}) [0-9a-f]+ \d\t(.*)$/s;
+
+async function listTree(
+  dir: string,
+  depth: number,
+  budget: { remaining: number },
   spawner: GitSpawner
 ): Promise<readonly string[] | undefined> {
-  const result = await spawner(
-    ["ls-files", "--cached", "--others", "--exclude-standard"],
-    { cwd: root }
+  const listing = await listRepo(
+    dir,
+    spawner,
+    depth < NESTED_REPO_DEPTH && budget.remaining > 0
   );
+  if (listing === undefined) {
+    return undefined;
+  }
+  const nestedRepos = listing.nestedRepos.slice(0, budget.remaining);
+  if (nestedRepos.length === 0) {
+    return listing.files;
+  }
+  budget.remaining -= nestedRepos.length;
+  const expanded = await Pool.mapPooled(
+    nestedRepos,
+    NESTED_REPO_CONCURRENCY,
+    async (nested) => {
+      const files =
+        (await listTree(join(dir, nested), depth + 1, budget, spawner)) ?? [];
+      return files.map((file) => `${nested}/${file}`);
+    }
+  );
+  return [...listing.files, ...expanded.flat()];
+}
 
-  if (result.exitCode !== 0) {
+async function listRepo(
+  dir: string,
+  spawner: GitSpawner,
+  wantNested: boolean
+): Promise<RepoListing | undefined> {
+  const [listed, ignored] = await Promise.all([
+    spawner(["ls-files", "-z", "--stage", "--others", "--exclude-standard"], {
+      cwd: dir,
+    }),
+    wantNested
+      ? spawner(
+          [
+            "ls-files",
+            "-z",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "--directory",
+          ],
+          { cwd: dir }
+        )
+      : undefined,
+  ]);
+  if (listed.exitCode !== 0) {
     return undefined;
   }
 
-  return result.stdout.split("\n").filter((line) => line.length > 0);
+  const files = new Set<string>();
+  const candidates = new Set<string>();
+  for (const record of nulRecords(listed.stdout)) {
+    const staged = STAGED_RECORD.exec(record);
+    if (staged === null) {
+      if (record.endsWith("/")) {
+        candidates.add(record.slice(0, -1));
+      } else {
+        files.add(record);
+      }
+    } else if (staged[1] === GITLINK_MODE) {
+      candidates.add(staged[2]!);
+    } else {
+      files.add(staged[2]!);
+    }
+  }
+  if (!wantNested) {
+    return { files: [...files], nestedRepos: [] };
+  }
+  if (ignored?.exitCode === 0) {
+    for (const record of nulRecords(ignored.stdout)) {
+      if (record.endsWith("/")) {
+        candidates.add(record.slice(0, -1));
+      }
+    }
+  }
+
+  const repoRoots = await Promise.all(
+    [...candidates].map(async (candidate) =>
+      (await isNestedRepo(join(dir, candidate))) ? [candidate] : []
+    )
+  );
+  return { files: [...files], nestedRepos: repoRoots.flat().sort() };
+}
+
+async function isNestedRepo(dir: string): Promise<boolean> {
+  const metadata = await lstat(dir).catch(() => undefined);
+  return (
+    metadata?.isDirectory() === true && (await FileEnumerator.isNestedRepo(dir))
+  );
+}
+
+function nulRecords(stdout: string): readonly string[] {
+  return stdout.split("\0").filter((record) => record.length > 0);
 }
 
 function finalizeRelative(paths: readonly string[]): readonly FileCandidate[] {

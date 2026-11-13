@@ -39,6 +39,7 @@ export function CommitActions(props: { readonly diff: DiffStore }) {
       </div>
       <CommitModal
         open={writing()}
+        target={props.diff.target()}
         files={props.diff.files()}
         message={props.diff.state.message}
         committing={props.diff.state.committing}

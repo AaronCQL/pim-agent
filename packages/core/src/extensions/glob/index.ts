@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Paths } from "../../shared/Paths";
+import { SearchRender } from "../../shared/SearchRender";
 import { Tools } from "../../shared/Tools";
 import { findFiles } from "./glob";
 import { globView, renderFiles } from "./render";
@@ -46,11 +47,18 @@ export default function (pi: ExtensionAPI): void {
       };
       const resolvedPathFormat = pathFormat ?? DEFAULT_PATH_FORMAT;
       const absolutePath = Paths.resolve(path ?? ".", ctx.cwd);
-      const matches = await findFiles(absolutePath, pattern, scan);
-      const outcome = renderFiles(matches, headLimit ?? GLOB_HEAD_LIMIT_MAX, {
-        cwd: ctx.cwd,
-        pathFormat: resolvedPathFormat,
-      });
+      const { matches, skippedRepos } = await findFiles(
+        absolutePath,
+        pattern,
+        scan
+      );
+      const display = { cwd: ctx.cwd, pathFormat: resolvedPathFormat };
+      const outcome = renderFiles(
+        matches,
+        headLimit ?? GLOB_HEAD_LIMIT_MAX,
+        display
+      );
+      const repos = SearchRender.skippedRepos("glob", skippedRepos, display);
       const content: Array<{ type: "text"; text: string }> = [
         { type: "text", text: outcome.body },
       ];
@@ -61,6 +69,8 @@ export default function (pi: ExtensionAPI): void {
           text: `[glob tool: showing ${outcome.visibleItems} of ${outcome.totalItems} entries; narrow the pattern or scope to a specific path to reduce results.]`,
         });
       }
+
+      content.push(...repos.footer);
 
       return {
         content,
@@ -73,6 +83,7 @@ export default function (pi: ExtensionAPI): void {
           totalItems: outcome.totalItems,
           visibleItems: outcome.visibleItems,
           truncated: outcome.truncated,
+          skippedRepos: repos.shown,
         },
       };
     },

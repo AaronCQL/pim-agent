@@ -181,6 +181,21 @@ test("a path outside the repository is refused, absolute or climbing", async () 
   expect(await stagedPaths(root)).toBe("");
 });
 
+test("a path is a file name, never a glob", async () => {
+  const root = await repo();
+  await Bun.write(join(root, "[id].tsx"), "page\n");
+  await Bun.write(join(root, "i.tsx"), "other\n");
+
+  const result = await Git.commit(root, {
+    message: "page",
+    paths: ["[id].tsx"],
+  });
+
+  expect(result.ok).toBe(true);
+  expect(await landed(root)).toBe("A\t[id].tsx");
+  expect(await status(root)).toBe("?? i.tsx");
+});
+
 test("a pre-commit hook that fails says what it said and commits nothing", async () => {
   const root = await repo();
   const hook = join(root, ".git", "hooks", "pre-commit");

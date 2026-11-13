@@ -126,12 +126,16 @@ export type SessionState = {
   interrupted: boolean;
   contextPercent: number | undefined;
   contextWindow: number | undefined;
+  /** The repository git actions run in, relative to `cwd`; empty for `cwd` itself. */
+  repo: string;
   branch: string | undefined;
   dirtyCount: number;
   ahead: number;
   behind: number;
-  /** Changes whenever the working copy does. */
+  /** Changes whenever `repo`'s working copy does. */
   repoRevision: string;
+  /** Bumped when an agent may have changed files anywhere under `cwd`. */
+  filesRevision: number;
   durable: DurableEvent[];
   live: LiveMessage[];
   optimistic: OptimisticMessage[];
@@ -269,11 +273,13 @@ export class SessionStore {
       interrupted: false,
       contextPercent: undefined,
       contextWindow: undefined,
+      repo: "",
       branch: undefined,
       dirtyCount: 0,
       ahead: 0,
       behind: 0,
       repoRevision: "",
+      filesRevision: 0,
       durable: [],
       live: [],
       optimistic: [],
@@ -704,6 +710,26 @@ export class SessionStore {
     return response.branches;
   }
 
+  /** Repositories below the cwd, as paths relative to it. */
+  public async listRepos(): Promise<readonly string[]> {
+    const response = await this.client.send({
+      type: "list_repos",
+      sessionId: this.attached(),
+    });
+    if (!response.success || !response.repos) {
+      throw new Error(response.error ?? "could not look for repositories");
+    }
+    return response.repos;
+  }
+
+  /** Points git actions at `repo`, one of `listRepos`; `""` is the cwd. */
+  public setRepo(repo: string): Promise<void> {
+    return this.demand(
+      { type: "set_repo", sessionId: this.attached(), repo },
+      `could not switch to ${repo}`
+    );
+  }
+
   /** Changed files without hunks; see `fileDiff`. */
   public async listChanges(base: DiffBase): Promise<ChangeList> {
     const response = await this.client.send({
@@ -781,6 +807,7 @@ export class SessionStore {
       sessionId: this.attached(),
       message,
       paths,
+      repo: this.shownRepo(),
     });
     if (!response.success || !response.commit) {
       throw new Error(response.error ?? "git refused the commit");
@@ -808,15 +835,28 @@ export class SessionStore {
       type: "checkout",
       sessionId: this.attached(),
       branch,
+      repo: this.shownRepo(),
     });
   }
 
   public pull(): Promise<void> {
-    return this.runGit({ type: "pull", sessionId: this.attached() });
+    return this.runGit({
+      type: "pull",
+      sessionId: this.attached(),
+      repo: this.shownRepo(),
+    });
   }
 
   public push(): Promise<void> {
-    return this.runGit({ type: "push", sessionId: this.attached() });
+    return this.runGit({
+      type: "push",
+      sessionId: this.attached(),
+      repo: this.shownRepo(),
+    });
+  }
+
+  private shownRepo(): string {
+    return untrack(() => this.state.repo);
   }
 
   /** Untracked, so callers do not subscribe to the session id. */
@@ -1396,6 +1436,7 @@ export class SessionStore {
             draft.heldBy = undefined;
             draft.turnElapsedMs = undefined;
             draft.interrupted = false;
+            draft.repo = "";
             draft.loading = event.head > 0;
           }
           // The replay re-sends any dialog still open.
@@ -1443,6 +1484,11 @@ export class SessionStore {
         return;
       case "picker_invalidate":
         void this.files.refreshRelative();
+        if (event.scope !== "commands" && event.cwd === this.state.cwd) {
+          this.setState((draft) => {
+            draft.filesRevision += 1;
+          });
+        }
         return;
       case "ui_notice":
         this.setState((draft) => {
@@ -1547,6 +1593,7 @@ export class SessionStore {
           draft.activity[draft.sessionId] = event.status;
           draft.contextPercent = event.contextPercent;
           draft.contextWindow = event.contextWindow;
+          draft.repo = event.repo ?? "";
           draft.branch = event.branch;
           draft.dirtyCount = event.dirtyCount ?? 0;
           draft.ahead = event.ahead ?? 0;

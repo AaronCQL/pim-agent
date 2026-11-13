@@ -49,6 +49,8 @@ function Tick(props: { readonly on: boolean }) {
 export function CommitModal(props: {
   readonly open: boolean;
   readonly onClose: () => void;
+  /** Repository and branch, `·`-joined; empty when unknown. */
+  readonly target: string;
   readonly files: readonly ChangeSummary[];
   readonly message: string;
   readonly committing: boolean;
@@ -100,7 +102,14 @@ export function CommitModal(props: {
       onClose={props.onClose}
       label="Commit"
       size="narrow"
-      header={<div class="font-bold leading-[--line]">Commit</div>}
+      header={
+        <div class="min-w-0 truncate leading-[--line]">
+          <span class="font-bold">Commit</span>
+          <Show when={props.target}>
+            {(target) => <span class="text-neutral-400"> to {target()}</span>}
+          </Show>
+        </div>
+      }
     >
       <Show when={props.open}>
         <div class="flex shrink-0 items-center gap-2 border-b border-neutral-700 px-3 py-1.5 text-sm">
@@ -154,7 +163,10 @@ export function CommitModal(props: {
 
         <Show when={props.failure}>
           {(message) => (
-            <p class="shrink-0 px-3 pt-2 text-sm whitespace-pre-wrap text-rose-400">
+            <p
+              role="alert"
+              class="shrink-0 px-3 pt-2 text-sm whitespace-pre-wrap text-rose-400"
+            >
               {message()}
             </p>
           )}

@@ -1,3 +1,5 @@
+import { join } from "node:path";
+
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import { Attachments } from "#core/attachments/Attachments";
@@ -7,7 +9,9 @@ import type { LeaseState, SessionHost } from "#core/session/SessionHost";
 import { SessionLease, type LeaseRecord } from "#core/session/SessionLease";
 import type { SessionUi, UiAsk } from "#core/session/SessionUi";
 import { FileWatch } from "#core/shared/FileWatch";
+import type { GitState } from "#core/shared/Git";
 import { GitMonitor } from "#core/shared/GitMonitor";
+import { NestedRepos } from "#core/shared/NestedRepos";
 import { Tools } from "#core/shared/Tools";
 import type { NoticeSeverity, ToolView } from "#core/view/ViewBlock";
 import type { Command } from "#protocol/Command";
@@ -19,10 +23,17 @@ import type {
   SubagentChildView,
 } from "#protocol/ServerEvent";
 import { attachmentView } from "./AttachmentEndpoint";
+import { RepoPaths } from "./RepoPaths";
 import { SessionProjection } from "./SessionProjection";
 import { SubagentChild } from "./SubagentChild";
 
 export type StreamListener = (event: ServerEvent) => void;
+
+/** Where git commands run: `repo` relative to the cwd, `""` being the cwd, and its directory. */
+export type Repository = {
+  readonly repo: string;
+  readonly dir: string;
+};
 
 export type UiAnswer = Omit<
   Extract<Command, { readonly type: "ui_response" }>,
@@ -63,8 +74,8 @@ export type SessionStreamDeps = {
   readonly pollMs?: number;
   /** Shared across sessions in the same directory. */
   readonly git?: GitMonitor;
-  /** Whether any session in this cwd is mid-turn or running subagents, this one included. */
-  readonly repoBusy?: () => boolean;
+  /** Whether any session working in or around `dir` is mid-turn or running subagents, this one included. */
+  readonly repoBusy?: (dir: string) => boolean;
   readonly requestCeilingMs?: number;
   readonly detachGraceMs?: number;
 };
@@ -104,7 +115,7 @@ export class SessionStream implements SessionUi {
   private readonly observers = new Set<StreamListener>();
   private readonly pollMs: number | undefined;
   private readonly git: GitMonitor;
-  private readonly repoBusy: (() => boolean) | undefined;
+  private readonly repoBusy: ((dir: string) => boolean) | undefined;
   private readonly requestCeilingMs: number;
   private readonly detachGraceMs: number;
   private readonly pending = new Map<string, PendingRequest>();
@@ -124,7 +135,10 @@ export class SessionStream implements SessionUi {
   private readonly dispatching: string[] = [];
   private turnStartedAt = 0;
   private interrupted = false;
-  private gitCwd: string | undefined;
+  private selected: { readonly cwd: string; readonly repo: string } | undefined;
+  private choices = 0;
+  private gitReadings = 0;
+  private watchedGitDir: string | undefined;
   private gitStop: (() => void) | undefined;
   private gitBranch: string | null = null;
 
@@ -182,7 +196,7 @@ export class SessionStream implements SessionUi {
     if (!active) {
       this.unwatch?.();
       this.unwatch = undefined;
-      this.syncGit();
+      this.watchGit();
       return;
     }
     const stops = [
@@ -202,34 +216,124 @@ export class SessionStream implements SessionUi {
         stop();
       }
     };
-    this.syncGit();
+    this.watchGit();
   }
 
-  /** Re-points the git watch after the cwd changes. */
-  public syncGit(): void {
-    const wanted = this.unwatch === undefined ? undefined : this.host.cwd;
-    if (wanted === this.gitCwd) {
+  /** The repository git commands run in, relative to the cwd; `""` is the cwd. */
+  public get repo(): string {
+    return this.selected?.cwd === this.host.cwd ? this.selected.repo : "";
+  }
+
+  public get gitDir(): string {
+    return join(this.host.cwd, this.repo);
+  }
+
+  /** Chooses the repository git commands run in. */
+  public async setRepo(repo: string): Promise<void> {
+    const cwd = this.host.cwd;
+    const choice = ++this.choices;
+    if (repo !== "") {
+      await NestedRepos.verify(cwd, repo);
+    }
+    await this.git.refresh(join(cwd, repo));
+    if (this.host.cwd !== cwd) {
+      throw new Error(`the working directory changed to ${this.host.cwd}`);
+    }
+    if (choice !== this.choices) {
+      throw new Error(`a later choice superseded ${RepoPaths.label(repo)}`);
+    }
+    this.selected = { cwd, repo };
+    this.showGit();
+  }
+
+  /** Resets the chosen repository after the cwd changes. */
+  public async syncGit(): Promise<void> {
+    this.choices += 1;
+    if (this.selected?.cwd !== this.host.cwd) {
+      this.selected = undefined;
+    }
+    await this.readGit();
+  }
+
+  /** Where git commands run now. */
+  public async repository(): Promise<Repository> {
+    const repo = this.repo;
+    const dir = this.gitDir;
+    if (
+      repo === "" ||
+      (await NestedRepos.verify(this.host.cwd, repo).then(
+        () => true,
+        () => false
+      ))
+    ) {
+      return { repo, dir };
+    }
+    if (this.gitDir === dir) {
+      this.selected = undefined;
+      await this.readGit();
+    }
+    throw new Error(`${repo} is no longer a git repository`);
+  }
+
+  public async refreshGit(fetch: boolean): Promise<void> {
+    await this.git.refresh((await this.repository()).dir, { fetch });
+  }
+
+  private async readGit(): Promise<void> {
+    await this.git.refresh(this.gitDir);
+    this.showGit();
+  }
+
+  private showGit(): void {
+    this.watchGit();
+    this.emit(this.sessionState());
+  }
+
+  private watchGit(): void {
+    const wanted = this.unwatch === undefined ? undefined : this.gitDir;
+    if (wanted === this.watchedGitDir) {
       return;
     }
     this.gitStop?.();
     this.gitStop = undefined;
-    this.gitCwd = wanted;
+    this.watchedGitDir = wanted;
     if (wanted === undefined) {
       return;
     }
+    this.gitBranch = this.git.stateOf(wanted).branch;
     this.gitStop = this.git.watch(wanted, (state) => {
-      // A branch switch stales file pickers; the first reading is not a switch.
-      const moved = this.gitBranch !== null && state.branch !== this.gitBranch;
-      this.gitBranch = state.branch;
-      if (moved) {
-        this.invalidatePickers("files");
-      }
-      this.emit(this.sessionState());
+      this.onGitState(wanted, state);
     });
   }
 
-  public async refreshGit(fetch: boolean): Promise<void> {
-    await this.git.refresh(this.host.cwd, { fetch });
+  /** Applies the latest git reading. */
+  private onGitState(dir: string, state: GitState): void {
+    const reading = ++this.gitReadings;
+    if (this.repo === "") {
+      this.applyGitState(dir, state);
+      return;
+    }
+    void this.repository().then(
+      () => {
+        if (reading === this.gitReadings) {
+          this.applyGitState(dir, state);
+        }
+      },
+      () => undefined
+    );
+  }
+
+  private applyGitState(dir: string, state: GitState): void {
+    if (this.watchedGitDir !== dir) {
+      return;
+    }
+    // A branch switch stales file pickers; the first reading is not a switch.
+    const moved = this.gitBranch !== null && state.branch !== this.gitBranch;
+    this.gitBranch = state.branch;
+    if (moved) {
+      this.invalidatePickers("files");
+    }
+    this.emit(this.sessionState());
   }
 
   /** Projects and broadcasts new entries; returns the head. */
@@ -479,8 +583,10 @@ export class SessionStream implements SessionUi {
     const tps = this.host.tps;
     const usage = this.host.usage();
     const cwd = this.host.cwd;
-    const { branch, dirtyCount, ahead, behind, revision } =
-      this.git.stateOf(cwd);
+    const repo = this.repo;
+    const { branch, dirtyCount, ahead, behind, revision } = this.git.stateOf(
+      this.gitDir
+    );
     const modelLabel = this.host.currentModelLabel;
     const queued = queuedView(this.host.queued);
     const turnElapsedMs =
@@ -497,7 +603,7 @@ export class SessionStream implements SessionUi {
       cost: this.host.settings.cumulativeCost ?? 0,
       status: this.host.status,
       ...this.leaseState(),
-      ...(this.repoBusy?.() === true ? { repoBusy: true } : {}),
+      ...(this.repoBusy?.(this.gitDir) === true ? { repoBusy: true } : {}),
       ...(tps === undefined ? {} : { tps }),
       ...(turnElapsedMs === undefined ? {} : { turnElapsedMs }),
       ...(this.interrupted ? { interrupted: true } : {}),
@@ -507,6 +613,7 @@ export class SessionStream implements SessionUi {
             contextPercent: usage.percent,
             contextWindow: usage.contextWindow,
           }),
+      ...(repo === "" ? {} : { repo }),
       ...(branch === null
         ? {}
         : { branch, dirtyCount, ahead, behind, repoRevision: revision }),
@@ -689,7 +796,7 @@ export class SessionStream implements SessionUi {
         if (Tools.effectOf(event.toolName)?.kind !== "readOnly") {
           this.invalidatePickers("files");
           // Worktree writes don't touch `.git`, so the watch won't see them.
-          void this.git.refresh(this.host.cwd);
+          void this.git.refresh(this.gitDir);
         }
         return;
       }

@@ -342,6 +342,23 @@ test("a file that changes on disk is read again in place", async () => {
   expect(build).not.toHaveBeenCalled();
 });
 
+test("a file written outside the selected repository joins the tree once files change", async () => {
+  const inner = join(repo, "inner");
+  await mkdir(inner);
+  await makeRepo(inner, ["feat/inner"]);
+  await Bun.write(join(repo, ".git/info/exclude"), "inner/\n");
+  await store.setRepo("inner");
+  const host = await files();
+
+  await Bun.write(join(repo, "later.md"), "# later\n");
+  store.ingest({ type: "picker_invalidate", scope: "files", cwd: repo });
+
+  await settle(
+    () => treeRows(host).includes("later.md"),
+    "the new file in the tree"
+  );
+});
+
 test("a binary file says so instead of painting bytes", async () => {
   await Bun.write(join(repo, "blob.bin"), new Uint8Array([0, 1, 2]));
   const host = await files();

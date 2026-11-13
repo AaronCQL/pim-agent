@@ -1,5 +1,5 @@
-import { readdir, stat } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { readdir, realpath, stat } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import ignore, { type Ignore } from "ignore";
 
 const CONCURRENCY = 32;
@@ -7,6 +7,8 @@ const CONCURRENCY = 32;
 export type EnumerateOptions = {
   readonly includeDotfiles?: boolean;
   readonly includeIgnored?: boolean;
+  /** Enters ignored repository roots instead of skipping them; one inside an ignored plain directory is not found. */
+  readonly includeNestedRepos?: boolean;
   /** Stops walking once this many files are found; a few more may still land. */
   readonly limit?: number;
 };
@@ -25,10 +27,21 @@ const EMPTY_MATCHER = ignore();
 type WalkContext = {
   includeDotfiles: boolean;
   useIgnore: boolean;
+  includeNestedRepos: boolean;
   globalGitIgnore: string | undefined;
   limit: number;
   stack: StackEntry[];
   result: string[];
+  repos: string[];
+  skippedRepos: string[];
+};
+
+/** Root-relative POSIX paths; `repos` and `skippedRepos` are sorted and lie strictly below the root. */
+type FileWalk = {
+  readonly files: readonly string[];
+  readonly repos: readonly string[];
+  /** Ignored repository roots the walk did not enter. */
+  readonly skippedRepos: readonly string[];
 };
 
 async function readIgnoreFile(path: string): Promise<string | undefined> {
@@ -139,16 +152,48 @@ function addDirRules(
   }
 }
 
+/** `.git` is a directory in a normal repo and a file in a worktree or submodule. */
+function isRepoRoot(dir: string): Promise<boolean> {
+  return stat(join(dir, ".git")).then(
+    () => true,
+    () => false
+  );
+}
+
+/** `dir`'s `.git` file points into `<ancestor>/.git/worktrees/`: a checkout of a project that encloses it. */
+async function isSameProjectWorktree(dir: string): Promise<boolean> {
+  try {
+    const pointer = /^gitdir: (.+)$/m.exec(
+      await Bun.file(join(dir, ".git")).text()
+    );
+    if (pointer === null) {
+      return false;
+    }
+    const [gitDir, realDir] = await Promise.all([
+      realpath(resolve(dir, pointer[1]!.trim())),
+      realpath(dir),
+    ]);
+    const worktrees = dirname(gitDir);
+    const dotGit = dirname(worktrees);
+    return (
+      basename(worktrees) === "worktrees" &&
+      basename(dotGit) === ".git" &&
+      realDir.startsWith(`${dirname(dotGit)}/`)
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** A repository root that is not a worktree of an enclosing project. */
+async function isNestedRepo(dir: string): Promise<boolean> {
+  return (await isRepoRoot(dir)) && !(await isSameProjectWorktree(dir));
+}
+
 async function findRepoRoot(start: string): Promise<string | undefined> {
   let dir = start;
   for (;;) {
-    // `.git` is a directory in a normal repo and a file in a worktree.
-    if (
-      await stat(join(dir, ".git")).then(
-        () => true,
-        () => false
-      )
-    ) {
+    if (await isRepoRoot(dir)) {
       return dir;
     }
     const parent = dirname(dir);
@@ -197,8 +242,12 @@ async function processDir(
   let rules = currentDir.ignoreRules;
   let matcher = currentDir.matcher;
 
+  const hasDotGit = entries.some((e) => e.name === ".git");
+  if (hasDotGit && currentDir.rel !== "") {
+    ctx.repos.push(currentDir.rel);
+  }
+
   if (ctx.useIgnore) {
-    const hasDotGit = entries.some((e) => e.name === ".git");
     if (hasDotGit) {
       // A nested repo does not inherit its parent's rules.
       inRepo = true;
@@ -250,7 +299,13 @@ async function processDir(
     }
 
     if (verdict.ignored) {
-      continue;
+      if (!isDir || !(await isNestedRepo(childAbs))) {
+        continue;
+      }
+      if (!ctx.includeNestedRepos) {
+        ctx.skippedRepos.push(relPath);
+        continue;
+      }
     }
 
     if (isDir) {
@@ -335,11 +390,8 @@ async function enclosingRepo(
   return { repoRoot, rules };
 }
 
-/** All files under `root` as root-relative POSIX paths; `.gitignore` is honored only inside a repo. */
-async function enumerate(
-  root: string,
-  opts?: EnumerateOptions
-): Promise<string[]> {
+/** One walk of `root`: its files, the repository roots it reaches, and the ignored ones it skips. */
+async function walk(root: string, opts?: EnumerateOptions): Promise<FileWalk> {
   const includeDotfiles = opts?.includeDotfiles ?? false;
   const includeIgnored = opts?.includeIgnored ?? false;
   const useIgnore = !includeIgnored;
@@ -358,6 +410,7 @@ async function enumerate(
   const ctx: WalkContext = {
     includeDotfiles,
     useIgnore,
+    includeNestedRepos: opts?.includeNestedRepos ?? false,
     globalGitIgnore,
     limit: opts?.limit ?? Number.POSITIVE_INFINITY,
     stack: [
@@ -374,11 +427,30 @@ async function enumerate(
       },
     ],
     result: [],
+    repos: [],
+    skippedRepos: [],
   };
 
   await drain(ctx);
 
-  return ctx.result;
+  return {
+    files: ctx.result,
+    repos: ctx.repos.toSorted(),
+    skippedRepos: ctx.skippedRepos.toSorted(),
+  };
 }
 
-export const FileEnumerator = { enumerate };
+/** All files under `root` as root-relative POSIX paths; `.gitignore` is honored only inside a repo. */
+async function enumerate(
+  root: string,
+  opts?: EnumerateOptions
+): Promise<readonly string[]> {
+  return (await walk(root, opts)).files;
+}
+
+export const FileEnumerator = {
+  enumerate,
+  walk,
+  isRepoRoot,
+  isNestedRepo,
+};

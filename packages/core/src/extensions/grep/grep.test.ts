@@ -79,7 +79,7 @@ describe("findMatches", () => {
       new Date("2024-01-02T00:00:00Z")
     );
 
-    const matches = await findMatches(
+    const { matches } = await findMatches(
       root,
       undefined,
       makeMatcher("alpha"),
@@ -99,7 +99,7 @@ describe("findMatches", () => {
     const path = join(root, "code.ts");
     await writeFile(path, "useFoo(\nfoo.bar[0]\n", "utf8");
 
-    const matches = await findMatches(
+    const { matches } = await findMatches(
       root,
       undefined,
       makeMatcher("foo\\.bar\\[0\\]"),
@@ -115,13 +115,13 @@ describe("findMatches", () => {
     const path = join(root, "block.txt");
     await writeFile(path, "before\nBEGIN\nmiddle\nEND\nafter\n", "utf8");
 
-    const withoutAcrossLines = await findMatches(
+    const { matches: withoutAcrossLines } = await findMatches(
       root,
       undefined,
       makeMatcher("BEGIN.*END"),
       defaultScanOptions
     );
-    const withAcrossLines = await findMatches(
+    const { matches: withAcrossLines } = await findMatches(
       root,
       undefined,
       makeMatcher("BEGIN.*END", { matchAcrossLines: true }),
@@ -162,7 +162,7 @@ describe("findMatches", () => {
     await writeFile(nodeModules, "needle\n", "utf8");
     await writeFile(dot, "needle\n", "utf8");
 
-    const matches = await findMatches(
+    const { matches } = await findMatches(
       root,
       undefined,
       makeMatcher("needle"),
@@ -184,10 +184,15 @@ describe("findMatches", () => {
     await writeFile(ignored, "needle\n", "utf8");
     await writeFile(dot, "needle\n", "utf8");
 
-    const matches = await findMatches(root, undefined, makeMatcher("needle"), {
-      includeDotfiles: true,
-      includeIgnored: true,
-    });
+    const { matches } = await findMatches(
+      root,
+      undefined,
+      makeMatcher("needle"),
+      {
+        includeDotfiles: true,
+        includeIgnored: true,
+      }
+    );
 
     expect(matches.map((match) => match.filePath).sort()).toEqual(
       [dot, ignored, kept].sort()
@@ -203,13 +208,13 @@ describe("findMatches", () => {
     await writeFile(ignored, "needle\n", "utf8");
     await writeFile(dotfile, "needle\n", "utf8");
 
-    const ignoredMatches = await findMatches(
+    const { matches: ignoredMatches } = await findMatches(
       ignored,
       undefined,
       makeMatcher("needle"),
       defaultScanOptions
     );
-    const dotfileMatches = await findMatches(
+    const { matches: dotfileMatches } = await findMatches(
       dotfile,
       undefined,
       makeMatcher("needle"),
@@ -232,10 +237,15 @@ describe("findMatches", () => {
     await writeFile(generated, "needle", "utf8");
     await writeFile(join(root, "src", "notes.md"), "needle", "utf8");
 
-    const matches = await findMatches(root, "**/*.ts", makeMatcher("needle"), {
-      ...defaultScanOptions,
-      exclude: ["**/*.test.ts", "src/generated/**"],
-    });
+    const { matches } = await findMatches(
+      root,
+      "**/*.ts",
+      makeMatcher("needle"),
+      {
+        ...defaultScanOptions,
+        exclude: ["**/*.test.ts", "src/generated/**"],
+      }
+    );
 
     expect(matches.map((match) => match.filePath)).toEqual([source]);
   });
@@ -248,7 +258,7 @@ describe("findMatches", () => {
     await writeFile(text, "needle\n", "utf8");
     await Bun.write(binary, new Uint8Array([0x6e, 0x00, 0x65, 0x65]));
 
-    const matches = await findMatches(
+    const { matches } = await findMatches(
       root,
       undefined,
       makeMatcher("n"),
@@ -279,7 +289,7 @@ describe("findMatches", () => {
     await writeFile(readable, "alpha", "utf8");
     await symlink(target, join(root, "linkdir"));
 
-    const matches = await findMatches(
+    const { matches } = await findMatches(
       root,
       undefined,
       makeMatcher("alpha"),
@@ -299,7 +309,7 @@ describe("findMatches", () => {
     await writeFile(readable, "alpha", "utf8");
     await symlink(join(root, "missing-target"), join(root, "broken.txt"));
 
-    const matches = await findMatches(
+    const { matches } = await findMatches(
       root,
       undefined,
       makeMatcher("alpha"),
@@ -320,7 +330,7 @@ describe("findMatches", () => {
       await writeFile(locked, "alpha", "utf8");
       await chmod(locked, 0o000);
 
-      const matches = await findMatches(
+      const { matches } = await findMatches(
         root,
         undefined,
         makeMatcher("alpha"),
@@ -342,7 +352,7 @@ describe("findMatches", () => {
     await writeFile(join(target, "inner.txt"), "alpha", "utf8");
     await symlink(target, link);
 
-    const matches = await findMatches(
+    const { matches } = await findMatches(
       link,
       undefined,
       makeMatcher("alpha"),

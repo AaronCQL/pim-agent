@@ -1,11 +1,12 @@
-import { join } from "node:path";
+import type { BunFile } from "bun";
 
 import { DiffLines, type ToolDiffHunk, type ToolDiffLine } from "./DiffLines";
 import { DiffPatch } from "./DiffPatch";
 import { Git } from "./Git";
 import type { GitMonitor } from "./GitMonitor";
 import { Lines } from "./Lines";
-import { Proc, type ProcResult } from "./Proc";
+import type { ProcResult } from "./Proc";
+import { RepoFiles } from "./RepoFiles";
 
 export type DiffBase =
   | { readonly kind: "worktree" }
@@ -97,7 +98,7 @@ const BINARY_PATCH = /^(?:Binary files |GIT binary patch)/m;
 
 /** `--no-optional-locks` keeps reads from taking `index.lock` and failing concurrent writes. */
 function git(cwd: string, args: readonly string[]): Promise<ProcResult> {
-  return Proc.run(["git", "--no-optional-locks", ...args], { cwd });
+  return Git.run(cwd, ["--no-optional-locks", ...args]);
 }
 
 async function read(
@@ -133,6 +134,9 @@ async function baseArgs(
   cwd: string,
   base: DiffBase
 ): Promise<readonly string[]> {
+  if ("ref" in base && Git.isOptionLike(base.ref)) {
+    throw new Error(`${base.ref} is not a ref`);
+  }
   switch (base.kind) {
     case "worktree":
       return (await born(cwd)) ? ["HEAD"] : [await emptyTree(cwd)];
@@ -293,12 +297,13 @@ function parseUntracked(text: string): readonly string[] {
   return paths;
 }
 
+/** Untracked files; an untracked nested repository, which git lists as `dir/`, is not one. */
 function untrackedPaths(cwd: string): Promise<readonly string[]> {
   return read(
     cwd,
     ["status", "--porcelain=v2", "-z", "--untracked-files=all"],
     "could not read the working tree"
-  ).then(parseUntracked);
+  ).then((text) => parseUntracked(text).filter((path) => !path.endsWith("/")));
 }
 
 type Untracked = {
@@ -309,17 +314,28 @@ type Untracked = {
   readonly bytes: number;
 };
 
+/** Undefined when missing, or when a symlink leads out of `cwd`. */
+async function worktreeFile(
+  cwd: string,
+  path: string
+): Promise<BunFile | undefined> {
+  return await RepoFiles.locate(cwd, path).then(
+    (target) => Bun.file(target),
+    () => undefined
+  );
+}
+
 async function readUntracked(cwd: string, path: string): Promise<Untracked> {
-  const file = Bun.file(join(cwd, path));
-  const mtimeMs = file.lastModified;
+  const file = await worktreeFile(cwd, path);
+  const mtimeMs = file?.lastModified ?? 0;
   const opaque: Untracked = {
     binary: true,
     text: "",
     lines: 0,
     mtimeMs,
-    bytes: file.size,
+    bytes: file?.size ?? 0,
   };
-  if (file.size > UNTRACKED_BYTE_LIMIT) {
+  if (file === undefined || file.size > UNTRACKED_BYTE_LIMIT) {
     return opaque;
   }
   const bytes = await file.bytes().catch(() => undefined);
@@ -336,26 +352,27 @@ async function readUntracked(cwd: string, path: string): Promise<Untracked> {
   };
 }
 
-function fingerprintOf(
+async function fingerprintOf(
   cwd: string,
   entry: Entry,
   added: number,
   removed: number
-): string {
+): Promise<string> {
   if (entry.status === "deleted") {
     return `deleted:${entry.baseSha ?? ""}`;
   }
   if (entry.headSha !== undefined) {
     return entry.headSha;
   }
-  return `${added}:${removed}:${Bun.file(join(cwd, entry.path)).lastModified}`;
+  const file = await worktreeFile(cwd, entry.path);
+  return `${added}:${removed}:${file?.lastModified ?? 0}`;
 }
 
-function summaryOf(
+async function summaryOf(
   cwd: string,
   entry: Entry,
   counts: Counts | undefined
-): ChangeSummary {
+): Promise<ChangeSummary> {
   const added = counts?.added ?? 0;
   const removed = counts?.removed ?? 0;
   return {
@@ -367,7 +384,7 @@ function summaryOf(
     ...(counts?.binary === true ? { binary: true } : {}),
     ...(entry.baseSha === undefined ? {} : { baseSha: entry.baseSha }),
     ...(entry.headSha === undefined ? {} : { headSha: entry.headSha }),
-    fingerprint: fingerprintOf(cwd, entry, added, removed),
+    fingerprint: await fingerprintOf(cwd, entry, added, removed),
   };
 }
 
@@ -531,8 +548,8 @@ async function sideText(
       ? result.stdout
       : undefined;
   }
-  const file = Bun.file(join(cwd, path));
-  if (file.size > CONTEXT_BYTE_LIMIT || !(await file.exists())) {
+  const file = await worktreeFile(cwd, path);
+  if (file === undefined || file.size > CONTEXT_BYTE_LIMIT) {
     return undefined;
   }
   return await file.text().catch(() => undefined);
@@ -558,8 +575,7 @@ async function worktreeSize(
   cwd: string,
   path: string
 ): Promise<number | undefined> {
-  const file = Bun.file(join(cwd, path));
-  return (await file.exists()) ? file.size : undefined;
+  return (await worktreeFile(cwd, path))?.size;
 }
 
 async function binaryDiff(
@@ -599,8 +615,8 @@ async function listChanges(
       ),
     ]);
     const counts = parseNumstat(numstat);
-    const files = entries.map((entry) =>
-      summaryOf(cwd, entry, counts.get(entry.path))
+    const files = await Promise.all(
+      entries.map((entry) => summaryOf(cwd, entry, counts.get(entry.path)))
     );
     if (base.kind !== "worktree") {
       return collect(base, files);

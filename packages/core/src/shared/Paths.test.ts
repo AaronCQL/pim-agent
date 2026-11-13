@@ -41,3 +41,35 @@ describe("Paths.titleOr", () => {
     expect(Paths.titleOr(undefined, "/work")).toBe("...");
   });
 });
+
+describe("Paths.within", () => {
+  test("holds for the directory itself and anything below it, by whole segments", () => {
+    expect(Paths.within("/work", "/work")).toBe(true);
+    expect(Paths.within("/work", "/work/inner/a")).toBe(true);
+    expect(Paths.within("/work", "/workshop")).toBe(false);
+    expect(Paths.within("/work/inner", "/work")).toBe(false);
+    expect(Paths.within("/work", "/other")).toBe(false);
+  });
+});
+
+describe("Paths.isNormalRelative", () => {
+  test("takes a plain relative path and nothing that climbs, roots or doubles up", () => {
+    expect(Paths.isNormalRelative("inner")).toBe(true);
+    expect(Paths.isNormalRelative("a/b.txt")).toBe(true);
+    for (const path of [
+      "",
+      ".",
+      "..",
+      "./a",
+      "a/",
+      "a//b",
+      "a/./b",
+      "a/../b",
+      "../a",
+      "/etc",
+      "a\\..\\..\\b",
+    ]) {
+      expect(Paths.isNormalRelative(path)).toBe(false);
+    }
+  });
+});

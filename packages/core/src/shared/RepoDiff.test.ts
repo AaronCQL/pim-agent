@@ -1,9 +1,10 @@
-import { rm, mkdtemp, symlink, unlink } from "node:fs/promises";
+import { mkdir, rm, mkdtemp, symlink, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterAll, describe, expect, spyOn, test } from "bun:test";
 
 import { git, makeRepo } from "./fixtures/repo";
+import { Git } from "./Git";
 import { GitMonitor } from "./GitMonitor";
 import { Proc } from "./Proc";
 import type { ToolDiffHunk } from "./DiffLines";
@@ -153,6 +154,30 @@ describe("the five bases", () => {
     await expect(
       RepoDiff.listChanges(root, { kind: "commit", ref: "nope" }, monitor)
     ).rejects.toThrow(/nope/);
+  });
+
+  test("a ref git would take for an option is refused, whatever the base", async () => {
+    const root = await repo();
+    const written = join(root, "written.txt");
+
+    for (const kind of ["commit", "branch"] as const) {
+      await expect(
+        RepoDiff.listChanges(
+          root,
+          { kind, ref: `--output=${written}` },
+          monitor
+        )
+      ).rejects.toThrow(/is not a ref/);
+      await expect(
+        RepoDiff.fileDiff(
+          root,
+          { kind, ref: `--output=${written}` },
+          "a.txt",
+          monitor
+        )
+      ).rejects.toThrow(/is not a ref/);
+    }
+    expect(await Bun.file(written).exists()).toBe(false);
   });
 
   test("a branch with no commit on it yet calls every file added", async () => {
@@ -371,6 +396,43 @@ describe("the long tail of one file", () => {
       added: 0,
       removed: 0,
     });
+  });
+
+  test("an untracked nested repository is no row, so committing every row still works", async () => {
+    const root = await repo();
+    await git(root, ["config", "user.email", "pim@example.com"]);
+    await git(root, ["config", "user.name", "pim"]);
+    await mkdir(join(root, "sub"));
+    await makeRepo(join(root, "sub"));
+    await write(root, "loose.txt", "u\n");
+
+    const list = await RepoDiff.listChanges(
+      root,
+      { kind: "worktree" },
+      monitor
+    );
+
+    expect(pathsOf(list)).toEqual(["loose.txt"]);
+    expect(
+      await Git.commit(root, { message: "all", paths: pathsOf(list) })
+    ).toMatchObject({ ok: true });
+  });
+
+  test("a path is a file name, never a pathspec reaching above the cwd", async () => {
+    const root = await repo();
+    await write(root, "a.txt", "one\ntwo\nsecret\n");
+    await write(root, "sub/in.txt", "in\n");
+    const cwd = join(root, "sub");
+
+    for (const path of [":(top)a.txt", ":/a.txt", "../*"]) {
+      const diff = await RepoDiff.fileDiff(
+        cwd,
+        { kind: "worktree" },
+        path,
+        monitor
+      ).catch(() => undefined);
+      expect(JSON.stringify(diff ?? {})).not.toContain("secret");
+    }
   });
 
   test("a deleted file keeps the sha it was deleted from", async () => {
@@ -852,6 +914,60 @@ describe("the lines behind a gap", () => {
     );
 
     expect(read.runs).toEqual([{ start: 2, lines: ["ink"] }]);
+  });
+
+  test("a path that climbs out of the repository is never read", async () => {
+    const root = await repo();
+    const secret = join(root, "..", `${basename(root)}-secret.txt`);
+    await Bun.write(secret, "secret\n");
+    roots.push(secret);
+
+    for (const path of [
+      `../${basename(secret)}`,
+      `nested/../../${basename(secret)}`,
+    ]) {
+      await expect(
+        RepoDiff.readLines(
+          root,
+          { kind: "worktree" },
+          path,
+          [{ start: 1, end: 1 }],
+          monitor
+        )
+      ).rejects.toThrow(/could not read/);
+    }
+  });
+
+  test("a symlink leading out of the repository is never followed", async () => {
+    const root = await repo();
+    const secret = join(root, "..", `${basename(root)}-secret.txt`);
+    await Bun.write(secret, "secret\n");
+    roots.push(secret);
+    await symlink(secret, join(root, "leak"));
+
+    const list = await RepoDiff.listChanges(
+      root,
+      { kind: "worktree" },
+      monitor
+    );
+    const diff = await RepoDiff.fileDiff(
+      root,
+      { kind: "worktree" },
+      "leak",
+      monitor
+    );
+
+    expect(rowOf(list, "leak")).toMatchObject({ added: 0, binary: true });
+    expect(JSON.stringify(diff)).not.toContain("secret");
+    await expect(
+      RepoDiff.readLines(
+        root,
+        { kind: "worktree" },
+        "leak",
+        [{ start: 1, end: 1 }],
+        monitor
+      )
+    ).rejects.toThrow(/could not read leak/);
   });
 
   test("a file with no side to read says so", async () => {

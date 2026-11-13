@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Paths } from "../../shared/Paths";
 import { Renderer } from "../../shared/Renderer";
+import { SearchRender } from "../../shared/SearchRender";
 import { Tools } from "../../shared/Tools";
 import { buildMatcher, findMatches } from "./grep";
 import { buildView, type GrepViewDetails, renderMatches } from "./render";
@@ -60,18 +61,24 @@ export default function (pi: ExtensionAPI): void {
         matchAcrossLines: matchAcrossLines ?? false,
       });
       const absolutePath = Paths.resolve(path ?? ".", ctx.cwd);
-      const matches = await findMatches(absolutePath, glob, matcher, {
-        exclude,
-        includeDotfiles: includeDotfiles ?? false,
-        includeIgnored: includeIgnored ?? false,
-        retainFileLines:
-          resolvedOutputMode === "content" && resolvedContext > 0,
-      });
+      const { matches, skippedRepos } = await findMatches(
+        absolutePath,
+        glob,
+        matcher,
+        {
+          exclude,
+          includeDotfiles: includeDotfiles ?? false,
+          includeIgnored: includeIgnored ?? false,
+          retainFileLines:
+            resolvedOutputMode === "content" && resolvedContext > 0,
+        }
+      );
+      const display = { cwd: ctx.cwd, pathFormat: resolvedPathFormat };
       const outcome = renderMatches(matches, resolvedOutputMode, limit, {
-        cwd: ctx.cwd,
-        pathFormat: resolvedPathFormat,
+        ...display,
         context: resolvedContext,
       });
+      const repos = SearchRender.skippedRepos("grep", skippedRepos, display);
       const content: Array<{ type: "text"; text: string }> = [
         { type: "text", text: outcome.body },
       ];
@@ -82,6 +89,8 @@ export default function (pi: ExtensionAPI): void {
           text: `[grep tool: showing ${outcome.visibleItems} of ${outcome.totalItems} ${outcome.itemNoun}; narrow the pattern, scope to a specific path, or use a glob filter to reduce results.]`,
         });
       }
+
+      content.push(...repos.footer);
 
       return {
         content,
@@ -99,6 +108,7 @@ export default function (pi: ExtensionAPI): void {
           totalItems: outcome.totalItems,
           visibleItems: outcome.visibleItems,
           truncated: outcome.truncated,
+          skippedRepos: repos.shown,
         },
       };
     },

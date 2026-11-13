@@ -4,7 +4,7 @@ import { render } from "@solidjs/web";
 import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { flush } from "solid-js";
+import { createRoot, flush } from "solid-js";
 
 import { git, makeRepo } from "#core/shared/fixtures/repo";
 import { Proc } from "#core/shared/Proc";
@@ -666,6 +666,80 @@ test("a commit writes exactly the picked files and leaves the rest dirty", async
     `committed ${await gitOut(["rev-parse", "--short", "HEAD"])}`
   );
   expect(host.querySelector("dialog")?.open).toBe(false);
+  expect(asked("commit")).toEqual([expect.objectContaining({ repo: "" })]);
+});
+
+async function nest(): Promise<void> {
+  const inner = join(repo, "inner");
+  await mkdir(inner);
+  await makeRepo(inner, ["feat/inner"]);
+  await Bun.write(join(inner, "fresh.txt"), "fresh\n");
+  await Bun.write(join(repo, ".git/info/exclude"), "inner/\n");
+}
+
+test("switching repository drops the change list read from the old one", async () => {
+  await seed();
+  await nest();
+  const diff = createRoot((drop) => {
+    dispose = drop;
+    return new DiffStore(store, 0);
+  });
+  await diff.refresh();
+  expect(diff.files().map((file) => file.path)).toEqual([
+    "alpha.ts",
+    "src/beta.ts",
+  ]);
+
+  await store.setRepo("inner");
+  await settle(() => diff.state.status === "idle", "the change list to reset");
+  await diff.refresh();
+
+  expect(diff.files().map((file) => file.path)).toEqual(["inner/fresh.txt"]);
+});
+
+test("the commit header names a nested repository and its branch", async () => {
+  await seed();
+  await nest();
+  await store.setRepo("inner");
+  await settle(() => store.state.branch === "feat/inner", "the inner branch");
+  const host = await open();
+  await settle(() => rows(host).length === 1, "the inner change");
+
+  openCommit(host);
+
+  expect(host.querySelector("dialog header")?.textContent).toBe(
+    "Commit to inner · feat/inner"
+  );
+});
+
+test("a commit against a repository another tab switched away from is refused", async () => {
+  await seed();
+  await nest();
+  const original = store.client.send.bind(store.client);
+  spyOn(store.client, "send").mockImplementation(async (command) => {
+    sent.push(command);
+    if (command.type === "commit") {
+      await original({
+        type: "set_repo",
+        sessionId: command.sessionId,
+        repo: "inner",
+      });
+    }
+    return original(command);
+  });
+  const host = paint();
+  await settle(() => rows(host).length === 2, "both rows");
+
+  openCommit(host);
+  write(host, "meant for the outer repository");
+  submit(host);
+
+  await settle(
+    () => host.querySelector("dialog [role='alert']") !== null,
+    "the refusal"
+  );
+  expect(asked("commit")).toEqual([expect.objectContaining({ repo: "" })]);
+  expect(await gitOut(["log", "-1", "--pretty=%s"])).toBe("seed");
 });
 
 test("a refused commit keeps the picks and the message that was refused", async () => {
