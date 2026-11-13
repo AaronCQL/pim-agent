@@ -129,14 +129,19 @@ function MessageBubble(props: {
               </div>
             )}
           </Show>
-          <Markdown
-            text={props.row.text}
-            complete={props.row.streaming !== true}
-          />
+          <div
+            data-reply={props.row.text === "" ? undefined : props.row.id}
+            data-stop={props.row.answer ? "" : undefined}
+          >
+            <Markdown
+              text={props.row.text}
+              complete={props.row.streaming !== true}
+            />
+          </div>
         </article>
       }
     >
-      <article class="flex flex-col items-end">
+      <article data-stop class="flex flex-col items-end">
         <Show when={props.row.attachments}>
           {(files) => (
             <div class="mb-1.5">

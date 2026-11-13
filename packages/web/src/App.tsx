@@ -26,10 +26,12 @@ import { HideThinking, Settings } from "./settings/Settings";
 import { SettingsModal } from "./settings/SettingsModal";
 import { Skeleton } from "./transcript/Skeleton";
 import { Splash } from "./transcript/Splash";
+import { Jumps } from "./transcript/Jumps";
+import { createReader } from "./transcript/reader";
 import { SubagentModal } from "./transcript/SubagentModal";
 import { Transcript } from "./transcript/Transcript";
 import { Topbar } from "./topbar/Topbar";
-import { createBottomPin, observeHeight } from "./ui/scroll";
+import { observeHeight } from "./ui/scroll";
 import { Drawer } from "./ui/Drawer";
 import { Fade } from "./ui/Fade";
 import { createBackGuard } from "./ui/history";
@@ -51,6 +53,11 @@ export function App() {
   return <Shell store={store} settings={settings} />;
 }
 
+const JUMP_KEYS: Readonly<Record<string, "up" | "down">> = {
+  ArrowUp: "up",
+  ArrowDown: "down",
+};
+
 export function Shell(props: {
   readonly store: SessionStore;
   readonly settings: Settings;
@@ -66,6 +73,7 @@ export function Shell(props: {
   /** A changed file the diff should scroll to. */
   const [focus, setFocus] = createSignal<string>();
   const comments = new Comments();
+  const reader = createReader(() => inset());
   const back = createBackGuard(() => {
     setReviewing(false);
   });
@@ -86,6 +94,21 @@ export function Shell(props: {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         setSearching(true);
+        return;
+      }
+      const jump = JUMP_KEYS[event.key];
+      if (
+        jump &&
+        event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.shiftKey &&
+        !event.defaultPrevented &&
+        !untrack(reviewing) &&
+        !(event.target instanceof Element && event.target.closest("dialog"))
+      ) {
+        event.preventDefault();
+        reader[jump]();
       }
     };
     globalThis.addEventListener("keydown", onKeyDown);
@@ -98,7 +121,6 @@ export function Shell(props: {
       setSidebar(true);
     }
   });
-  const pin = createBottomPin();
   const [overlay, setOverlay] = createSignal(0);
   // An object, so recalling the same text twice still fires.
   const [recalled, setRecalled] = createSignal<{ text: string }>();
@@ -138,7 +160,7 @@ export function Shell(props: {
 
   const navigate = (): void => {
     converse();
-    pin.jump();
+    reader.jump();
   };
 
   const clearReview = (): void => {
@@ -170,18 +192,43 @@ export function Shell(props: {
   /** Composer height over the transcript; 0 on the splash, which would otherwise show a needless scrollbar. */
   const inset = createMemo((): number => (showSplash() ? 0 : overlay()));
 
+  let opening = { sessionId: "", unread: false, landed: false };
+  createEffect(
+    () => ({
+      sessionId: props.store.state.sessionId,
+      ready: !props.store.state.loading,
+    }),
+    ({ sessionId, ready }) => {
+      // Snapshot before `session_read` arrives: it follows the replay.
+      if (sessionId !== opening.sessionId) {
+        opening = {
+          sessionId,
+          unread: untrack(() => props.store.isUnread(sessionId)),
+          landed: false,
+        };
+      }
+      if (ready && !opening.landed) {
+        opening.landed = true;
+        reader.open(
+          opening.unread && untrack(() => props.store.state.agent) === "idle"
+        );
+      }
+    }
+  );
+
   const viewportHeight = createViewportHeight();
 
   const Conversation = () => (
     <div
-      ref={pin.ref}
+      ref={reader.ref}
       class={{
         "isolate flex h-full flex-col-reverse overflow-y-auto": true,
-        "[overflow-anchor:none]": pin.pinned(),
+        "[overflow-anchor:none]": reader.pinned(),
       }}
     >
       <Fade height={inset()} />
       <div
+        ref={reader.content}
         class="mx-auto min-h-full w-full max-w-3xl flex-none space-y-[--line] p-3 leading-[--line]"
         style={{ "padding-bottom": `calc(${inset()}px + var(--line))` }}
       >
@@ -337,6 +384,11 @@ export function Shell(props: {
                       onSend={navigate}
                       recalled={recalled()}
                       review={pending()}
+                      chips={
+                        <Show when={!reviewing() && hasTranscript()}>
+                          <Jumps reader={reader} />
+                        </Show>
+                      }
                     />
                   </div>
                 </div>

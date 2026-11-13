@@ -10,6 +10,7 @@ import { SubagentResult } from "#core/extensions/subagent/SubagentResult";
 import type { SessionHost } from "#core/session/SessionHost";
 import type { GitState } from "#core/shared/Git";
 import { GitMonitor } from "#core/shared/GitMonitor";
+import { git as runGit } from "#core/shared/fixtures/repo";
 import { NestedRepos } from "#core/shared/NestedRepos";
 import type { EphemeralEvent, ServerEvent } from "#protocol/ServerEvent";
 import { until } from "#core/shared/fixtures/wait";
@@ -864,6 +865,12 @@ describe("the chosen repository", () => {
   let git: GitMonitor;
   let watched: SessionHost;
 
+  /** Real, since `NestedRepos.verify` asks git; the readings stay stubbed. */
+  async function init(dir: string): Promise<void> {
+    await mkdir(dir, { recursive: true });
+    await runGit(dir, ["init", "--quiet"]);
+  }
+
   function hold(dir: string): () => void {
     let release!: () => void;
     gates.set(
@@ -877,7 +884,7 @@ describe("the chosen repository", () => {
 
   beforeEach(async () => {
     inner = join(tmp, "inner");
-    await mkdir(join(inner, ".git"), { recursive: true });
+    await init(inner);
     innerState = nested;
     gates = new Map();
     git = new GitMonitor({
@@ -929,7 +936,7 @@ describe("the chosen repository", () => {
   });
 
   test("is the latest choice, even when an earlier one is read last", async () => {
-    await mkdir(join(tmp, "other", ".git"), { recursive: true });
+    await init(join(tmp, "other"));
     const release = hold(inner);
 
     const first = stream.setRepo("inner");
@@ -967,7 +974,7 @@ describe("the chosen repository", () => {
   test("falls back to the cwd once it is a symlink to a repository outside the cwd", async () => {
     const outside = await mkdtemp(join(tmpdir(), "pim-outside-repo-"));
     try {
-      await mkdir(join(outside, ".git"));
+      await init(outside);
       await stream.setRepo("inner");
       await rm(inner, { recursive: true });
       await symlink(outside, inner);

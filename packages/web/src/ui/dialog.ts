@@ -1,6 +1,15 @@
-import { createEffect } from "solid-js";
+import { createEffect, untrack } from "solid-js";
 
 import { createBackGuard } from "./history";
+import { createMediaQuery, KEYBOARD } from "./media";
+
+/** Closing refocuses what had the focus, and a refocused text field raises the soft keyboard. */
+function dropTextFocus(): void {
+  const active = document.activeElement;
+  if (active instanceof HTMLElement && active.matches("input, textarea")) {
+    active.blur();
+  }
+}
 
 export type Dialog = {
   readonly ref: (element: HTMLDialogElement) => void;
@@ -14,6 +23,7 @@ export function createDialog(options: {
   readonly onClose: () => void;
 }): Dialog {
   let host!: HTMLDialogElement;
+  const keyboard = createMediaQuery(KEYBOARD);
   const back = createBackGuard(() => {
     host.close();
   });
@@ -28,6 +38,9 @@ export function createDialog(options: {
       if (!open) {
         host.close();
         return;
+      }
+      if (!untrack(keyboard)) {
+        dropTextFocus();
       }
       host.showModal();
       back.arm();

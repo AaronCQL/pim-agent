@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 
 import { until } from "#core/shared/fixtures/wait";
 
-import { makeRepo } from "#core/shared/fixtures/repo";
+import { git, makeRepo } from "#core/shared/fixtures/repo";
 import { Proc } from "#core/shared/Proc";
 import { SessionRegistry } from "#core/session/SessionRegistry";
 import type { ServerEvent } from "#protocol/ServerEvent";
@@ -96,6 +96,9 @@ beforeEach(async () => {
   await makeRepo(cwd, ["outer-feature"]);
   await Bun.write(join(cwd, ".git/info/exclude"), "inner/\n");
   await makeRepo(inner, ["feat/inner"]);
+  // The gateway's own commit sees no fixture identity, and CI has no global one.
+  await git(inner, ["config", "user.email", "pim@example.com"]);
+  await git(inner, ["config", "user.name", "pim"]);
   await Bun.write(join(inner, "fresh.txt"), "new\n");
   await mkdir(join(cwd, "plain"));
   await Bun.write(join(cwd, "plain/notes.md"), "# notes\n");

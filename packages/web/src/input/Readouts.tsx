@@ -22,7 +22,7 @@ export function Readouts(props: { readonly store: SessionStore }) {
 
   return (
     <Show when={props.store.state.cost > 0 || fill() !== undefined}>
-      <div class="ml-auto flex items-center divide-x-1.5 divide-neutral-750 rounded-lg bg-neutral-900 text-sm text-neutral-350 tabular-nums ring-1 ring-neutral-750">
+      <div class="flex items-center divide-x-1.5 divide-neutral-750 rounded-lg bg-neutral-900 text-sm text-neutral-350 tabular-nums ring-1 ring-neutral-750">
         <Show when={props.store.state.cost > 0}>
           <div class="px-2.5 py-1">{`$${props.store.state.cost.toFixed(3)}`}</div>
         </Show>

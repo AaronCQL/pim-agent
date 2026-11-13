@@ -16,12 +16,12 @@ type Command = { readonly type: string } & Record<string, unknown>;
 
 type Answer = (command: Command) => Promise<unknown> | unknown;
 
-function attached(sessionId = "s1"): ServerEvent {
+function attached(sessionId = "s1", head = 0): ServerEvent {
   return {
     type: "attached",
     sessionId,
     cwd: "/repo",
-    head: 0,
+    head,
     pimVersion: "1.2.3",
     piVersion: "0.9.0",
   };
@@ -761,6 +761,20 @@ test("switching session swaps the box, the rows and the files", async () => {
 
   type(input, "@gret");
   await until(() => options(host).length > 0, "the rows for the next token");
+});
+
+test("only a new session takes the focus, and with it a phone's keyboard", () => {
+  const store = offline();
+  const { input } = paint(store);
+  expect(document.activeElement).not.toBe(input);
+
+  store.ingest(attached("old", 4));
+  flush();
+  expect(document.activeElement).not.toBe(input);
+
+  store.ingest(attached("new"));
+  flush();
+  expect(document.activeElement).toBe(input);
 });
 
 test("one pill opens the main agent's and the subagents' model and effort", async () => {

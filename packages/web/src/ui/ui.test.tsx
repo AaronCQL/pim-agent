@@ -438,6 +438,52 @@ describe("platform wrappers", () => {
     expect(closed).toEqual([1]);
   });
 
+  test("on a touch screen a dialog lets go of the text field, so closing cannot raise the keyboard", () => {
+    const real = globalThis.matchMedia.bind(globalThis);
+    globalThis.matchMedia = ((query: string) =>
+      query.includes("hover")
+        ? { matches: false, addEventListener() {}, removeEventListener() {} }
+        : real(query)) as typeof globalThis.matchMedia;
+    // A browser refocuses on close what had the focus at `showModal`; happy-dom does not.
+    const { showModal, close } = HTMLDialogElement.prototype;
+    let previous: Element | null = null;
+    HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
+      previous = document.activeElement;
+      showModal.call(this);
+    };
+    HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) {
+      close.call(this);
+      (previous as HTMLElement | null)?.focus();
+    };
+    try {
+      const host = mountPoint();
+      const [open, setOpen] = createSignal(false);
+      render(
+        () => (
+          <>
+            <textarea />
+            <Drawer open={open()} label="Sessions" onClose={() => {}}>
+              <button type="button">pick</button>
+            </Drawer>
+          </>
+        ),
+        host
+      );
+      flush();
+      const field = host.querySelector("textarea")!;
+      field.focus();
+
+      setOpen(true);
+      flush();
+      setOpen(false);
+      flush();
+      expect(document.activeElement).not.toBe(field);
+    } finally {
+      globalThis.matchMedia = real as typeof globalThis.matchMedia;
+      Object.assign(HTMLDialogElement.prototype, { showModal, close });
+    }
+  });
+
   // Browsers fire `history.back()`'s `popstate` in a later task; happy-dom fires it inline.
   function deferredBack(): {
     readonly deliver: () => void;

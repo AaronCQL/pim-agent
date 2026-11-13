@@ -91,6 +91,7 @@ describe("rows", () => {
         role: "assistant",
         text: "Let me check",
         timestamp: 0,
+        answer: true,
       },
       {
         kind: "notice",
@@ -179,6 +180,116 @@ describe("row grouping", () => {
     const groups = [...host.querySelectorAll(":scope > div > div")];
     expect(groups).toHaveLength(1);
     expect(groups[0]?.querySelectorAll("article")).toHaveLength(2);
+  });
+});
+
+describe("stops", () => {
+  const turn: readonly DurableEvent[] = [
+    {
+      seq: 1,
+      type: "message",
+      messageId: "u",
+      role: "user",
+      text: "Fix it",
+      timestamp: 0,
+    },
+    {
+      seq: 2,
+      type: "message",
+      messageId: "narration",
+      role: "assistant",
+      text: "Let me look.",
+      timestamp: 0,
+      toolCalls: [{ callId: "c", name: "read", view: { title: [] } }],
+    },
+    {
+      seq: 3,
+      type: "message",
+      messageId: "answer",
+      role: "assistant",
+      text: "Fixed.",
+      thinking: "Done now.",
+      timestamp: 0,
+    },
+  ];
+
+  test("a prompt and the text that ended its turn are stops; narration before a call is not", () => {
+    const host = replay(turn);
+
+    expect(
+      [...host.querySelectorAll("[data-stop]")].map((stop) => stop.textContent)
+    ).toEqual([expect.stringContaining("Fix it"), "Fixed."]);
+  });
+
+  test("a reply that ended a turn a subagent woke is a stop too", () => {
+    const reply = (seq: number, text: string): DurableEvent => ({
+      seq,
+      type: "message",
+      messageId: `r${seq}`,
+      role: "assistant",
+      text,
+      timestamp: 0,
+    });
+    const host = replay([
+      ...turn.slice(0, 2),
+      reply(3, "Spawned two jobs."),
+      result(4, "j1", "done") as DurableEvent,
+      reply(5, "Job one merged."),
+      reply(6, "Both merged; all green."),
+      {
+        seq: 7,
+        type: "message",
+        messageId: "u2",
+        role: "user",
+        text: "Thanks",
+        timestamp: 0,
+      },
+    ]);
+
+    expect(
+      [...host.querySelectorAll("[data-stop]")].map((stop) => stop.textContent)
+    ).toEqual([
+      expect.stringContaining("Fix it"),
+      "Spawned two jobs.",
+      "Job one merged.",
+      "Both merged; all green.",
+      expect.stringContaining("Thanks"),
+    ]);
+  });
+
+  test("every assistant text is a reply, keyed by its message and without its reasoning", () => {
+    const host = mountPoint();
+    render(
+      () => (
+        <Transcript
+          events={turn}
+          live={[
+            {
+              messageId: "streaming",
+              text: "Still going",
+              thinking: "",
+              tools: [],
+              retired: false,
+            },
+          ]}
+        />
+      ),
+      host
+    );
+    flush();
+
+    const replies = [...host.querySelectorAll<HTMLElement>("[data-reply]")];
+    expect(replies.map((reply) => reply.dataset.reply)).toEqual([
+      "narration",
+      "answer",
+      "streaming",
+    ]);
+    expect(replies.map((reply) => reply.textContent)).toEqual([
+      "Let me look.",
+      "Fixed.",
+      expect.stringContaining("Still"),
+    ]);
+    expect(replies[2]?.hasAttribute("data-stop")).toBe(false);
   });
 });
 

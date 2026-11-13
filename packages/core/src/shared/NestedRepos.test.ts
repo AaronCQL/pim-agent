@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 
+import { git, makeRepo } from "./fixtures/repo";
 import { NestedRepos } from "./NestedRepos";
 
 let cwd: string;
@@ -62,9 +63,22 @@ test("the ignore rules of a found repository still apply below it", async () => 
   expect(await NestedRepos.find(cwd)).toEqual(["inner"]);
 });
 
+/** A real repository, not a bare `.git` directory: `verify` asks git. */
+async function realRepo(dir: string): Promise<void> {
+  await mkdir(dir, { recursive: true });
+  await makeRepo(dir);
+}
+
 test("verify takes a repository root inside the cwd, a .git file included", async () => {
-  await repo("a/lib");
-  await Bun.write(join(cwd, "sub/.git"), "gitdir: ../.git/modules/sub\n");
+  await realRepo(cwd);
+  await realRepo(join(cwd, "a/lib"));
+  await mkdir(join(cwd, ".git/modules"));
+  await git(cwd, [
+    "init",
+    "--separate-git-dir",
+    join(cwd, ".git/modules/sub"),
+    "sub",
+  ]);
 
   await NestedRepos.verify(cwd, "a/lib");
   await NestedRepos.verify(cwd, "sub");
@@ -73,8 +87,9 @@ test("verify takes a repository root inside the cwd, a .git file included", asyn
 test("verify refuses a path that is not plain, leaves the cwd, or is no repository", async () => {
   const outside = await mkdtemp(join(tmpdir(), "pim-nested-outside-"));
   try {
-    await mkdir(join(outside, ".git"));
-    await repo("inner");
+    await realRepo(cwd);
+    await realRepo(outside);
+    await realRepo(join(cwd, "inner"));
     await mkdir(join(cwd, "plain"));
     await symlink(outside, join(cwd, "out"));
     await symlink(".", join(cwd, "self"));
@@ -98,4 +113,14 @@ test("verify refuses a path that is not plain, leaves the cwd, or is no reposito
   } finally {
     await rm(outside, { recursive: true, force: true });
   }
+});
+
+test("verify refuses a repository whose .git is half deleted, which git reads straight through", async () => {
+  await realRepo(cwd);
+  await realRepo(join(cwd, "inner"));
+  await rm(join(cwd, "inner/.git/HEAD"));
+
+  await expect(NestedRepos.verify(cwd, "inner")).rejects.toThrow(
+    "inner is not a git repository"
+  );
 });

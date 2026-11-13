@@ -5,6 +5,7 @@ import {
   Show,
   untrack,
 } from "solid-js";
+import type { JSX } from "@solidjs/web/jsx-runtime";
 
 import type { PickerItem } from "#core/picker/PickerItem";
 import { activeToken, applyCompletion, tokenKey } from "#core/picker/token";
@@ -29,13 +30,15 @@ function sends(event: KeyboardEvent, keyboard: boolean): boolean {
 }
 
 // Keeps focus in the textarea so the soft keyboard doesn't retract before the click lands.
-function keepFocus(event: MouseEvent): void {
+export function keepFocus(event: MouseEvent): void {
   event.preventDefault();
 }
 
 export function Composer(props: {
   readonly store: SessionStore;
   readonly onSend: () => void;
+  /** Trails the readouts above the card. */
+  readonly chips?: JSX.Element;
   /** A new object each time, so recalling the same text twice still fires. */
   readonly recalled?: { readonly text: string };
   /** Pending diff comments, sent ahead of the typed draft. */
@@ -134,6 +137,13 @@ export function Composer(props: {
       setDismissed("");
       uploads.reset();
       input.value = held;
+      const fresh = untrack(
+        () =>
+          !props.store.state.loading && props.store.state.durable.length === 0
+      );
+      if (sessionId !== "" && fresh) {
+        input.focus();
+      }
     }
   );
 
@@ -244,7 +254,10 @@ export function Composer(props: {
     <div class="pointer-events-auto relative w-full max-w-3xl">
       <div class="pointer-events-none absolute inset-x-0 bottom-full mb-2 flex items-center gap-2">
         <ClankChip store={props.store} />
-        <Readouts store={props.store} />
+        <div class="ml-auto flex items-center gap-2">
+          <Readouts store={props.store} />
+          {props.chips}
+        </div>
       </div>
 
       <JobsDock store={props.store} />

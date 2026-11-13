@@ -15,6 +15,8 @@ export type MessageRow = {
   readonly timestamp: number;
   readonly attachments?: readonly AttachmentView[];
   readonly thinking?: string;
+  /** Assistant text that ended its turn: no tool calls followed it. */
+  readonly answer?: boolean;
   readonly streaming?: boolean;
   readonly queued?: boolean;
 };
@@ -68,6 +70,11 @@ function append(
           timestamp: event.timestamp,
           ...(attachments.length === 0 ? {} : { attachments }),
           ...(thinking === "" ? {} : { thinking }),
+          ...(event.role === "assistant" &&
+          event.text !== "" &&
+          (event.toolCalls ?? []).length === 0
+            ? { answer: true }
+            : {}),
         });
       }
       if (event.skill !== undefined) {

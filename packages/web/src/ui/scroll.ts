@@ -65,23 +65,36 @@ export type BottomPin = {
   readonly pinned: Accessor<boolean>;
   readonly ref: (element: HTMLElement) => void;
   readonly jump: () => void;
+  /** Settles `pinned` at once, so anchoring switches before the next layout. */
+  readonly scrollBy: (delta: number) => void;
+  readonly scroller: () => HTMLElement | undefined;
 };
 
 /**
  * Follow state of a `flex-col-reverse` scroller (`scrollTop` 0 is the bottom).
  * Callers disable scroll anchoring while pinned and keep it while scrolled up.
  */
-export function createBottomPin(): BottomPin {
+export function createBottomPin(onPin?: () => void): BottomPin {
   const owner = getOwner();
   const [pinned, setPinned] = createSignal(true);
   let scroller: HTMLElement | undefined;
+  let current = true;
+  const settle = (value: boolean): void => {
+    const regained = value && !current;
+    current = value;
+    setPinned(value);
+    if (regained) {
+      onPin?.();
+    }
+  };
 
   return {
     pinned,
+    scroller: () => scroller,
     ref: (element: HTMLElement) => {
       scroller = element;
       const sync = (): void => {
-        setPinned(element.scrollTop >= -BOTTOM_SLACK);
+        settle(element.scrollTop >= -BOTTOM_SLACK);
       };
       element.addEventListener("scroll", sync, { passive: true });
       // Writes are not allowed inside a `ref`.
@@ -96,7 +109,13 @@ export function createBottomPin(): BottomPin {
       if (scroller) {
         scroller.scrollTop = 0;
       }
-      setPinned(true);
+      settle(true);
+    },
+    scrollBy: (delta) => {
+      if (scroller) {
+        scroller.scrollTop += delta;
+        settle(scroller.scrollTop >= -BOTTOM_SLACK);
+      }
     },
   };
 }

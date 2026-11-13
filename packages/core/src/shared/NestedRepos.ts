@@ -1,4 +1,6 @@
-import { FileEnumerator } from "./FileEnumerator";
+import { dirname } from "node:path";
+
+import { Git } from "./Git";
 import { Paths } from "./Paths";
 import { RepoFiles } from "./RepoFiles";
 
@@ -16,9 +18,20 @@ async function verify(cwd: string, repo: string): Promise<void> {
     throw new Error(`${repo} is not a plain relative path`);
   }
   const target = await RepoFiles.locate(cwd, repo);
-  if (!(await FileEnumerator.isRepoRoot(target))) {
+  if (!(await isRoot(target))) {
     throw new Error(`${repo} is not a git repository`);
   }
+}
+
+/**
+ * Asks git, fenced at the parent: a `.git` that is half deleted still stats,
+ * but git already falls through it to the enclosing repository.
+ */
+async function isRoot(dir: string): Promise<boolean> {
+  const result = await Git.run(dir, ["rev-parse", "--git-dir"], {
+    env: { GIT_CEILING_DIRECTORIES: dirname(dir) },
+  }).catch(() => undefined);
+  return result?.code === 0;
 }
 
 export const NestedRepos = { find, verify, LIMIT };
