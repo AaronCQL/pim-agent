@@ -14,7 +14,8 @@ import type {
   FileContent,
   FileDiff,
   FileLines,
-  FileList,
+  FolderListing,
+  FoundFiles,
 } from "./Diff";
 
 export type SessionStatus = "idle" | "thinking" | "streaming" | "tool";
@@ -423,8 +424,10 @@ export type ResponseEvent = {
   readonly fileDiff?: FileDiff;
   /** For `read_lines`. */
   readonly fileLines?: FileLines;
-  /** For `list_files`. */
-  readonly files?: FileList;
+  /** For `list_folder`. */
+  readonly folder?: FolderListing;
+  /** For `find_files`. */
+  readonly found?: FoundFiles;
   /** For `read_file`. */
   readonly file?: FileContent;
   /** For `cancel` and `dequeue`: queued messages handed back to the client. */

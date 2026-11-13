@@ -20,7 +20,8 @@ import type {
   FileContent,
   FileDiff,
   FileLines,
-  FileList,
+  FolderListing,
+  FoundFiles,
   LineSpan,
 } from "#protocol/Diff";
 import type {
@@ -751,15 +752,28 @@ export class SessionStore {
     return response.fileLines;
   }
 
-  public async listFiles(): Promise<FileList> {
+  public async listFolder(path: string): Promise<FolderListing> {
     const response = await this.client.send({
-      type: "list_files",
+      type: "list_folder",
       sessionId: this.attached(),
+      path,
     });
-    if (!response.success || !response.files) {
-      throw new Error(response.error ?? "could not list the files");
+    if (!response.success || !response.folder) {
+      throw new Error(response.error ?? `could not list ${path}`);
     }
-    return response.files;
+    return response.folder;
+  }
+
+  public async findFiles(query: string): Promise<FoundFiles> {
+    const response = await this.client.send({
+      type: "find_files",
+      sessionId: this.attached(),
+      query,
+    });
+    if (!response.success || !response.found) {
+      throw new Error(response.error ?? "could not search the files");
+    }
+    return response.found;
   }
 
   public async readFile(path: string): Promise<FileContent> {

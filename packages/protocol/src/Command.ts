@@ -170,11 +170,19 @@ export type Command =
       readonly path: string;
       readonly spans: readonly LineSpan[];
     }
-  /** Working-tree files, gitignored ones left out. */
+  /** One working-tree folder, gitignored entries left out; `path` is root-relative, `""` for the cwd. */
   | {
       readonly id: string;
-      readonly type: "list_files";
+      readonly type: "list_folder";
       readonly sessionId: string;
+      readonly path: string;
+    }
+  /** Working-tree files whose path holds every word of `query`. */
+  | {
+      readonly id: string;
+      readonly type: "find_files";
+      readonly sessionId: string;
+      readonly query: string;
     }
   /** One working-tree file; `path` must stay inside the cwd. */
   | {

@@ -429,9 +429,19 @@ export class WsGateway {
             this.git
           ),
         };
-      case "list_files":
+      case "list_folder":
         return {
-          files: await RepoFiles.list(this.requireStream(connection).host.cwd),
+          folder: await RepoFiles.folder(
+            this.requireStream(connection).host.cwd,
+            command.path
+          ),
+        };
+      case "find_files":
+        return {
+          found: await RepoFiles.find(
+            this.requireStream(connection).host.cwd,
+            command.query
+          ),
         };
       case "read_file":
         return {

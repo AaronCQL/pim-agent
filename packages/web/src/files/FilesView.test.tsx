@@ -14,7 +14,8 @@ import { SessionStore } from "../session/SessionStore";
 import { Settings } from "../settings/Settings";
 import { mountPoint } from "../test/dom";
 import { GatewayHarness } from "../test/gateway";
-import { FileTree } from "./FileTree";
+import { FileStore } from "./FileStore";
+import { FileTreeView } from "./FileTreeView";
 
 let harness: GatewayHarness;
 let store: SessionStore;
@@ -103,6 +104,14 @@ function treeRows(host: HTMLElement): readonly string[] {
   );
 }
 
+async function expand(host: HTMLElement, folder: string): Promise<void> {
+  press(host, `[data-path='${folder}']`);
+  await settle(
+    () => treeRows(host).some((path) => path.startsWith(`${folder}/`)),
+    `${folder}'s entries`
+  );
+}
+
 function code(host: HTMLElement): string {
   return (
     host.querySelector<HTMLElement>(
@@ -171,7 +180,7 @@ test("the files segment lists folders first and reads a file once picked", async
     "the closed folder's change marker"
   );
 
-  press(host, "[data-path='src']");
+  await expand(host, "src");
   expect(treeRows(host)).toEqual(["src", "src/alpha.ts", "README.md"]);
   expect(
     host.querySelector("[data-path='src/alpha.ts'] [aria-label='modified']")
@@ -201,6 +210,172 @@ test("the files segment lists folders first and reads a file once picked", async
   ]);
 });
 
+/** The tree alone, its debounces zeroed. */
+async function tree(): Promise<{ host: HTMLElement; files: FileStore }> {
+  const host = mountPoint();
+  let files!: FileStore;
+  dispose = render(() => {
+    files = new FileStore(store, { settleMs: 0, findMs: 0 });
+    return (
+      <FileTreeView
+        files={files}
+        changes={new Map()}
+        inset={0}
+        onPick={(path) => {
+          files.select(path);
+        }}
+      />
+    );
+  }, host);
+  flush();
+  files.watch(true);
+  await settle(() => treeRows(host).length > 0, "the file tree");
+  return { host, files };
+}
+
+function listed(): readonly string[] {
+  return asked("list_folder").map((command) =>
+    command.type === "list_folder" ? command.path : ""
+  );
+}
+
+function filter(host: HTMLElement, text: string): void {
+  const field = host.querySelector<HTMLInputElement>(
+    "input[aria-label='Filter files']"
+  )!;
+  field.value = text;
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+  flush();
+}
+
+test("a folder is listed when first opened, and kept while closed", async () => {
+  const { host } = await tree();
+  expect(listed()).toEqual([""]);
+
+  await expand(host, "src");
+  expect(treeRows(host)).toEqual(["src", "src/alpha.ts", "README.md"]);
+
+  press(host, "[data-path='src']");
+  expect(treeRows(host)).toEqual(["src", "README.md"]);
+  press(host, "[data-path='src']");
+  expect(treeRows(host)).toEqual(["src", "src/alpha.ts", "README.md"]);
+  expect(listed()).toEqual(["", "src"]);
+});
+
+test("a folded folder chain is one row that opens onto the deepest folder", async () => {
+  await Bun.write(join(repo, "a/b/c.ts"), "c\n");
+  await Bun.write(join(repo, "a/b/d.ts"), "d\n");
+  const { host } = await tree();
+
+  expect(treeRows(host)).toEqual(["a/b", "src", "README.md"]);
+  expect(button(host, "[data-path='a/b']").textContent).toBe("a/b");
+
+  await expand(host, "a/b");
+  expect(treeRows(host)).toEqual([
+    "a/b",
+    "a/b/c.ts",
+    "a/b/d.ts",
+    "src",
+    "README.md",
+  ]);
+});
+
+test("reveal opens every folder above a deep file and selects it", async () => {
+  await Bun.write(join(repo, "pkg/web/other.ts"), "other\n");
+  await Bun.write(join(repo, "pkg/web/src/files/deep.ts"), "deep\n");
+  const { host, files } = await tree();
+  expect(treeRows(host)).toEqual(["pkg/web", "src", "README.md"]);
+
+  files.reveal("pkg/web/src/files/deep.ts");
+
+  await settle(
+    () => treeRows(host).includes("pkg/web/src/files/deep.ts"),
+    "the revealed file"
+  );
+  expect(treeRows(host)).toEqual([
+    "pkg/web",
+    "pkg/web/src/files",
+    "pkg/web/src/files/deep.ts",
+    "pkg/web/other.ts",
+    "src",
+    "README.md",
+  ]);
+  expect(
+    button(host, "[data-path='pkg/web/src/files/deep.ts']").getAttribute(
+      "aria-selected"
+    )
+  ).toBe("true");
+});
+
+test("the filter asks the server and answers matching paths whole, and Escape clears it", async () => {
+  const { host } = await tree();
+
+  filter(host, "alp");
+  await settle(
+    () => treeRows(host).includes("src/alpha.ts"),
+    "the filter's hits"
+  );
+  expect(treeRows(host)).toEqual(["src/alpha.ts"]);
+  expect(asked("find_files")).toEqual([
+    { type: "find_files", sessionId: store.state.sessionId, query: "alp" },
+  ]);
+
+  filter(host, "nothing-matches");
+  await settle(
+    () => host.textContent?.includes("No file matches.") === true,
+    "the empty answer"
+  );
+  expect(treeRows(host)).toEqual([]);
+
+  host
+    .querySelector("input[aria-label='Filter files']")!
+    .dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true })
+    );
+  flush();
+  expect(treeRows(host)).toEqual(["src", "README.md"]);
+});
+
+test("a repo change lists the open folders again and forgets the closed ones", async () => {
+  await Bun.write(join(repo, "lib/one.ts"), "one\n");
+  const { host } = await tree();
+  await expand(host, "src");
+  await expand(host, "lib");
+  press(host, "[data-path='lib']");
+  sent.length = 0;
+
+  await Bun.write(join(repo, "src/beta.ts"), "beta\n");
+  await Bun.write(join(repo, "lib/two.ts"), "two\n");
+  store.ingest({ type: "picker_invalidate", scope: "files", cwd: repo });
+
+  await settle(
+    () => treeRows(host).includes("src/beta.ts"),
+    "the new file in the open folder"
+  );
+  expect(listed().toSorted()).toEqual(["", "src"]);
+
+  await expand(host, "lib");
+  expect(treeRows(host)).toContain("lib/two.ts");
+  expect(listed().toSorted()).toEqual(["", "lib", "src"]);
+});
+
+test("an empty folder is a folder with nothing in it", async () => {
+  await mkdir(join(repo, "empty"));
+  const { host } = await tree();
+  expect(treeRows(host)).toEqual(["empty", "src", "README.md"]);
+
+  press(host, "[data-path='empty']");
+  await settle(
+    () =>
+      button(host, "[data-path='empty']").getAttribute("aria-expanded") ===
+        "true" && listed().includes("empty"),
+    "the empty folder opened"
+  );
+  flush();
+  expect(treeRows(host)).toEqual(["empty", "src", "README.md"]);
+  expect(host.textContent).not.toContain("No files.");
+});
+
 function marks(host: HTMLElement): readonly string[] {
   return [...host.querySelectorAll<HTMLElement>("[data-mark]")].map(
     (mark) =>
@@ -211,7 +386,7 @@ function marks(host: HTMLElement): readonly string[] {
 test("a changed file marks its changed lines in the gutter", async () => {
   await Bun.write(join(repo, "fresh.ts"), "x\ny\n");
   const host = await files();
-  press(host, "[data-path='src']");
+  await expand(host, "src");
   press(host, "[data-path='src/alpha.ts']");
   await settle(() => marks(host).length > 0, "the change marks");
   expect(marks(host)).toEqual(["3:modified"]);
@@ -226,27 +401,9 @@ test("a changed file marks its changed lines in the gutter", async () => {
   expect(marks(host)).toEqual([]);
 });
 
-test("the filter answers matching paths whole, and Escape clears it", async () => {
-  const host = await files();
-  const field = host.querySelector<HTMLInputElement>(
-    "input[aria-label='Filter files']"
-  )!;
-
-  field.value = "alp";
-  field.dispatchEvent(new Event("input", { bubbles: true }));
-  flush();
-  expect(treeRows(host)).toEqual(["src/alpha.ts"]);
-
-  field.dispatchEvent(
-    new KeyboardEvent("keydown", { key: "Escape", bubbles: true })
-  );
-  flush();
-  expect(treeRows(host)).toEqual(["src", "README.md"]);
-});
-
 test("a changed file links to its diff, and the diff links back", async () => {
   const host = await files();
-  press(host, "[data-path='src']");
+  await expand(host, "src");
   press(host, "[data-path='src/alpha.ts']");
   await settle(
     () => host.querySelector("button[title^='Show this file']") !== null,
@@ -272,7 +429,7 @@ test("a changed file links to its diff, and the diff links back", async () => {
 
 test("a line comment in the viewer joins the review", async () => {
   const host = await files();
-  press(host, "[data-path='src']");
+  await expand(host, "src");
   press(host, "[data-path='src/alpha.ts']");
   await settle(() => code(host).includes("THREE"), "the file's lines");
 
@@ -318,7 +475,7 @@ test("Markdown always renders as preview without a source switch", async () => {
   expect(copy.classList.contains("text-neutral-400")).toBe(true);
   expect(copy.classList.contains("bg-neutral-850")).toBe(false);
 
-  press(host, "[data-path='src']");
+  await expand(host, "src");
   press(host, "[data-path='src/alpha.ts']");
   await settle(() => code(host).includes("THREE"), "source file");
   expect(host.querySelector("[aria-label='Markdown view']")).toBeNull();
@@ -333,13 +490,12 @@ test("a file that changes on disk is read again in place", async () => {
   const host = await files();
   press(host, "[data-path='README.md']");
   await settle(() => code(host).includes("readme"), "the file's lines");
-  const build = spyOn(FileTree, "build");
 
   await Bun.write(join(repo, "README.md"), "# rewritten\n");
   await store.refreshGit();
 
   await settle(() => code(host).includes("rewritten"), "the new lines");
-  expect(build).not.toHaveBeenCalled();
+  expect(treeRows(host)).toEqual(["src", "README.md"]);
 });
 
 test("a file written in an ignored nested repository joins the tree once files change", async () => {
@@ -409,7 +565,7 @@ test("on a narrow screen Browse returns to the file list instead of opening a dr
   expect(treeRows(host)).toEqual([]);
   press(host, "[aria-label='Browse']");
 
-  press(host, "[data-path='src']");
+  await expand(host, "src");
   press(host, "[data-path='src/alpha.ts']");
   await settle(() => code(host).includes("THREE"), "the other file");
   expect(host.querySelector("dialog[aria-label='Files']")).toBeNull();

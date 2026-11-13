@@ -13,26 +13,45 @@ export type EnumerateOptions = {
   readonly limit?: number;
 };
 
-type StackEntry = {
-  readonly abs: string;
+type Policy = {
+  readonly includeDotfiles: boolean;
+  readonly useIgnore: boolean;
+  readonly includeNestedRepos: boolean;
+  readonly globalGitIgnore: string | undefined;
+};
+
+/** A folder the walk enters; only the walk reads past `rel`. */
+export type WalkDir = {
+  /** Root-relative POSIX path; `""` for the root. */
   readonly rel: string;
+};
+
+/** A folder the walk enters, carrying the ignore rules in force above it. */
+type Dir = WalkDir & {
+  readonly abs: string;
+  readonly policy: Policy;
   readonly inRepo: boolean;
   readonly repoRootAbs: string;
   readonly ignoreRules: string[];
   readonly matcher: Ignore;
 };
 
+/** A folder's visible contents, in directory order. */
+export type WalkChildren<D extends WalkDir = WalkDir> = {
+  readonly dirs: readonly D[];
+  /** Root-relative POSIX paths. */
+  readonly files: readonly string[];
+  /** Ignored repository roots left out. */
+  readonly skippedRepos: readonly string[];
+};
+
 const EMPTY_MATCHER = ignore();
 
 type WalkContext = {
-  includeDotfiles: boolean;
-  useIgnore: boolean;
-  includeNestedRepos: boolean;
-  globalGitIgnore: string | undefined;
-  limit: number;
-  stack: StackEntry[];
-  result: string[];
-  skippedRepos: string[];
+  readonly limit: number;
+  readonly stack: Dir[];
+  readonly result: string[];
+  readonly skippedRepos: string[];
 };
 
 /** Root-relative POSIX paths; `skippedRepos` is sorted and lies strictly below the root. */
@@ -224,42 +243,43 @@ async function repoBaseRules(
   return rules;
 }
 
-async function processDir(
-  ctx: WalkContext,
-  currentDir: StackEntry
-): Promise<void> {
+async function contents(dir: Dir): Promise<WalkChildren<Dir>> {
+  const out = {
+    dirs: [] as Dir[],
+    files: [] as string[],
+    skippedRepos: [] as string[],
+  };
   let entries;
   try {
-    entries = await readdir(currentDir.abs, { withFileTypes: true });
+    entries = await readdir(dir.abs, { withFileTypes: true });
   } catch {
-    return;
+    return out;
   }
 
-  let inRepo = currentDir.inRepo;
-  let repoRootAbs = currentDir.repoRootAbs;
-  let rules = currentDir.ignoreRules;
-  let matcher = currentDir.matcher;
+  const { policy } = dir;
+  let inRepo = dir.inRepo;
+  let repoRootAbs = dir.repoRootAbs;
+  let rules = dir.ignoreRules;
+  let matcher = dir.matcher;
 
   const hasDotGit = entries.some((e) => e.name === ".git");
 
-  if (ctx.useIgnore) {
+  if (policy.useIgnore) {
     if (hasDotGit) {
       // A nested repo does not inherit its parent's rules.
       inRepo = true;
-      repoRootAbs = currentDir.abs;
-      rules = await repoBaseRules(currentDir.abs, ctx.globalGitIgnore);
+      repoRootAbs = dir.abs;
+      rules = await repoBaseRules(dir.abs, policy.globalGitIgnore);
       matcher = ignore().add(rules);
     } else if (inRepo) {
       const hasGitIgnore = entries.some(
         (e) => e.isFile() && e.name === ".gitignore"
       );
       if (hasGitIgnore) {
-        const content = await readIgnoreFile(
-          join(currentDir.abs, ".gitignore")
-        );
+        const content = await readIgnoreFile(join(dir.abs, ".gitignore"));
         if (content !== undefined) {
           rules = rules.slice();
-          addDirRules(rules, content, currentDir.abs, repoRootAbs);
+          addDirRules(rules, content, dir.abs, repoRootAbs);
           matcher = ignore().add(rules);
         }
       }
@@ -268,7 +288,7 @@ async function processDir(
 
   for (const entry of entries) {
     const name = entry.name;
-    const relPath = currentDir.rel === "" ? name : `${currentDir.rel}/${name}`;
+    const relPath = dir.rel === "" ? name : `${dir.rel}/${name}`;
     const isDir = entry.isDirectory();
     const isSymlink = entry.isSymbolicLink();
 
@@ -276,17 +296,17 @@ async function processDir(
       continue;
     }
 
-    const needsAbs = isDir || (ctx.useIgnore && inRepo);
-    const childAbs = needsAbs ? join(currentDir.abs, name) : "";
+    const needsAbs = isDir || (policy.useIgnore && inRepo);
+    const childAbs = needsAbs ? join(dir.abs, name) : "";
 
     const verdict =
-      ctx.useIgnore && inRepo
+      policy.useIgnore && inRepo
         ? ignoreVerdict(matcher, repoRootAbs, childAbs, isDir)
         : { ignored: false, unignored: false };
 
     // A `!` negation re-includes a dotfile, as in git/fd.
     if (
-      !ctx.includeDotfiles &&
+      !policy.includeDotfiles &&
       name.charCodeAt(0) === 0x2e /* "." */ &&
       !verdict.unignored
     ) {
@@ -297,8 +317,8 @@ async function processDir(
       if (!isDir || !(await isNestedRepo(childAbs))) {
         continue;
       }
-      if (!ctx.includeNestedRepos) {
-        ctx.skippedRepos.push(relPath);
+      if (!policy.includeNestedRepos) {
+        out.skippedRepos.push(relPath);
         continue;
       }
     }
@@ -309,9 +329,10 @@ async function processDir(
         continue;
       }
 
-      ctx.stack.push({
+      out.dirs.push({
         abs: childAbs,
         rel: relPath,
+        policy,
         inRepo,
         repoRootAbs,
         ignoreRules: rules,
@@ -321,9 +342,15 @@ async function processDir(
     }
 
     if (entry.isFile() || isSymlink) {
-      ctx.result.push(relPath);
+      out.files.push(relPath);
     }
   }
+  return out;
+}
+
+/** The folder's visible contents under the same rules the walk applies. */
+function children(dir: WalkDir): Promise<WalkChildren> {
+  return contents(dir as Dir);
 }
 
 // Refill on each completion: fixed workers would exit early while the stack holds only the root.
@@ -337,7 +364,16 @@ function drain(ctx: WalkContext): Promise<void> {
       while (inFlight < CONCURRENCY && ctx.stack.length > 0) {
         const currentDir = ctx.stack.pop()!;
         inFlight++;
-        processDir(ctx, currentDir).then(() => {
+        contents(currentDir).then((found) => {
+          for (const dir of found.dirs) {
+            ctx.stack.push(dir);
+          }
+          for (const file of found.files) {
+            ctx.result.push(file);
+          }
+          for (const repo of found.skippedRepos) {
+            ctx.skippedRepos.push(repo);
+          }
           inFlight--;
           pump();
         }, reject);
@@ -350,7 +386,7 @@ function drain(ctx: WalkContext): Promise<void> {
   });
 }
 
-/** Rules from a repo strictly above `root`; `root`'s own .gitignore is read by processDir. */
+/** Rules from a repo strictly above `root`; `root`'s own .gitignore is read by `contents`. */
 async function enclosingRepo(
   root: string,
   globalGitIgnore: string | undefined
@@ -385,11 +421,8 @@ async function enclosingRepo(
   return { repoRoot, rules };
 }
 
-/** One walk of `root`: its files, the repository roots it reaches, and the ignored ones it skips. */
-async function walk(root: string, opts?: EnumerateOptions): Promise<FileWalk> {
-  const includeDotfiles = opts?.includeDotfiles ?? false;
-  const includeIgnored = opts?.includeIgnored ?? false;
-  const useIgnore = !includeIgnored;
+async function rootDir(root: string, opts?: EnumerateOptions): Promise<Dir> {
+  const useIgnore = !(opts?.includeIgnored ?? false);
 
   let globalGitIgnore: string | undefined;
   if (useIgnore) {
@@ -402,25 +435,46 @@ async function walk(root: string, opts?: EnumerateOptions): Promise<FileWalk> {
     ? await enclosingRepo(root, globalGitIgnore)
     : undefined;
 
+  return {
+    abs: root,
+    rel: "",
+    policy: {
+      includeDotfiles: opts?.includeDotfiles ?? false,
+      useIgnore,
+      includeNestedRepos: opts?.includeNestedRepos ?? false,
+      globalGitIgnore,
+    },
+    inRepo: enclosing !== undefined,
+    repoRootAbs: enclosing?.repoRoot ?? root,
+    ignoreRules: enclosing?.rules ?? [],
+    matcher:
+      enclosing === undefined ? EMPTY_MATCHER : ignore().add(enclosing.rules),
+  };
+}
+
+/** The folder at root-relative `rel`, or undefined when the walk would not enter it. */
+async function folder(
+  root: string,
+  rel: string,
+  opts?: EnumerateOptions
+): Promise<WalkDir | undefined> {
+  let dir = await rootDir(root, opts);
+  for (const segment of rel === "" ? [] : rel.split("/")) {
+    const path = dir.rel === "" ? segment : `${dir.rel}/${segment}`;
+    const next = (await contents(dir)).dirs.find((child) => child.rel === path);
+    if (next === undefined) {
+      return undefined;
+    }
+    dir = next;
+  }
+  return dir;
+}
+
+/** One walk of `root`: its files, the repository roots it reaches, and the ignored ones it skips. */
+async function walk(root: string, opts?: EnumerateOptions): Promise<FileWalk> {
   const ctx: WalkContext = {
-    includeDotfiles,
-    useIgnore,
-    includeNestedRepos: opts?.includeNestedRepos ?? false,
-    globalGitIgnore,
     limit: opts?.limit ?? Number.POSITIVE_INFINITY,
-    stack: [
-      {
-        abs: root,
-        rel: "",
-        inRepo: enclosing !== undefined,
-        repoRootAbs: enclosing?.repoRoot ?? root,
-        ignoreRules: enclosing?.rules ?? [],
-        matcher:
-          enclosing === undefined
-            ? EMPTY_MATCHER
-            : ignore().add(enclosing.rules),
-      },
-    ],
+    stack: [await rootDir(root, opts)],
     result: [],
     skippedRepos: [],
   };
@@ -444,6 +498,8 @@ async function enumerate(
 export const FileEnumerator = {
   enumerate,
   walk,
+  folder,
+  children,
   isRepoRoot,
   isNestedRepo,
 };

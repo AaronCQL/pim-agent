@@ -349,16 +349,41 @@ test("read_lines and file_diff never read a path that climbs out of the cwd", as
   }
 });
 
-test("list_files answers the working tree's files", async () => {
+test("list_folder answers a folder's entries, and refuses one outside the cwd", async () => {
+  const probe = await connect();
+
+  const listed = await probe.send({
+    type: "list_folder",
+    sessionId: sessionOf(probe),
+    path: "",
+  });
+  const escaped = await probe.send({
+    type: "list_folder",
+    sessionId: sessionOf(probe),
+    path: "..",
+  });
+
+  expect(listed.folder).toEqual({
+    path: "",
+    entries: [
+      { name: "loose.txt", path: "loose.txt", kind: "file" },
+      { name: "sp ace.txt", path: "sp ace.txt", kind: "file" },
+    ],
+  });
+  expect(escaped.success).toBe(false);
+  expect(escaped.error).toContain("outside");
+});
+
+test("find_files answers the files holding every word", async () => {
   const probe = await connect();
 
   const response = await probe.send({
-    type: "list_files",
+    type: "find_files",
     sessionId: sessionOf(probe),
+    query: "ACE",
   });
 
-  expect(response.success).toBe(true);
-  expect(response.files).toEqual({ paths: ["loose.txt", "sp ace.txt"] });
+  expect(response.found).toEqual({ paths: ["sp ace.txt"] });
 });
 
 test("read_file answers a file's text, and refuses one outside the cwd", async () => {

@@ -8,4 +8,9 @@ export type {
   LineRun,
   LineSpan,
 } from "#core/shared/RepoDiff";
-export type { FileContent, FileList } from "#core/shared/RepoFiles";
+export type {
+  FileContent,
+  FolderEntry,
+  FolderListing,
+  FoundFiles,
+} from "#core/shared/RepoFiles";

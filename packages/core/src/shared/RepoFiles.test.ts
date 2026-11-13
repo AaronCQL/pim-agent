@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 
 import { FileEnumerator } from "./FileEnumerator";
-import { RepoFiles } from "./RepoFiles";
+import { useXdgConfigHome } from "./fixtures/home";
+import { type FolderEntry, RepoFiles } from "./RepoFiles";
+
+useXdgConfigHome("pim-repo-files-xdg-");
 
 let tmp: string;
 let cwd: string;
@@ -25,10 +28,145 @@ afterEach(async () => {
   await rm(tmp, { recursive: true, force: true });
 });
 
-test("list answers every file sorted, dotfiles in and ignored files out", async () => {
-  expect(await RepoFiles.list(cwd)).toEqual({
-    paths: [".github/ci.yml", ".gitignore", "a.md", "src/b.ts"],
+const folderOf = (name: string, path = name): FolderEntry => ({
+  name,
+  path,
+  kind: "folder",
+});
+const fileOf = (name: string, path = name): FolderEntry => ({
+  name,
+  path,
+  kind: "file",
+});
+
+test("folder answers the root's entries, dotfiles in and ignored ones out", async () => {
+  expect(await RepoFiles.folder(cwd, "")).toEqual({
+    path: "",
+    entries: [
+      folderOf(".github"),
+      folderOf("src"),
+      fileOf(".gitignore"),
+      fileOf("a.md"),
+    ],
   });
+});
+
+test("folder enters an ignored nested repo, which keeps its own rules", async () => {
+  await Bun.write(join(cwd, ".gitignore"), "lib/\n*.tmp\n");
+  await mkdir(join(cwd, "lib/.git"), { recursive: true });
+  await Bun.write(join(cwd, "lib/.gitignore"), "*.log\n");
+  await Bun.write(join(cwd, "lib/keep.tmp"), "");
+  await Bun.write(join(cwd, "lib/drop.log"), "");
+  await Bun.write(join(cwd, "lib/src/x.ts"), "");
+  await Bun.write(join(cwd, "root.tmp"), "");
+
+  const root = await RepoFiles.folder(cwd, "");
+  const lib = await RepoFiles.folder(cwd, "lib");
+
+  expect(root.entries.map((entry) => entry.path)).toEqual([
+    ".github",
+    "dist",
+    "lib",
+    "src",
+    ".gitignore",
+    "a.md",
+  ]);
+  expect(lib.entries).toEqual([
+    folderOf("src", "lib/src"),
+    fileOf(".gitignore", "lib/.gitignore"),
+    fileOf("keep.tmp", "lib/keep.tmp"),
+  ]);
+});
+
+test("folder folds a chain of single-folder folders, but never the one listed", async () => {
+  await Bun.write(join(cwd, "deep/a/b/c/f.ts"), "");
+  await mkdir(join(cwd, "solo/empty"), { recursive: true });
+  await Bun.write(join(cwd, "pkg/dist/out.js"), "");
+  await Bun.write(join(cwd, "pkg/lib/x.ts"), "");
+
+  const root = await RepoFiles.folder(cwd, "");
+
+  expect(root.entries.filter((entry) => entry.kind === "folder")).toEqual([
+    folderOf(".github"),
+    folderOf("deep/a/b/c", "deep/a/b/c"),
+    folderOf("pkg/lib", "pkg/lib"),
+    folderOf("solo/empty", "solo/empty"),
+    folderOf("src"),
+  ]);
+  expect((await RepoFiles.folder(cwd, "deep")).entries).toEqual([
+    folderOf("a/b/c", "deep/a/b/c"),
+  ]);
+  expect((await RepoFiles.folder(cwd, "solo/empty")).entries).toEqual([]);
+});
+
+test("folder orders folders, then files, each by name regardless of case", async () => {
+  for (const file of ["m/b.md", "m/A.md", "m/C.md", "m/Zed/z", "m/alpha/a"]) {
+    await Bun.write(join(cwd, file), "");
+  }
+
+  const { entries } = await RepoFiles.folder(cwd, "m");
+
+  expect(entries.map((entry) => entry.name)).toEqual([
+    "alpha",
+    "Zed",
+    "A.md",
+    "b.md",
+    "C.md",
+  ]);
+});
+
+test("folder caps its entries and says so", async () => {
+  await mkdir(join(cwd, "many"));
+  await Promise.all(
+    Array.from({ length: RepoFiles.FOLDER_LIMIT + 1 }, (_, index) =>
+      Bun.write(join(cwd, `many/${String(index)}`), "")
+    )
+  );
+
+  const listing = await RepoFiles.folder(cwd, "many");
+
+  expect(listing.entries).toHaveLength(RepoFiles.FOLDER_LIMIT);
+  expect(listing.truncated).toBe(true);
+});
+
+test("folder refuses paths that leave the cwd, files, and missing or ignored folders", async () => {
+  await mkdir(join(tmp, "elsewhere"));
+  await symlink(join(tmp, "elsewhere"), join(cwd, "out"));
+
+  expect(RepoFiles.folder(cwd, "..")).rejects.toThrow("outside");
+  expect(RepoFiles.folder(cwd, "out")).rejects.toThrow("outside");
+  expect(RepoFiles.folder(cwd, "a.md")).rejects.toThrow("not a folder");
+  expect(RepoFiles.folder(cwd, "nope")).rejects.toThrow("does not exist");
+  expect(RepoFiles.folder(cwd, "dist")).rejects.toThrow("ignored");
+});
+
+test("match wants every word, and puts paths whose name holds one first", () => {
+  const paths = ["src/view/a.ts", "lib/view.ts", "view/src/b.ts", "x.md"];
+
+  expect(RepoFiles.match(paths, "  VIEW  ")).toEqual([
+    "lib/view.ts",
+    "src/view/a.ts",
+    "view/src/b.ts",
+  ]);
+  expect(RepoFiles.match(paths, "src b")).toEqual(["view/src/b.ts"]);
+  expect(RepoFiles.match(paths, " ")).toEqual([]);
+});
+
+test("match stops at its limit", () => {
+  const paths = Array.from({ length: 300 }, (_, index) => `d/${String(index)}`);
+
+  expect(RepoFiles.match(paths, "d")).toHaveLength(RepoFiles.MATCH_LIMIT);
+});
+
+test("find searches the files the folders show", async () => {
+  await Bun.write(join(cwd, ".gitignore"), "lib/\ndist/\n");
+  await mkdir(join(cwd, "lib/.git"), { recursive: true });
+  await Bun.write(join(cwd, "lib/b.ts"), "");
+
+  expect(await RepoFiles.find(cwd, "b")).toEqual({
+    paths: ["lib/b.ts", "src/b.ts", ".github/ci.yml"],
+  });
+  expect(await RepoFiles.find(cwd, "out")).toEqual({ paths: [] });
 });
 
 test("the enumerator stops walking near its limit", async () => {

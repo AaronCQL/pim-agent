@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { FileEnumerator } from "./FileEnumerator";
+import { useXdgConfigHome } from "./fixtures/home";
 import { git, makeRepo } from "./fixtures/repo";
 
 const { enumerate } = FileEnumerator;
@@ -15,13 +16,11 @@ const writer =
     writeFileSync(abs, content);
   };
 
+const xdg = useXdgConfigHome("pim-enumerate-xdg-");
 let root: string;
-let previousXdgConfigHome: string | undefined;
 
 beforeAll(() => {
   root = mkdtempSync(join(tmpdir(), "pim-enumerate-"));
-  previousXdgConfigHome = process.env.XDG_CONFIG_HOME;
-  process.env.XDG_CONFIG_HOME = join(root, ".xdg");
 
   const write = writer(root);
 
@@ -38,7 +37,7 @@ beforeAll(() => {
 
   write("excluded-by-info.txt", "x");
 
-  write(".xdg/git/ignore", "**/global-ignore.txt\n");
+  writer(xdg.path)("git/ignore", "**/global-ignore.txt\n");
   write("global-ignore.txt", "g");
 
   write(
@@ -60,12 +59,6 @@ beforeAll(() => {
 
 afterAll(() => {
   rmSync(root, { recursive: true, force: true });
-
-  if (previousXdgConfigHome === undefined) {
-    delete process.env.XDG_CONFIG_HOME;
-  } else {
-    process.env.XDG_CONFIG_HOME = previousXdgConfigHome;
-  }
 });
 
 describe("FileEnumerator.enumerate", () => {
