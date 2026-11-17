@@ -6,6 +6,7 @@ describe("Languages", () => {
     expect(Languages.fromPath("src/App.tsx")).toBe("typescript");
     expect(Languages.resolve("ts")).toBe("typescript");
     expect(Languages.resolve("TypeScript")).toBe("typescript");
+    expect(Languages.fromPath("build.zig.zon")).toBe("zig");
   });
 
   test("a file with no extension is looked up by its own name", () => {

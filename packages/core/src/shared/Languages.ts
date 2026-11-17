@@ -73,6 +73,8 @@ const ALIASES: Readonly<Record<string, string>> = {
   hcl: "hcl",
   diff: "diff",
   patch: "diff",
+  zig: "zig",
+  zon: "zig",
 };
 
 const CANONICAL: ReadonlySet<string> = new Set(Object.values(ALIASES));

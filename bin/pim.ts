@@ -13,6 +13,7 @@ import {
 } from "#core/extensions/CoreExtensions";
 import { SubagentJobs } from "#core/extensions/subagent/SubagentJobs";
 import { ExtensionToggles } from "#core/shared/ExtensionToggles";
+import { PiHighlight } from "#core/shared/PiHighlight";
 import { PimVersion } from "#core/shared/PimVersion";
 import { Shutdown } from "#core/shared/Shutdown";
 import { Supervisor } from "#core/shared/Supervisor";
@@ -164,6 +165,7 @@ const extensionFactories: readonly PimInlineExtension[] = [
 ];
 
 Shutdown.exitOn(["SIGINT"]);
+PiHighlight.register();
 
 // Pi never applies its `enabled` filter to inline factories, so the toggle must gate inside the factory.
 await main([...themeCliArgs(cliArgs), ...cliArgs], {

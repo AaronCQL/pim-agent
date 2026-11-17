@@ -98,6 +98,8 @@ const GRAMMARS: Readonly<Record<string, () => Promise<unknown>>> = {
   vim: () => import("highlight.js/lib/languages/vim"),
   xml: () => import("highlight.js/lib/languages/xml"),
   yaml: () => import("highlight.js/lib/languages/yaml"),
+  zig: () =>
+    import("#core/shared/Zig").then(({ Zig }) => ({ default: Zig.grammar })),
 };
 
 // Bumped when a grammar loads, so `tokenize` callers re-run.

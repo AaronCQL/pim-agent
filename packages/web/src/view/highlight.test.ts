@@ -21,6 +21,23 @@ describe("Highlight.tokenize", () => {
     expect(line?.find((token) => token.text === "1")?.role).toBe("number");
   });
 
+  test("zig is coloured by pim's own grammar", async () => {
+    const source =
+      'const std = @import("std");\npub fn main() u8 {\n    return 42; // done\n}';
+    const lines = await tokenized(source, "zig");
+    const role = (text: string) =>
+      lines.flat().find((token) => token.text === text)?.role;
+
+    expect(text(lines)).toEqual(source.split("\n"));
+    expect(role("const")).toBe("keyword");
+    expect(role("@import")).toBe("type");
+    expect(role('"std"')).toBe("string");
+    expect(role("main")).toBe("function");
+    expect(role("u8")).toBe("type");
+    expect(role("42")).toBe("number");
+    expect(role("// done")).toBe("comment");
+  });
+
   test("an unknown language is left alone rather than guessed at", () => {
     expect(Highlight.tokenize("not code at all", undefined)).toEqual([
       [{ text: "not code at all" }],
