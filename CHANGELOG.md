@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.19.0
+
+### Features
+
+- `/handoff [focus]` clears the context down to a note the agent writes for a fresh agent. The transcript stays whole while the model carries on from only the note (fbaecb9)
+- Nested git repositories: the web file browser enters ignored nested repositories, `glob` and `grep` name the nested repositories they skipped, and the `@` picker lists their files (24e225f, 8acc7de)
+- Highlight Zig in the browser and the terminal (0f895fa)
+- Web: show tool calls while the model streams their arguments, not only once they run (13c18b0)
+- Web: list the file browser one folder at a time, with file-type icons and guide lines. Large repositories no longer hit a 20,000-file cap or ship the whole tree on every load (84c0fa9)
+- Web: jump between prompts and final answers with Alt+↑/↓ or the composer chips; the transcript holds at the start of a long new reply, and an unread session opens on its last reply (ff681c0)
+
+### Bug Fixes
+
+- Diffs no longer follow `..` or symlinks out of the working directory, git runs with literal pathspecs, and refs or branch names that look like options are refused (24e225f)
+- Web: a slash command is drawn only once the server answers, so extension commands no longer flash a bubble and jerk the transcript (a24821a)
+- Web: focus the composer on a fresh session, and closing a dialog on mobile no longer raises the soft keyboard (ff681c0)
+
+### Improvements
+
+- Update the README (07093f2)
+
 ## v0.18.0
 
 ### Features
