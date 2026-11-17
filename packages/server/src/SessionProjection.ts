@@ -129,7 +129,7 @@ export class SessionProjection {
               callId: part.id,
               args: part.arguments,
               details: undefined,
-              settled: false,
+              running: false,
               sessionId: this.sessionId,
             }),
           });
@@ -177,7 +177,7 @@ export class SessionProjection {
             callId: message.toolCallId,
             args,
             details: message.details,
-            settled: true,
+            running: false,
             sessionId: this.sessionId,
           }),
         };

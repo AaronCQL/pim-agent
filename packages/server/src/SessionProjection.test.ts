@@ -372,7 +372,7 @@ test("a job's context notice crosses as a subagent row linked to its job, never 
   ]);
 });
 
-test("a call links the child log it owns: a spawn its job, a run the log it wrote, a failed spawn and the other actions nothing", async () => {
+test("a call links the child log it owns: a spawn its job, a run the log it wrote, and a call not yet run, a failed spawn and the other actions nothing", async () => {
   const previousHome = process.env.PIM_HOME_DIR;
   const calls = {
     call_spawn: { action: "spawn", prompt: "audit" },
@@ -451,12 +451,12 @@ test("a call links the child log it owns: a spawn its job, a run the log it wrot
           : [];
 
     expect(children(events[0])).toEqual([
-      ["call_spawn", { jobId: "call_spawn" }],
-      ["call_failed", { jobId: "call_failed" }],
+      ["call_spawn", undefined],
+      ["call_failed", undefined],
       ["call_run", { jobId: "call_run" }],
       ["call_broke", { jobId: "call_broke" }],
       ["call_status", undefined],
-      ["call_open", { jobId: "call_open" }],
+      ["call_open", undefined],
     ]);
     expect(events.slice(1).flatMap(children)).toEqual([
       ["call_spawn", { jobId: "call_spawn", handle: "j2" }],

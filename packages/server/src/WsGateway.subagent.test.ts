@@ -8,6 +8,7 @@ import { Type } from "typebox";
 import { SessionRegistry } from "#core/session/SessionRegistry";
 import { SubagentLogs } from "#core/shared/SubagentLogs";
 import { Tools, type PimToolDefinition } from "#core/shared/Tools";
+import { until } from "#core/shared/fixtures/wait";
 import { isDurableEvent, type ServerEvent } from "#protocol/ServerEvent";
 import { ProbeClient } from "./ProbeClient";
 import { WsGateway } from "./WsGateway";
@@ -101,6 +102,14 @@ async function writeChild(
       message: { role, content: [{ type: "text", text }] },
     })
   );
+}
+
+/** The child log holds its task: the call is running, not just being written. */
+async function childStarted(): Promise<void> {
+  await until(async () => {
+    const log = Bun.file(SubagentLogs.pathFor(parentSessionId, CALL_ID)!);
+    return (await log.exists()) && (await log.text()).includes(TASK);
+  }, "the child's task in its log");
 }
 
 function chunk(delta: Record<string, unknown>, finish?: string): string {
@@ -305,7 +314,7 @@ test("watches a running child, and keeps it out of the parent transcript", async
   const held = holdChild();
   const mark = probe.events.length;
   await probe.prompt("delegate this");
-  await probe.waitFor((event) => event.type === "tool_update", { from: mark });
+  await childStarted();
 
   expect((await probe.watchSubagent(CALL_ID)).success).toBe(true);
   // The header is line 1, so the first message is seq 2.
@@ -388,7 +397,7 @@ test("stops sending a child's events once it is unwatched", async () => {
   const held = holdChild();
   const mark = probe.events.length;
   await probe.prompt("delegate this");
-  await probe.waitFor((event) => event.type === "tool_update", { from: mark });
+  await childStarted();
   await probe.watchSubagent(CALL_ID);
 
   expect((await probe.unwatchSubagent(CALL_ID)).success).toBe(true);

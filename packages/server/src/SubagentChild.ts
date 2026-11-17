@@ -9,24 +9,25 @@ type Call = {
   readonly callId: string;
   readonly args: unknown;
   readonly details: unknown;
-  readonly settled: boolean;
-  /** The session the call ran in; without it, no settled run owns a log. */
+  /** Executing now: `watch_subagent` accepts it before its log exists. */
+  readonly running: boolean;
+  /** The session the call ran in; without it, no run owns a log. */
   readonly sessionId: string | undefined;
 };
 
-/** `{ child }` when the call owns, or may yet own, a subagent log; `{}` otherwise. */
+/** `{ child }` exactly when `watch_subagent` would accept the call; `{}` otherwise, so no row offers a watch that fails. */
 function of(call: Call): { readonly child?: SubagentChildView } {
   const child = childOf(call);
   return child === undefined ? {} : { child };
 }
 
-/** A spawn's details name its job; any other run owns a log once it wrote one, which a failed spawn never did. */
+/** A spawn's details name its job. Any other run is watchable while it executes or once it wrote a log: not while its call is still streaming or queued, nor after a spawn that failed. */
 function childOf({
   name,
   callId,
   args,
   details,
-  settled,
+  running,
   sessionId,
 }: Call): SubagentChildView | undefined {
   if (name !== "subagent") {
@@ -45,7 +46,7 @@ function childOf({
   if (asked !== undefined && asked !== "spawn") {
     return undefined;
   }
-  return !settled || logged(sessionId, callId) ? { jobId: callId } : undefined;
+  return running || logged(sessionId, callId) ? { jobId: callId } : undefined;
 }
 
 function logged(sessionId: string | undefined, callId: string): boolean {

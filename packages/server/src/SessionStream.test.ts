@@ -788,6 +788,80 @@ test("a live spawn links its job, and a spawn that fails links nothing", async (
   ]);
 });
 
+function writing(
+  type: "toolcall_start" | "toolcall_delta" | "toolcall_end",
+  name: string,
+  args: Record<string, unknown>
+): AgentSessionEvent {
+  const message = {
+    role: "assistant",
+    content: [
+      { type: "text", text: "" },
+      { type: "toolCall", id: "call_w", name, arguments: args },
+    ],
+  };
+  return agentEvent({
+    type: "message_update",
+    message,
+    assistantMessageEvent: { type, contentIndex: 1, partial: message },
+  });
+}
+
+function calls(events: readonly ServerEvent[]): readonly unknown[] {
+  return events.flatMap((event) =>
+    event.type === "tool_call" || event.type === "tool_update"
+      ? [[event.type, event.callId, event.child]]
+      : []
+  );
+}
+
+test("shows a call while the model writes it, paced, and the run updates that row", () => {
+  emit(agentEvent({ type: "message_start", message: thinkingMessage("") }));
+  emit(writing("toolcall_start", TOOL, {}));
+  emit(writing("toolcall_delta", TOOL, { command: "a" }));
+  emit(writing("toolcall_delta", TOOL, { command: "ab" }));
+
+  expect(calls(received())).toEqual([["tool_call", "call_w", undefined]]);
+  expect(stream.isRunning("call_w")).toBe(false);
+
+  emit(writing("toolcall_end", TOOL, { command: "abc" }));
+  emit(
+    agentEvent({
+      type: "tool_execution_start",
+      toolCallId: "call_w",
+      toolName: TOOL,
+      args: { command: "abc" },
+    })
+  );
+
+  expect(calls(received())).toEqual([
+    ["tool_call", "call_w", undefined],
+    ["tool_update", "call_w", undefined],
+    ["tool_update", "call_w", undefined],
+  ]);
+  expect(stream.isRunning("call_w")).toBe(true);
+});
+
+test("a subagent offers its log only once it runs, never while the model writes it", () => {
+  const spawn = { action: "spawn", prompt: "audit the parser" };
+  emit(agentEvent({ type: "message_start", message: thinkingMessage("") }));
+  emit(writing("toolcall_start", "subagent", spawn));
+  emit(writing("toolcall_end", "subagent", spawn));
+  emit(
+    agentEvent({
+      type: "tool_execution_start",
+      toolCallId: "call_w",
+      toolName: "subagent",
+      args: spawn,
+    })
+  );
+
+  expect(calls(received())).toEqual([
+    ["tool_call", "call_w", undefined],
+    ["tool_update", "call_w", { jobId: "call_w" }],
+  ]);
+});
+
 test("counts a running job as a running call, so its log can be watched", () => {
   jobs = [JOB];
   expect(stream.isRunning(JOB.id)).toBe(true);

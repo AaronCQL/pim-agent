@@ -41,12 +41,22 @@ type PendingRequest = {
 type LiveTool = {
   readonly callId: string;
   readonly name: string;
-  readonly args: unknown;
+  args: unknown;
   view: ToolView;
   linked: { readonly child?: SubagentChildView };
+  /** False while the model is still writing the call, and while it waits its turn to run. */
+  started: boolean;
   isError: boolean;
   done: boolean;
   durationMs: number | undefined;
+  /** When `view` was last sent, to pace a call the model is still writing. */
+  viewedAt: number;
+};
+
+type StreamedCall = {
+  readonly id: string;
+  readonly name: string;
+  readonly arguments: unknown;
 };
 
 type LiveMessage = {
@@ -74,6 +84,9 @@ const REQUEST_CEILING_MS = 180_000;
 
 /** How long a pending dialog survives its last client detaching (reloads, reconnects). */
 const DETACH_GRACE_MS = 15_000;
+
+/** How often a call the model is still writing gets a fresh view; each one restates the whole view. */
+const STREAM_VIEW_MS = 200;
 
 function queuedView(queued: readonly string[]): QueuedView | undefined {
   if (queued.length === 0) {
@@ -418,8 +431,9 @@ export class SessionStream implements SessionUi {
 
   /** A live tool call, or a background subagent it spawned. */
   public isRunning(callId: string): boolean {
+    const tool = this.findTool(callId);
     return (
-      this.findTool(callId)?.done === false ||
+      (tool?.started === true && !tool.done) ||
       this.host.jobs.some((job) => job.id === callId)
     );
   }
@@ -603,6 +617,17 @@ export class SessionStream implements SessionUi {
         const thinking = MessageText.textOf(event.message.content, "thinking");
         this.emitDelta(message, "thinking", thinking);
         this.emitDelta(message, "text", text);
+        const streamed = event.assistantMessageEvent;
+        if (
+          streamed.type === "toolcall_start" ||
+          streamed.type === "toolcall_delta" ||
+          streamed.type === "toolcall_end"
+        ) {
+          const part = event.message.content[streamed.contentIndex];
+          if (part?.type === "toolCall") {
+            this.streamCall(message, part, streamed.type === "toolcall_end");
+          }
+        }
         return;
       }
       case "tool_execution_start": {
@@ -612,25 +637,29 @@ export class SessionStream implements SessionUi {
           isPartial: true,
           cwd: this.host.cwd,
         });
-        const linked = this.linkOf(event, event.args, undefined, false);
-        const message = this.currentMessage();
-        message.tools.push({
+        const linked = this.linkOf(event, event.args, undefined, true);
+        const streamed = this.findTool(event.toolCallId);
+        if (streamed !== undefined) {
+          streamed.args = event.args;
+          streamed.view = view;
+          streamed.linked = linked;
+          streamed.started = true;
+          this.emit({
+            type: "tool_update",
+            callId: event.toolCallId,
+            view,
+            ...linked,
+          });
+          this.emit(this.sessionState());
+          return;
+        }
+        this.addTool(this.currentMessage(), {
           callId: event.toolCallId,
           name: event.toolName,
           args: event.args,
           view,
           linked,
-          isError: false,
-          done: false,
-          durationMs: undefined,
-        });
-        this.emit({
-          type: "tool_call",
-          callId: event.toolCallId,
-          name: event.toolName,
-          messageId: message.messageId,
-          view,
-          ...linked,
+          started: true,
         });
         this.emit(this.sessionState());
         return;
@@ -647,7 +676,7 @@ export class SessionStream implements SessionUi {
           event,
           event.args,
           event.partialResult?.details,
-          false
+          true
         );
         const tool = this.findTool(event.toolCallId);
         if (tool) {
@@ -676,7 +705,7 @@ export class SessionStream implements SessionUi {
           event,
           tool?.args,
           event.result?.details,
-          true
+          false
         );
         if (tool) {
           tool.view = view;
@@ -797,18 +826,97 @@ export class SessionStream implements SessionUi {
     return undefined;
   }
 
+  /** Shows a call as soon as the model starts writing it, rather than once it runs. */
+  private streamCall(
+    message: LiveMessage,
+    call: StreamedCall,
+    complete: boolean
+  ): void {
+    // Some providers learn the id or name only after the first chunk.
+    if (call.id === "" || call.name === "") {
+      return;
+    }
+    const now = Date.now();
+    const tool = this.findTool(call.id);
+    if (
+      tool !== undefined &&
+      (tool.started || (!complete && now - tool.viewedAt < STREAM_VIEW_MS))
+    ) {
+      return;
+    }
+    const view = Tools.viewOf({
+      name: call.name,
+      args: call.arguments,
+      isPartial: true,
+      cwd: this.host.cwd,
+    });
+    const linked = this.linkOf(
+      { toolName: call.name, toolCallId: call.id },
+      call.arguments,
+      undefined,
+      false
+    );
+    if (tool !== undefined) {
+      tool.args = call.arguments;
+      tool.viewedAt = now;
+      // Most views show only a path or a command, which stops changing early.
+      if (
+        JSON.stringify([view, linked]) ===
+        JSON.stringify([tool.view, tool.linked])
+      ) {
+        return;
+      }
+      tool.view = view;
+      tool.linked = linked;
+      this.emit({ type: "tool_update", callId: call.id, view, ...linked });
+      return;
+    }
+    this.addTool(message, {
+      callId: call.id,
+      name: call.name,
+      args: call.arguments,
+      view,
+      linked,
+      started: false,
+    });
+  }
+
+  private addTool(
+    message: LiveMessage,
+    tool: Pick<
+      LiveTool,
+      "callId" | "name" | "args" | "view" | "linked" | "started"
+    >
+  ): void {
+    message.tools.push({
+      ...tool,
+      isError: false,
+      done: false,
+      durationMs: undefined,
+      viewedAt: Date.now(),
+    });
+    this.emit({
+      type: "tool_call",
+      callId: tool.callId,
+      name: tool.name,
+      messageId: message.messageId,
+      view: tool.view,
+      ...tool.linked,
+    });
+  }
+
   private linkOf(
     event: { readonly toolName: string; readonly toolCallId: string },
     args: unknown,
     details: unknown,
-    settled: boolean
+    running: boolean
   ): LiveTool["linked"] {
     return SubagentChild.of({
       name: event.toolName,
       callId: event.toolCallId,
       args,
       details,
-      settled,
+      running,
       sessionId: this.sessionId,
     });
   }
