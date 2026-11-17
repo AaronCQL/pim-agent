@@ -531,8 +531,13 @@ describe("the optimistic echo", () => {
     expect(target.state.optimistic.map((row) => row.text)).toEqual(["mine"]);
   });
 
-  test("one whose durable text was expanded is cleared once the turn goes idle", () => {
+  test("one whose durable text was expanded is cleared once the turn goes idle", async () => {
     const target = store();
+    target.client.send = (async () => ({
+      type: "response",
+      id: "1",
+      success: true,
+    })) as typeof target.client.send;
     const state = (status: "idle" | "streaming") => ({
       type: "session_state" as const,
       writable: true,
@@ -543,7 +548,7 @@ describe("the optimistic echo", () => {
       status,
     });
     feed(target, attached("s1"), state("idle"));
-    void target.prompt("/review");
+    await target.prompt("/review");
     flush();
 
     feed(target, state("streaming"), {
@@ -1686,17 +1691,32 @@ describe("extension commands", () => {
     const queued = target.prompt("use the other file");
     answer(1, { success: false, error: "the server refused the message" });
     expect(await queued).toBe(false);
-    flush();
-
-    expect(target.state.optimistic.map((row) => row.text)).toEqual([
-      "/claude-quota",
-    ]);
-
     answer(0, { dispatched: true });
     await dispatched;
     flush();
 
     expect(target.state.optimistic).toEqual([]);
+  });
+
+  // Drawn before the answer, a dispatched command's row flashed and vanished.
+  test("a slash message waits for the answer before it draws a row", async () => {
+    const target = store();
+    const { answer } = gate(target);
+    feed(target, attached("s1"));
+
+    const command = target.prompt("/handoff");
+    const skill = target.prompt("/skill:review the diff");
+    flush();
+    expect(rows(target)).toEqual([]);
+
+    answer(0, { dispatched: true });
+    answer(1);
+    await Promise.all([command, skill]);
+    flush();
+
+    expect(
+      rows(target).map((row) => row.kind === "message" && row.text)
+    ).toEqual(["/skill:review the diff"]);
   });
 
   test("what one dispatch says stacks for the modal; the rest are toasts", () => {

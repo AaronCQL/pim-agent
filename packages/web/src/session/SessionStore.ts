@@ -469,43 +469,15 @@ export class SessionStore {
     const carried: readonly AttachmentView[] = attachments.map(
       ({ name, url, isImage }) => ({ name, url, isImage })
     );
+    // Only `/` text can be an extension command, which writes no entry: drawn
+    // before the answer, its row would flash and vanish, jerking the transcript.
+    const command = trimmed.startsWith("/");
+    // Read before sending: the turn this send starts must not make it look queued.
     const busy = this.isBusy();
-    // Read inside the write so two sends in one tick see each other.
-    let rowId = "";
-    let opened: string | undefined;
     this.setState((draft) => {
-      const opens =
-        openingMessage(draft.durable, draft.optimistic) === undefined;
-      const growing = busy
-        ? draft.optimistic.find((pending) => pending.queued)
-        : undefined;
-      if (growing) {
-        rowId = growing.id;
-        growing.text = `${growing.text}\n\n${trimmed}`;
-        growing.attachments = [...(growing.attachments ?? []), ...carried];
-        growing.mirrored = false;
-      } else {
-        rowId = `optimistic:${++this.optimisticId}`;
-        draft.optimistic.push({
-          id: rowId,
-          text: trimmed,
-          ...(carried.length === 0 ? {} : { attachments: carried }),
-          timestamp: Date.now(),
-          ...(busy ? { queued: true } : {}),
-        });
-      }
-      if (opens) {
-        draft.openings[draft.sessionId] = trimmed;
-        opened = draft.sessionId;
-      }
       draft.error = undefined;
     });
-    const undo: Undo = {
-      id: rowId,
-      text: trimmed,
-      attachments: carried,
-      opened,
-    };
+    const undo = command ? undefined : this.showSent(trimmed, carried, busy);
     this.drafts.spendDraft();
     const refs: readonly AttachmentRef[] = attachments.map(({ id: ref }) => ({
       id: ref,
@@ -522,17 +494,60 @@ export class SessionStore {
         throw new Error(response.error ?? "the server refused the message");
       }
     } catch (err) {
-      this.rollback(undo);
+      if (undo) {
+        this.rollback(undo);
+      }
       this.setState((draft) => {
         draft.error = (err as Error).message;
       });
       return false;
     }
-    // An extension command writes no entry, so nothing will replace the row.
-    if (response.dispatched === true) {
-      this.rollback(undo);
+    if (
+      command &&
+      response.dispatched !== true &&
+      this.state.sessionId === sessionId
+    ) {
+      this.showSent(trimmed, carried, busy);
     }
     return true;
+  }
+
+  /** Draws a send as a pending row, merged into the queued one during a turn. */
+  private showSent(
+    text: string,
+    carried: readonly AttachmentView[],
+    busy: boolean
+  ): Undo {
+    // Read inside the write so two sends in one tick see each other.
+    let rowId = "";
+    let opened: string | undefined;
+    this.setState((draft) => {
+      const opens =
+        openingMessage(draft.durable, draft.optimistic) === undefined;
+      const growing = busy
+        ? draft.optimistic.find((pending) => pending.queued)
+        : undefined;
+      if (growing) {
+        rowId = growing.id;
+        growing.text = `${growing.text}\n\n${text}`;
+        growing.attachments = [...(growing.attachments ?? []), ...carried];
+        growing.mirrored = false;
+      } else {
+        rowId = `optimistic:${++this.optimisticId}`;
+        draft.optimistic.push({
+          id: rowId,
+          text,
+          ...(carried.length === 0 ? {} : { attachments: carried }),
+          timestamp: Date.now(),
+          ...(busy ? { queued: true } : {}),
+        });
+      }
+      if (opens) {
+        draft.openings[draft.sessionId] = text;
+        opened = draft.sessionId;
+      }
+    });
+    return { id: rowId, text, attachments: carried, opened };
   }
 
   /** Stops the turn and every background subagent; resolves to the queued text that was never sent. */
