@@ -13,6 +13,7 @@ const EXTENSIONS = {
   footer: "Powerline footer",
   glob: "glob tool",
   grep: "grep tool",
+  handoff: "/handoff: continue from the agent's own handoff note",
   pim: "This menu",
   read: "read tool",
   "session-lease": "Cross-surface turn lease and /sync",

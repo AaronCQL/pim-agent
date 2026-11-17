@@ -13,6 +13,7 @@ import bash from "./bash/index";
 import edit from "./edit/index";
 import glob from "./glob/index";
 import grep from "./grep/index";
+import handoff from "./handoff/index";
 import read from "./read/index";
 import subagent from "./subagent/index";
 import type { SubagentJobs } from "./subagent/SubagentJobs";
@@ -43,6 +44,7 @@ function list(
     { name: "edit", factory: edit },
     { name: "glob", factory: glob },
     { name: "grep", factory: grep },
+    { name: "handoff", factory: handoff },
     { name: "read", factory: read },
     { name: "subagent", factory: subagent(options) },
     { name: "system-prompt", factory: systemPrompt(surface) },

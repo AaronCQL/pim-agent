@@ -27,10 +27,17 @@ export type ChatRequest = {
   }[];
 };
 
-/** `spawn` starts one background job per prompt, each with its prompt as its id; `status` fails the request with that HTTP status. */
+type ToolCall = {
+  readonly id: string;
+  readonly name: string;
+  readonly arguments: Record<string, unknown>;
+};
+
+/** `spawn` starts one background job per prompt, each with its prompt as its id; `call` makes one tool call; `status` fails the request with that HTTP status. */
 export type Reply =
   | { readonly text: string }
   | { readonly spawn: readonly string[] }
+  | { readonly call: ToolCall }
   | { readonly status: number };
 
 export type Script = (
@@ -60,21 +67,36 @@ function chunk(delta: Record<string, unknown>, finish: string | null = null) {
   })}\n\n`;
 }
 
+function callsOf(reply: Exclude<Reply, { readonly status: number }>) {
+  if ("call" in reply) {
+    return [reply.call];
+  }
+  if ("spawn" in reply) {
+    return reply.spawn.map((prompt) => ({
+      id: prompt,
+      name: "subagent",
+      arguments: { action: "spawn", prompt },
+    }));
+  }
+  return undefined;
+}
+
 function stream(reply: Exclude<Reply, { readonly status: number }>): string {
+  const calls = callsOf(reply);
   const body =
-    "text" in reply
-      ? [chunk({ content: reply.text }), chunk({}, "stop")]
+    calls === undefined
+      ? [chunk({ content: "text" in reply ? reply.text : "" }), chunk({}, "stop")]
       : [
-          ...reply.spawn.map((prompt, index) =>
+          ...calls.map((call, index) =>
             chunk({
               tool_calls: [
                 {
                   index,
-                  id: prompt,
+                  id: call.id,
                   type: "function",
                   function: {
-                    name: "subagent",
-                    arguments: JSON.stringify({ action: "spawn", prompt }),
+                    name: call.name,
+                    arguments: JSON.stringify(call.arguments),
                   },
                 },
               ],
