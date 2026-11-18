@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.19.1
+
+### Bug Fixes
+
+- Web: a streamed reply keeps its row when the final message lands instead of being rebuilt, and already-rendered markdown is not re-parsed (252ebeb)
+- Web: markdown table cells close open inline formatting at the pipe or line end, and an underscore inside a word is no longer read as emphasis (252ebeb)
+- Web: the message jump buttons no longer summon the soft keyboard, and a fresh session focuses the composer only when a physical keyboard is present (252ebeb)
+
+### Improvements
+
+- Move the developer guide from `AGENTS.md` to `CONTRIBUTING.md`, linked from the README (1179338, 60e2cdb)
+
 ## v0.19.0
 
 ### Features
