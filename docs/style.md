@@ -36,7 +36,7 @@ Do NOT write comments containing rationale/justifications or layout decisions in
 
 ## Icons
 
-**Chrome is a class, never an inline SVG.** Everything the UI points at itself with is a utility class off the unocss icon preset (`i-lucide-*`, `i-solar-*`), and no SVG is ever inlined into a component. One inline drawing is a component that has quietly become an art asset: it cannot be restyled with the rest, nobody can find it when the set changes, and the second one will not match the first.
+**Chrome is a class, never an inline SVG.** Everything the UI points at itself with is a utility class off the unocss icon preset (`i-griddy-icons:*`, `i-lucide-*`), and no SVG is ever inlined into a component. One inline drawing is a component that has quietly become an art asset: it cannot be restyled with the rest, nobody can find it when the set changes, and the second one will not match the first.
 
 ## TypeScript
 

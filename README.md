@@ -119,7 +119,7 @@ See [Web & Telegram](#web--telegram).
 tailscale ip -4
 
 # Install with --hostname set to it:
-pim --mode daemon --install --hostname=100.115.46.15 # Replace with your actual tailscale IP
+pim --mode daemon --install --hostname=<tailnet-ip>
 ```
 
 The web UI is then at `http://<tailnet-ip>:4319` and `localhost` no longer serves it.
@@ -293,4 +293,4 @@ See [CHANGELOG.md](./CHANGELOG.md) for release notes.
 
 ## Developing
 
-See [AGENTS.md](./AGENTS.md) for the developer guide.
+See [CONTRIBUTING.md](./CONTRIBUTING.md).
