@@ -166,8 +166,12 @@ export type EphemeralEvent =
       readonly role: "assistant";
       readonly messageId: string;
     }
-  /** Drop this live message; its durable `message` was sent just before. */
-  | { readonly type: "message_retire"; readonly messageId: string }
+  /** Drop this live message; its durable `message`, `replacedBy`, was sent just before. */
+  | {
+      readonly type: "message_retire";
+      readonly messageId: string;
+      readonly replacedBy: string;
+    }
   | {
       readonly type: "text_delta";
       readonly messageId: string;

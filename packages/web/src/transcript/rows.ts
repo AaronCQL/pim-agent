@@ -54,7 +54,8 @@ export type RowBuild = {
 function append(
   rows: Row[],
   toolIndex: Map<string, number>,
-  event: DurableEvent
+  event: DurableEvent,
+  streamedAs: Readonly<Record<string, string>>
 ): void {
   switch (event.type) {
     case "message": {
@@ -64,7 +65,7 @@ function append(
       if (event.text !== "" || thinking !== "" || attachments.length > 0) {
         rows.push({
           kind: "message",
-          id: event.messageId,
+          id: streamedAs[event.messageId] ?? event.messageId,
           role: event.role,
           text: event.text,
           timestamp: event.timestamp,
@@ -212,11 +213,15 @@ function appendLive(
   }
 }
 
-export function buildRows(events: readonly DurableEvent[]): RowBuild {
+/** A message that streamed in keeps its live id, so its row is not rebuilt when it lands. */
+export function buildRows(
+  events: readonly DurableEvent[],
+  streamedAs: Readonly<Record<string, string>> = {}
+): RowBuild {
   const rows: Row[] = [];
   const toolIndex = new Map<string, number>();
   for (const event of events) {
-    append(rows, toolIndex, event);
+    append(rows, toolIndex, event, streamedAs);
   }
   return { rows, toolIndex };
 }

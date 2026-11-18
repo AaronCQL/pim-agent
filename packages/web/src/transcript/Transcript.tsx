@@ -32,10 +32,11 @@ export function Transcript(props: {
   readonly events: readonly DurableEvent[];
   readonly trailing?: readonly PendingMessage[];
   readonly live?: readonly LiveMessage[];
+  readonly streamedAs?: Readonly<Record<string, string>>;
   readonly onEdit?: () => void;
   readonly onOpenSubagent?: (callId: string) => void;
 }) {
-  const durable = createMemo(() => buildRows(props.events));
+  const durable = createMemo(() => buildRows(props.events, props.streamedAs));
   const rows = createMemo(() =>
     extendRows(durable(), props.trailing ?? [], props.live ?? [])
   );

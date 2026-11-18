@@ -267,6 +267,10 @@ test("sends a written step and the retire that supersedes it as one frame", asyn
     "message",
     "message_retire",
   ]);
+  const [message, retire] = frame?.type === "replay" ? frame.events : [];
+  expect(retire).toMatchObject({
+    replacedBy: message?.type === "message" ? message.messageId : undefined,
+  });
 });
 
 test("keeps a retired step's calls, and drops each on its durable result", async () => {

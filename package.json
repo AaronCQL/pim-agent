@@ -83,5 +83,8 @@
     "grammy": "^1.46.0",
     "ignore": "^7.0.14",
     "ky": "^2.2.0"
+  },
+  "patchedDependencies": {
+    "streaming-markdown@0.2.15": "patches/streaming-markdown@0.2.15.patch"
   }
 }

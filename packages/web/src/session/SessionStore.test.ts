@@ -11,7 +11,7 @@ import type {
   SessionSummaryView,
 } from "#protocol/ServerEvent";
 import { job, jobs, notice, result, spawnView, statusView } from "../test/jobs";
-import { toRows, type ToolRow } from "../transcript/rows";
+import { buildRows, toRows, type ToolRow } from "../transcript/rows";
 import { SessionStore } from "./SessionStore";
 
 const VIEW = { title: [{ kind: "text" as const, text: "x" }] };
@@ -89,11 +89,37 @@ describe("the in-flight bucket", () => {
         text: "Hello",
         timestamp: 0,
       },
-      { type: "message_retire", messageId: "live-1" }
+      { type: "message_retire", messageId: "live-1", replacedBy: "m1" }
     );
 
     expect(target.state.live).toEqual([]);
     expect(rows(target).map((row) => row.id)).toEqual(["m1"]);
+  });
+
+  test("a landed message keeps the row id it streamed under", () => {
+    const target = store();
+    feed(
+      target,
+      attached("s1"),
+      { type: "message_start", role: "assistant", messageId: "live-1" },
+      { type: "text_delta", messageId: "live-1", delta: "Hello" },
+      {
+        seq: 7,
+        type: "message",
+        messageId: "m1",
+        role: "assistant",
+        text: "Hello",
+        timestamp: 0,
+      },
+      { type: "message_retire", messageId: "live-1", replacedBy: "m1" }
+    );
+
+    const landed = buildRows(target.state.durable, target.state.streamedAs);
+    expect(landed.rows.map((row) => row.id)).toEqual(["live-1"]);
+
+    // A new server stream counts its live ids from 1 again.
+    feed(target, attached("s1"));
+    expect(target.state.streamedAs).toEqual({});
   });
 
   // Regression: pi writes every step's entries at turn end, so until then
@@ -153,7 +179,7 @@ describe("the in-flight bucket", () => {
         text: "one",
         timestamp: 0,
       },
-      { type: "message_retire", messageId: "live-1" }
+      { type: "message_retire", messageId: "live-1", replacedBy: "m1" }
     );
 
     expect(rows(target).map((row) => row.id)).toEqual(["m1", "live-2"]);
@@ -187,7 +213,7 @@ describe("the in-flight bucket", () => {
         text: "one",
         timestamp: 0,
       },
-      { type: "message_retire", messageId: "live-1" },
+      { type: "message_retire", messageId: "live-1", replacedBy: "m1" },
       { type: "message_start", role: "assistant", messageId: "live-2" },
       { type: "message_start", role: "assistant", messageId: "live-3" },
       { type: "text_delta", messageId: "live-3", delta: "three" },
@@ -199,7 +225,7 @@ describe("the in-flight bucket", () => {
         text: "three",
         timestamp: 0,
       },
-      { type: "message_retire", messageId: "live-3" }
+      { type: "message_retire", messageId: "live-3", replacedBy: "m2" }
     );
 
     expect(rows(target).map((row) => row.id)).toEqual(["m1", "m2"]);
@@ -286,7 +312,7 @@ describe("the in-flight bucket", () => {
         timestamp: 0,
         toolCalls: [{ callId: "c1", name: "read", view: VIEW }],
       },
-      { type: "message_retire", messageId: "live-1" }
+      { type: "message_retire", messageId: "live-1", replacedBy: "m1" }
     );
 
     expect(rows(target).map((row) => row.id)).toEqual(["m1", "c1"]);
@@ -335,7 +361,7 @@ describe("the in-flight bucket", () => {
         timestamp: 0,
         toolCalls: [{ callId: "c1", name: "read", view: VIEW }],
       },
-      { type: "message_retire", messageId: "live-1" },
+      { type: "message_retire", messageId: "live-1", replacedBy: "m1" },
       {
         seq: 8,
         type: "tool_result",
@@ -374,7 +400,7 @@ describe("the in-flight bucket", () => {
         timestamp: 0,
         toolCalls: [{ callId: "c1", name: "bash", view: VIEW }],
       },
-      { type: "message_retire", messageId: "live-1" },
+      { type: "message_retire", messageId: "live-1", replacedBy: "m1" },
       {
         type: "tool_update",
         callId: "c1",
@@ -423,7 +449,7 @@ describe("the in-flight bucket", () => {
         timestamp: 0,
         toolCalls: [{ callId: "c1", name: "read", view: VIEW }],
       },
-      { type: "message_retire", messageId: "live-1" },
+      { type: "message_retire", messageId: "live-1", replacedBy: "m1" },
       { type: "message_start", role: "assistant", messageId: "live-2" },
       { type: "text_delta", messageId: "live-2", delta: "two" }
     );
@@ -450,7 +476,7 @@ describe("the in-flight bucket", () => {
             text: "Let me look.",
             timestamp: 0,
           },
-          { type: "message_retire", messageId: "live-1" },
+          { type: "message_retire", messageId: "live-1", replacedBy: "m1" },
         ]
       )
     ).toEqual([[], [], ["live-1"], ["m1"]]);
@@ -2243,13 +2269,21 @@ describe("background subagents", () => {
           child: { jobId: "a", handle: "j1" },
         },
       ],
-      [call, settled, { type: "message_retire", messageId: "live-1" }],
+      [
+        call,
+        settled,
+        { type: "message_retire", messageId: "live-1", replacedBy: "m2" },
+      ],
       [
         { type: "message_start", role: "assistant", messageId: "live-2" },
         { type: "text_delta", messageId: "live-2", delta: "it is back" },
         result(4, "a", "done"),
       ],
-      [waiting, { type: "message_retire", messageId: "live-2" }, state()]
+      [
+        waiting,
+        { type: "message_retire", messageId: "live-2", replacedBy: "m5" },
+        state(),
+      ]
     );
     expect(frames).toEqual([
       ["u1", "a"],

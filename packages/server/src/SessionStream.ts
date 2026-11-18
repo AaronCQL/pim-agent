@@ -956,7 +956,7 @@ export class SessionStream implements SessionUi {
     for (const event of fresh) {
       batch.push(event);
       if (event.type === "message" && event.role === "assistant") {
-        const retired = this.retireLive();
+        const retired = this.retireLive(event.messageId);
         if (retired) {
           batch.push(retired);
         }
@@ -971,7 +971,7 @@ export class SessionStream implements SessionUi {
   }
 
   // The oldest *ended* message; a retired one with tools stays until they settle.
-  private retireLive(): EphemeralEvent | undefined {
+  private retireLive(replacedBy: string): EphemeralEvent | undefined {
     const retired = this.liveTurn.find(
       (message) => message.ended && !message.retired
     );
@@ -984,7 +984,11 @@ export class SessionStream implements SessionUi {
     if (retired.tools.length === 0) {
       this.liveTurn = this.liveTurn.filter((message) => message !== retired);
     }
-    return { type: "message_retire", messageId: retired.messageId };
+    return {
+      type: "message_retire",
+      messageId: retired.messageId,
+      replacedBy,
+    };
   }
 
   private settleLive(callId: string): void {

@@ -141,7 +141,8 @@ export function Composer(props: {
         () =>
           !props.store.state.loading && props.store.state.durable.length === 0
       );
-      if (sessionId !== "" && fresh) {
+      // A scripted focus raises no soft keyboard, so on touch it only leaves a focused field for the next tap anywhere to summon one.
+      if (sessionId !== "" && fresh && untrack(keyboard)) {
         input.focus();
       }
     }

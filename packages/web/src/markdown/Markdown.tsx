@@ -212,17 +212,22 @@ export function Markdown(props: {
       grammars: Highlight.version(),
     }),
     ({ text, complete, grammars }) => {
-      if (parser === undefined || !text.startsWith(written)) {
+      // An ended parser takes no more text, but the text it ended on needs none.
+      const diverged =
+        parser === undefined ? text !== written : !text.startsWith(written);
+      if (diverged) {
         disposeButtons();
         host.replaceChildren();
         parser = smd.parser(renderer(host));
         written = "";
       }
-      smd.parser_write(parser, text.slice(written.length));
-      written = text;
-      if (complete) {
-        smd.parser_end(parser);
-        parser = undefined;
+      if (parser !== undefined) {
+        smd.parser_write(parser, text.slice(written.length));
+        written = text;
+        if (complete) {
+          smd.parser_end(parser);
+          parser = undefined;
+        }
       }
       if (grammars !== painted) {
         painted = grammars;

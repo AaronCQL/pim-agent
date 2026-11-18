@@ -1,4 +1,3 @@
-import { keepFocus } from "../input/Composer";
 import type { Reader } from "./reader";
 
 const BUTTON =
@@ -17,7 +16,6 @@ export function Jumps(props: { readonly reader: Reader }) {
         title="Previous message (Alt+↑)"
         disabled={props.reader.atTop()}
         class={BUTTON}
-        onMouseDown={keepFocus}
         onClick={() => {
           props.reader.up();
         }}
@@ -30,7 +28,6 @@ export function Jumps(props: { readonly reader: Reader }) {
         title="Next message (Alt+↓)"
         disabled={props.reader.pinned()}
         class={BUTTON}
-        onMouseDown={keepFocus}
         onClick={() => {
           props.reader.down();
         }}

@@ -99,6 +99,50 @@ describe("Markdown", () => {
     expect(items).toEqual(["- [x] done", "- [ ] open", "1. [ ] first"]);
   });
 
+  describe("tables", () => {
+    function cells(view: ReturnType<typeof mount>): string[][] {
+      return [...(view.find("table")?.querySelectorAll("tr") ?? [])].map(
+        (row) => [...row.children].map((cell) => cell.textContent!.trim())
+      );
+    }
+
+    const HEAD = "| a | b | c |\n|---|---|---|\n";
+
+    test("emphasis left open in a cell ends with the cell", () => {
+      const view = mount(`${HEAD}| *one | **two | ~~three |\n| 4 | 5 | 6 |\n`);
+      expect(cells(view)).toEqual([
+        ["a", "b", "c"],
+        ["one", "two", "three"],
+        ["4", "5", "6"],
+      ]);
+    });
+
+    test("an underscore inside a word is a letter, not emphasis", () => {
+      const view = mount(`${HEAD}| serde_json | size_t | 3 |\n`);
+      expect(cells(view)[1]).toEqual(["serde_json", "size_t", "3"]);
+      expect(view.find("em")).toBeNull();
+      expect(mount("snake_case and _real_ emphasis").html()).toBe(
+        "<p>snake_case and <em>real</em> emphasis</p>"
+      );
+    });
+
+    test("a pipe ends inline code in a cell unless escaped", () => {
+      const view = mount(`${HEAD}| \`a \\| b\` | \`c | d |\n`);
+      expect(cells(view)[1]).toEqual(["a | b", "c", "d"]);
+    });
+
+    test("a row streamed a few characters at a time parses the same", () => {
+      const source = `${HEAD}| do ___ 3 | serde_json | *x |\n| 4 | 5 | 6 |\n`;
+      const view = mount("", false);
+      for (let end = 1; end <= source.length; end += 3) {
+        view.write(source.slice(0, end));
+      }
+      view.write(source);
+      expect(cells(view).map((row) => row.length)).toEqual([3, 3, 3]);
+      expect(cells(view)[1]?.slice(1)).toEqual(["serde_json", "x"]);
+    });
+  });
+
   test("raw HTML never reaches the DOM as markup", () => {
     const view = mount('<img src=x onerror="alert(1)">\n');
     expect(view.html()).not.toContain("<img");
@@ -316,6 +360,26 @@ describe("Markdown", () => {
       click(view.find('[aria-label="Show source"]'));
       flush();
       expect(view.find('[aria-label="Expand diagram"]')).toBeNull();
+    });
+
+    test("a finished message that re-renders unchanged keeps its diagram", async () => {
+      const [row, setRow] = createSignal({ text: FENCE });
+      const host = mountPoint();
+      render(() => <Markdown text={row().text} />, host);
+      flush();
+      await until(() => {
+        flush();
+        return host.querySelector(".pim-diagram svg") !== null;
+      }, "the diagram");
+      const svg = host.querySelector(".pim-diagram svg");
+
+      // A new row object with the same text, as a durable event landing elsewhere makes.
+      setRow({ text: FENCE });
+      flush();
+      await settle();
+      flush();
+
+      expect(host.querySelector(".pim-diagram svg")).toBe(svg);
     });
 
     test("a fence still being written stays source", async () => {

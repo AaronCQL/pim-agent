@@ -238,6 +238,7 @@ export function Shell(props: {
               events={props.store.state.durable}
               trailing={props.store.trailing()}
               live={props.store.state.live}
+              streamedAs={props.store.state.streamedAs}
               onEdit={recall}
               onOpenSubagent={(callId) => {
                 void props.store.watch(callId);

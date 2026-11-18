@@ -183,19 +183,26 @@ describe("the shell, painted from events alone", () => {
 
     store.ingest({ type: "text_delta", messageId: "live-1", delta: "ne\n\n" });
     flush();
-    expect(host.querySelector(".pim-markdown h2")?.textContent).toBe("Done");
+    const heading = host.querySelector(".pim-markdown h2");
+    expect(heading?.textContent).toBe("Done");
 
     store.ingest({
       seq: 3,
       type: "message",
       messageId: "a1",
       role: "assistant",
-      text: "## Done\n",
+      text: "## Done\n\n",
       timestamp: 0,
     });
-    store.ingest({ type: "message_retire", messageId: "live-1" });
+    store.ingest({
+      type: "message_retire",
+      messageId: "live-1",
+      replacedBy: "a1",
+    });
     flush();
     expect(host.querySelectorAll(".pim-markdown h2")).toHaveLength(1);
+    // Landing keeps the streamed DOM; a rebuild would redraw its diagrams.
+    expect(host.querySelector(".pim-markdown h2")).toBe(heading);
   });
 
   test("what the footer used to say is spread across its new homes", () => {

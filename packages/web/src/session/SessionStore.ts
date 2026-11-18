@@ -137,6 +137,8 @@ export type SessionState = {
   filesRevision: number;
   durable: DurableEvent[];
   live: LiveMessage[];
+  /** Durable message id → the live id it streamed as, so its row survives the swap. */
+  streamedAs: Record<string, string>;
   optimistic: OptimisticMessage[];
   /** This session's running background subagents, oldest first. */
   jobs: readonly JobView[];
@@ -280,6 +282,7 @@ export class SessionStore {
       filesRevision: 0,
       durable: [],
       live: [],
+      streamedAs: {},
       optimistic: [],
       jobs: [],
       activity: {},
@@ -1440,14 +1443,21 @@ export class SessionStore {
           draft.piVersion = event.piVersion;
           // The server re-sends the in-flight turn on attach.
           draft.live = [];
+          // A new server stream numbers its live ids from 1 again.
+          draft.streamedAs = {};
           draft.error = undefined;
         });
         this.drafts.claim(event.sessionId, event.cwd);
         this.rewatch(previous, event.sessionId);
         return;
       }
-      case "message_start":
       case "message_retire":
+        this.setState((draft) => {
+          applyLive(draft, event);
+          draft.streamedAs[event.replacedBy] = event.messageId;
+        });
+        return;
+      case "message_start":
       case "text_delta":
       case "thinking_delta":
       case "tool_call":

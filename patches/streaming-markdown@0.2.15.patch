@@ -1,0 +1,43 @@
+diff --git a/smd.js b/smd.js
+index f7ad270f0172e7b2a9ce07b3c3bd95d3207083ca..dcf721d226a2d243b4e9e95bf0bf50344d5fb904 100644
+--- a/smd.js
++++ b/smd.js
+@@ -496,6 +496,29 @@ export function parser_write(p, chunk) {
+             }
+         }
+ 
++        /*
++         A table cell ends at its pipe or at the end of its line,
++         so whatever inline tokens are still open in it end there too.
++        */
++        if ((char === '|' || char === '\n') && p.pending[0] !== '\\') {
++            const cell = idx_of_token(p, TABLE_CELL, 0)
++            if (cell !== -1 && cell < p.len) {
++                /* `a \| b`: an escaped pipe in code is a pipe */
++                if (char === '|' &&
++                    p.tokens[p.len] === CODE_INLINE &&
++                    p.pending === "" &&
++                    p.text.endsWith('\\')
++                ) {
++                    p.text = p.text.slice(0, -1) + char
++                    continue
++                }
++                p.text += p.pending
++                p.pending = ""
++                add_text(p)
++                end_tokens_to_len(p, cell)
++            }
++        }
++
+         const pending_with_char = p.pending + char
+ 
+         /*
+@@ -1307,6 +1330,8 @@ export function parser_write(p, chunk) {
+             /** @type {Token} */ let strong = STRONG_AST
+             const symbol = p.pending[0]
+             if ('_' === symbol) {
++                /* snake_case: an underscore inside a word is a letter */
++                if (/[\p{L}\p{N}]/u.test(p.text[p.text.length-1] ?? "")) break
+                 italic = ITALIC_UND
+                 strong = STRONG_UND
+             }
