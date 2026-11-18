@@ -1,3 +1,8 @@
+<!-- ape -->
+Private docs: if `ape/` exists, run `ape`, then read `ape/_FRAMEWORK.md` and `ape/PROJECT.md`; they hold everything.
+Without `ape/`: README.md, and CONTRIBUTING.md if present.
+<!-- /ape -->
+
 # Developer Guide
 
 `bin/pim.ts` is a Bun entry point that imports pi's `main()` **in-process** and hands it pim's extensions inline via `MainOptions.extensionFactories`. A vanilla `pi` on the same machine is unaffected, and third-party pi extensions still load alongside pim's. `--mode daemon` routes to `packages/daemon` instead; `--mode web` and `--mode telegram` are its single-surface spellings.
