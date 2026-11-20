@@ -1,4 +1,4 @@
-import { getOwner, onCleanup, runWithOwner } from "solid-js";
+import { ownedRef } from "./ref";
 
 /** Travel in px before a touch commits to an axis. */
 const SLOP = 10;
@@ -49,10 +49,9 @@ export function createSwipe(
   toward: SwipeDirection,
   onSwipe: () => void
 ): (element: HTMLElement) => void {
-  const owner = getOwner();
   const sign = toward === "right" ? 1 : -1;
 
-  return (host) => {
+  return ownedRef((host: HTMLElement) => {
     let origin: Point | undefined;
     let locked = false;
 
@@ -101,13 +100,11 @@ export function createSwipe(
     host.addEventListener("touchmove", move, { passive: true });
     host.addEventListener("touchend", reset);
     host.addEventListener("touchcancel", reset);
-    runWithOwner(owner, () => {
-      onCleanup(() => {
-        host.removeEventListener("touchstart", start);
-        host.removeEventListener("touchmove", move);
-        host.removeEventListener("touchend", reset);
-        host.removeEventListener("touchcancel", reset);
-      });
-    });
-  };
+    return () => {
+      host.removeEventListener("touchstart", start);
+      host.removeEventListener("touchmove", move);
+      host.removeEventListener("touchend", reset);
+      host.removeEventListener("touchcancel", reset);
+    };
+  });
 }

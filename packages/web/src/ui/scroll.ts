@@ -1,11 +1,5 @@
-import {
-  createEffect,
-  createSignal,
-  getOwner,
-  onCleanup,
-  runWithOwner,
-  type Accessor,
-} from "solid-js";
+import { createEffect, createSignal, type Accessor } from "solid-js";
+import { ownedRef } from "./ref";
 
 /** Distance from the bottom, in px, that still counts as pinned. */
 const BOTTOM_SLACK = 16;
@@ -14,18 +8,15 @@ function observe(
   measure: (element: HTMLElement) => number,
   report: (value: number) => void
 ): (element: HTMLElement) => void {
-  const owner = getOwner();
-  return (element) => {
+  return ownedRef((element: HTMLElement) => {
     const observer = new ResizeObserver(() => {
       report(measure(element));
     });
     observer.observe(element);
-    runWithOwner(owner, () => {
-      onCleanup(() => {
-        observer.disconnect();
-      });
-    });
-  };
+    return () => {
+      observer.disconnect();
+    };
+  });
 }
 
 /** Call during component setup, not inside a `ref`: it needs an owner for cleanup. */
@@ -75,7 +66,6 @@ export type BottomPin = {
  * Callers disable scroll anchoring while pinned and keep it while scrolled up.
  */
 export function createBottomPin(onPin?: () => void): BottomPin {
-  const owner = getOwner();
   const [pinned, setPinned] = createSignal(true);
   let scroller: HTMLElement | undefined;
   let current = true;
@@ -91,7 +81,7 @@ export function createBottomPin(onPin?: () => void): BottomPin {
   return {
     pinned,
     scroller: () => scroller,
-    ref: (element: HTMLElement) => {
+    ref: ownedRef((element: HTMLElement) => {
       scroller = element;
       const sync = (): void => {
         settle(element.scrollTop >= -BOTTOM_SLACK);
@@ -99,12 +89,10 @@ export function createBottomPin(onPin?: () => void): BottomPin {
       element.addEventListener("scroll", sync, { passive: true });
       // Writes are not allowed inside a `ref`.
       queueMicrotask(sync);
-      runWithOwner(owner, () => {
-        onCleanup(() => {
-          element.removeEventListener("scroll", sync);
-        });
-      });
-    },
+      return () => {
+        element.removeEventListener("scroll", sync);
+      };
+    }),
     jump: () => {
       if (scroller) {
         scroller.scrollTop = 0;

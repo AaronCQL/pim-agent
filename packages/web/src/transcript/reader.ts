@@ -1,12 +1,6 @@
-import {
-  createSignal,
-  getOwner,
-  onCleanup,
-  runWithOwner,
-  untrack,
-  type Accessor,
-} from "solid-js";
+import { createSignal, untrack, type Accessor } from "solid-js";
 
+import { ownedRef } from "../ui/ref";
 import { createBottomPin, type BottomPin } from "../ui/scroll";
 
 /** How far below the scroller's top edge a stop lands. */
@@ -36,7 +30,6 @@ export type Reader = BottomPin & {
  * carries the start of a reply it has not shown yet off the top: it holds there.
  */
 export function createReader(inset: Accessor<number>): Reader {
-  const owner = getOwner();
   let content: HTMLElement | undefined;
   let observer: ResizeObserver | undefined;
   let seen: string | undefined | typeof ADOPT = ADOPT;
@@ -141,22 +134,20 @@ export function createReader(inset: Accessor<number>): Reader {
   return {
     ...pin,
     atTop,
-    ref: (element) => {
+    ref: ownedRef((element: HTMLElement) => {
       pin.ref(element);
       element.addEventListener("scroll", measure, { passive: true });
       for (const type of TAKEOVERS) {
         element.addEventListener(type, arrive, { passive: true });
       }
-      runWithOwner(owner, () => {
-        onCleanup(() => {
-          element.removeEventListener("scroll", measure);
-          for (const type of TAKEOVERS) {
-            element.removeEventListener(type, arrive);
-          }
-        });
-      });
-    },
-    content: (element) => {
+      return () => {
+        element.removeEventListener("scroll", measure);
+        for (const type of TAKEOVERS) {
+          element.removeEventListener(type, arrive);
+        }
+      };
+    }),
+    content: ownedRef((element: HTMLElement) => {
       content = element;
       observer?.disconnect();
       const next = new ResizeObserver(() => {
@@ -165,12 +156,10 @@ export function createReader(inset: Accessor<number>): Reader {
       });
       observer = next;
       next.observe(element);
-      runWithOwner(owner, () => {
-        onCleanup(() => {
-          next.disconnect();
-        });
-      });
-    },
+      return () => {
+        next.disconnect();
+      };
+    }),
     up: () => {
       step("up");
     },
