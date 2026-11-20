@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.19.2
+
+### Improvements
+
+- Web: update to Solid 2.0 stable (`solid-js` and `@solidjs/web` 2.0.3, `@solidjs/vite-plugin` 3.0.1) (6d9879a)
+
 ## v0.19.1
 
 ### Bug Fixes
